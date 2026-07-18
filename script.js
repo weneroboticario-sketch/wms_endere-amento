@@ -1,7 +1,10 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "wms_enderecamento_html_v1";
+  var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
+  var supabaseConfig = { url: "", key: "" };
+  var supabaseDb = null;
+  var productsDirty = false;
   var AREAS = [
     { code: 1, name: "Alto Giro" },
     { code: 2, name: "Médio Giro" },
@@ -30,14 +33,18 @@
   var currentLocation = null;
   var editingId = null;
 
-  document.addEventListener("DOMContentLoaded", function () {
-    loadData();
+  document.addEventListener("DOMContentLoaded", async function () {
+    loadSupabaseConfig();
+    fillSupabaseForm();
+    initSupabaseClient();
+    await loadData();
     seedIfEmpty();
     applyDataMigrations();
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
     renderAll();
+    updateSupabaseStatus();
     focusSkuInput();
   });
 
@@ -45,22 +52,150 @@
     return document.getElementById(id);
   }
 
-  function loadData() {
+  function loadSupabaseConfig() {
     try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      var parsed = JSON.parse(raw);
-      state.bindings = Array.isArray(parsed.bindings) ? parsed.bindings : [];
-      state.history = Array.isArray(parsed.history) ? parsed.history : [];
-      state.products = parsed.products && typeof parsed.products === "object" ? parsed.products : {};
+      var raw = localStorage.getItem(SUPABASE_CONFIG_KEY);
+      supabaseConfig = raw ? JSON.parse(raw) : { url: "", key: "" };
     } catch (error) {
-      state = { bindings: [], history: [], products: {} };
-      showToast("Nao foi possivel carregar dados salvos. Dados de exemplo foram recriados.", "error");
+      supabaseConfig = { url: "", key: "" };
     }
   }
 
-  function saveData() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  function fillSupabaseForm() {
+    if ($("supabaseUrlInput")) $("supabaseUrlInput").value = supabaseConfig.url || "";
+    if ($("supabaseKeyInput")) $("supabaseKeyInput").value = supabaseConfig.key || "";
+  }
+
+  function initSupabaseClient() {
+    if (!supabaseConfig.url || !supabaseConfig.key || !window.supabase) {
+      supabaseDb = null;
+      return false;
+    }
+    supabaseDb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+    });
+    return true;
+  }
+
+  function isSupabaseReady() {
+    return !!supabaseDb;
+  }
+
+  async function loadData() {
+    state = { bindings: [], history: [], products: {} };
+    if (!isSupabaseReady()) return;
+    try {
+      var bindingsResponse = await supabaseDb.from("wms_bindings").select("*").order("created_at", { ascending: false });
+      if (bindingsResponse.error) throw bindingsResponse.error;
+      state.bindings = (bindingsResponse.data || []).map(fromDbBinding);
+
+      var historyResponse = await supabaseDb.from("wms_history").select("*").order("datetime", { ascending: false }).limit(1000);
+      if (historyResponse.error) throw historyResponse.error;
+      state.history = (historyResponse.data || []).map(fromDbHistory);
+
+      var productsResponse = await supabaseDb.from("wms_products").select("*");
+      if (productsResponse.error) throw productsResponse.error;
+      state.products = {};
+      (productsResponse.data || []).forEach(function (product) {
+        if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
+      });
+      productsDirty = false;
+    } catch (error) {
+      state = { bindings: [], history: [], products: {} };
+      showToast("Nao foi possivel carregar o banco Supabase. Confira a conexao e as tabelas.", "error");
+    }
+  }
+
+  async function saveData() {
+    if (!isSupabaseReady()) {
+      updateSupabaseStatus("Configure o Supabase para salvar no banco.", "warning");
+      return false;
+    }
+    try {
+      if (state.bindings.length) {
+        await upsertInChunks("wms_bindings", state.bindings.map(toDbBinding));
+      }
+      if (state.history.length) {
+        await upsertInChunks("wms_history", state.history.map(toDbHistory));
+      }
+      if (productsDirty) {
+        var products = Object.keys(state.products).map(function (sku) {
+          return { sku: sku, product_name: state.products[sku] };
+        });
+        if (products.length) await upsertInChunks("wms_products", products);
+        productsDirty = false;
+      }
+      return true;
+    } catch (error) {
+      showToast("Erro ao salvar no Supabase.", "error");
+      return false;
+    }
+  }
+
+  async function upsertInChunks(tableName, rows) {
+    var chunkSize = 500;
+    for (var i = 0; i < rows.length; i += chunkSize) {
+      var chunk = rows.slice(i, i + chunkSize);
+      var response = await supabaseDb.from(tableName).upsert(chunk);
+      if (response.error) throw response.error;
+    }
+  }
+
+  function fromDbBinding(row) {
+    return {
+      id: row.id,
+      sku: row.sku || "",
+      rua: Number(row.rua),
+      rack: Number(row.rack),
+      linha: Number(row.linha),
+      letra: row.letra || "",
+      locationCode: row.location_code || "",
+      areaCode: Number(row.area_code || 1),
+      areaName: row.area_name || (getAreaByCode(row.area_code) || getAreaByCode(1)).name,
+      productName: row.product_name || "",
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function toDbBinding(binding) {
+    return {
+      id: binding.id,
+      sku: String(binding.sku || ""),
+      rua: Number(binding.rua),
+      rack: Number(binding.rack),
+      linha: Number(binding.linha),
+      letra: binding.letra || "",
+      location_code: binding.locationCode || "",
+      area_code: Number(binding.areaCode || 1),
+      area_name: binding.areaName || (getAreaByCode(binding.areaCode) || getAreaByCode(1)).name,
+      product_name: binding.productName || findProductName(binding.sku) || "",
+      created_at: binding.createdAt || new Date().toISOString(),
+      updated_at: binding.updatedAt || new Date().toISOString()
+    };
+  }
+
+  function fromDbHistory(row) {
+    return {
+      id: row.id,
+      datetime: row.datetime || new Date().toISOString(),
+      action: row.action || "",
+      sku: row.sku || "",
+      location: row.location || "",
+      details: row.details || ""
+    };
+  }
+
+  function toDbHistory(item) {
+    if (!item.id) item.id = "hist-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    return {
+      id: item.id,
+      datetime: item.datetime || new Date().toISOString(),
+      action: item.action || "",
+      sku: item.sku || "",
+      location: item.location || "",
+      details: item.details || ""
+    };
   }
 
   function seedIfEmpty() {
@@ -84,12 +219,6 @@
 
   function applyDataMigrations() {
     var changed = false;
-    Object.keys(BUILTIN_PRODUCTS).forEach(function (sku) {
-      if (!state.products[sku]) {
-        state.products[sku] = BUILTIN_PRODUCTS[sku];
-        changed = true;
-      }
-    });
     state.bindings.forEach(function (binding) {
       var area = getAreaByCode(binding.areaCode);
       if (area && binding.areaName !== area.name) {
@@ -184,6 +313,8 @@
     $("clearHistoryButton").addEventListener("click", clearHistory);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
+    $("saveSupabaseButton").addEventListener("click", saveSupabaseSettings);
+    $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
   }
 
   function cacheStaticOptions() {
@@ -505,6 +636,11 @@
     var ok = window.confirm("Remover o vinculo do SKU " + binding.sku + " com o endereco " + binding.locationCode + "?");
     if (!ok) return;
     state.bindings = state.bindings.filter(function (item) { return item.id !== id; });
+    if (isSupabaseReady()) {
+      supabaseDb.from("wms_bindings").delete().eq("id", id).then(function (response) {
+        if (response.error) showToast("Nao foi possivel remover no Supabase.", "error");
+      });
+    }
     addHistory("Endereco removido", binding.sku, binding.locationCode, "Vinculo removido pelo usuario.");
     saveData();
     renderAll();
@@ -733,9 +869,11 @@
   function mergeProducts(products) {
     Object.keys(products).forEach(function (sku) {
       state.products[sku] = products[sku];
+      productsDirty = true;
       var normalizedWithoutZeros = normalizeSkuKey(sku);
       if (normalizedWithoutZeros && normalizedWithoutZeros !== sku) {
         state.products[normalizedWithoutZeros] = products[sku];
+        productsDirty = true;
       }
     });
     state.bindings.forEach(function (binding) {
@@ -813,31 +951,94 @@
     }).join("") : "<tr><td colspan=\"5\">Nenhum historico registrado.</td></tr>";
   }
 
-  function clearHistory() {
-    if (!window.confirm("Limpar todo o historico local?")) return;
+  async function saveSupabaseSettings() {
+    supabaseConfig = {
+      url: normalizeText($("supabaseUrlInput").value),
+      key: normalizeText($("supabaseKeyInput").value)
+    };
+    localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
+    initSupabaseClient();
+    await loadData();
+    seedIfEmpty();
+    applyDataMigrations();
+    renderAll();
+    updateSupabaseStatus();
+    showToast("Conexao Supabase salva.", "success");
+  }
+
+  async function testSupabaseConnection() {
+    supabaseConfig = {
+      url: normalizeText($("supabaseUrlInput").value),
+      key: normalizeText($("supabaseKeyInput").value)
+    };
+    initSupabaseClient();
+    if (!isSupabaseReady()) {
+      updateSupabaseStatus("Informe URL e anon key do Supabase.", "error");
+      return;
+    }
+    try {
+      var response = await supabaseDb.from("wms_bindings").select("id", { count: "exact", head: true });
+      if (response.error) throw response.error;
+      updateSupabaseStatus("Conexao OK. Banco pronto para uso.", "success");
+    } catch (error) {
+      updateSupabaseStatus("Falha na conexao. Confira URL, anon key e tabelas SQL.", "error");
+    }
+  }
+
+  function updateSupabaseStatus(message, type) {
+    if (!$("supabaseStatus")) return;
+    var ready = isSupabaseReady();
+    var text = message || (ready ? "Supabase configurado. Dados serao salvos no banco." : "Supabase nao configurado. Configure antes de usar em varios dispositivos.");
+    setStatus("supabaseStatus", text, type || (ready ? "success" : "warning"));
+  }
+
+  async function clearRemoteTable(tableName, columnName) {
+    if (!isSupabaseReady()) return;
+    var response = await supabaseDb.from(tableName).delete().neq(columnName, "");
+    if (response.error) throw response.error;
+  }
+
+  async function clearHistory() {
+    if (!window.confirm("Limpar todo o historico do Supabase?")) return;
     state.history = [];
-    saveData();
+    try {
+      await clearRemoteTable("wms_history", "id");
+    } catch (error) {
+      showToast("Nao foi possivel limpar o historico no Supabase.", "error");
+    }
     renderHistory();
     showToast("Historico limpo.", "success");
   }
 
-  function restoreSamples() {
+  async function restoreSamples() {
     if (!window.confirm("Restaurar dados de exemplo? Os dados atuais serao substituidos.")) return;
     state.bindings = [];
     state.history = [];
     state.products = {};
-    saveData();
+    try {
+      await clearRemoteTable("wms_bindings", "id");
+      await clearRemoteTable("wms_history", "id");
+      await clearRemoteTable("wms_products", "sku");
+    } catch (error) {
+      showToast("Nao foi possivel limpar dados antigos no Supabase.", "error");
+    }
     seedIfEmpty();
     renderAll();
     showToast("Dados de exemplo restaurados.", "success");
   }
 
-  function clearAllData() {
-    if (!window.confirm("Apagar todos os vinculos e historico deste navegador?")) return;
+  async function clearAllData() {
+    if (!window.confirm("Apagar todos os vinculos, produtos e historico do Supabase?")) return;
     state.bindings = [];
     state.history = [];
     state.products = {};
-    saveData();
+    try {
+      await clearRemoteTable("wms_bindings", "id");
+      await clearRemoteTable("wms_history", "id");
+      await clearRemoteTable("wms_products", "sku");
+    } catch (error) {
+      showToast("Nao foi possivel apagar tudo no Supabase.", "error");
+    }
     renderAll();
     showToast("Todos os dados foram apagados.", "success");
   }
@@ -872,8 +1073,9 @@
   function findProductName(sku) {
     var exact = state.products[sku];
     if (exact) return exact;
+    if (BUILTIN_PRODUCTS[sku]) return BUILTIN_PRODUCTS[sku];
     var normalized = normalizeSkuKey(sku);
-    return normalized ? state.products[normalized] || "" : "";
+    return normalized ? state.products[normalized] || BUILTIN_PRODUCTS[normalized] || "" : "";
   }
 
   function normalizeSku(value) {
@@ -968,6 +1170,7 @@
 
   function addHistory(action, sku, location, details) {
     state.history.push({
+      id: "hist-" + Date.now() + "-" + Math.random().toString(16).slice(2),
       datetime: new Date().toISOString(),
       action: action,
       sku: sku || "",

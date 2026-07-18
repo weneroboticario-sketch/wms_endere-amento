@@ -8,7 +8,8 @@
   <link rel="stylesheet" href="style.css">
   <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script defer src="script.js?v=20260717-produtos"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="script.js?v=20260717-supabase"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -43,7 +44,7 @@
 
       <div class="sidebar-note">
         <span class="status-dot"></span>
-        Dados salvos no navegador
+        Dados salvos no Supabase
       </div>
     </aside>
 
@@ -331,7 +332,16 @@
           </div>
         </div>
         <section class="panel narrow-panel">
-          <p class="muted">Os dados ficam no localStorage deste navegador. Use exportar Excel antes de limpar dados reais.</p>
+          <p class="muted">Os dados principais ficam no banco Supabase. Configure a URL do projeto e a chave anon public para usar o app em computadores e celulares.</p>
+          <label for="supabaseUrlInput">Supabase URL</label>
+          <input id="supabaseUrlInput" type="url" placeholder="https://seu-projeto.supabase.co">
+          <label for="supabaseKeyInput">Supabase anon public key</label>
+          <input id="supabaseKeyInput" type="password" placeholder="Cole a anon key publica">
+          <div class="button-row">
+            <button class="primary-button" id="saveSupabaseButton" type="button">Salvar conexao</button>
+            <button class="secondary-button" id="testSupabaseButton" type="button">Testar conexao</button>
+          </div>
+          <div id="supabaseStatus" class="inline-status"></div>
           <button class="secondary-button wide-button" id="resetSampleButton" type="button">Restaurar dados de exemplo</button>
           <button class="danger-button wide-button" id="clearAllButton" type="button">Apagar todos os dados</button>
         </section>
