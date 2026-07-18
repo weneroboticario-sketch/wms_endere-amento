@@ -41,6 +41,17 @@ README.md
 
 Depois disso, computadores e celulares que usarem a mesma URL/chave verão o mesmo banco.
 
+## Variáveis na Vercel
+
+Se publicar na Vercel, configure estas variáveis em `Settings` > `Environment Variables`:
+
+```text
+SUPABASE_URL
+SUPABASE_ANON_KEY
+```
+
+Depois faça um novo deploy. O app lê essas variáveis pela rota `/api/supabase-config`, então não precisa configurar manualmente em cada celular ou computador.
+
 ## Publicar no GitHub Pages
 
 1. Crie um repositório público no GitHub.

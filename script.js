@@ -34,12 +34,12 @@
   var editingId = null;
 
   document.addEventListener("DOMContentLoaded", async function () {
-    loadSupabaseConfig();
+    await loadSupabaseConfig();
     fillSupabaseForm();
     initSupabaseClient();
     await loadData();
-    seedIfEmpty();
-    applyDataMigrations();
+    await seedIfEmpty();
+    await applyDataMigrations();
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
@@ -52,7 +52,20 @@
     return document.getElementById(id);
   }
 
-  function loadSupabaseConfig() {
+  async function loadSupabaseConfig() {
+    try {
+      var response = await fetch("/api/supabase-config", { cache: "no-store" });
+      if (response.ok) {
+        var remoteConfig = await response.json();
+        if (remoteConfig.url && (remoteConfig.key || remoteConfig.anonKey)) {
+          supabaseConfig = { url: remoteConfig.url, key: remoteConfig.key || remoteConfig.anonKey };
+          localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
+          return;
+        }
+      }
+    } catch (error) {
+      // Em arquivo local ou GitHub Pages, usa a configuracao salva no navegador.
+    }
     try {
       var raw = localStorage.getItem(SUPABASE_CONFIG_KEY);
       supabaseConfig = raw ? JSON.parse(raw) : { url: "", key: "" };
@@ -198,7 +211,7 @@
     };
   }
 
-  function seedIfEmpty() {
+  async function seedIfEmpty() {
     if (state.bindings.length > 0) return;
     var samples = [
       ["89261", "R01-RK01-L01-A", 1],
@@ -214,10 +227,10 @@
       }
     });
     addHistory("Dados de exemplo criados", "", "", "Carga inicial automatica");
-    saveData();
+    await saveData();
   }
 
-  function applyDataMigrations() {
+  async function applyDataMigrations() {
     var changed = false;
     state.bindings.forEach(function (binding) {
       var area = getAreaByCode(binding.areaCode);
@@ -231,7 +244,7 @@
         changed = true;
       }
     });
-    if (changed) saveData();
+    if (changed) await saveData();
   }
 
   function bindNavigation() {
@@ -369,7 +382,7 @@
     $("saveManualButton").focus();
   }
 
-  function saveManualScan() {
+  async function saveManualScan() {
     var sku = normalizeSku($("skuInput").value || currentSku);
     var parsed = normalizeLocation($("locationInput").value);
     var existingBinding = editingId ? state.bindings.find(function (binding) { return binding.id === editingId; }) : null;
@@ -385,7 +398,7 @@
     if (!getAreaByCode(areaCode)) areaCode = 1;
 
     if (editingId) {
-      updateBinding(editingId, sku, parsed, areaCode);
+      await updateBinding(editingId, sku, parsed, areaCode);
       editingId = null;
       setScanMessage("Endereco alterado. Pronto para o proximo produto.", "success");
       resetScanSoon();
@@ -401,13 +414,17 @@
     }
     state.bindings.push(createBinding(sku, parsed, areaCode));
     addHistory("SKU enderecado", sku, parsed.code, "SKU enderecado com sucesso.");
-    saveData();
+    var saved = await saveData();
+    if (!saved) {
+      setScanMessage("Nao foi possivel salvar no Supabase. Confira a conexao.", "error");
+      return;
+    }
     renderAll();
     setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
     resetScanSoon();
   }
 
-  function updateBinding(id, sku, parsed, areaCode) {
+  async function updateBinding(id, sku, parsed, areaCode) {
     var duplicate = state.bindings.some(function (binding) {
       return binding.id !== id && binding.sku === sku && binding.locationCode === parsed.code;
     });
@@ -430,7 +447,7 @@
     target.productName = state.products[sku] || target.productName || "";
     target.updatedAt = new Date().toISOString();
     addHistory("Endereco alterado", sku, parsed.code, "Vinculo editado manualmente.");
-    saveData();
+    await saveData();
     renderAll();
   }
 
