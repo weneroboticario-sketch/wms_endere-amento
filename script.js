@@ -3,6 +3,7 @@
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var supabaseConfig = { url: "", key: "" };
+  var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
   var productsDirty = false;
   var AREAS = [
@@ -53,18 +54,20 @@
   }
 
   async function loadSupabaseConfig() {
+    supabaseConfigDiagnostics = null;
     try {
-      var response = await fetch("/api/supabase-config", { cache: "no-store" });
-      if (response.ok) {
-        var remoteConfig = await response.json();
-        if (remoteConfig.url && (remoteConfig.key || remoteConfig.anonKey)) {
-          supabaseConfig = { url: remoteConfig.url, key: remoteConfig.key || remoteConfig.anonKey };
-          localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
-          return;
-        }
+      var remoteConfig = await fetchSupabaseConfigFromApi("/api/supabase-config");
+      if (remoteConfig && remoteConfig.url && (remoteConfig.key || remoteConfig.anonKey)) {
+        supabaseConfig = { url: remoteConfig.url, key: remoteConfig.key || remoteConfig.anonKey };
+        localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
+        return;
       }
     } catch (error) {
-      // Em arquivo local ou GitHub Pages, usa a configuracao salva no navegador.
+      supabaseConfigDiagnostics = {
+        endpoint: "/api/supabase-config",
+        error: formatSupabaseError(error),
+        note: "Falha ao buscar a rota de configuracao da Vercel."
+      };
     }
     try {
       var raw = localStorage.getItem(SUPABASE_CONFIG_KEY);
@@ -74,13 +77,47 @@
     }
   }
 
+  async function fetchSupabaseConfigFromApi(endpoint) {
+    var response = await fetch(endpoint, { cache: "no-store" });
+    var body = null;
+    try {
+      body = await response.json();
+    } catch (error) {
+      body = null;
+    }
+
+    supabaseConfigDiagnostics = Object.assign({
+      endpoint: endpoint,
+      status: response.status,
+      statusText: response.statusText
+    }, body && body.diagnostics ? body.diagnostics : {
+      hasUrl: Boolean(body && body.url),
+      hasKey: Boolean(body && (body.key || body.anonKey))
+    });
+
+    if (!response.ok) return null;
+    return body;
+  }
+
   function fillSupabaseForm() {
     if ($("supabaseUrlInput")) $("supabaseUrlInput").value = supabaseConfig.url || "";
     if ($("supabaseKeyInput")) $("supabaseKeyInput").value = supabaseConfig.key || "";
   }
 
   function initSupabaseClient() {
-    if (!supabaseConfig.url || !supabaseConfig.key || !window.supabase) {
+    if (!window.supabase) {
+      supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
+        libraryLoaded: false,
+        note: "A biblioteca @supabase/supabase-js nao carregou no navegador."
+      });
+      supabaseDb = null;
+      return false;
+    }
+    if (!supabaseConfig.url || !supabaseConfig.key) {
+      supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
+        hasUrl: Boolean(supabaseConfig.url),
+        hasKey: Boolean(supabaseConfig.key)
+      });
       supabaseDb = null;
       return false;
     }
@@ -125,7 +162,7 @@
 
   async function saveData() {
     if (!isSupabaseReady()) {
-      updateSupabaseStatus("Configure o Supabase para salvar no banco.", "warning");
+      updateSupabaseStatus("Supabase nao conectado. " + describeSupabaseConfigProblem(), "warning");
       return false;
     }
     try {
@@ -163,8 +200,9 @@
 
   async function saveBindingAndHistory(binding, historyItem) {
     if (!isSupabaseReady()) {
-      updateSupabaseStatus("Supabase nao conectado. O SKU nao foi salvo.", "error");
-      return { ok: false, message: "Supabase nao conectado." };
+      var problem = describeSupabaseConfigProblem();
+      updateSupabaseStatus("Supabase nao conectado. O SKU nao foi salvo. " + problem, "error");
+      return { ok: false, message: "Supabase nao conectado. " + problem };
     }
     try {
       var bindingResponse = await supabaseDb
@@ -852,7 +890,7 @@
     }
 
     if (!isSupabaseReady()) {
-      setStatus("importStatus", "Supabase nao conectado. Configure antes de importar.", "error");
+      setStatus("importStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
       return;
     }
 
@@ -1066,7 +1104,7 @@
     };
     initSupabaseClient();
     if (!isSupabaseReady()) {
-      updateSupabaseStatus("Informe URL e anon key do Supabase.", "error");
+      updateSupabaseStatus(describeSupabaseConfigProblem(), "error");
       return;
     }
     try {
@@ -1111,8 +1149,38 @@
   function updateSupabaseStatus(message, type) {
     if (!$("supabaseStatus")) return;
     var ready = isSupabaseReady();
-    var text = message || (ready ? "Supabase configurado. Dados serao salvos no banco." : "Supabase nao configurado. Configure antes de usar em varios dispositivos.");
+    var text = message || (ready ? "Supabase configurado. Dados serao salvos no banco." : describeSupabaseConfigProblem());
     setStatus("supabaseStatus", text, type || (ready ? "success" : "warning"));
+  }
+
+  function describeSupabaseConfigProblem() {
+    if (!window.supabase) {
+      return "Biblioteca Supabase nao carregou no navegador. Verifique a conexao com a internet ou bloqueio do CDN.";
+    }
+
+    if (supabaseConfig.url && supabaseConfig.key) {
+      return "URL e anon key existem, mas o cliente Supabase nao inicializou. Recarregue a pagina e teste a conexao.";
+    }
+
+    var diagnostics = supabaseConfigDiagnostics || {};
+    var endpoint = diagnostics.endpoint || "/api/supabase-config";
+    var urlInfo = diagnostics.hasUrl ? "OK" : "ausente";
+    var keyInfo = diagnostics.hasKey ? "OK" : "ausente";
+
+    if (diagnostics.urlSource) urlInfo += " em " + diagnostics.urlSource;
+    if (diagnostics.keySource) keyInfo += " em " + diagnostics.keySource;
+    if (diagnostics.urlPreview) urlInfo += " (" + diagnostics.urlPreview + ")";
+    if (diagnostics.keyPreview) keyInfo += " (" + diagnostics.keyPreview + ")";
+
+    if (diagnostics.status && diagnostics.status !== 200) {
+      return "A rota " + endpoint + " respondeu HTTP " + diagnostics.status + " " + (diagnostics.statusText || "") + ". O app nao recebeu as variaveis da Vercel.";
+    }
+
+    if (diagnostics.error) {
+      return "Falha ao ler " + endpoint + ": " + diagnostics.error;
+    }
+
+    return "Variaveis recebidas pela Vercel: VITE_SUPABASE_URL " + urlInfo + "; VITE_SUPABASE_ANON_KEY " + keyInfo + ". Este app e HTML/JS puro, entao import.meta.env nao existe no navegador sem build Vite.";
   }
 
   function formatSupabaseError(error) {

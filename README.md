@@ -46,11 +46,27 @@ Depois disso, computadores e celulares que usarem a mesma URL/chave verão o mes
 Se publicar na Vercel, configure estas variáveis em `Settings` > `Environment Variables`:
 
 ```text
-SUPABASE_URL
-SUPABASE_ANON_KEY
+VITE_SUPABASE_URL
+VITE_SUPABASE_ANON_KEY
 ```
 
+Tambem sao aceitos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
+
 Depois faça um novo deploy. O app lê essas variáveis pela rota `/api/supabase-config`, então não precisa configurar manualmente em cada celular ou computador.
+
+Este projeto é HTML/JS puro e não roda build Vite. Por isso `import.meta.env.VITE_SUPABASE_URL` e `import.meta.env.VITE_SUPABASE_ANON_KEY` não existem dentro do `script.js` no navegador. Na Vercel, abra `/api/supabase-config` depois do deploy e confira:
+
+```json
+{
+  "configured": true,
+  "diagnostics": {
+    "urlSource": "VITE_SUPABASE_URL",
+    "keySource": "VITE_SUPABASE_ANON_KEY"
+  }
+}
+```
+
+Se `configured` vier como `false`, o JSON vai mostrar qual variável chegou ausente.
 
 ## Publicar no GitHub Pages
 
