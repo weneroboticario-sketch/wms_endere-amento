@@ -1,3 +1,5 @@
+import { createClient } from "@supabase/supabase-js";
+
 (function () {
   "use strict";
 
@@ -55,6 +57,13 @@
 
   async function loadSupabaseConfig() {
     supabaseConfigDiagnostics = null;
+    var viteConfig = readSupabaseConfigFromViteEnv();
+    if (viteConfig.url && viteConfig.key) {
+      supabaseConfig = viteConfig;
+      localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
+      return;
+    }
+
     try {
       var remoteConfig = await fetchSupabaseConfigFromApi("/api/supabase-config");
       if (remoteConfig && remoteConfig.url && (remoteConfig.key || remoteConfig.anonKey)) {
@@ -77,6 +86,24 @@
     }
   }
 
+  function readSupabaseConfigFromViteEnv() {
+    var env = import.meta.env || {};
+    var url = env.VITE_SUPABASE_URL || "";
+    var key = env.VITE_SUPABASE_ANON_KEY || "";
+
+    supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
+      source: "vite-build",
+      viteMode: env.MODE || "",
+      viteHasUrl: Boolean(url),
+      viteHasKey: Boolean(key),
+      viteUrlPreview: previewPublicValue(url),
+      viteKeyPreview: previewSecret(key),
+      checkedViteVariables: ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"]
+    });
+
+    return { url: url, key: key };
+  }
+
   async function fetchSupabaseConfigFromApi(endpoint) {
     var response = await fetch(endpoint, { cache: "no-store" });
     var body = null;
@@ -86,17 +113,34 @@
       body = null;
     }
 
-    supabaseConfigDiagnostics = Object.assign({
-      endpoint: endpoint,
-      status: response.status,
-      statusText: response.statusText
-    }, body && body.diagnostics ? body.diagnostics : {
-      hasUrl: Boolean(body && body.url),
-      hasKey: Boolean(body && (body.key || body.anonKey))
+    var apiDiagnostics = body && body.diagnostics ? body.diagnostics : {};
+    supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
+      apiEndpoint: endpoint,
+      apiStatus: response.status,
+      apiStatusText: response.statusText,
+      apiHasUrl: Boolean(body && body.url),
+      apiHasKey: Boolean(body && (body.key || body.anonKey)),
+      apiUrlSource: apiDiagnostics.urlSource || "",
+      apiKeySource: apiDiagnostics.keySource || "",
+      apiUrlPreview: apiDiagnostics.urlPreview || "",
+      apiKeyPreview: apiDiagnostics.keyPreview || "",
+      apiNote: apiDiagnostics.note || ""
     });
 
     if (!response.ok) return null;
     return body;
+  }
+
+  function previewPublicValue(value) {
+    if (!value) return "";
+    return String(value).replace(/\/+$/, "");
+  }
+
+  function previewSecret(value) {
+    if (!value) return "";
+    value = String(value);
+    if (value.length <= 12) return "***";
+    return value.slice(0, 8) + "..." + value.slice(-6);
   }
 
   function fillSupabaseForm() {
@@ -105,14 +149,6 @@
   }
 
   function initSupabaseClient() {
-    if (!window.supabase) {
-      supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
-        libraryLoaded: false,
-        note: "A biblioteca @supabase/supabase-js nao carregou no navegador."
-      });
-      supabaseDb = null;
-      return false;
-    }
     if (!supabaseConfig.url || !supabaseConfig.key) {
       supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
         hasUrl: Boolean(supabaseConfig.url),
@@ -121,7 +157,7 @@
       supabaseDb = null;
       return false;
     }
-    supabaseDb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.key, {
+    supabaseDb = createClient(supabaseConfig.url, supabaseConfig.key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
     });
     return true;
@@ -1154,33 +1190,33 @@
   }
 
   function describeSupabaseConfigProblem() {
-    if (!window.supabase) {
-      return "Biblioteca Supabase nao carregou no navegador. Verifique a conexao com a internet ou bloqueio do CDN.";
-    }
-
     if (supabaseConfig.url && supabaseConfig.key) {
       return "URL e anon key existem, mas o cliente Supabase nao inicializou. Recarregue a pagina e teste a conexao.";
     }
 
     var diagnostics = supabaseConfigDiagnostics || {};
-    var endpoint = diagnostics.endpoint || "/api/supabase-config";
-    var urlInfo = diagnostics.hasUrl ? "OK" : "ausente";
-    var keyInfo = diagnostics.hasKey ? "OK" : "ausente";
+    var endpoint = diagnostics.apiEndpoint || "/api/supabase-config";
+    var viteUrlInfo = diagnostics.viteHasUrl ? "OK" : "ausente";
+    var viteKeyInfo = diagnostics.viteHasKey ? "OK" : "ausente";
+    var apiUrlInfo = diagnostics.apiHasUrl ? "OK" : "ausente";
+    var apiKeyInfo = diagnostics.apiHasKey ? "OK" : "ausente";
 
-    if (diagnostics.urlSource) urlInfo += " em " + diagnostics.urlSource;
-    if (diagnostics.keySource) keyInfo += " em " + diagnostics.keySource;
-    if (diagnostics.urlPreview) urlInfo += " (" + diagnostics.urlPreview + ")";
-    if (diagnostics.keyPreview) keyInfo += " (" + diagnostics.keyPreview + ")";
+    if (diagnostics.viteUrlPreview) viteUrlInfo += " (" + diagnostics.viteUrlPreview + ")";
+    if (diagnostics.viteKeyPreview) viteKeyInfo += " (" + diagnostics.viteKeyPreview + ")";
+    if (diagnostics.apiUrlSource) apiUrlInfo += " em " + diagnostics.apiUrlSource;
+    if (diagnostics.apiKeySource) apiKeyInfo += " em " + diagnostics.apiKeySource;
+    if (diagnostics.apiUrlPreview) apiUrlInfo += " (" + diagnostics.apiUrlPreview + ")";
+    if (diagnostics.apiKeyPreview) apiKeyInfo += " (" + diagnostics.apiKeyPreview + ")";
 
-    if (diagnostics.status && diagnostics.status !== 200) {
-      return "A rota " + endpoint + " respondeu HTTP " + diagnostics.status + " " + (diagnostics.statusText || "") + ". O app nao recebeu as variaveis da Vercel.";
+    if (diagnostics.apiStatus && diagnostics.apiStatus !== 200) {
+      return "Build Vite: VITE_SUPABASE_URL " + viteUrlInfo + "; VITE_SUPABASE_ANON_KEY " + viteKeyInfo + ". Fallback " + endpoint + " respondeu HTTP " + diagnostics.apiStatus + " " + (diagnostics.apiStatusText || "") + ".";
     }
 
     if (diagnostics.error) {
       return "Falha ao ler " + endpoint + ": " + diagnostics.error;
     }
 
-    return "Variaveis recebidas pela Vercel: VITE_SUPABASE_URL " + urlInfo + "; VITE_SUPABASE_ANON_KEY " + keyInfo + ". Este app e HTML/JS puro, entao import.meta.env nao existe no navegador sem build Vite.";
+    return "Build Vite/import.meta.env: VITE_SUPABASE_URL " + viteUrlInfo + "; VITE_SUPABASE_ANON_KEY " + viteKeyInfo + ". Fallback " + endpoint + ": URL " + apiUrlInfo + "; anon key " + apiKeyInfo + ".";
   }
 
   function formatSupabaseError(error) {

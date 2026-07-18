@@ -1,6 +1,6 @@
 # WMS Endereçamento de Estoque
 
-Sistema WMS em HTML, CSS e JavaScript puro, pronto para GitHub Pages, Vercel ou Netlify.
+Sistema WMS em HTML, CSS e JavaScript compilado pelo Vite, pronto para Vercel.
 
 Agora os dados principais ficam no Supabase:
 
@@ -8,7 +8,7 @@ Agora os dados principais ficam no Supabase:
 - Histórico
 - Produtos importados
 
-O app ainda não usa React, Vite, TypeScript, Node, npm ou build.
+O app nao usa React nem TypeScript, mas agora usa Vite para compilar o JavaScript e ler `import.meta.env.VITE_SUPABASE_URL` e `import.meta.env.VITE_SUPABASE_ANON_KEY`.
 
 ## Arquivos
 
@@ -16,6 +16,8 @@ O app ainda não usa React, Vite, TypeScript, Node, npm ou build.
 index.html
 style.css
 script.js
+package.json
+vite.config.js
 supabase-schema.sql
 README.md
 ```
@@ -52,9 +54,17 @@ VITE_SUPABASE_ANON_KEY
 
 Tambem sao aceitos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
 
-Depois faça um novo deploy. O app lê essas variáveis pela rota `/api/supabase-config`, então não precisa configurar manualmente em cada celular ou computador.
+Na Vercel, use as configuracoes padrao do Vite:
 
-Este projeto é HTML/JS puro e não roda build Vite. Por isso `import.meta.env.VITE_SUPABASE_URL` e `import.meta.env.VITE_SUPABASE_ANON_KEY` não existem dentro do `script.js` no navegador. Na Vercel, abra `/api/supabase-config` depois do deploy e confira:
+```text
+Install Command: npm install
+Build Command: npm run build
+Output Directory: dist
+```
+
+Depois faca um novo deploy. O app le primeiro `import.meta.env.VITE_SUPABASE_URL` e `import.meta.env.VITE_SUPABASE_ANON_KEY` no build Vite. A rota `/api/supabase-config` continua existindo como fallback e diagnostico.
+
+Na Vercel, abra `/api/supabase-config` depois do deploy se quiser conferir o fallback:
 
 ```json
 {

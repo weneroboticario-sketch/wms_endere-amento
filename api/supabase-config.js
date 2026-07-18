@@ -42,7 +42,7 @@ export default function handler(req, res) {
       keyPreview: previewSecret(key),
       checkedUrlVariables: urlVars.map(function (item) { return item[0]; }),
       checkedKeyVariables: keyVars.map(function (item) { return item[0]; }),
-      note: "Este app e HTML/JS puro. import.meta.env nao existe no navegador sem build Vite; a Vercel entrega as variaveis por esta rota."
+      note: "Fallback de configuracao. O app principal le VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY pelo build Vite."
     }
   });
 }
