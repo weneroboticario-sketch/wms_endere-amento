@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Sistema WMS de endereçamento de estoque em HTML, CSS e JavaScript puro.">
+  <title>WMS Endereçamento de Estoque</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script defer src="script.js?v=20260717-produtos"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="mobile-topbar">
+      <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu">☰</button>
+      <div>
+        <strong>WMS Estoque</strong>
+        <span>Endereçamento</span>
+      </div>
+    </header>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <h1>WMS Estoque</h1>
+          <p>Endereçamento</p>
+        </div>
+      </div>
+
+      <nav class="menu" aria-label="Menu principal">
+        <button class="menu-item active" data-screen="dashboard" type="button">Dashboard</button>
+        <button class="menu-item" data-screen="bipagem" type="button">Bipagem</button>
+        <button class="menu-item" data-screen="consultaSku" type="button">Consultar SKU</button>
+        <button class="menu-item" data-screen="consultaPrateleira" type="button">Consultar Prateleira</button>
+        <button class="menu-item" data-screen="etiquetas" type="button">Gerar Etiquetas</button>
+        <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
+        <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
+        <button class="menu-item" data-screen="historico" type="button">Histórico</button>
+        <button class="menu-item" data-screen="configuracoes" type="button">Configuracoes</button>
+      </nav>
+
+      <div class="sidebar-note">
+        <span class="status-dot"></span>
+        Dados salvos no navegador
+      </div>
+    </aside>
+
+    <main class="content">
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+      <section class="screen active" id="dashboard">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Visao geral</p>
+            <h2>Dashboard</h2>
+          </div>
+          <button class="primary-button" data-screen-target="bipagem" type="button">Iniciar bipagem</button>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span>Total de SKUs</span>
+            <strong id="metricSkus">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>Localizacoes</span>
+            <strong id="metricLocations">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>Vinculos SKU + endereco</span>
+            <strong id="metricBindings">0</strong>
+          </article>
+          <article class="metric-card">
+            <span>Ultima atualizacao</span>
+            <strong id="metricUpdated">-</strong>
+          </article>
+        </div>
+
+        <div class="dashboard-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Total por Área Linha Separação</h3>
+            </div>
+            <div id="areaTotals" class="area-totals"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Últimos endereçamentos</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>Endereco</th>
+                    <th>Area</th>
+                    <th>Data</th>
+                  </tr>
+                </thead>
+                <tbody id="recentBindings"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="quick-actions">
+          <button class="secondary-button" data-screen-target="consultaSku" type="button">Consultar SKU</button>
+          <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar prateleira</button>
+          <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
+          <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
+        </div>
+      </section>
+
+      <section class="screen" id="bipagem">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Operacao principal</p>
+            <h2>Bipagem / Endereçamento</h2>
+          </div>
+        </div>
+
+        <div class="scan-grid">
+          <section class="panel scan-panel">
+            <form id="scanForm" autocomplete="off">
+              <label for="skuInput">SKU do produto</label>
+              <div class="input-action">
+                <input id="skuInput" name="sku" inputmode="text" type="text" placeholder="Bipe ou digite o SKU" autocomplete="off">
+                <button class="primary-button" id="skuReadButton" type="button">Ler SKU</button>
+              </div>
+
+              <label for="locationInput">Codigo da prateleira</label>
+              <div class="input-action">
+                <input id="locationInput" name="location" inputmode="text" type="text" placeholder="Ex.: R1-RK1-L1-A" autocomplete="off">
+                <button class="secondary-button" id="locationReadButton" type="button">Ler prateleira</button>
+              </div>
+
+              <select id="areaSelect" name="area" hidden aria-hidden="true"></select>
+
+              <div class="scan-message" id="scanMessage">Pronto para bipar o produto.</div>
+
+              <div class="button-row">
+                <button class="primary-button" id="saveManualButton" type="submit">Salvar manualmente</button>
+                <button class="secondary-button" id="clearScanButton" type="button">Limpar</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Localizacoes do SKU</h3>
+            </div>
+            <div id="scanResults" class="result-list empty-state">Nenhum SKU bipado ainda.</div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="consultaSku">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Pesquisa</p>
+            <h2>Consulta por SKU</h2>
+          </div>
+        </div>
+        <section class="panel">
+          <div class="input-action">
+            <input id="skuSearchInput" inputmode="text" type="text" placeholder="Digite ou bipe o SKU">
+            <button class="primary-button" id="skuSearchButton" type="button">Consultar</button>
+          </div>
+          <div id="skuSearchStatus" class="inline-status"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Produto</th>
+                  <th>Rua</th>
+                  <th>Rack</th>
+                  <th>Linha</th>
+                  <th>Letra</th>
+                  <th>Codigo tecnico</th>
+                  <th>Área Linha Separação</th>
+                  <th>Data de cadastro</th>
+                  <th>Acoes</th>
+                </tr>
+              </thead>
+              <tbody id="skuResults"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen" id="consultaPrateleira">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Pesquisa</p>
+            <h2>Consulta por Prateleira</h2>
+          </div>
+        </div>
+        <section class="panel">
+          <div class="input-action">
+            <input id="shelfSearchInput" inputmode="text" type="text" placeholder="Ex.: R01-RK01-L01-A">
+            <button class="primary-button" id="shelfSearchButton" type="button">Consultar</button>
+          </div>
+          <div id="shelfSearchStatus" class="inline-status"></div>
+          <div id="shelfSummary" class="shelf-summary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Produto</th>
+                  <th>Codigo da prateleira</th>
+                  <th>Rua</th>
+                  <th>Rack</th>
+                  <th>Linha</th>
+                  <th>Letra</th>
+                  <th>Area</th>
+                  <th>Acoes</th>
+                </tr>
+              </thead>
+              <tbody id="shelfResults"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen" id="etiquetas">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Impressao</p>
+            <h2>Gerar Etiquetas</h2>
+          </div>
+          <button class="primary-button" id="printLabelsButton" type="button">Imprimir</button>
+        </div>
+
+        <section class="panel">
+          <div class="label-form-grid">
+            <label>Rua inicial<input id="labelRuaStart" type="number" min="1" value="1"></label>
+            <label>Rua final<input id="labelRuaEnd" type="number" min="1" value="1"></label>
+            <label>Rack inicial<input id="labelRackStart" type="number" min="1" value="1"></label>
+            <label>Rack final<input id="labelRackEnd" type="number" min="1" value="1"></label>
+            <label>Linha inicial<input id="labelLinhaStart" type="number" min="1" value="1"></label>
+            <label>Linha final<input id="labelLinhaEnd" type="number" min="1" value="1"></label>
+            <label>Letra inicial<input id="labelLetraStart" type="text" value="A"></label>
+            <label>Letra final<input id="labelLetraEnd" type="text" value="A"></label>
+          </div>
+          <div class="button-row">
+            <button class="primary-button" id="previewLabelsButton" type="button">Visualizar etiquetas</button>
+            <button class="secondary-button" id="singleLabelButton" type="button">Gerar etiqueta individual</button>
+          </div>
+        </section>
+
+        <section class="labels-area" id="labelsPreview"></section>
+      </section>
+
+      <section class="screen" id="exportar">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Planilha</p>
+            <h2>Exportar Excel</h2>
+          </div>
+        </div>
+        <section class="panel narrow-panel">
+          <p class="muted">A exportação usa a aba <strong>LinhaSeparacao</strong> e preserva o SKU como texto.</p>
+          <button class="primary-button wide-button" id="exportExcelButton" type="button">Exportar LinhaSeparacao</button>
+          <div class="excel-columns">
+            <span>Nome estacao</span>
+            <span>Nr Rack</span>
+            <span>Area Linha Separação</span>
+            <span>Linha</span>
+            <span>Coluna</span>
+            <span>Codigo Material</span>
+            <span>Conferencia Obrigatoria</span>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen" id="importar">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Planilha</p>
+            <h2>Importar Excel</h2>
+          </div>
+        </div>
+        <section class="panel narrow-panel">
+          <label for="excelFileInput">Arquivos .xlsx LinhaSeparacao e MaterialLinhaSeparacao</label>
+          <input id="excelFileInput" type="file" accept=".xlsx,.xls" multiple>
+          <button class="primary-button wide-button" id="importExcelButton" type="button">Importar planilha</button>
+          <div id="importStatus" class="inline-status"></div>
+        </section>
+      </section>
+
+      <section class="screen" id="historico">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Auditoria local</p>
+            <h2>Historico</h2>
+          </div>
+          <button class="secondary-button" id="clearHistoryButton" type="button">Limpar histórico</button>
+        </div>
+        <section class="panel">
+          <div class="input-action">
+            <input id="historyFilterInput" type="search" placeholder="Buscar por acao, SKU, endereco ou detalhes">
+            <button class="secondary-button" id="historyFilterButton" type="button">Filtrar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data e hora</th>
+                  <th>Acao</th>
+                  <th>SKU</th>
+                  <th>Endereco</th>
+                  <th>Detalhes</th>
+                </tr>
+              </thead>
+              <tbody id="historyRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="screen" id="configuracoes">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Manutencao</p>
+            <h2>Configuracoes</h2>
+          </div>
+        </div>
+        <section class="panel narrow-panel">
+          <p class="muted">Os dados ficam no localStorage deste navegador. Use exportar Excel antes de limpar dados reais.</p>
+          <button class="secondary-button wide-button" id="resetSampleButton" type="button">Restaurar dados de exemplo</button>
+          <button class="danger-button wide-button" id="clearAllButton" type="button">Apagar todos os dados</button>
+        </section>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
