@@ -113,9 +113,13 @@
         if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
       });
       productsDirty = false;
+      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s) em wms_products.", "success");
     } catch (error) {
+      var message = formatSupabaseError(error);
+      console.error("Erro no SELECT do Supabase:", error);
       state = { bindings: [], history: [], products: {} };
-      showToast("Nao foi possivel carregar o banco Supabase. Confira a conexao e as tabelas.", "error");
+      updateSupabaseStatus("Falha no SELECT do Supabase: " + message, "error");
+      showToast("Nao foi possivel carregar o banco Supabase.", "error");
     }
   }
 
@@ -836,7 +840,7 @@
     showToast("Excel exportado no modelo LinhaSeparacao.", "success");
   }
 
-  function importExcel() {
+  async function importExcel() {
     if (!window.XLSX) {
       setStatus("importStatus", "Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
@@ -847,25 +851,40 @@
       return;
     }
 
-    Promise.all(files.map(readWorkbookFile)).then(function (workbooks) {
-      try {
-        var parsed = collectImportData(workbooks);
-        if (!parsed.addressRows.length && !Object.keys(parsed.products).length) {
-          setStatus("importStatus", "Nenhuma aba reconhecida. Selecione LinhaSeparacao e/ou MaterialLinhaSeparacao.", "error");
-          return;
-        }
-        mergeProducts(parsed.products);
-        var result = importRows(parsed.addressRows);
-        addHistory("Excel importado", "", "", result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s), " + Object.keys(parsed.products).length + " produto(s) lido(s).");
-        saveData();
-        renderAll();
-        setStatus("importStatus", "Importacao concluida: " + result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s).", "success");
-      } catch (error) {
-        setStatus("importStatus", "Nao foi possivel importar o arquivo.", "error");
+    if (!isSupabaseReady()) {
+      setStatus("importStatus", "Supabase nao conectado. Configure antes de importar.", "error");
+      return;
+    }
+
+    try {
+      setStatus("importStatus", "Lendo planilha e preparando importacao...", "warning");
+      var workbooks = await Promise.all(files.map(readWorkbookFile));
+      var parsed = collectImportData(workbooks);
+      if (!parsed.addressRows.length && !Object.keys(parsed.products).length) {
+        setStatus("importStatus", "Nenhuma aba reconhecida. Selecione LinhaSeparacao e/ou MaterialLinhaSeparacao.", "error");
+        return;
       }
-    }).catch(function () {
-      setStatus("importStatus", "Nao foi possivel ler uma das planilhas selecionadas.", "error");
-    });
+      mergeProducts(parsed.products);
+      var result = importRows(parsed.addressRows);
+      addHistory("Excel importado", "", "", result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s), " + Object.keys(parsed.products).length + " produto(s) lido(s).");
+
+      setStatus("importStatus", "Gravando no Supabase. Aguarde...", "warning");
+      var saved = await saveData();
+      if (!saved) {
+        setStatus("importStatus", "Falha ao gravar a importacao no Supabase. Veja a mensagem em Configuracoes.", "error");
+        return;
+      }
+
+      await verifyImportedBindings(result.changedIds);
+      await loadData();
+      renderAll();
+      setStatus("importStatus", "Importacao salva no Supabase: " + result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s).", "success");
+    } catch (error) {
+      var message = formatSupabaseError(error);
+      console.error("Falha na importacao:", error);
+      setStatus("importStatus", "Falha na importacao: " + message, "error");
+      updateSupabaseStatus("Falha na importacao: " + message, "error");
+    }
   }
 
   function readWorkbookFile(file) {
@@ -965,7 +984,7 @@
   }
 
   function importRows(rows) {
-    var result = { created: 0, updated: 0, skipped: 0, invalid: 0 };
+    var result = { created: 0, updated: 0, skipped: 0, invalid: 0, changedIds: [] };
     rows.forEach(function (row) {
       var parsed = buildLocationFromParts(row.station, row.rack, row.line, row.column);
       var areaCode = getAreaByCode(row.areaCode) ? row.areaCode : 1;
@@ -981,15 +1000,33 @@
         var newName = row.productName || findProductName(row.sku) || "";
         if (newName && existing.productName !== newName) {
           existing.productName = newName;
+          existing.updatedAt = new Date().toISOString();
           result.updated += 1;
+          result.changedIds.push(existing.id);
         }
         result.skipped += 1;
         return;
       }
-      state.bindings.push(createBinding(row.sku, parsed, areaCode, row.productName || findProductName(row.sku) || ""));
+      var newBinding = createBinding(row.sku, parsed, areaCode, row.productName || findProductName(row.sku) || "");
+      state.bindings.push(newBinding);
+      result.changedIds.push(newBinding.id);
       result.created += 1;
     });
     return result;
+  }
+
+  async function verifyImportedBindings(ids) {
+    var sampleIds = Array.from(new Set(ids || [])).slice(0, 20);
+    if (!sampleIds.length) return;
+    var response = await supabaseDb
+      .from("wms_bindings")
+      .select("id")
+      .in("id", sampleIds);
+    if (response.error) throw response.error;
+    var found = (response.data || []).length;
+    if (found !== sampleIds.length) {
+      throw new Error("Supabase gravou " + found + " de " + sampleIds.length + " registros verificados em wms_bindings.");
+    }
   }
 
   function renderHistory() {
@@ -1059,7 +1096,12 @@
       var deleteResponse = await supabaseDb.from("wms_bindings").delete().eq("id", probeId);
       if (deleteResponse.error) throw deleteResponse.error;
 
-      updateSupabaseStatus("Conexao OK. Tabelas existem e insert/select/delete funcionaram.", "success");
+      var bindingCount = await supabaseDb.from("wms_bindings").select("id", { count: "exact", head: true });
+      if (bindingCount.error) throw bindingCount.error;
+      var productCount = await supabaseDb.from("wms_products").select("sku", { count: "exact", head: true });
+      if (productCount.error) throw productCount.error;
+
+      updateSupabaseStatus("Conexao OK. Escrita OK. SELECT em wms_bindings: " + (bindingCount.count || 0) + " registro(s). wms_products: " + (productCount.count || 0) + " produto(s).", "success");
     } catch (error) {
       console.error("Teste Supabase falhou:", error);
       updateSupabaseStatus("Falha no Supabase: " + formatSupabaseError(error), "error");
