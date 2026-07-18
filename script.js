@@ -126,31 +126,67 @@
     }
     try {
       if (state.bindings.length) {
-        await upsertInChunks("wms_bindings", state.bindings.map(toDbBinding));
+        await upsertInChunks("wms_bindings", state.bindings.map(toDbBinding), "id");
       }
       if (state.history.length) {
-        await upsertInChunks("wms_history", state.history.map(toDbHistory));
+        await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
       }
       if (productsDirty) {
         var products = Object.keys(state.products).map(function (sku) {
           return { sku: sku, product_name: state.products[sku] };
         });
-        if (products.length) await upsertInChunks("wms_products", products);
+        if (products.length) await upsertInChunks("wms_products", products, "sku");
         productsDirty = false;
       }
       return true;
     } catch (error) {
+      var message = formatSupabaseError(error);
+      console.error("Erro ao salvar no Supabase:", error);
+      updateSupabaseStatus("Erro ao salvar no Supabase: " + message, "error");
       showToast("Erro ao salvar no Supabase.", "error");
       return false;
     }
   }
 
-  async function upsertInChunks(tableName, rows) {
+  async function upsertInChunks(tableName, rows, onConflict) {
     var chunkSize = 500;
     for (var i = 0; i < rows.length; i += chunkSize) {
       var chunk = rows.slice(i, i + chunkSize);
-      var response = await supabaseDb.from(tableName).upsert(chunk);
+      var response = await supabaseDb.from(tableName).upsert(chunk, onConflict ? { onConflict: onConflict } : undefined);
       if (response.error) throw response.error;
+    }
+  }
+
+  async function saveBindingAndHistory(binding, historyItem) {
+    if (!isSupabaseReady()) {
+      updateSupabaseStatus("Supabase nao conectado. O SKU nao foi salvo.", "error");
+      return { ok: false, message: "Supabase nao conectado." };
+    }
+    try {
+      var bindingResponse = await supabaseDb
+        .from("wms_bindings")
+        .upsert(toDbBinding(binding), { onConflict: "id" });
+      if (bindingResponse.error) throw bindingResponse.error;
+
+      var historyResponse = await supabaseDb
+        .from("wms_history")
+        .upsert(toDbHistory(historyItem), { onConflict: "id" });
+      if (historyResponse.error) throw historyResponse.error;
+
+      var verifyResponse = await supabaseDb
+        .from("wms_bindings")
+        .select("id, sku, location_code")
+        .eq("id", binding.id)
+        .maybeSingle();
+      if (verifyResponse.error) throw verifyResponse.error;
+      if (!verifyResponse.data) throw new Error("Registro nao encontrado apos salvar.");
+
+      return { ok: true };
+    } catch (error) {
+      var message = formatSupabaseError(error);
+      console.error("Falha no insert/upsert do Supabase:", error);
+      updateSupabaseStatus("Falha ao gravar no Supabase: " + message, "error");
+      return { ok: false, message: message };
     }
   }
 
@@ -412,13 +448,16 @@
       setScanMessage("Este SKU ja esta cadastrado neste endereco.", "error");
       return;
     }
-    state.bindings.push(createBinding(sku, parsed, areaCode));
-    addHistory("SKU enderecado", sku, parsed.code, "SKU enderecado com sucesso.");
-    var saved = await saveData();
-    if (!saved) {
-      setScanMessage("Nao foi possivel salvar no Supabase. Confira a conexao.", "error");
+    var newBinding = createBinding(sku, parsed, areaCode);
+    var historyItem = createHistoryItem("SKU enderecado", sku, parsed.code, "SKU enderecado com sucesso.");
+    setScanMessage("Salvando no Supabase...", "warning");
+    var saved = await saveBindingAndHistory(newBinding, historyItem);
+    if (!saved.ok) {
+      setScanMessage("Nao foi possivel salvar no Supabase: " + saved.message, "error");
       return;
     }
+    state.bindings.push(newBinding);
+    state.history.push(historyItem);
     renderAll();
     setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
     resetScanSoon();
@@ -994,11 +1033,36 @@
       return;
     }
     try {
-      var response = await supabaseDb.from("wms_bindings").select("id", { count: "exact", head: true });
-      if (response.error) throw response.error;
-      updateSupabaseStatus("Conexao OK. Banco pronto para uso.", "success");
+      var probeId = "probe-" + Date.now();
+      var probe = {
+        id: probeId,
+        sku: "TESTE-CONEXAO",
+        rua: 1,
+        rack: 1,
+        linha: 1,
+        letra: "A",
+        location_code: "R01-RK01-L01-A",
+        area_code: 1,
+        area_name: "Alto Giro",
+        product_name: "Teste de conexao",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "id" });
+      if (insertResponse.error) throw insertResponse.error;
+
+      var selectResponse = await supabaseDb.from("wms_bindings").select("id").eq("id", probeId).maybeSingle();
+      if (selectResponse.error) throw selectResponse.error;
+      if (!selectResponse.data) throw new Error("Insert executou, mas o registro de teste nao voltou no select.");
+
+      var deleteResponse = await supabaseDb.from("wms_bindings").delete().eq("id", probeId);
+      if (deleteResponse.error) throw deleteResponse.error;
+
+      updateSupabaseStatus("Conexao OK. Tabelas existem e insert/select/delete funcionaram.", "success");
     } catch (error) {
-      updateSupabaseStatus("Falha na conexao. Confira URL, anon key e tabelas SQL.", "error");
+      console.error("Teste Supabase falhou:", error);
+      updateSupabaseStatus("Falha no Supabase: " + formatSupabaseError(error), "error");
     }
   }
 
@@ -1007,6 +1071,12 @@
     var ready = isSupabaseReady();
     var text = message || (ready ? "Supabase configurado. Dados serao salvos no banco." : "Supabase nao configurado. Configure antes de usar em varios dispositivos.");
     setStatus("supabaseStatus", text, type || (ready ? "success" : "warning"));
+  }
+
+  function formatSupabaseError(error) {
+    if (!error) return "erro desconhecido";
+    if (typeof error === "string") return error;
+    return error.message || error.details || error.hint || error.code || JSON.stringify(error);
   }
 
   async function clearRemoteTable(tableName, columnName) {
@@ -1186,17 +1256,21 @@
   }
 
   function addHistory(action, sku, location, details) {
-    state.history.push({
+    state.history.push(createHistoryItem(action, sku, location, details));
+    if (state.history.length > 1000) {
+      state.history = state.history.slice(state.history.length - 1000);
+    }
+  }
+
+  function createHistoryItem(action, sku, location, details) {
+    return {
       id: "hist-" + Date.now() + "-" + Math.random().toString(16).slice(2),
       datetime: new Date().toISOString(),
       action: action,
       sku: sku || "",
       location: location || "",
       details: details || ""
-    });
-    if (state.history.length > 1000) {
-      state.history = state.history.slice(state.history.length - 1000);
-    }
+    };
   }
 
   function getAreaByCode(code) {
