@@ -52,7 +52,16 @@ VITE_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY
 ```
 
-Tambem sao aceitos `SUPABASE_URL` e `SUPABASE_ANON_KEY`.
+Use estes valores:
+
+```text
+VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+Nao use a URL `.../rest/v1/` como anon key. A URL do projeto pode ser colada com `/rest/v1/`, porque o app normaliza para `https://SEU-PROJETO.supabase.co`, mas a anon key precisa ser a chave publica `anon public` do Supabase.
+
+Tambem sao aceitos `SUPABASE_URL` e `SUPABASE_ANON_KEY` no fallback `/api/supabase-config`.
 
 Na Vercel, use as configuracoes padrao do Vite:
 

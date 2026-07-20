@@ -41,7 +41,6 @@ import { createClient } from "@supabase/supabase-js";
     fillSupabaseForm();
     initSupabaseClient();
     await loadData();
-    await seedIfEmpty();
     await applyDataMigrations();
     cacheStaticOptions();
     bindNavigation();
@@ -58,7 +57,7 @@ import { createClient } from "@supabase/supabase-js";
   async function loadSupabaseConfig() {
     supabaseConfigDiagnostics = null;
     var viteConfig = readSupabaseConfigFromViteEnv();
-    if (viteConfig.url && viteConfig.key) {
+    if (isUsableSupabaseConfig(viteConfig)) {
       supabaseConfig = viteConfig;
       localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
       return;
@@ -66,8 +65,12 @@ import { createClient } from "@supabase/supabase-js";
 
     try {
       var remoteConfig = await fetchSupabaseConfigFromApi("/api/supabase-config");
-      if (remoteConfig && remoteConfig.url && (remoteConfig.key || remoteConfig.anonKey)) {
-        supabaseConfig = { url: remoteConfig.url, key: remoteConfig.key || remoteConfig.anonKey };
+      var apiConfig = sanitizeSupabaseConfig({
+        url: remoteConfig && remoteConfig.url,
+        key: remoteConfig && (remoteConfig.key || remoteConfig.anonKey)
+      });
+      if (isUsableSupabaseConfig(apiConfig)) {
+        supabaseConfig = apiConfig;
         localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
         return;
       }
@@ -80,7 +83,8 @@ import { createClient } from "@supabase/supabase-js";
     }
     try {
       var raw = localStorage.getItem(SUPABASE_CONFIG_KEY);
-      supabaseConfig = raw ? JSON.parse(raw) : { url: "", key: "" };
+      var savedConfig = raw ? sanitizeSupabaseConfig(JSON.parse(raw)) : { url: "", key: "" };
+      supabaseConfig = isUsableSupabaseConfig(savedConfig) ? savedConfig : { url: "", key: "" };
     } catch (error) {
       supabaseConfig = { url: "", key: "" };
     }
@@ -88,20 +92,25 @@ import { createClient } from "@supabase/supabase-js";
 
   function readSupabaseConfigFromViteEnv() {
     var env = import.meta.env || {};
-    var url = env.VITE_SUPABASE_URL || "";
-    var key = env.VITE_SUPABASE_ANON_KEY || "";
+    var urlMatch = firstEnvValue(env, ["VITE_SUPABASE_URL", "vite_SUPABASE_URL", "SUPABASE_URL"]);
+    var keyMatch = firstEnvValue(env, ["VITE_SUPABASE_ANON_KEY", "VITE_SUPABASE_ANOM_KEY", "SUPABASE_ANON_KEY", "SUPABASE_KEY"]);
+    var config = sanitizeSupabaseConfig({ url: urlMatch.value, key: keyMatch.value });
 
     supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
       source: "vite-build",
       viteMode: env.MODE || "",
-      viteHasUrl: Boolean(url),
-      viteHasKey: Boolean(key),
-      viteUrlPreview: previewPublicValue(url),
-      viteKeyPreview: previewSecret(key),
-      checkedViteVariables: ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"]
+      viteHasUrl: Boolean(urlMatch.value),
+      viteHasKey: Boolean(keyMatch.value),
+      viteUrlSource: urlMatch.name,
+      viteKeySource: keyMatch.name,
+      viteUrlValid: isValidSupabaseUrl(config.url),
+      viteKeyValid: isLikelySupabaseAnonKey(config.key),
+      viteUrlPreview: previewPublicValue(config.url || urlMatch.value),
+      viteKeyPreview: previewSecret(config.key || keyMatch.value),
+      checkedViteVariables: ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "vite_SUPABASE_URL", "VITE_SUPABASE_ANOM_KEY"]
     });
 
-    return { url: url, key: key };
+    return config;
   }
 
   async function fetchSupabaseConfigFromApi(endpoint) {
@@ -120,6 +129,8 @@ import { createClient } from "@supabase/supabase-js";
       apiStatusText: response.statusText,
       apiHasUrl: Boolean(body && body.url),
       apiHasKey: Boolean(body && (body.key || body.anonKey)),
+      apiUrlValid: apiDiagnostics.hasValidUrl,
+      apiKeyValid: apiDiagnostics.hasValidKey,
       apiUrlSource: apiDiagnostics.urlSource || "",
       apiKeySource: apiDiagnostics.keySource || "",
       apiUrlPreview: apiDiagnostics.urlPreview || "",
@@ -129,6 +140,50 @@ import { createClient } from "@supabase/supabase-js";
 
     if (!response.ok) return null;
     return body;
+  }
+
+  function firstEnvValue(env, names) {
+    for (var i = 0; i < names.length; i += 1) {
+      if (env[names[i]]) return { name: names[i], value: env[names[i]] };
+    }
+    return { name: "", value: "" };
+  }
+
+  function sanitizeSupabaseConfig(config) {
+    return {
+      url: normalizeSupabaseProjectUrl(config && config.url),
+      key: normalizeText(config && config.key)
+    };
+  }
+
+  function normalizeSupabaseProjectUrl(value) {
+    var raw = normalizeText(value);
+    if (!raw) return "";
+    try {
+      var parsed = new URL(raw);
+      if (parsed.pathname.replace(/\/+$/, "") === "/rest/v1") return parsed.origin;
+      return parsed.origin;
+    } catch (error) {
+      return raw.replace(/\/rest\/v1\/?$/i, "").replace(/\/+$/, "");
+    }
+  }
+
+  function isUsableSupabaseConfig(config) {
+    return isValidSupabaseUrl(config && config.url) && isLikelySupabaseAnonKey(config && config.key);
+  }
+
+  function isValidSupabaseUrl(value) {
+    try {
+      var parsed = new URL(normalizeText(value));
+      return parsed.protocol === "https:" && /\.supabase\.co$/i.test(parsed.hostname);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function isLikelySupabaseAnonKey(value) {
+    var key = normalizeText(value);
+    return /^eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/.test(key) || /^sb_publishable_[a-zA-Z0-9_-]{20,}$/.test(key);
   }
 
   function previewPublicValue(value) {
@@ -149,10 +204,12 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   function initSupabaseClient() {
-    if (!supabaseConfig.url || !supabaseConfig.key) {
+    if (!isUsableSupabaseConfig(supabaseConfig)) {
       supabaseConfigDiagnostics = Object.assign({}, supabaseConfigDiagnostics || {}, {
         hasUrl: Boolean(supabaseConfig.url),
-        hasKey: Boolean(supabaseConfig.key)
+        hasKey: Boolean(supabaseConfig.key),
+        hasValidUrl: isValidSupabaseUrl(supabaseConfig.url),
+        hasValidKey: isLikelySupabaseAnonKey(supabaseConfig.key)
       });
       supabaseDb = null;
       return false;
@@ -1119,25 +1176,32 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   async function saveSupabaseSettings() {
-    supabaseConfig = {
+    supabaseConfig = sanitizeSupabaseConfig({
       url: normalizeText($("supabaseUrlInput").value),
       key: normalizeText($("supabaseKeyInput").value)
-    };
+    });
+    if (!isUsableSupabaseConfig(supabaseConfig)) {
+      initSupabaseClient();
+      fillSupabaseForm();
+      updateSupabaseStatus("Configuracao Supabase invalida. " + describeSupabaseConfigProblem(), "error");
+      showToast("Confira a URL do projeto e a anon public key.", "error");
+      return;
+    }
     localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(supabaseConfig));
     initSupabaseClient();
     await loadData();
-    seedIfEmpty();
-    applyDataMigrations();
+    await applyDataMigrations();
     renderAll();
     updateSupabaseStatus();
     showToast("Conexao Supabase salva.", "success");
   }
 
   async function testSupabaseConnection() {
-    supabaseConfig = {
+    supabaseConfig = sanitizeSupabaseConfig({
       url: normalizeText($("supabaseUrlInput").value),
       key: normalizeText($("supabaseKeyInput").value)
-    };
+    });
+    fillSupabaseForm();
     initSupabaseClient();
     if (!isSupabaseReady()) {
       updateSupabaseStatus(describeSupabaseConfigProblem(), "error");
@@ -1196,17 +1260,29 @@ import { createClient } from "@supabase/supabase-js";
 
     var diagnostics = supabaseConfigDiagnostics || {};
     var endpoint = diagnostics.apiEndpoint || "/api/supabase-config";
-    var viteUrlInfo = diagnostics.viteHasUrl ? "OK" : "ausente";
-    var viteKeyInfo = diagnostics.viteHasKey ? "OK" : "ausente";
-    var apiUrlInfo = diagnostics.apiHasUrl ? "OK" : "ausente";
-    var apiKeyInfo = diagnostics.apiHasKey ? "OK" : "ausente";
+    var viteUrlInfo = diagnostics.viteHasUrl ? "presente" : "ausente";
+    var viteKeyInfo = diagnostics.viteHasKey ? "presente" : "ausente";
+    var apiUrlInfo = diagnostics.apiHasUrl ? "presente" : "ausente";
+    var apiKeyInfo = diagnostics.apiHasKey ? "presente" : "ausente";
 
     if (diagnostics.viteUrlPreview) viteUrlInfo += " (" + diagnostics.viteUrlPreview + ")";
     if (diagnostics.viteKeyPreview) viteKeyInfo += " (" + diagnostics.viteKeyPreview + ")";
+    if (diagnostics.viteUrlSource) viteUrlInfo += " via " + diagnostics.viteUrlSource;
+    if (diagnostics.viteKeySource) viteKeyInfo += " via " + diagnostics.viteKeySource;
+    if (diagnostics.viteHasUrl && diagnostics.viteUrlValid === true) viteUrlInfo += " valida";
+    if (diagnostics.viteHasKey && diagnostics.viteKeyValid === true) viteKeyInfo += " valida";
+    if (diagnostics.viteHasUrl && diagnostics.viteUrlValid === false) viteUrlInfo += " invalida";
+    if (diagnostics.viteHasKey && diagnostics.viteKeyValid === false) viteKeyInfo += " invalida";
     if (diagnostics.apiUrlSource) apiUrlInfo += " em " + diagnostics.apiUrlSource;
     if (diagnostics.apiKeySource) apiKeyInfo += " em " + diagnostics.apiKeySource;
     if (diagnostics.apiUrlPreview) apiUrlInfo += " (" + diagnostics.apiUrlPreview + ")";
     if (diagnostics.apiKeyPreview) apiKeyInfo += " (" + diagnostics.apiKeyPreview + ")";
+    if (diagnostics.apiHasUrl && diagnostics.apiUrlValid === true) apiUrlInfo += " valida";
+    if (diagnostics.apiHasKey && diagnostics.apiKeyValid === true) apiKeyInfo += " valida";
+    if (diagnostics.apiHasUrl && diagnostics.apiUrlValid === false) apiUrlInfo += " invalida";
+    if (diagnostics.apiHasKey && diagnostics.apiKeyValid === false) apiKeyInfo += " invalida";
+    if (diagnostics.hasUrl && diagnostics.hasValidUrl === false) viteUrlInfo = "invalida (" + previewPublicValue(supabaseConfig.url) + ")";
+    if (diagnostics.hasKey && diagnostics.hasValidKey === false) viteKeyInfo = "invalida (" + previewSecret(supabaseConfig.key) + ")";
 
     if (diagnostics.apiStatus && diagnostics.apiStatus !== 200) {
       return "Build Vite: VITE_SUPABASE_URL " + viteUrlInfo + "; VITE_SUPABASE_ANON_KEY " + viteKeyInfo + ". Fallback " + endpoint + " respondeu HTTP " + diagnostics.apiStatus + " " + (diagnostics.apiStatusText || "") + ".";
@@ -1255,7 +1331,7 @@ import { createClient } from "@supabase/supabase-js";
     } catch (error) {
       showToast("Nao foi possivel limpar dados antigos no Supabase.", "error");
     }
-    seedIfEmpty();
+    await seedIfEmpty();
     renderAll();
     showToast("Dados de exemplo restaurados.", "success");
   }

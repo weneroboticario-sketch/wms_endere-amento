@@ -12,6 +12,7 @@ export default function handler(req, res) {
   const urlVars = [
     ["SUPABASE_URL", process.env.SUPABASE_URL],
     ["VITE_SUPABASE_URL", process.env.VITE_SUPABASE_URL],
+    ["vite_SUPABASE_URL", process.env.vite_SUPABASE_URL],
     ["NEXT_PUBLIC_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL],
     ["PUBLIC_SUPABASE_URL", process.env.PUBLIC_SUPABASE_URL]
   ];
@@ -20,22 +21,27 @@ export default function handler(req, res) {
     ["SUPABASE_ANON_KEY", process.env.SUPABASE_ANON_KEY],
     ["SUPABASE_KEY", process.env.SUPABASE_KEY],
     ["VITE_SUPABASE_ANON_KEY", process.env.VITE_SUPABASE_ANON_KEY],
+    ["VITE_SUPABASE_ANOM_KEY", process.env.VITE_SUPABASE_ANOM_KEY],
     ["NEXT_PUBLIC_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY],
     ["PUBLIC_SUPABASE_ANON_KEY", process.env.PUBLIC_SUPABASE_ANON_KEY]
   ];
 
   const urlMatch = firstFilled(urlVars);
   const keyMatch = firstFilled(keyVars);
-  const url = urlMatch.value;
-  const key = keyMatch.value;
+  const url = normalizeSupabaseProjectUrl(urlMatch.value);
+  const key = (keyMatch.value || "").trim();
+  const hasValidUrl = isValidSupabaseUrl(url);
+  const hasValidKey = isLikelySupabaseAnonKey(key);
 
   res.status(200).json({
-    configured: Boolean(url && key),
-    url,
-    key,
+    configured: Boolean(hasValidUrl && hasValidKey),
+    url: hasValidUrl ? url : "",
+    key: hasValidKey ? key : "",
     diagnostics: {
       hasUrl: Boolean(url),
       hasKey: Boolean(key),
+      hasValidUrl,
+      hasValidKey,
       urlSource: urlMatch.name,
       keySource: keyMatch.name,
       urlPreview: previewUrl(url),
@@ -54,6 +60,32 @@ function firstFilled(entries) {
     }
   }
   return { name: "", value: "" };
+}
+
+function normalizeSupabaseProjectUrl(value) {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.pathname.replace(/\/+$/, "") === "/rest/v1") return parsed.origin;
+    return parsed.origin;
+  } catch (error) {
+    return raw.replace(/\/rest\/v1\/?$/i, "").replace(/\/+$/, "");
+  }
+}
+
+function isValidSupabaseUrl(value) {
+  try {
+    const parsed = new URL((value || "").trim());
+    return parsed.protocol === "https:" && /\.supabase\.co$/i.test(parsed.hostname);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isLikelySupabaseAnonKey(value) {
+  const key = (value || "").trim();
+  return /^eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/.test(key) || /^sb_publishable_[a-zA-Z0-9_-]{20,}$/.test(key);
 }
 
 function previewUrl(value) {
