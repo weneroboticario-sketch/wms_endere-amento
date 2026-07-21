@@ -283,7 +283,7 @@ import { createClient } from "@supabase/supabase-js";
     }
     try {
       if (state.bindings.length) {
-        await upsertInChunks("wms_bindings", state.bindings.map(toDbBinding), "id");
+        await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "sku,location_code");
       }
       if (state.history.length && historySchemaAvailable) {
         try {
@@ -332,6 +332,34 @@ import { createClient } from "@supabase/supabase-js";
     }
   }
 
+  function dedupeBindingsForSave() {
+    var bySkuLocation = {};
+    var deduped = [];
+    state.bindings.forEach(function (binding) {
+      var key = String(binding.sku || "") + "\u0001" + String(binding.locationCode || "");
+      var existing = bySkuLocation[key];
+      if (!existing) {
+        bySkuLocation[key] = binding;
+        deduped.push(binding);
+        return;
+      }
+      existing.productName = existing.productName || binding.productName || "";
+      existing.areaCode = binding.areaCode || existing.areaCode;
+      existing.areaName = binding.areaName || existing.areaName;
+      existing.updatedAt = maxIsoDate(existing.updatedAt, binding.updatedAt);
+    });
+    if (deduped.length !== state.bindings.length) {
+      state.bindings = deduped;
+    }
+    return state.bindings;
+  }
+
+  function maxIsoDate(first, second) {
+    if (!first) return second || new Date().toISOString();
+    if (!second) return first;
+    return new Date(second).getTime() > new Date(first).getTime() ? second : first;
+  }
+
   async function saveBindingAndHistory(binding, historyItem) {
     if (!isSupabaseReady()) {
       var problem = describeSupabaseConfigProblem();
@@ -341,7 +369,7 @@ import { createClient } from "@supabase/supabase-js";
     try {
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
-        .upsert(toDbBinding(binding), { onConflict: "id" });
+        .upsert(toDbBinding(binding), { onConflict: "sku,location_code" });
       if (bindingResponse.error) throw bindingResponse.error;
 
       var historyResponse = await supabaseDb
@@ -1269,7 +1297,7 @@ import { createClient } from "@supabase/supabase-js";
         updated_at: new Date().toISOString()
       };
 
-      var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "id" });
+      var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "sku,location_code" });
       if (insertResponse.error) throw insertResponse.error;
 
       var selectResponse = await supabaseDb.from("wms_bindings").select("id").eq("id", probeId).maybeSingle();
@@ -1357,6 +1385,9 @@ import { createClient } from "@supabase/supabase-js";
     var lower = String(message + " " + (error.code || "")).toLowerCase();
     if (lower.indexOf("row-level security") >= 0 || lower.indexOf("42501") >= 0) {
       return message + ". Execute o arquivo supabase-schema.sql no SQL Editor do Supabase para criar as policies de leitura e gravacao.";
+    }
+    if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("duplicate key value") >= 0) {
+      return message + ". O mesmo SKU ja existe nesse endereco; o app agora atualiza esse vinculo usando sku + endereco como chave.";
     }
     return message;
   }
