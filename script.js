@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
   var supabaseDb = null;
   var productsDirty = false;
   var productsTableAvailable = true;
+  var historySchemaAvailable = true;
   var AREAS = [
     { code: 1, name: "Alto Giro" },
     { code: 2, name: "Médio Giro" },
@@ -219,6 +220,7 @@ import { createClient } from "@supabase/supabase-js";
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
     });
     productsTableAvailable = true;
+    historySchemaAvailable = true;
     return true;
   }
 
@@ -235,13 +237,22 @@ import { createClient } from "@supabase/supabase-js";
       state.bindings = (bindingsResponse.data || []).map(fromDbBinding);
 
       var historyResponse = await supabaseDb.from("wms_history").select("*").order("datetime", { ascending: false }).limit(1000);
-      if (historyResponse.error) throw historyResponse.error;
-      state.history = (historyResponse.data || []).map(fromDbHistory);
+      var historyMessage = "";
+      var statusType = "success";
+      if (historyResponse.error) {
+        if (!isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
+        historySchemaAvailable = false;
+        state.history = [];
+        historyMessage = " Historico indisponivel: coluna datetime ausente em wms_history. Execute supabase-schema.sql no Supabase.";
+        statusType = "warning";
+      } else {
+        historySchemaAvailable = true;
+        state.history = (historyResponse.data || []).map(fromDbHistory);
+      }
 
       var productsResponse = await supabaseDb.from("wms_products").select("*");
       state.products = {};
       var productsMessage = "";
-      var statusType = "success";
       if (productsResponse.error) {
         if (!isMissingProductsTableError(productsResponse.error)) throw productsResponse.error;
         productsTableAvailable = false;
@@ -255,7 +266,7 @@ import { createClient } from "@supabase/supabase-js";
         });
       }
       productsDirty = false;
-      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + productsMessage, statusType);
+      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + historyMessage + productsMessage, statusType);
     } catch (error) {
       var message = formatSupabaseError(error);
       console.error("Erro no SELECT do Supabase:", error);
@@ -274,8 +285,16 @@ import { createClient } from "@supabase/supabase-js";
       if (state.bindings.length) {
         await upsertInChunks("wms_bindings", state.bindings.map(toDbBinding), "id");
       }
-      if (state.history.length) {
-        await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
+      if (state.history.length && historySchemaAvailable) {
+        try {
+          await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
+        } catch (historyError) {
+          if (!isHistorySchemaError(historyError)) throw historyError;
+          historySchemaAvailable = false;
+          updateSupabaseStatus("Dados principais salvos em wms_bindings. Historico nao salvo porque wms_history esta sem a coluna datetime; execute supabase-schema.sql no Supabase.", "warning");
+        }
+      } else if (state.history.length && !historySchemaAvailable) {
+        updateSupabaseStatus("Dados principais salvos em wms_bindings. Historico nao salvo porque wms_history esta sem a coluna datetime; execute supabase-schema.sql no Supabase.", "warning");
       }
       if (productsDirty) {
         var products = Object.keys(state.products).map(function (sku) {
@@ -328,7 +347,11 @@ import { createClient } from "@supabase/supabase-js";
       var historyResponse = await supabaseDb
         .from("wms_history")
         .upsert(toDbHistory(historyItem), { onConflict: "id" });
-      if (historyResponse.error) throw historyResponse.error;
+      if (historyResponse.error) {
+        if (!isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
+        historySchemaAvailable = false;
+        updateSupabaseStatus("SKU salvo em wms_bindings. Historico nao salvo porque wms_history esta sem a coluna datetime; execute supabase-schema.sql no Supabase.", "warning");
+      }
 
       var verifyResponse = await supabaseDb
         .from("wms_bindings")
@@ -1344,6 +1367,18 @@ import { createClient } from "@supabase/supabase-js";
       message.indexOf("not found") >= 0 ||
       message.indexOf("schema cache") >= 0 ||
       message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0
+    );
+  }
+
+  function isHistorySchemaError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("wms_history") >= 0 && (
+      message.indexOf("datetime") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("not found") >= 0 ||
       message.indexOf("pgrst") >= 0 ||
       message.indexOf("404") >= 0
     );

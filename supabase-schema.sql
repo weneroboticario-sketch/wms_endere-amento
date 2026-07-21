@@ -13,6 +13,18 @@ create table if not exists public.wms_bindings (
   updated_at timestamptz not null default now()
 );
 
+alter table public.wms_bindings add column if not exists sku text not null default '';
+alter table public.wms_bindings add column if not exists rua integer not null default 1;
+alter table public.wms_bindings add column if not exists rack integer not null default 1;
+alter table public.wms_bindings add column if not exists linha integer not null default 1;
+alter table public.wms_bindings add column if not exists letra text not null default 'A';
+alter table public.wms_bindings add column if not exists location_code text not null default '';
+alter table public.wms_bindings add column if not exists area_code integer not null default 1;
+alter table public.wms_bindings add column if not exists area_name text not null default 'Alto Giro';
+alter table public.wms_bindings add column if not exists product_name text default '';
+alter table public.wms_bindings add column if not exists created_at timestamptz not null default now();
+alter table public.wms_bindings add column if not exists updated_at timestamptz not null default now();
+
 create unique index if not exists wms_bindings_sku_location_idx
 on public.wms_bindings (sku, location_code);
 
@@ -20,6 +32,8 @@ create table if not exists public.wms_products (
   sku text primary key,
   product_name text not null
 );
+
+alter table public.wms_products add column if not exists product_name text not null default '';
 
 create table if not exists public.wms_history (
   id text primary key,
@@ -29,6 +43,12 @@ create table if not exists public.wms_history (
   location text default '',
   details text default ''
 );
+
+alter table public.wms_history add column if not exists datetime timestamptz not null default now();
+alter table public.wms_history add column if not exists action text not null default '';
+alter table public.wms_history add column if not exists sku text default '';
+alter table public.wms_history add column if not exists location text default '';
+alter table public.wms_history add column if not exists details text default '';
 
 alter table public.wms_bindings enable row level security;
 alter table public.wms_products enable row level security;
