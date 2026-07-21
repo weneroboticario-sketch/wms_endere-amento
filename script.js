@@ -8,6 +8,7 @@ import { createClient } from "@supabase/supabase-js";
   var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
   var productsDirty = false;
+  var productsTableAvailable = true;
   var AREAS = [
     { code: 1, name: "Alto Giro" },
     { code: 2, name: "Médio Giro" },
@@ -217,6 +218,7 @@ import { createClient } from "@supabase/supabase-js";
     supabaseDb = createClient(supabaseConfig.url, supabaseConfig.key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
     });
+    productsTableAvailable = true;
     return true;
   }
 
@@ -237,13 +239,23 @@ import { createClient } from "@supabase/supabase-js";
       state.history = (historyResponse.data || []).map(fromDbHistory);
 
       var productsResponse = await supabaseDb.from("wms_products").select("*");
-      if (productsResponse.error) throw productsResponse.error;
       state.products = {};
-      (productsResponse.data || []).forEach(function (product) {
-        if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
-      });
+      var productsMessage = "";
+      var statusType = "success";
+      if (productsResponse.error) {
+        if (!isMissingProductsTableError(productsResponse.error)) throw productsResponse.error;
+        productsTableAvailable = false;
+        rebuildProductsFromBindings();
+        productsMessage = " Tabela wms_products ausente; nomes foram lidos de wms_bindings. Execute supabase-schema.sql no Supabase para gravar o catalogo de produtos.";
+        statusType = "warning";
+      } else {
+        productsTableAvailable = true;
+        (productsResponse.data || []).forEach(function (product) {
+          if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
+        });
+      }
       productsDirty = false;
-      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s) em wms_products.", "success");
+      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + productsMessage, statusType);
     } catch (error) {
       var message = formatSupabaseError(error);
       console.error("Erro no SELECT do Supabase:", error);
@@ -269,7 +281,17 @@ import { createClient } from "@supabase/supabase-js";
         var products = Object.keys(state.products).map(function (sku) {
           return { sku: sku, product_name: state.products[sku] };
         });
-        if (products.length) await upsertInChunks("wms_products", products, "sku");
+        if (products.length && productsTableAvailable) {
+          try {
+            await upsertInChunks("wms_products", products, "sku");
+          } catch (productError) {
+            if (!isMissingProductsTableError(productError)) throw productError;
+            productsTableAvailable = false;
+            updateSupabaseStatus("Dados principais salvos em wms_bindings. Tabela wms_products ausente; execute supabase-schema.sql no Supabase para gravar o catalogo de produtos.", "warning");
+          }
+        } else if (products.length && !productsTableAvailable) {
+          updateSupabaseStatus("Dados principais salvos em wms_bindings. Tabela wms_products ausente; execute supabase-schema.sql no Supabase para gravar o catalogo de produtos.", "warning");
+        }
         productsDirty = false;
       }
       return true;
@@ -1237,9 +1259,19 @@ import { createClient } from "@supabase/supabase-js";
       var bindingCount = await supabaseDb.from("wms_bindings").select("id", { count: "exact", head: true });
       if (bindingCount.error) throw bindingCount.error;
       var productCount = await supabaseDb.from("wms_products").select("sku", { count: "exact", head: true });
-      if (productCount.error) throw productCount.error;
+      var productCountText = "";
+      var statusType = "success";
+      if (productCount.error) {
+        if (!isMissingProductsTableError(productCount.error)) throw productCount.error;
+        productsTableAvailable = false;
+        productCountText = " wms_products ausente; execute supabase-schema.sql para criar a tabela de produtos.";
+        statusType = "warning";
+      } else {
+        productsTableAvailable = true;
+        productCountText = " wms_products: " + (productCount.count || 0) + " produto(s).";
+      }
 
-      updateSupabaseStatus("Conexao OK. Escrita OK. SELECT em wms_bindings: " + (bindingCount.count || 0) + " registro(s). wms_products: " + (productCount.count || 0) + " produto(s).", "success");
+      updateSupabaseStatus("Conexao OK. Escrita OK. SELECT em wms_bindings: " + (bindingCount.count || 0) + " registro(s)." + productCountText, statusType);
     } catch (error) {
       console.error("Teste Supabase falhou:", error);
       updateSupabaseStatus("Falha no Supabase: " + formatSupabaseError(error), "error");
@@ -1301,9 +1333,33 @@ import { createClient } from "@supabase/supabase-js";
     return error.message || error.details || error.hint || error.code || JSON.stringify(error);
   }
 
+  function isMissingProductsTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("wms_products") >= 0 && (
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0
+    );
+  }
+
+  function rebuildProductsFromBindings() {
+    state.bindings.forEach(function (binding) {
+      if (!binding.sku || !binding.productName) return;
+      state.products[binding.sku] = binding.productName;
+      var normalized = normalizeSkuKey(binding.sku);
+      if (normalized && normalized !== binding.sku) state.products[normalized] = binding.productName;
+    });
+  }
+
   async function clearRemoteTable(tableName, columnName) {
     if (!isSupabaseReady()) return;
     var response = await supabaseDb.from(tableName).delete().neq(columnName, "");
+    if (response.error && tableName === "wms_products" && isMissingProductsTableError(response.error)) {
+      productsTableAvailable = false;
+      return;
+    }
     if (response.error) throw response.error;
   }
 
