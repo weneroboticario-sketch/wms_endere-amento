@@ -435,6 +435,10 @@ select:focus {
   overflow-x: auto;
 }
 
+.mobile-result-summary {
+  display: none;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -615,7 +619,7 @@ td {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
+    padding: 8px 12px;
     background: #ffffff;
     border-bottom: 1px solid var(--line);
   }
@@ -641,29 +645,63 @@ td {
   }
 
   .content {
-    padding: 18px 14px 28px;
+    padding: 10px 10px 22px;
   }
 
   .page-title {
     align-items: stretch;
     flex-direction: column;
+    gap: 8px;
+    margin-bottom: 10px;
   }
 
-  .metric-grid,
+  .page-title h2 {
+    font-size: 1.7rem;
+    line-height: 1.08;
+  }
+
+  .eyebrow {
+    margin-bottom: 3px;
+    font-size: 0.68rem;
+  }
+
   .dashboard-layout,
   .scan-grid,
   .label-form-grid {
     grid-template-columns: 1fr;
   }
 
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  #dashboard .dashboard-layout {
+    display: none;
+  }
+
+  #dashboard .quick-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
   .input-action {
     grid-template-columns: 1fr;
+  }
+
+  #consultaSku .input-action {
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 8px;
+    margin-bottom: 8px;
   }
 
   .primary-button,
   .secondary-button,
   .danger-button {
     width: 100%;
+    min-height: 42px;
+    padding: 0 12px;
   }
 
   .quick-actions,
@@ -672,12 +710,129 @@ td {
     grid-template-columns: 1fr;
   }
 
+  .panel {
+    padding: 10px;
+  }
+
   .metric-card {
-    min-height: 96px;
+    min-height: 76px;
+    padding: 10px;
+  }
+
+  .metric-card span {
+    font-size: 0.78rem;
   }
 
   .metric-card strong {
-    font-size: 2rem;
+    font-size: 1.65rem;
+  }
+
+  #metricUpdated {
+    font-size: 1.08rem;
+    line-height: 1.12;
+  }
+
+  input,
+  select {
+    min-height: 42px;
+    padding: 9px 11px;
+  }
+
+  .inline-status,
+  .scan-message {
+    min-height: 34px;
+    padding: 9px 10px;
+    margin: 8px 0 10px;
+  }
+
+  #consultaSku .table-wrap {
+    overflow: visible;
+  }
+
+  #consultaSku table,
+  #consultaSku tbody,
+  #consultaSku tr,
+  #consultaSku td {
+    display: block;
+    width: 100%;
+  }
+
+  #consultaSku table {
+    min-width: 0;
+  }
+
+  #consultaSku thead {
+    display: none;
+  }
+
+  #consultaSku tr {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px;
+    background: #ffffff;
+    box-shadow: var(--shadow);
+  }
+
+  #consultaSku td {
+    border: 0;
+    padding: 4px 0;
+  }
+
+  #consultaSku td:not(.mobile-result-summary):not([data-label="Acoes"]) {
+    display: none;
+  }
+
+  #consultaSku td.mobile-result-summary {
+    display: grid;
+    gap: 8px;
+  }
+
+  .mobile-result-location {
+    padding: 10px;
+    border-radius: var(--radius);
+    background: var(--primary);
+    color: #ffffff;
+    font-size: 1.35rem;
+    font-weight: 800;
+    text-align: center;
+  }
+
+  .mobile-result-product {
+    color: #253449;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+
+  .mobile-result-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .mobile-result-grid span {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 4px;
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-align: center;
+  }
+
+  .mobile-result-grid strong {
+    display: block;
+    margin-top: 3px;
+    color: var(--ink);
+    font-size: 1.1rem;
+  }
+
+  #consultaSku .row-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    margin-top: 6px;
+  }
+
+  #consultaSku .row-actions button {
+    width: 100%;
   }
 
   .toast {

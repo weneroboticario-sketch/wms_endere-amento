@@ -10,6 +10,7 @@ import { createClient } from "@supabase/supabase-js";
   var productsDirty = false;
   var productsTableAvailable = true;
   var historySchemaAvailable = true;
+  var skuSearchTimer = null;
   var AREAS = [
     { code: 1, name: "Alto Giro" },
     { code: 2, name: "Médio Giro" },
@@ -544,9 +545,22 @@ import { createClient } from "@supabase/supabase-js";
       }
     });
 
-    $("skuSearchButton").addEventListener("click", renderSkuSearch);
+    $("skuSearchButton").addEventListener("click", function () {
+      renderSkuSearch();
+    });
     $("skuSearchInput").addEventListener("keydown", function (event) {
-      if (event.key === "Enter") renderSkuSearch();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        renderSkuSearch();
+      }
+    });
+    $("skuSearchInput").addEventListener("input", function () {
+      window.clearTimeout(skuSearchTimer);
+      var value = normalizeSku($("skuSearchInput").value);
+      if (value.length < 5) return;
+      skuSearchTimer = window.setTimeout(function () {
+        renderSkuSearch();
+      }, 450);
     });
 
     $("shelfSearchButton").addEventListener("click", renderShelfSearch);
@@ -779,6 +793,7 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   function renderSkuSearch() {
+    window.clearTimeout(skuSearchTimer);
     var sku = normalizeSku($("skuSearchInput").value);
     var list = sku ? findBySku(sku) : [];
     if (!sku) {
@@ -790,6 +805,7 @@ import { createClient } from "@supabase/supabase-js";
     if (!list.length) {
       setStatus("skuSearchStatus", "Nenhuma localizacao encontrada para este SKU.", "warning");
       $("skuResults").innerHTML = "";
+      clearSkuSearchInput();
       saveData();
       return;
     }
@@ -797,7 +813,15 @@ import { createClient } from "@supabase/supabase-js";
     setStatus("skuSearchStatus", list.length + " localizacao(oes) encontrada(s).", "success");
     $("skuResults").innerHTML = list.map(skuTableRowHtml).join("");
     bindActionButtons($("skuResults"));
+    clearSkuSearchInput();
     saveData();
+  }
+
+  function clearSkuSearchInput() {
+    $("skuSearchInput").value = "";
+    window.setTimeout(function () {
+      $("skuSearchInput").focus();
+    }, 60);
   }
 
   function renderShelfSearch() {
@@ -833,18 +857,24 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   function skuTableRowHtml(binding) {
+    var productName = binding.productName || findProductName(binding.sku) || "-";
     return [
       "<tr>",
-      "<td>" + escapeHtml(binding.sku) + "</td>",
-      "<td>" + escapeHtml(binding.productName || findProductName(binding.sku) || "-") + "</td>",
-      "<td>" + pad2(binding.rua) + "</td>",
-      "<td>" + binding.rack + "</td>",
-      "<td>" + binding.linha + "</td>",
-      "<td>" + escapeHtml(binding.letra) + "</td>",
-      "<td>" + escapeHtml(binding.locationCode) + "</td>",
-      "<td>" + escapeHtml(binding.areaName) + "</td>",
-      "<td>" + formatDateTime(binding.createdAt) + "</td>",
-      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-edit=\"" + binding.id + "\" type=\"button\">Editar</button><button class=\"remove-small\" data-remove=\"" + binding.id + "\" type=\"button\">Remover</button></div></td>",
+      "<td class=\"mobile-result-summary\">",
+      "<div class=\"mobile-result-location\">" + escapeHtml(binding.locationCode) + "</div>",
+      "<div class=\"mobile-result-product\">" + escapeHtml(binding.sku) + " - " + escapeHtml(productName) + "</div>",
+      "<div class=\"mobile-result-grid\"><span>Rua<strong>" + pad2(binding.rua) + "</strong></span><span>Rack<strong>" + binding.rack + "</strong></span><span>Linha<strong>" + binding.linha + "</strong></span><span>Letra<strong>" + escapeHtml(binding.letra) + "</strong></span></div>",
+      "</td>",
+      "<td data-label=\"SKU\">" + escapeHtml(binding.sku) + "</td>",
+      "<td data-label=\"Produto\">" + escapeHtml(productName) + "</td>",
+      "<td data-label=\"Rua\">" + pad2(binding.rua) + "</td>",
+      "<td data-label=\"Rack\">" + binding.rack + "</td>",
+      "<td data-label=\"Linha\">" + binding.linha + "</td>",
+      "<td data-label=\"Letra\">" + escapeHtml(binding.letra) + "</td>",
+      "<td data-label=\"Codigo tecnico\">" + escapeHtml(binding.locationCode) + "</td>",
+      "<td data-label=\"Area\">" + escapeHtml(binding.areaName) + "</td>",
+      "<td data-label=\"Data\">" + formatDateTime(binding.createdAt) + "</td>",
+      "<td data-label=\"Acoes\"><div class=\"row-actions\"><button class=\"edit-small\" data-edit=\"" + binding.id + "\" type=\"button\">Editar</button><button class=\"remove-small\" data-remove=\"" + binding.id + "\" type=\"button\">Remover</button></div></td>",
       "</tr>"
     ].join("");
   }
