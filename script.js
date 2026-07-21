@@ -1330,7 +1330,12 @@ import { createClient } from "@supabase/supabase-js";
   function formatSupabaseError(error) {
     if (!error) return "erro desconhecido";
     if (typeof error === "string") return error;
-    return error.message || error.details || error.hint || error.code || JSON.stringify(error);
+    var message = error.message || error.details || error.hint || error.code || JSON.stringify(error);
+    var lower = String(message + " " + (error.code || "")).toLowerCase();
+    if (lower.indexOf("row-level security") >= 0 || lower.indexOf("42501") >= 0) {
+      return message + ". Execute o arquivo supabase-schema.sql no SQL Editor do Supabase para criar as policies de leitura e gravacao.";
+    }
+    return message;
   }
 
   function isMissingProductsTableError(error) {

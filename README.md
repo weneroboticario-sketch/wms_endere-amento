@@ -87,6 +87,22 @@ Na Vercel, abra `/api/supabase-config` depois do deploy se quiser conferir o fal
 
 Se `configured` vier como `false`, o JSON vai mostrar qual variável chegou ausente.
 
+## Corrigir Supabase conectado mas sem gravar
+
+Se o app mostrar erro parecido com:
+
+```text
+new row violates row-level security policy for table "wms_bindings"
+```
+
+ou:
+
+```text
+Could not find the table 'public.wms_products' in the schema cache
+```
+
+abra o Supabase do projeto, entre em `SQL Editor`, cole todo o conteúdo de `supabase-schema.sql` e execute. Esse SQL cria as tabelas `wms_bindings`, `wms_history`, `wms_products` e recria as policies que permitem leitura e gravação com a chave pública do app.
+
 ## Publicar no GitHub Pages
 
 1. Crie um repositório público no GitHub.
