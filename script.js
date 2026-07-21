@@ -4,6 +4,9 @@ import { createClient } from "@supabase/supabase-js";
   "use strict";
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
+  var AUTH_SESSION_KEY = "wms_auth_session_v1";
+  var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var supabaseConfig = { url: "", key: "" };
   var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
@@ -38,19 +41,23 @@ import { createClient } from "@supabase/supabase-js";
   var currentSku = "";
   var currentLocation = null;
   var editingId = null;
+  var authState = {
+    currentUser: null,
+    currentSession: null,
+    users: [],
+    usersTableAvailable: true,
+    sessionsTableAvailable: true
+  };
 
   document.addEventListener("DOMContentLoaded", async function () {
     await loadSupabaseConfig();
     fillSupabaseForm();
     initSupabaseClient();
-    await loadData();
-    await applyDataMigrations();
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
-    renderAll();
     updateSupabaseStatus();
-    focusSkuInput();
+    await initAuth();
   });
 
   function $(id) {
@@ -456,6 +463,366 @@ import { createClient } from "@supabase/supabase-js";
     };
   }
 
+  async function initAuth() {
+    document.body.classList.add("auth-locked");
+    document.body.classList.remove("auth-unlocked");
+    if (!isSupabaseReady()) {
+      showLogin("Supabase nao conectado. Configure as variaveis antes de entrar.", "error");
+      return;
+    }
+    var loaded = await loadUsers();
+    if (!loaded) {
+      showLogin("Tabelas de usuarios ausentes. Execute supabase-schema.sql no SQL Editor do Supabase.", "error");
+      return;
+    }
+    await ensureInitialAdmin();
+    await loadUsers();
+    var savedSession = readStoredSession();
+    if (savedSession) {
+      var user = authState.users.find(function (item) {
+        return item.id === savedSession.userId && item.active;
+      });
+      if (user) {
+        authState.currentUser = user;
+        authState.currentSession = savedSession;
+        await enterAuthenticatedApp(false);
+        return;
+      }
+      localStorage.removeItem(AUTH_SESSION_KEY);
+    }
+    showLogin("", "");
+  }
+
+  async function loadUsers() {
+    if (!isSupabaseReady()) return false;
+    var response = await supabaseDb
+      .from("wms_users")
+      .select("*")
+      .order("created_at", { ascending: true });
+    if (response.error) {
+      if (isMissingAuthTableError(response.error)) {
+        authState.usersTableAvailable = false;
+        return false;
+      }
+      updateSupabaseStatus("Falha ao carregar usuarios: " + formatSupabaseError(response.error), "error");
+      return false;
+    }
+    authState.usersTableAvailable = true;
+    authState.users = (response.data || []).map(fromDbUser);
+    return true;
+  }
+
+  async function ensureInitialAdmin() {
+    if (authState.users.length) return;
+    var now = new Date().toISOString();
+    var admin = {
+      id: "user-admin",
+      name: "Administrador",
+      username: "admin",
+      matricula: "admin",
+      password_hash: await hashPassword("admin", "admin123"),
+      role: "ADMINISTRADOR",
+      active: true,
+      created_at: now,
+      updated_at: now,
+      last_login_at: null
+    };
+    var response = await supabaseDb.from("wms_users").upsert(admin, { onConflict: "username" });
+    if (response.error) {
+      updateSupabaseStatus("Nao foi possivel criar admin inicial: " + formatSupabaseError(response.error), "error");
+    }
+  }
+
+  async function handleLogin() {
+    var login = normalizeText($("loginUserInput").value).toLowerCase();
+    var password = $("loginPasswordInput").value || "";
+    if (!login || !password) {
+      setStatus("loginStatus", "Informe usuario e senha.", "error");
+      return;
+    }
+    await loadUsers();
+    var user = authState.users.find(function (item) {
+      return item.active && (String(item.username).toLowerCase() === login || String(item.matricula).toLowerCase() === login);
+    });
+    if (!user || !(await verifyPassword(user, password))) {
+      setStatus("loginStatus", "Usuario ou senha invalidos", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    await supabaseDb.from("wms_users").update({ last_login_at: now, updated_at: now }).eq("id", user.id);
+    user.lastLoginAt = now;
+    authState.currentUser = user;
+    authState.currentSession = await createAccessSession(user);
+    localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authState.currentSession));
+    $("loginPasswordInput").value = "";
+    await enterAuthenticatedApp(true);
+  }
+
+  async function enterAuthenticatedApp(showWelcome) {
+    document.body.classList.remove("auth-locked");
+    document.body.classList.add("auth-unlocked");
+    updateLoggedUserUi();
+    applyRolePermissions();
+    await loadData();
+    await applyDataMigrations();
+    renderAll();
+    renderUsers();
+    showScreen("dashboard");
+    if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
+    focusSkuInput();
+  }
+
+  function showLogin(message, type) {
+    authState.currentUser = null;
+    authState.currentSession = null;
+    document.body.classList.add("auth-locked");
+    document.body.classList.remove("auth-unlocked");
+    if (message) setStatus("loginStatus", message, type || "warning");
+    window.setTimeout(function () {
+      if ($("loginUserInput")) $("loginUserInput").focus();
+    }, 80);
+  }
+
+  async function logout() {
+    if (authState.currentSession && authState.currentSession.sessionId && isSupabaseReady()) {
+      await supabaseDb
+        .from("wms_sessions")
+        .update({ ended_at: new Date().toISOString(), active: false })
+        .eq("id", authState.currentSession.sessionId);
+    }
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    authState.currentUser = null;
+    authState.currentSession = null;
+    state = { bindings: [], history: [], products: {} };
+    showLogin("Sessao encerrada.", "success");
+  }
+
+  async function createAccessSession(user) {
+    var now = new Date().toISOString();
+    var session = {
+      sessionId: "sess-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      userId: user.id,
+      userName: user.name,
+      role: user.role,
+      startedAt: now
+    };
+    var row = {
+      id: session.sessionId,
+      user_id: user.id,
+      user_name: user.name,
+      started_at: now,
+      ended_at: null,
+      active: true
+    };
+    var response = await supabaseDb.from("wms_sessions").insert(row);
+    if (response.error) {
+      authState.sessionsTableAvailable = !isMissingAuthTableError(response.error);
+    }
+    return session;
+  }
+
+  function readStoredSession() {
+    try {
+      var session = JSON.parse(localStorage.getItem(AUTH_SESSION_KEY) || "null");
+      if (!session || !session.startedAt || !session.userId) return null;
+      if (Date.now() - new Date(session.startedAt).getTime() > SESSION_MAX_AGE_MS) {
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        return null;
+      }
+      return session;
+    } catch (error) {
+      localStorage.removeItem(AUTH_SESSION_KEY);
+      return null;
+    }
+  }
+
+  function updateLoggedUserUi() {
+    var user = authState.currentUser;
+    if (!user) return;
+    ["topUserName", "sidebarUserName"].forEach(function (id) { $(id).textContent = user.name; });
+    ["topUserRole", "sidebarUserRole"].forEach(function (id) { $(id).textContent = user.role; });
+  }
+
+  function applyRolePermissions() {
+    var admin = isAdmin();
+    document.querySelectorAll(".admin-only").forEach(function (element) {
+      element.hidden = !admin;
+    });
+    if (!admin && $("usuarios").classList.contains("active")) showScreen("dashboard");
+  }
+
+  function isAdmin() {
+    return authState.currentUser && authState.currentUser.role === "ADMINISTRADOR";
+  }
+
+  function fromDbUser(row) {
+    return {
+      id: row.id,
+      name: row.name || "",
+      username: row.username || "",
+      matricula: row.matricula || row.username || "",
+      passwordHash: row.password_hash || "",
+      role: ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR",
+      active: row.active !== false,
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
+      lastLoginAt: row.last_login_at || ""
+    };
+  }
+
+  async function hashPassword(username, password) {
+    var input = "wms-v1:" + normalizeText(username).toLowerCase() + ":" + String(password || "");
+    var bytes = new TextEncoder().encode(input);
+    var hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
+    var hashArray = Array.from(new Uint8Array(hashBuffer));
+    return "sha256:" + hashArray.map(function (byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
+  }
+
+  async function verifyPassword(user, password) {
+    return user.passwordHash === await hashPassword(user.username, password);
+  }
+
+  function isMissingAuthTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return (message.indexOf("wms_users") >= 0 || message.indexOf("wms_sessions") >= 0) && (
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0
+    );
+  }
+
+  async function saveUserFromForm() {
+    if (!isAdmin()) {
+      setStatus("userFormStatus", "Acesso restrito ao administrador.", "error");
+      return;
+    }
+    var id = $("userEditId").value;
+    var name = normalizeText($("userNameInput").value);
+    var username = normalizeText($("userUsernameInput").value).toLowerCase();
+    var password = $("userPasswordInput").value || "";
+    var role = $("userRoleInput").value;
+    var active = $("userActiveInput").checked;
+    if (!name || !username || ROLES.indexOf(role) === -1) {
+      setStatus("userFormStatus", "Preencha nome, usuario e perfil.", "error");
+      return;
+    }
+    if (!id && !password) {
+      setStatus("userFormStatus", "Informe a senha inicial.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var row = {
+      id: id || "user-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      name: name,
+      username: username,
+      matricula: username,
+      role: role,
+      active: active,
+      updated_at: now
+    };
+    if (!id) row.created_at = now;
+    if (password) row.password_hash = await hashPassword(username, password);
+    var response = await supabaseDb.from("wms_users").upsert(row, { onConflict: "id" });
+    if (response.error) {
+      setStatus("userFormStatus", "Erro ao salvar usuario: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await loadUsers();
+    resetUserForm();
+    renderUsers();
+    setStatus("userFormStatus", "Usuario salvo com sucesso.", "success");
+  }
+
+  function resetUserForm() {
+    $("userEditId").value = "";
+    $("userFormTitle").textContent = "Criar usuário";
+    $("userNameInput").value = "";
+    $("userUsernameInput").value = "";
+    $("userUsernameInput").disabled = false;
+    $("userPasswordInput").value = "";
+    $("userRoleInput").value = "OPERADOR";
+    $("userActiveInput").checked = true;
+  }
+
+  function renderUsers() {
+    if (!$("usersRows") || !isAdmin()) return;
+    $("usersRows").innerHTML = authState.users.length ? authState.users.map(userRowHtml).join("") : "<tr><td colspan=\"5\">Nenhum usuario cadastrado.</td></tr>";
+  }
+
+  function userRowHtml(user) {
+    return [
+      "<tr>",
+      "<td><strong>" + escapeHtml(user.name) + "</strong><br><span class=\"muted\">" + escapeHtml(user.username) + "</span></td>",
+      "<td><span class=\"role-badge\">" + escapeHtml(user.role) + "</span></td>",
+      "<td>" + formatDateTime(user.lastLoginAt) + "</td>",
+      "<td><span class=\"status-badge " + (user.active ? "active" : "inactive") + "\">" + (user.active ? "Ativo" : "Inativo") + "</span></td>",
+      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-user-edit=\"" + user.id + "\" type=\"button\">Editar</button><button class=\"secondary-button\" data-user-reset=\"" + user.id + "\" type=\"button\">Redefinir senha</button><button class=\"remove-small\" data-user-toggle=\"" + user.id + "\" type=\"button\">" + (user.active ? "Desativar" : "Ativar") + "</button></div></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  async function handleUserTableClick(event) {
+    var editId = event.target.dataset.userEdit;
+    var resetId = event.target.dataset.userReset;
+    var toggleId = event.target.dataset.userToggle;
+    if (editId) editUser(editId);
+    if (resetId) await resetUserPassword(resetId);
+    if (toggleId) await toggleUserActive(toggleId);
+  }
+
+  function editUser(id) {
+    var user = authState.users.find(function (item) { return item.id === id; });
+    if (!user) return;
+    $("userEditId").value = user.id;
+    $("userFormTitle").textContent = "Editar usuário";
+    $("userNameInput").value = user.name;
+    $("userUsernameInput").value = user.username;
+    $("userUsernameInput").disabled = true;
+    $("userPasswordInput").value = "";
+    $("userRoleInput").value = user.role;
+    $("userActiveInput").checked = user.active;
+    setStatus("userFormStatus", "Editando " + user.name + ". Deixe a senha em branco para manter a atual.", "warning");
+  }
+
+  async function resetUserPassword(id) {
+    var user = authState.users.find(function (item) { return item.id === id; });
+    if (!user) return;
+    var password = window.prompt("Nova senha para " + user.name + ":");
+    if (!password) return;
+    var response = await supabaseDb
+      .from("wms_users")
+      .update({ password_hash: await hashPassword(user.username, password), updated_at: new Date().toISOString() })
+      .eq("id", user.id);
+    if (response.error) {
+      showToast("Nao foi possivel redefinir a senha.", "error");
+      return;
+    }
+    showToast("Senha redefinida.", "success");
+  }
+
+  async function toggleUserActive(id) {
+    var user = authState.users.find(function (item) { return item.id === id; });
+    if (!user) return;
+    if (user.id === authState.currentUser.id && user.active) {
+      showToast("Voce nao pode desativar seu proprio usuario.", "error");
+      return;
+    }
+    var response = await supabaseDb
+      .from("wms_users")
+      .update({ active: !user.active, updated_at: new Date().toISOString() })
+      .eq("id", user.id);
+    if (response.error) {
+      showToast("Nao foi possivel alterar o status.", "error");
+      return;
+    }
+    await loadUsers();
+    renderUsers();
+  }
+
   async function seedIfEmpty() {
     if (state.bindings.length > 0) return;
     var samples = [
@@ -511,6 +878,14 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   function showScreen(screenId) {
+    if (!authState.currentUser) {
+      showLogin("Entre para acessar o sistema.", "warning");
+      return;
+    }
+    if (screenId === "usuarios" && !isAdmin()) {
+      showToast("Acesso restrito ao administrador.", "error");
+      screenId = "dashboard";
+    }
     document.querySelectorAll(".screen").forEach(function (screen) {
       screen.classList.toggle("active", screen.id === screenId);
     });
@@ -519,12 +894,27 @@ import { createClient } from "@supabase/supabase-js";
     });
     $("sidebar").classList.remove("open");
     renderAll();
+    if (screenId === "usuarios") renderUsers();
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
   }
 
   function bindEvents() {
+    $("loginForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      handleLogin();
+    });
+    ["logoutButton", "topLogoutButton", "mobileLogoutButton"].forEach(function (id) {
+      $(id).addEventListener("click", logout);
+    });
+    $("userForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      saveUserFromForm();
+    });
+    $("clearUserFormButton").addEventListener("click", resetUserForm);
+    $("usersRows").addEventListener("click", handleUserTableClick);
+
     $("skuReadButton").addEventListener("click", handleSkuRead);
     $("locationReadButton").addEventListener("click", handleLocationRead);
     $("scanForm").addEventListener("submit", function (event) {

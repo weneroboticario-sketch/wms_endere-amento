@@ -50,9 +50,54 @@ alter table public.wms_history add column if not exists sku text default '';
 alter table public.wms_history add column if not exists location text default '';
 alter table public.wms_history add column if not exists details text default '';
 
+create table if not exists public.wms_users (
+  id text primary key,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  name text not null default '',
+  username text not null unique,
+  matricula text default '',
+  password_hash text not null default '',
+  role text not null default 'OPERADOR',
+  active boolean not null default true,
+  last_login_at timestamptz
+);
+
+alter table public.wms_users add column if not exists created_at timestamptz not null default now();
+alter table public.wms_users add column if not exists updated_at timestamptz not null default now();
+alter table public.wms_users add column if not exists name text not null default '';
+alter table public.wms_users add column if not exists username text not null default '';
+alter table public.wms_users add column if not exists matricula text default '';
+alter table public.wms_users add column if not exists password_hash text not null default '';
+alter table public.wms_users add column if not exists role text not null default 'OPERADOR';
+alter table public.wms_users add column if not exists active boolean not null default true;
+alter table public.wms_users add column if not exists last_login_at timestamptz;
+
+create unique index if not exists wms_users_username_idx
+on public.wms_users (username);
+
+create table if not exists public.wms_sessions (
+  id text primary key,
+  created_at timestamptz not null default now(),
+  user_id text,
+  user_name text default '',
+  started_at timestamptz not null default now(),
+  ended_at timestamptz,
+  active boolean not null default true
+);
+
+alter table public.wms_sessions add column if not exists created_at timestamptz not null default now();
+alter table public.wms_sessions add column if not exists user_id text;
+alter table public.wms_sessions add column if not exists user_name text default '';
+alter table public.wms_sessions add column if not exists started_at timestamptz not null default now();
+alter table public.wms_sessions add column if not exists ended_at timestamptz;
+alter table public.wms_sessions add column if not exists active boolean not null default true;
+
 alter table public.wms_bindings enable row level security;
 alter table public.wms_products enable row level security;
 alter table public.wms_history enable row level security;
+alter table public.wms_users enable row level security;
+alter table public.wms_sessions enable row level security;
 
 drop policy if exists "wms_bindings_public_all" on public.wms_bindings;
 create policy "wms_bindings_public_all"
@@ -73,6 +118,22 @@ with check (true);
 drop policy if exists "wms_history_public_all" on public.wms_history;
 create policy "wms_history_public_all"
 on public.wms_history
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_users_public_all" on public.wms_users;
+create policy "wms_users_public_all"
+on public.wms_users
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_sessions_public_all" on public.wms_sessions;
+create policy "wms_sessions_public_all"
+on public.wms_sessions
 for all
 to anon
 using (true)

@@ -103,6 +103,17 @@ Could not find the table 'public.wms_products' in the schema cache
 
 abra o Supabase do projeto, entre em `SQL Editor`, cole todo o conteúdo de `supabase-schema.sql` e execute. Esse SQL cria as tabelas `wms_bindings`, `wms_history`, `wms_products` e recria as policies que permitem leitura e gravação com a chave pública do app.
 
+## Login e usuários
+
+O sistema possui login simples para operação de estoque. Depois de executar `supabase-schema.sql`, o app cria automaticamente o primeiro administrador se ainda não existir usuário:
+
+```text
+Usuário: admin
+Senha: admin123
+```
+
+Troque essa senha inicial na tela `Usuários` após o primeiro acesso. As senhas são salvas como `password_hash` gerado no navegador, não em texto puro. A tabela `wms_sessions` registra início e encerramento de sessão de forma simples.
+
 ## Publicar no GitHub Pages
 
 1. Crie um repositório público no GitHub.

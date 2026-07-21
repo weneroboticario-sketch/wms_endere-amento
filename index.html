@@ -10,7 +10,28 @@
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script type="module" src="/script.js"></script>
 </head>
-<body>
+<body class="auth-locked">
+  <section class="login-shell" id="loginShell">
+    <form class="login-card" id="loginForm" autocomplete="off">
+      <div class="brand login-brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <h1>WMS Estoque</h1>
+          <p>Endereçamento</p>
+        </div>
+      </div>
+      <p class="eyebrow">Acesso ao sistema</p>
+      <h2>Entrar</h2>
+      <label for="loginUserInput">Matrícula ou usuário</label>
+      <input id="loginUserInput" name="user" type="text" autocomplete="username" placeholder="Ex.: admin">
+      <label for="loginPasswordInput">Senha</label>
+      <input id="loginPasswordInput" name="password" type="password" autocomplete="current-password" placeholder="Digite sua senha">
+      <button class="primary-button wide-button" id="loginButton" type="submit">Entrar</button>
+      <button class="link-button" type="button">Esqueci minha senha</button>
+      <div id="loginStatus" class="inline-status"></div>
+      <p class="muted admin-warning">Primeiro acesso: usuário <strong>admin</strong> e senha <strong>admin123</strong>. Troque a senha inicial assim que entrar.</p>
+    </form>
+  </section>
   <div class="app-shell">
     <header class="mobile-topbar">
       <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu">☰</button>
@@ -18,6 +39,7 @@
         <strong>WMS Estoque</strong>
         <span>Endereçamento</span>
       </div>
+      <button class="secondary-button logout-button" id="mobileLogoutButton" type="button">Sair</button>
     </header>
 
     <aside class="sidebar" id="sidebar">
@@ -38,8 +60,15 @@
         <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
         <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
         <button class="menu-item" data-screen="historico" type="button">Histórico</button>
+        <button class="menu-item admin-only" data-screen="usuarios" type="button">Usuários</button>
         <button class="menu-item" data-screen="configuracoes" type="button">Configuracoes</button>
       </nav>
+
+      <div class="user-card">
+        <strong id="sidebarUserName">-</strong>
+        <span id="sidebarUserRole">-</span>
+        <button class="secondary-button" id="logoutButton" type="button">Sair</button>
+      </div>
 
       <div class="sidebar-note">
         <span class="status-dot"></span>
@@ -49,6 +78,17 @@
 
     <main class="content">
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <div class="user-strip">
+        <div>
+          <span>Usuário logado</span>
+          <strong id="topUserName">-</strong>
+        </div>
+        <div>
+          <span>Perfil</span>
+          <strong id="topUserRole">-</strong>
+        </div>
+        <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
+      </div>
 
       <section class="screen active" id="dashboard">
         <div class="page-title">
@@ -321,6 +361,66 @@
             </table>
           </div>
         </section>
+      </section>
+
+      <section class="screen" id="usuarios">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Administração</p>
+            <h2>Usuários</h2>
+          </div>
+        </div>
+        <div class="dashboard-layout users-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h3 id="userFormTitle">Criar usuário</h3>
+            </div>
+            <form id="userForm" autocomplete="off">
+              <input id="userEditId" type="hidden">
+              <label for="userNameInput">Nome completo</label>
+              <input id="userNameInput" type="text" placeholder="Nome do usuário">
+              <label for="userUsernameInput">Matrícula ou usuário</label>
+              <input id="userUsernameInput" type="text" placeholder="Ex.: 12345">
+              <label for="userPasswordInput">Senha inicial / nova senha</label>
+              <input id="userPasswordInput" type="password" placeholder="Obrigatória para novo usuário">
+              <label for="userRoleInput">Perfil</label>
+              <select id="userRoleInput">
+                <option value="OPERADOR">OPERADOR</option>
+                <option value="SUPERVISOR">SUPERVISOR</option>
+                <option value="ADMINISTRADOR">ADMINISTRADOR</option>
+              </select>
+              <label class="checkbox-label">
+                <input id="userActiveInput" type="checkbox" checked>
+                Usuário ativo
+              </label>
+              <div class="button-row">
+                <button class="primary-button" id="saveUserButton" type="submit">Salvar usuário</button>
+                <button class="secondary-button" id="clearUserFormButton" type="button">Limpar</button>
+              </div>
+              <div id="userFormStatus" class="inline-status"></div>
+            </form>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Usuários ativos</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Usuário</th>
+                    <th>Perfil</th>
+                    <th>Último login</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="usersRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section class="screen" id="configuracoes">
