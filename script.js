@@ -1069,10 +1069,21 @@ import { createClient } from "@supabase/supabase-js";
         return;
       }
       mergeProducts(parsed.products);
+      var oldBindingsCount = state.bindings.length;
+      if (parsed.addressRows.length) {
+        state.bindings = [];
+      }
       var result = importRows(parsed.addressRows);
-      addHistory("Excel importado", "", "", result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s), " + Object.keys(parsed.products).length + " produto(s) lido(s).");
+      var importDetails = parsed.addressRows.length
+        ? result.created + " endereco(s) novos, " + oldBindingsCount + " endereco(s) antigos substituido(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s), " + Object.keys(parsed.products).length + " produto(s) lido(s)."
+        : Object.keys(parsed.products).length + " produto(s) lido(s); enderecamentos atuais mantidos.";
+      addHistory("Excel importado", "", "", importDetails);
 
       setStatus("importStatus", "Gravando no Supabase. Aguarde...", "warning");
+      if (parsed.addressRows.length) {
+        setStatus("importStatus", "Apagando enderecamentos antigos no Supabase...", "warning");
+        await clearRemoteTable("wms_bindings", "id");
+      }
       var saved = await saveData();
       if (!saved) {
         setStatus("importStatus", "Falha ao gravar a importacao no Supabase. Veja a mensagem em Configuracoes.", "error");
@@ -1082,7 +1093,11 @@ import { createClient } from "@supabase/supabase-js";
       await verifyImportedBindings(result.changedIds);
       await loadData();
       renderAll();
-      setStatus("importStatus", "Importacao salva no Supabase: " + result.created + " endereco(s), " + result.updated + " nome(s) atualizado(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s).", "success");
+      if (parsed.addressRows.length) {
+        setStatus("importStatus", "Importacao salva no Supabase: base antiga substituida por " + result.created + " endereco(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s).", "success");
+      } else {
+        setStatus("importStatus", "Produtos importados no Supabase. Enderecamentos atuais mantidos.", "success");
+      }
     } catch (error) {
       var message = formatSupabaseError(error);
       console.error("Falha na importacao:", error);
