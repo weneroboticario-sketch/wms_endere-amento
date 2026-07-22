@@ -3196,12 +3196,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "<article class=\"label-card\">",
         "<svg class=\"barcode\" id=\"barcode-" + index + "\" data-code=\"" + parsed.code + "\"></svg>",
         "<h3>" + parsed.code + "</h3>",
-        "<div class=\"label-meta\">",
-        "<div>Rua<strong>" + pad2(parsed.rua) + "</strong></div>",
-        "<div>Rack<strong>" + parsed.rack + "</strong></div>",
-        "<div>Linha<strong>" + parsed.linha + "</strong></div>",
-        "<div>Letra<strong>" + parsed.letra + "</strong></div>",
-        "</div>",
         "</article>"
       ].join("");
     }).join("");
