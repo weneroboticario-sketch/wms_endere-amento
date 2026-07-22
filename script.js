@@ -4129,7 +4129,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function normalizeSku(value) {
     if (value === null || value === undefined) return "";
-    return String(value).trim();
+    var sku = String(value).trim();
+    var digits = sku.replace(/\D/g, "");
+    if (digits.length === 13 && digits.indexOf("789") === 0) {
+      return digits.slice(-6, -1);
+    }
+    return sku;
   }
 
   function normalizeSkuKey(value) {
