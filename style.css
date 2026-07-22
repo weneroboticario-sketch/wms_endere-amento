@@ -928,6 +928,7 @@ td {
 }
 
 .transfer-filter-grid,
+.transfer-conference-admin-grid,
 .transfer-work-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1181,6 +1182,7 @@ td {
   .scan-grid,
   .label-form-grid,
   .transfer-filter-grid,
+  .transfer-conference-admin-grid,
   .transfer-work-grid,
   .transfer-work-summary,
   .xml-summary,

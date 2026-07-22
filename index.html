@@ -397,6 +397,7 @@
           <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="transferConferenceSection" type="button">Conferência XML</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
         </div>
 
@@ -521,6 +522,29 @@
               <h3>Minhas Tarefas</h3>
             </div>
             <div id="myTransfersList" class="transfer-card-grid"></div>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="transferConferenceSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Conferência XML</h3>
+            </div>
+            <div class="transfer-conference-admin-grid">
+              <label>Transferência
+                <select id="conferenceTransferSelect"></select>
+              </label>
+              <label>Pessoa que vai conferir
+                <select id="conferenceUserSelect"></select>
+              </label>
+            </div>
+            <div id="conferenceAdminSummary" class="xml-summary"></div>
+            <div class="button-row">
+              <button class="primary-button" id="assignConferenceSelectedButton" type="button">Atribuir conferência</button>
+              <button class="secondary-button" id="exportConferenceSelectedButton" type="button">Exportar XML</button>
+              <button class="secondary-button" id="openConferenceSelectedButton" type="button">Abrir transferência</button>
+            </div>
+            <div id="conferenceAdminStatus" class="inline-status"></div>
           </section>
         </section>
 

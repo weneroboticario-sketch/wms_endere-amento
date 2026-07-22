@@ -1519,6 +1519,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $(id).addEventListener("input", renderTransferPanel);
       $(id).addEventListener("change", renderTransferPanel);
     });
+    $("conferenceTransferSelect").addEventListener("change", renderTransferConferenceAdminPanel);
+    $("conferenceUserSelect").addEventListener("change", renderTransferConferenceAdminPanel);
+    $("assignConferenceSelectedButton").addEventListener("click", assignSelectedTransferConference);
+    $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
+    $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
     $("previewTransferExcelButton").addEventListener("click", previewTransferExcel);
     $("newTransferForm").addEventListener("submit", createTransferFromForm);
     $("transferPanelRows").addEventListener("click", handleTransferActionClick);
@@ -1914,6 +1919,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderTransferSelects();
     renderTransferPanel();
     renderMyTransfers();
+    renderTransferConferenceAdminPanel();
     renderEstablishments();
     renderTransferPreview();
     renderTransferWork();
@@ -1958,6 +1964,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return "<option value=\"" + user.id + "\">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
       }).join("");
     }
+    if ($("conferenceUserSelect")) {
+      var selectedConferenceUser = $("conferenceUserSelect").value;
+      $("conferenceUserSelect").innerHTML = transferConferenceOptionsHtml(selectedConferenceUser);
+    }
     if ($("transferResponsibleFilter")) {
       $("transferResponsibleFilter").innerHTML = "<option value=\"\">Todos</option>" + authState.users.map(function (user) {
         return "<option value=\"" + user.id + "\">" + escapeHtml(user.name) + "</option>";
@@ -1967,6 +1977,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("transferEstablishmentFilter").innerHTML = "<option value=\"\">Todos</option>" + transferState.establishments.map(function (item) {
         return "<option value=\"" + item.id + "\">" + escapeHtml(item.name) + "</option>";
       }).join("");
+    }
+    if ($("conferenceTransferSelect")) {
+      var selectedTransfer = $("conferenceTransferSelect").value;
+      var transferOptions = getVisibleTransfers().filter(function (transfer) {
+        return transfer.status !== "CANCELADA";
+      });
+      if (!selectedTransfer && transferOptions.length) selectedTransfer = transferOptions[0].id;
+      $("conferenceTransferSelect").innerHTML = transferOptions.length
+        ? transferOptions.map(function (transfer) {
+          var label = (transfer.name || transfer.code) + " - " + (transfer.establishmentName || "-") + " - " + transfer.status;
+          return "<option value=\"" + transfer.id + "\"" + (transfer.id === selectedTransfer ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
+        }).join("")
+        : "<option value=\"\">Nenhuma transferência disponível</option>";
     }
   }
 
@@ -2026,6 +2049,60 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "<option value=\"\">Selecionar conferente</option>" + users.map(function (user) {
       return "<option value=\"" + user.id + "\"" + (user.id === selectedUserId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
     }).join("");
+  }
+
+  function renderTransferConferenceAdminPanel() {
+    if (!$("conferenceAdminSummary")) return;
+    if (!isAdminOrSupervisor()) {
+      $("conferenceAdminSummary").innerHTML = "";
+      return;
+    }
+    var transfer = getTransferById($("conferenceTransferSelect").value);
+    if (!transfer) {
+      $("conferenceAdminSummary").innerHTML = "";
+      setStatus("conferenceAdminStatus", "Nenhuma transferência disponível para conferência.", "warning");
+      return;
+    }
+    var stats = getTransferStats(transfer.id);
+    var assignment = getLatestTransferConferenceAssignment(transfer.id);
+    $("conferenceAdminSummary").innerHTML = [
+      summaryChip("Transferência", transfer.name || transfer.code || "-"),
+      summaryChip("Destino", transfer.establishmentName || "-"),
+      summaryChip("Status", transfer.status || "-"),
+      summaryChip("Conferente", assignment && assignment.assignedUserName ? assignment.assignedUserName : "Não atribuído"),
+      summaryChip("Itens", stats.totalItems),
+      summaryChip("Solicitada", formatQty(stats.requested)),
+      summaryChip("Separada", formatQty(stats.separated)),
+      summaryChip("Lacrada", formatQty(stats.packed))
+    ].join("");
+    var selectedUser = authState.users.find(function (user) { return user.id === $("conferenceUserSelect").value; });
+    setStatus("conferenceAdminStatus", selectedUser ? "Pronto para atribuir ou exportar o XML para " + selectedUser.name + "." : "Selecione a pessoa que vai conferir antes de atribuir.", selectedUser ? "success" : "warning");
+  }
+
+  async function assignSelectedTransferConference() {
+    var transferId = $("conferenceTransferSelect").value;
+    var userId = $("conferenceUserSelect").value;
+    await assignTransferConference(transferId, userId);
+    renderTransferConferenceAdminPanel();
+  }
+
+  async function exportSelectedTransferConferenceXml() {
+    var transferId = $("conferenceTransferSelect").value;
+    if (!transferId) {
+      setStatus("conferenceAdminStatus", "Selecione uma transferência para exportar.", "error");
+      return;
+    }
+    await exportTransferConferenceXml(transferId);
+    setStatus("conferenceAdminStatus", "XML exportado. Entregue esse arquivo para a pessoa conferir na tela da transferência.", "success");
+  }
+
+  async function openSelectedTransferConference() {
+    var transferId = $("conferenceTransferSelect").value;
+    if (!transferId) {
+      setStatus("conferenceAdminStatus", "Selecione uma transferência para abrir.", "error");
+      return;
+    }
+    await openTransferWork(transferId);
   }
 
   function renderMyTransfers() {
@@ -2184,13 +2261,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return assignment && assignment.assignedUserId === authState.currentUser.id;
   }
 
-  async function assignTransferConference(transferId) {
+  async function assignTransferConference(transferId, selectedUserId) {
     if (!isAdminOrSupervisor()) return;
     var transfer = getTransferById(transferId);
     var select = $("transferConferenceSelect-" + transferId);
-    var user = select ? authState.users.find(function (entry) { return entry.id === select.value; }) : null;
+    var userId = selectedUserId || (select ? select.value : "");
+    var user = userId ? authState.users.find(function (entry) { return entry.id === userId; }) : null;
     if (!transfer || !user) {
       showToast("Selecione a pessoa que vai conferir a transferência.", "error");
+      if ($("conferenceAdminStatus")) setStatus("conferenceAdminStatus", "Selecione a transferência e a pessoa que vai conferir.", "error");
       return;
     }
     await recordTransferEvent(
