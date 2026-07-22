@@ -1794,8 +1794,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function getActiveUserTasks() {
     if (!authState.currentUser) return [];
     return transferState.transfers.filter(function (transfer) {
-      if (["CANCELADA", "PRONTA_PARA_NOTA"].indexOf(transfer.status) >= 0) return false;
-      if (authState.currentUser.role === "OPERADOR") return transfer.responsibleId === authState.currentUser.id;
+      if (transfer.status === "CANCELADA") return false;
+      if (authState.currentUser.role === "OPERADOR") {
+        return transfer.responsibleId === authState.currentUser.id || isTransferConferenceAssignedToCurrentUser(transfer.id);
+      }
+      if (transfer.status === "PRONTA_PARA_NOTA") return false;
       return true;
     });
   }
@@ -1827,6 +1830,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function taskMessage(transfer) {
     if (!transfer) return "Não foi possível carregar suas tarefas. Tente novamente.";
+    if (isTransferConferenceAssignedToCurrentUser(transfer.id)) return "Você recebeu uma transferência para conferir pelo XML.";
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE") return "Separação concluída. Faça a etapa de caixa/lacre.";
     if (transfer.status === "EM_SEPARACAO") return "Você possui uma transferência em andamento.";
     return "Você recebeu uma transferência para separar.";
@@ -1993,6 +1997,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function transferPanelRowHtml(transfer) {
     var stats = getTransferStats(transfer.id);
+    var conferenceAssignment = getLatestTransferConferenceAssignment(transfer.id);
+    var conferenceSelectId = "transferConferenceSelect-" + transfer.id;
     return [
       "<tr>",
       "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code) + "</span></td>",
@@ -2001,25 +2007,42 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
       "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
       "<td><span>Criada: " + formatDateTime(transfer.createdAt) + "</span><br><span>Início: " + formatDateTime(transfer.startedAt) + "</span><br><span>Sep.: " + formatDateTime(transfer.separationFinishedAt) + "</span><br><span>Lacre: " + formatDateTime(transfer.packingFinishedAt) + "</span></td>",
-      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>" + (canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "") + "</div></td>",
+      "<td><div class=\"row-actions transfer-action-stack\">",
+      "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
+      "<button class=\"edit-small\" data-transfer-export-xml=\"" + transfer.id + "\" type=\"button\">Exportar XML</button>",
+      "<select class=\"transfer-conference-select\" id=\"" + escapeHtml(conferenceSelectId) + "\">" + transferConferenceOptionsHtml(conferenceAssignment && conferenceAssignment.assignedUserId) + "</select>",
+      "<button class=\"edit-small\" data-transfer-assign-conference=\"" + transfer.id + "\" type=\"button\">Atribuir conferência</button>",
+      conferenceAssignment ? "<span class=\"muted\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</span>" : "",
+      canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
+      "</div></td>",
       "</tr>"
     ].join("");
+  }
+
+  function transferConferenceOptionsHtml(selectedUserId) {
+    var users = authState.users.filter(function (user) {
+      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
+    });
+    return "<option value=\"\">Selecionar conferente</option>" + users.map(function (user) {
+      return "<option value=\"" + user.id + "\"" + (user.id === selectedUserId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+    }).join("");
   }
 
   function renderMyTransfers() {
     if (!$("myTransfersList")) return;
     var transfers = getVisibleTransfers().filter(function (transfer) {
-      return transfer.status !== "CANCELADA" && transfer.status !== "PRONTA_PARA_NOTA";
+      return transfer.status !== "CANCELADA" && (transfer.status !== "PRONTA_PARA_NOTA" || isTransferConferenceAssignedToCurrentUser(transfer.id));
     });
     $("myTransfersList").innerHTML = transfers.length ? transfers.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma tarefa atribuida.</div>";
   }
 
   function myTransferCardHtml(transfer) {
     var stats = getTransferStats(transfer.id);
-    var action = transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar caixa/lacre" : transfer.status === "EM_LACRE" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
+    var conferenceAssigned = isTransferConferenceAssignedToCurrentUser(transfer.id);
+    var action = conferenceAssigned ? "Conferir XML" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar caixa/lacre" : transfer.status === "EM_LACRE" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
       "<article class=\"transfer-card\">",
-      "<span class=\"eyebrow\">Transferência</span>",
+      "<span class=\"eyebrow\">" + (conferenceAssigned ? "Conferência XML" : "Transferência") + "</span>",
       "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
       "<span>Estabelecimento: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
       "<span>Status: " + escapeHtml(transfer.status) + "</span>",
@@ -2105,7 +2128,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!authState.currentUser) return [];
     if (isAdminOrSupervisor()) return transferState.transfers.slice();
     return transferState.transfers.filter(function (transfer) {
-      return transfer.responsibleId === authState.currentUser.id;
+      return transfer.responsibleId === authState.currentUser.id || isTransferConferenceAssignedToCurrentUser(transfer.id);
     });
   }
 
@@ -2144,6 +2167,158 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function canCancelTransfer(transfer) {
     if (!isAdmin()) return transfer.status !== "LACRE_CONCLUIDO" && transfer.status !== "PRONTA_PARA_NOTA";
     return transfer.status !== "CANCELADA";
+  }
+
+  function getLatestTransferConferenceAssignment(transferId) {
+    var events = transferState.events.filter(function (event) {
+      return event.transfer_id === transferId && event.event_type === "XML_CONFERENCE_ASSIGNED" && event.payload;
+    }).sort(function (a, b) {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+    return events.length ? events[0].payload : null;
+  }
+
+  function isTransferConferenceAssignedToCurrentUser(transferId) {
+    if (!authState.currentUser) return false;
+    var assignment = getLatestTransferConferenceAssignment(transferId);
+    return assignment && assignment.assignedUserId === authState.currentUser.id;
+  }
+
+  async function assignTransferConference(transferId) {
+    if (!isAdminOrSupervisor()) return;
+    var transfer = getTransferById(transferId);
+    var select = $("transferConferenceSelect-" + transferId);
+    var user = select ? authState.users.find(function (entry) { return entry.id === select.value; }) : null;
+    if (!transfer || !user) {
+      showToast("Selecione a pessoa que vai conferir a transferência.", "error");
+      return;
+    }
+    await recordTransferEvent(
+      transfer.id,
+      "",
+      "XML_CONFERENCE_ASSIGNED",
+      "",
+      0,
+      "Conferência XML atribuída para " + user.name + ".",
+      {
+        assignedAt: new Date().toISOString(),
+        assignedUserId: user.id,
+        assignedUserName: user.name,
+        assignedUsername: user.username,
+        transferId: transfer.id,
+        transferCode: transfer.code,
+        transferName: transfer.name
+      }
+    );
+    await loadTransferData();
+    renderTransfers();
+    renderOperatorTasksAlert();
+    showToast("Conferência atribuída para " + user.name + ".", "success");
+  }
+
+  async function exportTransferConferenceXml(transferId) {
+    if (!isAdminOrSupervisor()) return;
+    var transfer = getTransferById(transferId);
+    if (!transfer) return;
+    var items = getTransferItems(transfer.id);
+    if (!items.length) {
+      showToast("Transferência sem itens para exportar.", "error");
+      return;
+    }
+    var assignment = getLatestTransferConferenceAssignment(transfer.id) || {};
+    var xml = buildTransferConferenceXml(transfer, items, assignment);
+    var fileName = "Conferencia_" + sanitizeFileName(transfer.code || transfer.name || transfer.id) + "_" + dateForFileName(new Date()) + ".xml";
+    downloadTextFile(fileName, xml, "application/xml;charset=utf-8");
+    await recordTransferEvent(
+      transfer.id,
+      "",
+      "XML_CONFERENCE_EXPORTED",
+      "",
+      items.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0),
+      "XML da transferência exportado para conferência.",
+      {
+        exportedAt: new Date().toISOString(),
+        fileName: fileName,
+        assignedUserId: assignment.assignedUserId || "",
+        assignedUserName: assignment.assignedUserName || ""
+      }
+    );
+    showToast("XML da transferência exportado.", "success");
+  }
+
+  function buildTransferConferenceXml(transfer, items, assignment) {
+    var stats = getTransferStats(transfer.id);
+    return [
+      "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+      "<wmsTransferConference version=\"1\">",
+      "  <transfer>",
+      "    <id>" + xmlEscape(transfer.id) + "</id>",
+      "    <code>" + xmlEscape(transfer.code) + "</code>",
+      "    <name>" + xmlEscape(transfer.name) + "</name>",
+      "    <status>" + xmlEscape(transfer.status) + "</status>",
+      "    <createdAt>" + xmlEscape(transfer.createdAt) + "</createdAt>",
+      "  </transfer>",
+      "  <destination>",
+      "    <code>" + xmlEscape(transfer.establishmentCode) + "</code>",
+      "    <name>" + xmlEscape(transfer.establishmentName) + "</name>",
+      "    <cnpj>" + xmlEscape(transfer.establishmentCnpj) + "</cnpj>",
+      "  </destination>",
+      "  <separationResponsible>",
+      "    <id>" + xmlEscape(transfer.responsibleId) + "</id>",
+      "    <name>" + xmlEscape(transfer.responsibleName) + "</name>",
+      "  </separationResponsible>",
+      "  <conferenceResponsible>",
+      "    <id>" + xmlEscape(assignment.assignedUserId || "") + "</id>",
+      "    <name>" + xmlEscape(assignment.assignedUserName || "") + "</name>",
+      "  </conferenceResponsible>",
+      "  <totals>",
+      "    <items>" + items.length + "</items>",
+      "    <requestedQty>" + formatQty(stats.requested) + "</requestedQty>",
+      "    <separatedQty>" + formatQty(stats.separated) + "</separatedQty>",
+      "    <packedQty>" + formatQty(stats.packed) + "</packedQty>",
+      "  </totals>",
+      "  <items>",
+      items.map(function (item) {
+        return [
+          "    <item>",
+          "      <sku>" + xmlEscape(item.sku) + "</sku>",
+          "      <description>" + xmlEscape(item.description) + "</description>",
+          "      <unit>" + xmlEscape(item.unit) + "</unit>",
+          "      <requestedQty>" + formatQty(item.requestedQty) + "</requestedQty>",
+          "      <separatedQty>" + formatQty(item.separatedQty) + "</separatedQty>",
+          "      <packedQty>" + formatQty(item.packedQty) + "</packedQty>",
+          "      <status>" + xmlEscape(item.status) + "</status>",
+          "    </item>"
+        ].join("\n");
+      }).join("\n"),
+      "  </items>",
+      "</wmsTransferConference>"
+    ].join("\n");
+  }
+
+  function downloadTextFile(fileName, content, mimeType) {
+    var blob = new Blob([content], { type: mimeType || "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  function sanitizeFileName(value) {
+    return normalizeText(value || "transferencia").replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "_").slice(0, 80);
+  }
+
+  function xmlEscape(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
   }
 
   function formatQty(value) {
@@ -2253,6 +2428,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function parseNfeXml(xmlText) {
     var doc = new DOMParser().parseFromString(xmlText, "application/xml");
     if (xmlNodes(doc, "parsererror").length) throw new Error("Arquivo XML inválido.");
+    if (doc.documentElement && doc.documentElement.localName === "wmsTransferConference") {
+      return parseWmsTransferConferenceXml(doc);
+    }
     var ide = xmlFirst(doc, "ide");
     var emit = xmlFirst(doc, "emit");
     var dest = xmlFirst(doc, "dest");
@@ -2284,6 +2462,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       aggregate[sku].quantity += qty;
     });
     return { note: note, items: Object.keys(aggregate).map(function (sku) { return aggregate[sku]; }) };
+  }
+
+  function parseWmsTransferConferenceXml(doc) {
+    var transferNode = xmlFirst(doc, "transfer");
+    var destinationNode = xmlFirst(doc, "destination");
+    var conferenceNode = xmlFirst(doc, "conferenceResponsible");
+    var note = {
+      key: xmlTextValue(xmlFirst(transferNode, "id")),
+      number: xmlTextValue(xmlFirst(transferNode, "code")),
+      issuedAt: xmlTextValue(xmlFirst(transferNode, "createdAt")),
+      emitterName: "WMS Estoque",
+      emitterCnpj: "",
+      destinationName: xmlTextValue(xmlFirst(destinationNode, "name")),
+      destinationCnpj: xmlTextValue(xmlFirst(destinationNode, "cnpj")),
+      conferenceResponsible: xmlTextValue(xmlFirst(conferenceNode, "name"))
+    };
+    var items = xmlNodes(xmlFirst(doc, "items"), "item").map(function (itemNode) {
+      return {
+        sku: normalizeSku(xmlTextValue(xmlFirst(itemNode, "sku"))) || normalizeText(xmlTextValue(xmlFirst(itemNode, "sku"))),
+        description: xmlTextValue(xmlFirst(itemNode, "description")),
+        unit: xmlTextValue(xmlFirst(itemNode, "unit")) || "UN",
+        quantity: parseXmlQuantity(xmlTextValue(xmlFirst(itemNode, "requestedQty")))
+      };
+    }).filter(function (item) {
+      return item.sku;
+    });
+    return { note: note, items: items };
   }
 
   function buildXmlConference(transfer, parsed) {
@@ -3089,6 +3294,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var button = event.target.closest("button");
     if (!button) return;
     if (button.dataset.transferOpen) await openTransferWork(button.dataset.transferOpen);
+    if (button.dataset.transferExportXml) await exportTransferConferenceXml(button.dataset.transferExportXml);
+    if (button.dataset.transferAssignConference) await assignTransferConference(button.dataset.transferAssignConference);
     if (button.dataset.transferCancel) await cancelTransfer(button.dataset.transferCancel);
     if (button.dataset.establishmentEdit) editEstablishment(button.dataset.establishmentEdit);
     if (button.dataset.establishmentToggle) await toggleEstablishment(button.dataset.establishmentToggle);

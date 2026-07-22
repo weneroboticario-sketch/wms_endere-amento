@@ -995,6 +995,23 @@ td {
   font-size: 1.08rem;
 }
 
+.transfer-action-stack {
+  align-items: stretch;
+  flex-direction: column;
+  min-width: 190px;
+}
+
+.transfer-action-stack button,
+.transfer-action-stack select {
+  width: 100%;
+}
+
+.transfer-conference-select {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
 .transfer-work-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
