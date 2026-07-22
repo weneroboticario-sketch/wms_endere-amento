@@ -540,7 +540,15 @@ import { createClient } from "@supabase/supabase-js";
       setStatus("loginStatus", "Informe usuario e senha.", "error");
       return;
     }
-    await loadUsers();
+    var loaded = await loadUsers();
+    if (!loaded) {
+      setStatus("loginStatus", "Tabela wms_users ausente. Execute supabase-schema.sql no SQL Editor do Supabase e atualize a pagina.", "error");
+      return;
+    }
+    if (!authState.users.length) {
+      await ensureInitialAdmin();
+      await loadUsers();
+    }
     var user = authState.users.find(function (item) {
       return item.active && (String(item.username).toLowerCase() === login || String(item.matricula).toLowerCase() === login);
     });
