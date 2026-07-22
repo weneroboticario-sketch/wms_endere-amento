@@ -1102,6 +1102,34 @@ td {
   color: var(--muted);
 }
 
+.transfer-product-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.transfer-product-list article {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.transfer-product-list strong {
+  color: var(--ink);
+}
+
+.transfer-product-list span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 .current-item-meta {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

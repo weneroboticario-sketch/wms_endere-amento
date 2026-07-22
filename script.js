@@ -1543,7 +1543,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       renderTransfers();
     });
     $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
-    $("transferScanButton").addEventListener("click", locateTransferItem);
     $("transferScanInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -2307,6 +2306,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!transfer) {
       $("transferWorkRows").innerHTML = "";
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
+      if ($("transferProductList")) $("transferProductList").innerHTML = "";
       if ($("adminTransferProgressPanel")) $("adminTransferProgressPanel").hidden = true;
       clearXmlConferencePanel();
       return;
@@ -2314,11 +2314,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var stats = getTransferStats(transfer.id);
     var mode = transferState.activeWorkMode;
     $("transferWorkTitle").textContent = (mode === "LACRE" ? "Caixa / Lacre" : "Separação") + " - " + (transfer.name || transfer.code);
-    $("transferWorkSummary").innerHTML = [
+    $("transferWorkSummary").innerHTML = isAdminOrSupervisor() ? [
       "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
       "<div><span>Itens</span><strong>" + stats.totalItems + "</strong></div>",
       "<div><span>Progresso</span><strong>" + stats.progress + "%</strong></div>"
+    ].join("") : [
+      "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
+      "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>"
     ].join("");
     $("startPackingButton").hidden = transfer.status !== "SEPARACAO_CONCLUIDA";
     $("finishSeparationButton").hidden = mode !== "SEPARACAO";
@@ -2327,9 +2330,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     setTransferFieldHidden("boxIdInput", mode !== "LACRE");
     var items = getTransferItems(transfer.id);
     $("transferWorkRows").innerHTML = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
+    renderTransferProductList(items);
     renderCurrentTransferItem();
     renderAdminTransferProgress(transfer, mode);
     renderXmlConference(transfer.id);
+  }
+
+  function renderTransferProductList(items) {
+    if (!$("transferProductList")) return;
+    $("transferProductList").innerHTML = items.length ? [
+      "<span class=\"eyebrow\">Produtos da conferência</span>",
+      items.map(function (item) {
+        return "<article><strong>" + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(item.description || "-") + "</span></article>";
+      }).join("")
+    ].join("") : "";
   }
 
   function renderAdminTransferProgress(transfer, mode) {
@@ -2390,16 +2404,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
       return;
     }
-    var mode = transferState.activeWorkMode;
-    var done = mode === "LACRE" ? item.packedQty : item.separatedQty;
-    var expected = mode === "LACRE" ? item.separatedQty : item.requestedQty;
     $("transferCurrentItem").innerHTML = [
       "<strong>" + escapeHtml(item.sku) + "</strong>",
-      "<span>" + escapeHtml(item.description || "-") + "</span>",
-      "<div class=\"current-item-meta\">",
-      "<div><span>Quantidade esperada</span><b>" + formatQty(expected) + "</b></div>",
-      "<div><span>Já bipado</span><b>" + formatQty(done) + "</b></div>",
-      "</div>"
+      "<span>" + escapeHtml(item.description || "-") + "</span>"
     ].join("");
   }
 
@@ -2632,7 +2639,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!conference) {
       $("xmlConferenceSummary").innerHTML = "";
       $("xmlConferenceRows").innerHTML = "";
-      setStatus("xmlConferenceStatus", "Ao finalizar, importe o XML e envie a conferência para ver o resultado.", "warning");
+      setStatus("xmlConferenceStatus", "Ao finalizar a bipagem, envie a conferência para gerar o resultado.", "warning");
       return;
     }
     renderXmlConferencePayload(conference);
@@ -2651,9 +2658,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var summary = conference.summary || {};
     var note = conference.note || {};
     $("xmlConferenceSummary").innerHTML = [
-      summaryChip("NF-e", note.number || "-"),
-      summaryChip("Origem", (note.emitterName || "-")),
+      summaryChip("Conferência", note.number || "-"),
       summaryChip("Destino", (note.destinationName || "-")),
+      summaryChip("Itens", summary.transferItems || summary.xmlItems || 0),
       summaryChip("Resultado final", summary.correct ? "CORRETA" : "DIVERGENTE")
     ].join("");
     var issues = (conference.rows || []).filter(function (row) { return row.status !== "CORRETO"; });
@@ -2665,7 +2672,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           "<strong>" + escapeHtml(row.sku || "-") + "</strong>",
           "<span>" + escapeHtml(row.xmlDescription || row.transferDescription || "-") + "</span>",
           "<b>" + escapeHtml(row.status) + "</b>",
-          "<small>XML: " + formatQty(row.xmlQty) + " | Conferido: " + formatQty(Number(row.packedQty || 0) > 0 ? row.packedQty : row.separatedQty) + "</small>",
+          "<small>Esperado: " + formatQty(row.xmlQty) + " | Conferido: " + formatQty(Number(row.packedQty || 0) > 0 ? row.packedQty : row.separatedQty) + "</small>",
           "</article>"
         ].join("");
       }).join("")
@@ -2683,14 +2690,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("xmlConferenceStatus", "Abra uma transferência antes de conferir XML.", "error");
       return;
     }
-    var file = ($("transferXmlInput").files || [])[0];
-    if (!file) {
-      setStatus("xmlConferenceStatus", "Selecione o XML da NF-e.", "error");
-      return;
-    }
     try {
-      var parsed = parseNfeXml(await file.text());
-      var conference = buildXmlConference(transfer, parsed);
+      var conference = buildFinalTransferConference(transfer);
       renderXmlConferencePayload(conference);
       await recordTransferEvent(
         transfer.id,
@@ -2698,16 +2699,58 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "XML_CONFERENCE",
         "",
         conference.summary.totalXmlQty,
-        conference.summary.correct ? "XML conferido sem divergências." : "XML conferido com divergências.",
+        conference.summary.correct ? "Conferência enviada sem divergências." : "Conferência enviada com divergências.",
         conference
       );
       await loadTransferData();
       transferState.activeTransferId = transfer.id;
       renderTransfers();
-      setStatus("xmlConferenceStatus", conference.summary.correct ? "XML salvo: quantidade final correta." : "XML salvo: divergências visíveis para o operador.", conference.summary.correct ? "success" : "error");
+      setStatus("xmlConferenceStatus", conference.summary.correct ? "Conferência enviada: 100% correta." : "Conferência enviada: existem itens faltando ou sobrando.", conference.summary.correct ? "success" : "error");
     } catch (error) {
-      setStatus("xmlConferenceStatus", "Não foi possível ler o XML: " + formatSupabaseError(error), "error");
+      setStatus("xmlConferenceStatus", "Não foi possível enviar a conferência: " + formatSupabaseError(error), "error");
     }
+  }
+
+  function buildFinalTransferConference(transfer) {
+    var items = getTransferItems(transfer.id);
+    var rows = items.map(function (item) {
+      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var expectedQty = Number(item.requestedQty || 0);
+      var diff = actualQty - expectedQty;
+      return xmlConferenceRow(
+        item.sku,
+        item.description,
+        item.description,
+        expectedQty,
+        item.separatedQty,
+        item.packedQty,
+        Math.abs(diff) < 0.0001 ? "CORRETO" : diff < 0 ? "Faltando " + formatQty(Math.abs(diff)) : "Sobrando " + formatQty(diff)
+      );
+    });
+    var errors = rows.filter(function (row) { return row.status !== "CORRETO"; }).length;
+    var totalQty = items.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
+    return {
+      version: 1,
+      checkedAt: new Date().toISOString(),
+      checkedBy: { id: authState.currentUser.id, name: authState.currentUser.name },
+      transfer: { id: transfer.id, code: transfer.code, name: transfer.name },
+      note: {
+        key: transfer.id,
+        number: transfer.name || transfer.code || transfer.id,
+        issuedAt: transfer.createdAt,
+        emitterName: "WMS Estoque",
+        destinationName: transfer.establishmentName || "-",
+        destinationCnpj: transfer.establishmentCnpj || ""
+      },
+      summary: {
+        correct: errors === 0,
+        xmlItems: items.length,
+        transferItems: items.length,
+        totalXmlQty: totalQty,
+        errors: errors
+      },
+      rows: rows
+    };
   }
 
   function parseNfeXml(xmlText) {
@@ -3455,10 +3498,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferWorkStatus", "Item não pertence a esta transferência.", "error");
       return;
     }
-    var pending = transferState.activeWorkMode === "LACRE" ? Math.max(0, item.separatedQty - item.packedQty) : Math.max(0, item.requestedQty - item.separatedQty);
     transferState.selectedItemId = item.id;
     $("transferScanInput").value = item.sku;
-    $("transferQuantityInput").value = pending ? formatQty(pending) : "";
+    $("transferQuantityInput").value = "";
     renderCurrentTransferItem();
     setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
     $("transferQuantityInput").focus();
@@ -3467,6 +3509,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function confirmTransferItem() {
     var transfer = getTransferById(transferState.activeTransferId);
     var item = transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; });
+    if (transfer && !item) {
+      var typedSku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+      item = getTransferItems(transfer.id).find(function (entry) {
+        return entry.sku === typedSku || normalizeSkuKey(entry.sku) === normalizeSkuKey(typedSku);
+      });
+      if (item) transferState.selectedItemId = item.id;
+    }
     if (!transfer || !item) {
       setStatus("transferWorkStatus", "Bipe um SKU válido antes de confirmar.", "error");
       return;
@@ -3479,11 +3528,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var mode = transferState.activeWorkMode;
     var now = new Date().toISOString();
     if (mode === "LACRE") {
-      var pendingPack = Math.max(0, item.separatedQty - item.packedQty);
-      if (qty > pendingPack) {
-        setStatus("transferWorkStatus", "Quantidade maior que a separada. Confirme com o responsável.", "error");
-        return;
-      }
       item.packedQty += qty;
       item.status = item.packedQty >= item.separatedQty ? "LACRADO" : "PARCIAL";
       var packResponse = await supabaseDb.from("wms_transfer_items").update({
@@ -3497,11 +3541,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         box: $("boxIdInput").value
       });
     } else {
-      var pendingSep = Math.max(0, item.requestedQty - item.separatedQty);
-      if (qty > pendingSep) {
-        setStatus("transferWorkStatus", "Quantidade maior que a solicitada. Confirme com o responsável.", "error");
-        return;
-      }
       item.separatedQty += qty;
       item.status = item.separatedQty >= item.requestedQty ? "SEPARADO" : "PARCIAL";
       var sepResponse = await supabaseDb.from("wms_transfer_items").update({
