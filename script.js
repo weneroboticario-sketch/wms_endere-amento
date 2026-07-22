@@ -306,13 +306,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return !!supabaseDb;
   }
 
+  async function fetchAllRows(tableName, orderColumn, ascending) {
+    var allRows = [];
+    var from = 0;
+    var pageSize = 1000;
+    while (true) {
+      var query = supabaseDb.from(tableName).select("*");
+      if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+      var response = await query.range(from, from + pageSize - 1);
+      if (response.error) throw response.error;
+      var rows = response.data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return allRows;
+  }
+
   async function loadData() {
     state = { bindings: [], history: [], products: {} };
     if (!isSupabaseReady()) return;
     try {
-      var bindingsResponse = await supabaseDb.from("wms_bindings").select("*").order("created_at", { ascending: false });
-      if (bindingsResponse.error) throw bindingsResponse.error;
-      state.bindings = (bindingsResponse.data || []).map(fromDbBinding);
+      var bindingRows = await fetchAllRows("wms_bindings", "created_at", false);
+      state.bindings = bindingRows.map(fromDbBinding);
 
       var historyResponse = await supabaseDb.from("wms_history").select("*").order("datetime", { ascending: false }).limit(1000);
       var historyMessage = "";
@@ -328,20 +344,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         state.history = (historyResponse.data || []).map(fromDbHistory);
       }
 
-      var productsResponse = await supabaseDb.from("wms_products").select("*");
       state.products = {};
       var productsMessage = "";
-      if (productsResponse.error) {
-        if (!isMissingProductsTableError(productsResponse.error)) throw productsResponse.error;
+      try {
+        var productRows = await fetchAllRows("wms_products", "sku", true);
+        productsTableAvailable = true;
+        productRows.forEach(function (product) {
+          if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
+        });
+      } catch (productsError) {
+        if (!isMissingProductsTableError(productsError)) throw productsError;
         productsTableAvailable = false;
         rebuildProductsFromBindings();
         productsMessage = " Tabela wms_products ausente; nomes foram lidos de wms_bindings. Execute supabase-schema.sql no Supabase para gravar o catalogo de produtos.";
         statusType = "warning";
-      } else {
-        productsTableAvailable = true;
-        (productsResponse.data || []).forEach(function (product) {
-          if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
-        });
       }
       productsDirty = false;
       updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + historyMessage + productsMessage, statusType);
@@ -408,18 +424,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.events = [];
     if (!isSupabaseReady()) return false;
     try {
-      var establishmentsResponse = await supabaseDb.from("wms_establishments").select("*").order("codigo", { ascending: true });
-      if (establishmentsResponse.error) throw establishmentsResponse.error;
-      var transfersResponse = await supabaseDb.from("wms_transfers").select("*").order("created_at", { ascending: false });
-      if (transfersResponse.error) throw transfersResponse.error;
-      var itemsResponse = await supabaseDb.from("wms_transfer_items").select("*").order("created_at", { ascending: true });
-      if (itemsResponse.error) throw itemsResponse.error;
-      var eventsResponse = await supabaseDb.from("wms_transfer_events").select("*").order("created_at", { ascending: false }).limit(1000);
-      if (eventsResponse.error) throw eventsResponse.error;
-      transferState.establishments = (establishmentsResponse.data || []).map(fromDbEstablishment);
-      transferState.transfers = (transfersResponse.data || []).map(fromDbTransfer);
-      transferState.items = (itemsResponse.data || []).map(fromDbTransferItem);
-      transferState.events = eventsResponse.data || [];
+      var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
+      var transferRows = await fetchAllRows("wms_transfers", "created_at", false);
+      var itemRows = await fetchAllRows("wms_transfer_items", "created_at", true);
+      var eventRows = await fetchAllRows("wms_transfer_events", "created_at", false);
+      transferState.establishments = establishmentRows.map(fromDbEstablishment);
+      transferState.transfers = transferRows.map(fromDbTransfer);
+      transferState.items = itemRows.map(fromDbTransferItem);
+      transferState.events = eventRows;
       transferState.tablesAvailable = true;
       return true;
     } catch (error) {
