@@ -4112,7 +4112,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function findBySku(sku) {
-    return state.bindings.filter(function (binding) { return binding.sku === sku; }).sort(sortByDateDesc);
+    var normalized = normalizeSkuKey(sku);
+    return state.bindings.filter(function (binding) {
+      return binding.sku === sku || normalizeSkuKey(binding.sku) === normalized;
+    }).sort(sortByDateDesc);
   }
 
   function findByLocation(locationCode) {
@@ -4131,8 +4134,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (value === null || value === undefined) return "";
     var sku = String(value).trim();
     var digits = sku.replace(/\D/g, "");
-    if (digits.length === 13 && digits.indexOf("789") === 0) {
-      return digits.slice(-6, -1);
+    var eanStart = digits.indexOf("789");
+    if (eanStart >= 0 && digits.length >= eanStart + 13) {
+      var ean = digits.slice(eanStart, eanStart + 13);
+      return ean.slice(-6, -1);
     }
     return sku;
   }
