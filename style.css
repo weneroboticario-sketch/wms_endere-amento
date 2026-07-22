@@ -675,6 +675,10 @@ textarea {
   font-size: 1.1rem;
 }
 
+.role-operador #consultaSku .sku-card-area {
+  display: none;
+}
+
 .sku-result-actions[hidden],
 #consultaSku .legacy-sku-table {
   display: none;
@@ -1423,7 +1427,6 @@ td {
   .transfer-work-summary,
   .admin-transfer-progress .transfer-work-summary,
   .xml-summary,
-  .sku-location-grid,
   .sku-card-meta {
     grid-template-columns: 1fr;
   }
@@ -1500,10 +1503,53 @@ td {
 
   .sku-card-head {
     display: grid;
+    gap: 6px;
+  }
+
+  .sku-location-card {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .sku-card-head strong {
+    font-size: 1.35rem;
+  }
+
+  .sku-card-head span {
+    line-height: 1.22;
+  }
+
+  .latest-pill {
+    width: fit-content;
+    min-height: 24px;
+    padding: 4px 9px;
+    font-size: 0.72rem;
   }
 
   .sku-location-code {
-    font-size: 1.18rem;
+    padding: 11px;
+    font-size: 1.3rem;
+  }
+
+  .sku-location-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .sku-location-grid span,
+  .sku-card-meta span {
+    padding: 7px 5px;
+    font-size: 0.68rem;
+  }
+
+  .sku-location-grid strong,
+  .sku-card-meta strong {
+    font-size: 1rem;
+  }
+
+  .role-operador #consultaSku .sku-card-meta,
+  .role-operador #consultaSku .result-actions {
+    display: none;
   }
 
   .transfer-summary-grid {
