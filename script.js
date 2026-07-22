@@ -18,6 +18,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
@@ -118,6 +119,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     activeTransferId: "",
     activeWorkMode: "SEPARACAO",
     selectedItemId: "",
+    scanInputStartedAt: 0,
+    lastScanInputAt: 0,
+    tablesAvailable: true
+  };
+  var CONFERENCE_STATUSES = [
+    "PENDENTE",
+    "ATRIBUIDA",
+    "EM_CONFERENCIA",
+    "AGUARDANDO_RECONFERENCIA",
+    "CONFERENCIA_APROVADA",
+    "CONFERENCIA_COM_DIVERGENCIA",
+    "FINALIZADA_PARA_ANALISE",
+    "CANCELADA"
+  ];
+  var FINAL_CONFERENCE_STATUSES = ["CONFERENCIA_APROVADA", "CONFERENCIA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "CANCELADA"];
+  var conferenceState = {
+    conferences: [],
+    items: [],
+    events: [],
+    preview: null,
+    activeConferenceId: "",
+    selectedItemId: "",
+    recheckOnly: false,
     scanInputStartedAt: 0,
     lastScanInputAt: 0,
     tablesAvailable: true
@@ -503,6 +527,56 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  async function loadConferenceData() {
+    conferenceState.conferences = [];
+    conferenceState.items = [];
+    conferenceState.events = [];
+    if (!isSupabaseReady()) return false;
+    try {
+      var conferenceRows = await fetchAllRows("wms_conferences", "created_at", false);
+      var itemRows = await fetchAllRows("wms_conference_items", "created_at", true);
+      var eventRows = await fetchAllRows("wms_conference_events", "created_at", false);
+      conferenceState.conferences = conferenceRows.map(fromDbConference);
+      conferenceState.items = itemRows.map(fromDbConferenceItem);
+      conferenceState.events = eventRows;
+      conferenceState.tablesAvailable = true;
+      return true;
+    } catch (error) {
+      conferenceState.tablesAvailable = !isMissingConferenceTableError(error);
+      if (!conferenceState.tablesAvailable) {
+        showToast("Tabelas de conferências ausentes. Execute supabase-schema.sql.", "warning");
+      } else {
+        showToast("Não foi possível carregar conferências.", "error");
+        console.error("Erro ao carregar conferências:", error);
+      }
+      return false;
+    }
+  }
+
+  async function recordConferenceEvent(conferenceId, itemId, eventType, code, quantity, observation, payload) {
+    if (!isSupabaseReady()) return;
+    var user = authState.currentUser || {};
+    var row = {
+      id: "cevt-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      created_at: new Date().toISOString(),
+      conference_id: conferenceId || "",
+      item_id: itemId || "",
+      user_id: user.id || "",
+      user_name: user.name || "",
+      event_type: eventType || "",
+      codigo_informado: code || "",
+      sku: payload && payload.sku ? payload.sku : code || "",
+      ean: payload && payload.ean ? payload.ean : "",
+      quantidade: Number(quantity || 0),
+      input_type: payload && payload.inputType ? payload.inputType : "",
+      divergence_type: payload && payload.divergenceType ? payload.divergenceType : "",
+      observation: observation || "",
+      payload: payload || {}
+    };
+    var response = await supabaseDb.from("wms_conference_events").insert(row);
+    if (response.error && !isMissingConferenceTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+  }
+
   function fromDbEstablishment(row) {
     return {
       id: row.id,
@@ -649,6 +723,118 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       added_by_name: item.addedByName || "",
       input_type: item.inputType || "",
       observation: item.observation || ""
+    };
+  }
+
+  function fromDbConference(row) {
+    return {
+      id: row.id,
+      name: row.name || row.document_number || "",
+      documentType: row.document_type || "XML_NFE",
+      xmlKey: row.xml_key || "",
+      documentNumber: row.document_number || "",
+      series: row.series || "",
+      issuerCnpj: row.issuer_cnpj || "",
+      issuerName: row.issuer_name || "",
+      recipientCnpj: row.recipient_cnpj || "",
+      recipientName: row.recipient_name || "",
+      assignedToId: row.assigned_to_id || "",
+      assignedToName: row.assigned_to_name || "",
+      createdById: row.created_by_id || "",
+      createdByName: row.created_by_name || "",
+      status: CONFERENCE_STATUSES.indexOf(row.status) >= 0 ? row.status : "PENDENTE",
+      startedAt: row.started_at || "",
+      finishedAt: row.finished_at || "",
+      durationSeconds: Number(row.duration_seconds || 0),
+      totalItems: Number(row.total_items || 0),
+      totalExpectedQuantity: Number(row.total_expected_quantity || 0),
+      totalCheckedQuantity: Number(row.total_checked_quantity || 0),
+      correctItems: Number(row.correct_items || 0),
+      divergenceCount: Number(row.divergence_count || 0),
+      accuracyPercent: Number(row.accuracy_percent || 0),
+      finalResult: row.final_result || "",
+      notes: row.notes || "",
+      payload: row.payload || {},
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function fromDbConferenceItem(row) {
+    return {
+      id: row.id,
+      conferenceId: row.conference_id || "",
+      sku: row.sku || row.codigo_item || "",
+      ean: row.ean || "",
+      code: row.codigo_item || row.sku || "",
+      description: row.descricao || "",
+      unit: row.unidade || "UN",
+      expectedQty: Number(row.quantidade_xml || 0),
+      checkedQty: Number(row.quantidade_conferida || 0),
+      difference: Number(row.diferenca || 0),
+      status: row.status || "PENDENTE",
+      divergenceType: row.divergence_type || "",
+      isExtra: row.is_extra === true,
+      observation: row.observation || "",
+      payload: row.payload || {},
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function toDbConference(item) {
+    return {
+      id: item.id,
+      name: item.name || "",
+      document_type: item.documentType || "XML_NFE",
+      xml_key: item.xmlKey || "",
+      document_number: item.documentNumber || "",
+      series: item.series || "",
+      issuer_cnpj: item.issuerCnpj || "",
+      issuer_name: item.issuerName || "",
+      recipient_cnpj: item.recipientCnpj || "",
+      recipient_name: item.recipientName || "",
+      assigned_to_id: item.assignedToId || "",
+      assigned_to_name: item.assignedToName || "",
+      created_by_id: item.createdById || "",
+      created_by_name: item.createdByName || "",
+      status: item.status || "PENDENTE",
+      started_at: item.startedAt || null,
+      finished_at: item.finishedAt || null,
+      duration_seconds: Number(item.durationSeconds || 0),
+      total_items: Number(item.totalItems || 0),
+      total_expected_quantity: Number(item.totalExpectedQuantity || 0),
+      total_checked_quantity: Number(item.totalCheckedQuantity || 0),
+      correct_items: Number(item.correctItems || 0),
+      divergence_count: Number(item.divergenceCount || 0),
+      accuracy_percent: Number(item.accuracyPercent || 0),
+      final_result: item.finalResult || "",
+      notes: item.notes || "",
+      payload: item.payload || {},
+      created_at: item.createdAt || new Date().toISOString(),
+      updated_at: item.updatedAt || new Date().toISOString()
+    };
+  }
+
+  function toDbConferenceItem(item) {
+    return {
+      id: item.id,
+      conference_id: item.conferenceId,
+      sku: item.sku || item.code || "",
+      ean: item.ean || "",
+      codigo_item: item.code || item.sku || "",
+      descricao: item.description || "",
+      unidade: item.unit || "UN",
+      quantidade_xml: Number(item.expectedQty || 0),
+      quantidade_conferida: Number(item.checkedQty || 0),
+      diferenca: Number(item.difference || 0),
+      status: item.status || "PENDENTE",
+      divergence_type: item.divergenceType || "",
+      is_extra: item.isExtra === true,
+      observation: item.observation || "",
+      payload: item.payload || {},
+      created_at: item.createdAt || new Date().toISOString(),
+      updated_at: item.updatedAt || new Date().toISOString()
     };
   }
 
@@ -960,6 +1146,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (isAdmin()) await loadAccessRequests();
     await loadData();
     await loadTransferData();
+    await loadConferenceData();
     await applyDataMigrations();
     startTaskPolling();
     renderAll();
@@ -1523,6 +1710,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") {
       activateTransferTab("myTransfersSection");
     }
+    if (screenId === "conferencias" && authState.currentUser.role === "OPERADOR") {
+      activateConferenceTab("myConferencesSection");
+    }
     document.querySelectorAll(".screen").forEach(function (screen) {
       screen.classList.toggle("active", screen.id === screenId);
     });
@@ -1633,6 +1823,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     $("operatorTaskAlert").addEventListener("click", function (event) {
       if (event.target.closest("[data-open-tasks]")) showScreen("transferencias");
+      var conferenceButton = event.target.closest("[data-open-conferences]");
+      if (conferenceButton) showScreen("conferencias");
     });
     ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
       $(id).addEventListener("input", renderTransferPanel);
@@ -1653,6 +1845,42 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferFinalReportDetails").addEventListener("click", handleTransferActionClick);
     $("myTransfersList").addEventListener("click", handleTransferActionClick);
     $("completedTransfersList").addEventListener("click", handleTransferActionClick);
+    document.querySelectorAll(".conference-tab").forEach(function (button) {
+      button.addEventListener("click", function () {
+        activateConferenceTab(button.dataset.conferenceTab);
+        renderConferences();
+      });
+    });
+    ["conferenceStatusFilter", "conferenceResponsibleFilter", "conferenceQueryFilter"].forEach(function (id) {
+      $(id).addEventListener("input", renderConferencePanel);
+      $(id).addEventListener("change", renderConferencePanel);
+    });
+    $("previewConferenceXmlButton").addEventListener("click", previewConferenceXml);
+    $("newConferenceForm").addEventListener("submit", createConferenceFromForm);
+    $("conferenceXmlInput").addEventListener("change", previewConferenceXml);
+    $("conferencePanelRows").addEventListener("click", handleConferenceActionClick);
+    $("myConferencesList").addEventListener("click", handleConferenceActionClick);
+    $("finalizedConferencesList").addEventListener("click", handleConferenceActionClick);
+    $("backToConferencesButton").addEventListener("click", function () {
+      activateConferenceTab(isAdminOrSupervisor() ? "conferencePanelSection" : "myConferencesSection");
+      renderConferences();
+    });
+    $("conferenceScanInput").addEventListener("input", markConferenceScanInput);
+    $("conferenceScanInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        locateConferenceItem();
+      }
+    });
+    $("conferenceQtyInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        confirmConferenceItem();
+      }
+    });
+    $("confirmConferenceItemButton").addEventListener("click", confirmConferenceItem);
+    $("finishConferenceButton").addEventListener("click", finishConference);
+    $("recheckConferenceButton").addEventListener("click", startConferenceRecheck);
     $("establishmentForm").addEventListener("submit", function (event) {
       event.preventDefault();
       saveEstablishmentFromForm();
@@ -1964,6 +2192,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderDashboard();
     renderHistory();
     renderTransfers();
+    renderConferences();
     renderOperatorTasksAlert();
   }
 
@@ -2011,7 +2240,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getActiveUserTasks() {
     if (!authState.currentUser) return [];
-    return transferState.transfers.filter(function (transfer) {
+    var transfers = transferState.transfers.filter(function (transfer) {
       if (transfer.status === "CANCELADA") return false;
       if (isFinalTransferStatus(transfer.status)) return false;
       if (authState.currentUser.role === "OPERADOR") {
@@ -2019,15 +2248,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       if (transfer.status === "PRONTA_PARA_NOTA") return false;
       return true;
+    }).map(function (transfer) {
+      return { type: "TRANSFERENCIA", id: transfer.id, title: transfer.name || transfer.code, subtitle: transfer.establishmentName || "-", source: transfer };
     });
+    var conferences = getActiveUserConferences().map(function (conference) {
+      return { type: "CONFERENCIA", id: conference.id, title: conference.name || conference.documentNumber || "Conferência", subtitle: (conference.issuerName || "-") + " / " + (conference.recipientName || "-"), source: conference };
+    });
+    return transfers.concat(conferences);
   }
 
   function renderOperatorTasksAlert() {
     if (!$("operatorTaskAlert") || !$("taskMenuBadge")) return;
     var tasks = getActiveUserTasks();
+    var transferTasks = tasks.filter(function (task) { return task.type === "TRANSFERENCIA"; });
+    var conferenceTasks = tasks.filter(function (task) { return task.type === "CONFERENCIA"; });
     var isOperatorUser = authState.currentUser && authState.currentUser.role === "OPERADOR";
-    $("taskMenuBadge").hidden = !isOperatorUser || !tasks.length;
-    $("taskMenuBadge").textContent = String(tasks.length);
+    $("taskMenuBadge").hidden = !isOperatorUser || !transferTasks.length;
+    $("taskMenuBadge").textContent = String(transferTasks.length);
+    if ($("conferenceMenuBadge")) {
+      $("conferenceMenuBadge").hidden = !isOperatorUser || !conferenceTasks.length;
+      $("conferenceMenuBadge").textContent = String(conferenceTasks.length);
+    }
     if (!isOperatorUser || !tasks.length) {
       $("operatorTaskAlert").hidden = true;
       $("operatorTaskAlert").innerHTML = "";
@@ -2040,15 +2281,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div>",
       "<strong>Você tem uma nova tarefa</strong>",
       "<span>" + escapeHtml(taskMessage(mainTask)) + "</span>",
-      "<span>" + escapeHtml(mainTask.name || mainTask.code) + " - " + escapeHtml(mainTask.establishmentName || "-") + "</span>",
+      "<span>" + escapeHtml(mainTask.title || "-") + " - " + escapeHtml(mainTask.subtitle || "-") + "</span>",
       "</div>",
-      "<button class=\"primary-button\" data-open-tasks type=\"button\">Ver minhas tarefas</button>"
+      "<button class=\"primary-button\" " + (mainTask.type === "CONFERENCIA" ? "data-open-conferences" : "data-open-tasks") + " type=\"button\">Ver minhas tarefas</button>"
     ].join("");
     notifyTaskChanges(tasks);
   }
 
-  function taskMessage(transfer) {
-    if (!transfer) return "Não foi possível carregar suas tarefas. Tente novamente.";
+  function taskMessage(task) {
+    if (!task) return "Não foi possível carregar suas tarefas. Tente novamente.";
+    if (task.type === "CONFERENCIA") return "Você recebeu uma conferência para realizar.";
+    var transfer = task.source || task;
     if (isTransferConferenceAssignedToCurrentUser(transfer.id)) return "Você recebeu uma transferência para conferir pelo XML.";
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE") return "Separação concluída. Faça a etapa de caixa/lacre.";
     if (transfer.status === "EM_SEPARACAO") return "Você possui uma transferência em andamento.";
@@ -2057,7 +2300,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function taskSignature(tasks) {
     return tasks.map(function (task) {
-      return task.id;
+      return task.type + ":" + task.id;
     }).sort().join("|");
   }
 
@@ -2112,7 +2355,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     taskPollTimer = window.setInterval(async function () {
       try {
         await loadTransferData();
+        await loadConferenceData();
         renderTransfers();
+        renderConferences();
         renderOperatorTasksAlert();
       } catch (error) {
         if (authState.currentUser && authState.currentUser.role === "OPERADOR") showToast("Não foi possível carregar suas tarefas. Tente novamente.", "error");
@@ -2125,6 +2370,726 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       window.clearInterval(taskPollTimer);
       taskPollTimer = null;
     }
+  }
+
+  function isFinalConferenceStatus(status) {
+    return FINAL_CONFERENCE_STATUSES.indexOf(status) >= 0;
+  }
+
+  function getConferenceById(id) {
+    return conferenceState.conferences.find(function (conference) { return conference.id === id; });
+  }
+
+  function getConferenceItems(conferenceId) {
+    return conferenceState.items.filter(function (item) { return item.conferenceId === conferenceId; });
+  }
+
+  function getVisibleConferences() {
+    if (!authState.currentUser) return [];
+    if (isAdminOrSupervisor()) return conferenceState.conferences.slice();
+    return conferenceState.conferences.filter(function (conference) {
+      return conference.assignedToId === authState.currentUser.id;
+    });
+  }
+
+  function getActiveUserConferences() {
+    if (!authState.currentUser) return [];
+    return getVisibleConferences().filter(function (conference) {
+      return !isFinalConferenceStatus(conference.status) && conference.status !== "CANCELADA";
+    });
+  }
+
+  function getConferenceStats(conferenceId) {
+    var items = getConferenceItems(conferenceId);
+    var originalItems = items.filter(function (item) { return !item.isExtra; });
+    var extraItems = items.filter(function (item) { return item.isExtra && Number(item.checkedQty || 0) > 0; });
+    var expected = originalItems.reduce(function (sum, item) { return sum + Number(item.expectedQty || 0); }, 0);
+    var checked = items.reduce(function (sum, item) { return sum + Number(item.checkedQty || 0); }, 0);
+    var correctItems = originalItems.filter(function (item) { return Math.abs(Number(item.checkedQty || 0) - Number(item.expectedQty || 0)) < 0.0001; }).length;
+    var missingItems = originalItems.filter(function (item) { return Number(item.checkedQty || 0) < Number(item.expectedQty || 0); }).length;
+    var excessItems = originalItems.filter(function (item) { return Number(item.checkedQty || 0) > Number(item.expectedQty || 0); }).length;
+    var divergenceCount = missingItems + excessItems + extraItems.length;
+    return {
+      totalItems: originalItems.length,
+      totalExpectedQuantity: expected,
+      totalCheckedQuantity: checked,
+      correctItems: correctItems,
+      missingItems: missingItems,
+      excessItems: excessItems,
+      extraItems: extraItems.length,
+      divergenceCount: divergenceCount,
+      accuracyPercent: originalItems.length ? Math.round((correctItems / originalItems.length) * 100) : 0
+    };
+  }
+
+  function renderConferences() {
+    if (!$("conferencias")) return;
+    renderConferenceTabVisibility();
+    renderConferenceSelects();
+    renderConferencePanel();
+    renderMyConferences();
+    renderFinalizedConferences();
+    renderConferencePreview();
+    renderConferenceWork();
+  }
+
+  function renderConferenceTabVisibility() {
+    var workVisible = $("conferenceWorkSection") && !$("conferenceWorkSection").hidden;
+    document.querySelectorAll(".conference-tab").forEach(function (button) {
+      var target = button.dataset.conferenceTab;
+      var visible = target === "myConferencesSection" || isAdminOrSupervisor();
+      button.hidden = !visible;
+      if (button.classList.contains("active") && !visible) activateConferenceTab("myConferencesSection");
+    });
+    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR") activateConferenceTab("myConferencesSection");
+  }
+
+  function activateConferenceTab(sectionId) {
+    document.querySelectorAll(".conference-section").forEach(function (section) {
+      section.hidden = section.id !== sectionId;
+    });
+    document.querySelectorAll(".conference-tab").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.conferenceTab === sectionId);
+    });
+  }
+
+  function renderConferenceSelects() {
+    if (!$("conferenceResponsibleInput")) return;
+    var users = authState.users.filter(function (user) {
+      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
+    });
+    var options = "<option value=\"\">Selecionar responsável</option>" + users.map(function (user) {
+      return "<option value=\"" + user.id + "\">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+    }).join("");
+    ["conferenceResponsibleInput", "conferenceResponsibleFilter"].forEach(function (id) {
+      var select = $(id);
+      if (!select) return;
+      var selected = select.value;
+      select.innerHTML = id === "conferenceResponsibleFilter" ? "<option value=\"\">Todos</option>" + options.replace("<option value=\"\">Selecionar responsável</option>", "") : options;
+      select.value = selected;
+    });
+    var statusSelect = $("conferenceStatusFilter");
+    if (statusSelect) {
+      var status = statusSelect.value;
+      statusSelect.innerHTML = "<option value=\"\">Todos</option>" + CONFERENCE_STATUSES.map(function (item) {
+        return "<option value=\"" + item + "\">" + item + "</option>";
+      }).join("");
+      statusSelect.value = status;
+    }
+  }
+
+  function renderConferencePanel() {
+    if (!$("conferencePanelRows")) return;
+    if (!isAdminOrSupervisor()) {
+      $("conferencePanelRows").innerHTML = "";
+      return;
+    }
+    var status = $("conferenceStatusFilter").value;
+    var responsible = $("conferenceResponsibleFilter").value;
+    var query = normalizeText($("conferenceQueryFilter").value).toLowerCase();
+    var conferences = getVisibleConferences().filter(function (conference) {
+      if (status && conference.status !== status) return false;
+      if (responsible && conference.assignedToId !== responsible) return false;
+      if (query) {
+        var haystack = [conference.name, conference.documentNumber, conference.xmlKey, conference.issuerName, conference.recipientName, conference.assignedToName].join(" ").toLowerCase();
+        if (haystack.indexOf(query) === -1) return false;
+      }
+      return true;
+    });
+    $("conferencePanelRows").innerHTML = conferences.length ? conferences.map(conferencePanelRowHtml).join("") : "<tr><td colspan=\"8\">Nenhuma conferência encontrada.</td></tr>";
+  }
+
+  function conferencePanelRowHtml(conference) {
+    var stats = getConferenceStats(conference.id);
+    return [
+      "<tr>",
+      "<td><strong>" + escapeHtml(conference.name || conference.documentNumber || "-") + "</strong><br><span class=\"muted\">" + escapeHtml(conference.documentNumber || conference.xmlKey || "-") + "</span></td>",
+      "<td><span>" + escapeHtml(conference.issuerName || "-") + "</span><br><span class=\"muted\">" + escapeHtml(conference.recipientName || "-") + "</span></td>",
+      "<td>" + escapeHtml(conference.assignedToName || "-") + "</td>",
+      "<td><span class=\"status-badge " + (isFinalConferenceStatus(conference.status) ? "active" : "pending") + "\">" + escapeHtml(conference.status) + "</span></td>",
+      "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.accuracyPercent + "%\"></span></div><span>" + stats.accuracyPercent + "%</span></div></td>",
+      "<td>" + stats.divergenceCount + "</td>",
+      "<td>Criada: " + formatDateTime(conference.createdAt) + "<br><span class=\"muted\">Fim: " + formatDateTime(conference.finishedAt) + "</span></td>",
+      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-conference-open=\"" + conference.id + "\" type=\"button\">Ver detalhes</button><button class=\"secondary-button\" data-conference-export=\"" + conference.id + "\" type=\"button\">Exportar</button><button class=\"remove-small\" data-conference-cancel=\"" + conference.id + "\" type=\"button\">Cancelar</button></div></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function renderMyConferences() {
+    if (!$("myConferencesList")) return;
+    var active = getVisibleConferences().filter(function (conference) {
+      return !isFinalConferenceStatus(conference.status);
+    });
+    $("myConferencesList").innerHTML = active.length ? active.map(conferenceCardHtml).join("") : "<div class=\"empty-state\">Nenhuma conferência pendente.</div>";
+  }
+
+  function renderFinalizedConferences() {
+    if (!$("finalizedConferencesList")) return;
+    var completed = getVisibleConferences().filter(function (conference) {
+      return isFinalConferenceStatus(conference.status);
+    });
+    $("finalizedConferencesList").innerHTML = completed.length ? completed.map(conferenceCardHtml).join("") : "<div class=\"empty-state\">Nenhuma conferência finalizada.</div>";
+  }
+
+  function conferenceCardHtml(conference) {
+    var stats = getConferenceStats(conference.id);
+    var action = isFinalConferenceStatus(conference.status) ? "Ver resultado" : conference.status === "PENDENTE" || conference.status === "ATRIBUIDA" ? "Iniciar Conferência" : "Continuar";
+    return [
+      "<article class=\"transfer-card\">",
+      "<span class=\"eyebrow\">Conferência XML</span>",
+      "<h3>" + escapeHtml(conference.name || conference.documentNumber || "-") + "</h3>",
+      "<span>Emitente: " + escapeHtml(conference.issuerName || "-") + "</span>",
+      "<span>Destinatário: " + escapeHtml(conference.recipientName || "-") + "</span>",
+      "<span>Status: " + escapeHtml(conference.status) + "</span>",
+      "<span>SKUs: " + stats.totalItems + " | Divergências: " + stats.divergenceCount + "</span>",
+      "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.accuracyPercent + "%\"></span></div><span>" + stats.accuracyPercent + "%</span></div>",
+      "<button class=\"primary-button\" data-conference-open=\"" + conference.id + "\" type=\"button\">" + action + "</button>",
+      "</article>"
+    ].join("");
+  }
+
+  async function previewConferenceXml() {
+    var file = $("conferenceXmlInput").files && $("conferenceXmlInput").files[0];
+    if (!file) {
+      setStatus("newConferenceStatus", "Selecione um XML para pré-visualizar.", "error");
+      return;
+    }
+    try {
+      var text = await file.text();
+      var parsed = parseConferenceXml(text);
+      if (!parsed.items.length) throw new Error("XML inválido ou sem itens reconhecidos.");
+      conferenceState.preview = parsed;
+      renderConferencePreview();
+      setStatus("newConferenceStatus", "XML lido com " + parsed.items.length + " item(ns).", "success");
+    } catch (error) {
+      conferenceState.preview = null;
+      renderConferencePreview();
+      setStatus("newConferenceStatus", "XML inválido ou sem itens reconhecidos.", "error");
+    }
+  }
+
+  function parseConferenceXml(xmlText) {
+    var doc = new DOMParser().parseFromString(xmlText, "application/xml");
+    if (xmlNodes(doc, "parsererror").length) throw new Error("XML inválido.");
+    var ide = xmlFirst(doc, "ide");
+    var emit = xmlFirst(doc, "emit");
+    var dest = xmlFirst(doc, "dest");
+    var infNfe = xmlFirst(doc, "infNFe");
+    var note = {
+      key: infNfe && infNfe.getAttribute ? (infNfe.getAttribute("Id") || "").replace(/^NFe/, "") : xmlTextValue(xmlFirst(doc, "chNFe")),
+      number: xmlTextValue(xmlFirst(ide, "nNF")) || xmlTextValue(xmlFirst(doc, "nNF")),
+      series: xmlTextValue(xmlFirst(ide, "serie")),
+      issuedAt: xmlTextValue(xmlFirst(ide, "dhEmi")),
+      issuerName: xmlTextValue(xmlFirst(emit, "xNome")),
+      issuerCnpj: xmlTextValue(xmlFirst(emit, "CNPJ")),
+      recipientName: xmlTextValue(xmlFirst(dest, "xNome")),
+      recipientCnpj: xmlTextValue(xmlFirst(dest, "CNPJ"))
+    };
+    var aggregate = {};
+    xmlNodes(doc, "det").forEach(function (det) {
+      var prod = xmlFirst(det, "prod");
+      if (!prod) return;
+      var rawCode = xmlTextValue(xmlFirst(prod, "cProd"));
+      var sku = normalizeSku(rawCode) || normalizeText(rawCode);
+      var qty = parseXmlQuantity(xmlTextValue(xmlFirst(prod, "qCom")) || xmlTextValue(xmlFirst(prod, "qTrib")));
+      if (!sku || qty <= 0) return;
+      var ean = normalizeText(xmlTextValue(xmlFirst(prod, "cEAN")) || xmlTextValue(xmlFirst(prod, "cEANTrib")));
+      if (!aggregate[sku]) {
+        aggregate[sku] = {
+          sku: sku,
+          code: sku,
+          originalCode: rawCode,
+          ean: ean,
+          description: xmlTextValue(xmlFirst(prod, "xProd")),
+          unit: xmlTextValue(xmlFirst(prod, "uCom")) || xmlTextValue(xmlFirst(prod, "uTrib")) || "UN",
+          unitValue: parseXmlQuantity(xmlTextValue(xmlFirst(prod, "vUnCom"))),
+          quantity: 0
+        };
+      }
+      aggregate[sku].quantity += qty;
+      if (ean && !aggregate[sku].ean) aggregate[sku].ean = ean;
+    });
+    return { note: note, items: Object.keys(aggregate).map(function (sku) { return aggregate[sku]; }) };
+  }
+
+  function renderConferencePreview() {
+    if (!$("conferencePreviewRows")) return;
+    var parsed = conferenceState.preview;
+    if (!parsed) {
+      $("conferencePreviewSummary").innerHTML = "";
+      $("conferencePreviewRows").innerHTML = "<tr><td colspan=\"5\">Nenhum XML carregado.</td></tr>";
+      return;
+    }
+    var totalQty = parsed.items.reduce(function (sum, item) { return sum + Number(item.quantity || 0); }, 0);
+    $("conferencePreviewSummary").innerHTML = [
+      summaryChip("Número", parsed.note.number || "-"),
+      summaryChip("Emitente", parsed.note.issuerName || "-"),
+      summaryChip("Destinatário", parsed.note.recipientName || "-"),
+      summaryChip("SKUs", parsed.items.length + " / " + formatQty(totalQty))
+    ].join("");
+    $("conferencePreviewRows").innerHTML = parsed.items.map(function (item) {
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.quantity) + "</td><td>" + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.ean || "-") + "</td></tr>";
+    }).join("");
+  }
+
+  async function createConferenceFromForm(event) {
+    event.preventDefault();
+    if (!isAdminOrSupervisor()) return;
+    if (!conferenceState.preview) await previewConferenceXml();
+    var parsed = conferenceState.preview;
+    var responsible = authState.users.find(function (user) { return user.id === $("conferenceResponsibleInput").value; });
+    if (!parsed || !parsed.items.length) {
+      setStatus("newConferenceStatus", "XML inválido ou sem itens reconhecidos.", "error");
+      return;
+    }
+    if (!responsible) {
+      setStatus("newConferenceStatus", "Responsável obrigatório.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var note = parsed.note || {};
+    var conferenceId = "conf-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    var name = normalizeText($("conferenceNameInput").value) || ("XML " + (note.number || dateForFileName(new Date())));
+    var totalQty = parsed.items.reduce(function (sum, item) { return sum + Number(item.quantity || 0); }, 0);
+    var conference = {
+      id: conferenceId,
+      name: name,
+      documentType: $("conferenceDocTypeInput").value || "XML_NFE",
+      xmlKey: note.key || "",
+      documentNumber: note.number || "",
+      series: note.series || "",
+      issuerCnpj: note.issuerCnpj || "",
+      issuerName: note.issuerName || "",
+      recipientCnpj: note.recipientCnpj || "",
+      recipientName: note.recipientName || "",
+      assignedToId: responsible.id,
+      assignedToName: responsible.name,
+      createdById: authState.currentUser.id,
+      createdByName: authState.currentUser.name,
+      status: "ATRIBUIDA",
+      totalItems: parsed.items.length,
+      totalExpectedQuantity: totalQty,
+      notes: normalizeText($("conferenceNotesInput").value),
+      payload: { note: note },
+      createdAt: now,
+      updatedAt: now
+    };
+    var items = parsed.items.map(function (item) {
+      return {
+        id: "citem-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        conferenceId: conferenceId,
+        sku: item.sku,
+        ean: item.ean || "",
+        code: item.code || item.sku,
+        description: item.description || "",
+        unit: item.unit || "UN",
+        expectedQty: Number(item.quantity || 0),
+        checkedQty: 0,
+        difference: -Number(item.quantity || 0),
+        status: "PENDENTE",
+        payload: { originalCode: item.originalCode || "", unitValue: item.unitValue || 0 },
+        createdAt: now,
+        updatedAt: now
+      };
+    });
+    var response = await supabaseDb.from("wms_conferences").insert(toDbConference(conference));
+    if (response.error) {
+      setStatus("newConferenceStatus", "Erro ao criar conferência: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await upsertInChunks("wms_conference_items", items.map(toDbConferenceItem), "id");
+    await recordConferenceEvent(conferenceId, "", "CONFERENCE_CREATED", "", items.length, "Conferência criada pelo XML.", { itemCount: items.length, note: note });
+    await recordConferenceEvent(conferenceId, "", "CONFERENCE_ASSIGNED", "", 0, "Conferência atribuída para " + responsible.name + ".", { assignedUserId: responsible.id, assignedUserName: responsible.name });
+    conferenceState.preview = null;
+    $("newConferenceForm").reset();
+    await loadConferenceData();
+    renderConferences();
+    setStatus("newConferenceStatus", "Conferência criada e atribuída para " + responsible.name + ".", "success");
+  }
+
+  function markConferenceScanInput() {
+    var value = $("conferenceScanInput").value || "";
+    if (!value) {
+      conferenceState.scanInputStartedAt = 0;
+      conferenceState.lastScanInputAt = 0;
+      return;
+    }
+    if (!conferenceState.scanInputStartedAt) conferenceState.scanInputStartedAt = Date.now();
+    conferenceState.lastScanInputAt = Date.now();
+  }
+
+  function detectConferenceInputType() {
+    var value = $("conferenceScanInput").value || "";
+    var elapsed = conferenceState.scanInputStartedAt ? Date.now() - conferenceState.scanInputStartedAt : 9999;
+    return value.length >= 5 && elapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
+  }
+
+  function clearConferenceInputs() {
+    conferenceState.selectedItemId = "";
+    conferenceState.scanInputStartedAt = 0;
+    conferenceState.lastScanInputAt = 0;
+    $("conferenceScanInput").value = "";
+    $("conferenceQtyInput").value = "";
+  }
+
+  async function openConferenceWork(id) {
+    var conference = getConferenceById(id);
+    if (!conference) return;
+    if (!isAdminOrSupervisor() && conference.assignedToId !== authState.currentUser.id) {
+      showToast("Você não tem acesso a esta conferência.", "error");
+      return;
+    }
+    conferenceState.activeConferenceId = id;
+    conferenceState.selectedItemId = "";
+    if (conference.status === "PENDENTE" || conference.status === "ATRIBUIDA") {
+      await updateConferenceStatus(conference, "EM_CONFERENCIA", { started_at: new Date().toISOString() }, "CONFERENCE_STARTED");
+      await loadConferenceData();
+    }
+    activateConferenceTab("conferenceWorkSection");
+    renderConferences();
+    setStatus("conferenceWorkStatus", "Bipe o SKU/EAN e informe a quantidade.", "warning");
+    window.setTimeout(function () { $("conferenceScanInput").focus(); }, 80);
+  }
+
+  async function updateConferenceStatus(conference, status, extra, eventType) {
+    var now = new Date().toISOString();
+    var update = Object.assign({ status: status, updated_at: now }, extra || {});
+    var response = await supabaseDb.from("wms_conferences").update(update).eq("id", conference.id);
+    if (response.error) throw response.error;
+    conference.status = status;
+    conference.updatedAt = now;
+    if (update.started_at) conference.startedAt = update.started_at;
+    if (update.finished_at) conference.finishedAt = update.finished_at;
+    if (eventType) await recordConferenceEvent(conference.id, "", eventType, "", 0, status, {});
+  }
+
+  function findConferenceItemByCode(conferenceId, code) {
+    var normalized = normalizeSku(code) || normalizeText(code);
+    var key = normalizeSkuKey(normalized);
+    var raw = normalizeText(code);
+    return getConferenceItems(conferenceId).find(function (item) {
+      return normalizeSkuKey(item.sku) === key || normalizeSkuKey(item.code) === key || normalizeText(item.ean) === raw || normalizeText(item.ean) === normalizeText(normalized);
+    });
+  }
+
+  function locateConferenceItem() {
+    var conference = getConferenceById(conferenceState.activeConferenceId);
+    if (!conference || isFinalConferenceStatus(conference.status)) return;
+    var code = normalizeText($("conferenceScanInput").value);
+    if (!code) {
+      setStatus("conferenceWorkStatus", "Informe ou bipe um código.", "error");
+      return;
+    }
+    var item = findConferenceItemByCode(conference.id, code);
+    if (!item) {
+      conferenceState.selectedItemId = "";
+      renderConferenceCurrentItem(null, code);
+      setStatus("conferenceWorkStatus", "Este item não consta no XML. Informe a quantidade e confirme para decidir se registra como extra.", "warning");
+      $("conferenceQtyInput").focus();
+      return;
+    }
+    conferenceState.selectedItemId = item.id;
+    $("conferenceScanInput").value = item.sku;
+    renderConferenceCurrentItem(item);
+    setStatus("conferenceWorkStatus", "Item localizado. Informe a quantidade conferida.", "success");
+    $("conferenceQtyInput").focus();
+  }
+
+  function renderConferenceCurrentItem(item, code) {
+    if (!$("conferenceCurrentItem")) return;
+    if (!item) {
+      $("conferenceCurrentItem").innerHTML = code ? "<strong>" + escapeHtml(code) + "</strong><span>Item fora do XML.</span>" : "<strong>Aguardando bipagem</strong><span>Bipe SKU/EAN e informe a quantidade.</span>";
+      return;
+    }
+    var pending = Math.max(0, Number(item.expectedQty || 0) - Number(item.checkedQty || 0));
+    $("conferenceCurrentItem").innerHTML = [
+      "<strong>" + escapeHtml(item.sku || item.code || "-") + "</strong>",
+      "<span>" + escapeHtml(item.description || "-") + "</span>",
+      "<div class=\"current-item-meta\"><div><span>Conferida</span><b>" + formatQty(item.checkedQty) + "</b></div><div><span>Pendente</span><b>" + formatQty(pending) + "</b></div></div>"
+    ].join("");
+  }
+
+  async function confirmConferenceItem() {
+    var conference = getConferenceById(conferenceState.activeConferenceId);
+    if (!conference || isFinalConferenceStatus(conference.status)) return;
+    var code = normalizeText($("conferenceScanInput").value);
+    var qty = parseQuantity($("conferenceQtyInput").value);
+    if (!code) {
+      setStatus("conferenceWorkStatus", "Bipe um código antes de confirmar.", "error");
+      $("conferenceScanInput").focus();
+      return;
+    }
+    if (!qty || qty <= 0) {
+      setStatus("conferenceWorkStatus", "Informe uma quantidade maior que zero.", "error");
+      $("conferenceQtyInput").focus();
+      return;
+    }
+    var item = conferenceState.items.find(function (entry) { return entry.id === conferenceState.selectedItemId; }) || findConferenceItemByCode(conference.id, code);
+    var inputType = detectConferenceInputType();
+    if (!item) {
+      await handleConferenceUnknownItem(conference, code, qty, inputType);
+      return;
+    }
+    item.checkedQty = Number(item.checkedQty || 0) + qty;
+    updateConferenceItemComputedStatus(item);
+    var response = await supabaseDb.from("wms_conference_items").update(toDbConferenceItem(item)).eq("id", item.id);
+    if (response.error) throw response.error;
+    await recordConferenceEvent(conference.id, item.id, inputType === "BIPAGEM" ? "ITEM_SCANNED" : "ITEM_TYPED", code, qty, "Quantidade conferida.", {
+      sku: item.sku,
+      ean: item.ean,
+      inputType: inputType,
+      divergenceType: item.divergenceType || ""
+    });
+    await updateConferenceTotals(conference);
+    await loadConferenceData();
+    conferenceState.activeConferenceId = conference.id;
+    clearConferenceInputs();
+    renderConferences();
+    setStatus("conferenceWorkStatus", "Quantidade registrada.", item.divergenceType ? "warning" : "success");
+    $("conferenceScanInput").focus();
+  }
+
+  async function handleConferenceUnknownItem(conference, code, qty, inputType) {
+    var ok = window.confirm("Este item não consta no XML. Deseja registrar como item extra?");
+    if (!ok) {
+      await recordConferenceEvent(conference.id, "", "UNKNOWN_CODE_CANCELLED", code, 0, "Código fora do XML cancelado.", { inputType: inputType, divergenceType: "CODIGO_NAO_RECONHECIDO" });
+      clearConferenceInputs();
+      renderConferences();
+      $("conferenceScanInput").focus();
+      return;
+    }
+    var description = findProductName(normalizeSku(code)) || normalizeText(window.prompt("Descrição do item extra:", "Item extra") || "Item extra");
+    var observation = normalizeText(window.prompt("Observação do item extra:", "Item não consta no XML") || "");
+    var now = new Date().toISOString();
+    var sku = normalizeSku(code) || code;
+    var item = {
+      id: "citem-extra-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      conferenceId: conference.id,
+      sku: sku,
+      code: sku,
+      ean: /^\d{8,14}$/.test(code) ? code : "",
+      description: description,
+      unit: "UN",
+      expectedQty: 0,
+      checkedQty: qty,
+      difference: qty,
+      status: "DIVERGENTE",
+      divergenceType: "ITEM_EXTRA",
+      isExtra: true,
+      observation: observation,
+      createdAt: now,
+      updatedAt: now
+    };
+    var response = await supabaseDb.from("wms_conference_items").insert(toDbConferenceItem(item));
+    if (response.error) throw response.error;
+    await recordConferenceEvent(conference.id, item.id, "ITEM_EXTRA", code, qty, "Item extra registrado.", {
+      sku: sku,
+      ean: item.ean,
+      inputType: inputType,
+      divergenceType: "ITEM_EXTRA",
+      observation: observation
+    });
+    await updateConferenceTotals(conference);
+    await loadConferenceData();
+    conferenceState.activeConferenceId = conference.id;
+    clearConferenceInputs();
+    renderConferences();
+    setStatus("conferenceWorkStatus", "Item extra registrado como divergência.", "warning");
+    $("conferenceScanInput").focus();
+  }
+
+  function updateConferenceItemComputedStatus(item) {
+    var expected = Number(item.expectedQty || 0);
+    var checked = Number(item.checkedQty || 0);
+    item.difference = checked - expected;
+    item.updatedAt = new Date().toISOString();
+    if (item.isExtra) {
+      item.status = "DIVERGENTE";
+      item.divergenceType = "ITEM_EXTRA";
+      return;
+    }
+    if (Math.abs(item.difference) < 0.0001) {
+      item.status = "OK";
+      item.divergenceType = "";
+    } else if (item.difference < 0) {
+      item.status = checked > 0 ? "PARCIAL" : "PENDENTE";
+      item.divergenceType = "FALTA_DE_ITEM";
+    } else {
+      item.status = "DIVERGENTE";
+      item.divergenceType = "QUANTIDADE_EXCEDENTE";
+    }
+  }
+
+
+
+
+  async function updateConferenceTotals(conference) {
+    var stats = getConferenceStats(conference.id);
+    var response = await supabaseDb.from("wms_conferences").update({
+      updated_at: new Date().toISOString(),
+      total_items: stats.totalItems,
+      total_expected_quantity: stats.totalExpectedQuantity,
+      total_checked_quantity: stats.totalCheckedQuantity,
+      correct_items: stats.correctItems,
+      divergence_count: stats.divergenceCount,
+      accuracy_percent: stats.accuracyPercent
+    }).eq("id", conference.id);
+    if (response.error) throw response.error;
+  }
+
+  function isConferenceItemDivergent(item) {
+    return item.isExtra || item.divergenceType || Math.abs(Number(item.difference || 0)) > 0.0001;
+  }
+
+  function renderConferenceWork() {
+    if (!$("conferenceWorkSection")) return;
+    var conference = getConferenceById(conferenceState.activeConferenceId);
+    if (!conference) {
+      $("conferenceWorkSection").hidden = true;
+      return;
+    }
+    var items = getConferenceItems(conference.id);
+    var stats = getConferenceStats(conference.id);
+    var finalized = isFinalConferenceStatus(conference.status);
+    $("conferenceWorkTitle").textContent = "Conferência - " + (conference.name || conference.documentNumber || "-");
+    $("conferenceWorkSummary").innerHTML = [
+      "<div><span>Emitente</span><strong>" + escapeHtml(conference.issuerName || "-") + "</strong></div>",
+      "<div><span>Destinatário</span><strong>" + escapeHtml(conference.recipientName || "-") + "</strong></div>",
+      "<div><span>Status</span><strong>" + escapeHtml(conference.status) + "</strong></div>",
+      "<div><span>Acerto</span><strong>" + stats.accuracyPercent + "%</strong></div>"
+    ].join("");
+    $("conferenceScanInput").disabled = finalized;
+    $("conferenceQtyInput").disabled = finalized;
+    $("confirmConferenceItemButton").hidden = finalized;
+    $("finishConferenceButton").hidden = finalized;
+    $("recheckConferenceButton").hidden = finalized || !stats.divergenceCount;
+    renderConferenceCurrentItem(conferenceState.items.find(function (entry) { return entry.id === conferenceState.selectedItemId; }));
+    var visibleItems = conferenceState.recheckOnly ? items.filter(isConferenceItemDivergent) : items;
+    var pending = visibleItems.filter(function (item) { return !item.isExtra && Number(item.checkedQty || 0) < Number(item.expectedQty || 0); });
+    var divergences = visibleItems.filter(isConferenceItemDivergent);
+    $("conferencePendingRows").innerHTML = pending.length ? pending.map(function (item) {
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.expectedQty) + "</td><td>" + formatQty(item.checkedQty) + "</td><td>" + formatQty(Math.max(0, item.expectedQty - item.checkedQty)) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"5\">Nenhum item pendente.</td></tr>";
+    $("conferenceDivergenceRows").innerHTML = divergences.length ? divergences.map(function (item) {
+      return "<tr><td>" + escapeHtml(item.divergenceType || "-") + "</td><td>" + escapeHtml(item.sku || item.code || "-") + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.expectedQty) + "</td><td>" + formatQty(item.checkedQty) + "</td><td>" + formatQty(item.difference) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"6\">Nenhuma divergência.</td></tr>";
+    $("conferenceFinalSummary").innerHTML = "<div class=\"conference-result-ok\"><strong>" + stats.correctItems + " de " + stats.totalItems + " corretos</strong><br>Faltas: " + stats.missingItems + " | Sobras: " + stats.excessItems + " | Extras: " + stats.extraItems + "</div>";
+  }
+
+  async function startConferenceRecheck() {
+    var conference = getConferenceById(conferenceState.activeConferenceId);
+    if (!conference) return;
+    conferenceState.recheckOnly = true;
+    if (conference.status !== "AGUARDANDO_RECONFERENCIA") {
+      await updateConferenceStatus(conference, "AGUARDANDO_RECONFERENCIA", {}, "RECHECK_STARTED");
+      await loadConferenceData();
+      conferenceState.activeConferenceId = conference.id;
+    }
+    renderConferences();
+    setStatus("conferenceWorkStatus", "Reconferência ativada. A tela mostra somente itens divergentes.", "warning");
+    $("conferenceScanInput").focus();
+  }
+
+  async function finishConference() {
+    var conference = getConferenceById(conferenceState.activeConferenceId);
+    if (!conference) return;
+    getConferenceItems(conference.id).forEach(updateConferenceItemComputedStatus);
+    var stats = getConferenceStats(conference.id);
+    if (!stats.divergenceCount) {
+      if (!window.confirm("Conferência 100% correta. Deseja finalizar?")) return;
+      await finalizeConference(conference, "CONFERENCIA_APROVADA", "CORRETA");
+      return;
+    }
+    var recheck = window.confirm("Existem divergências nesta conferência.\nOK = Reconferir somente divergências\nCancelar = Finalizar com divergência");
+    if (recheck) {
+      await startConferenceRecheck();
+      return;
+    }
+    if (!window.confirm("Finalizar com divergência e enviar para análise do líder?")) return;
+    await saveConferenceDivergences(conference);
+    await finalizeConference(conference, "CONFERENCIA_COM_DIVERGENCIA", "COM_DIVERGENCIA");
+  }
+
+  async function finalizeConference(conference, status, result) {
+    var stats = getConferenceStats(conference.id);
+    var now = new Date().toISOString();
+    var response = await supabaseDb.from("wms_conferences").update({
+      status: status,
+      finished_at: now,
+      duration_seconds: secondsBetween(conference.startedAt || conference.createdAt, now),
+      total_items: stats.totalItems,
+      total_expected_quantity: stats.totalExpectedQuantity,
+      total_checked_quantity: stats.totalCheckedQuantity,
+      correct_items: stats.correctItems,
+      divergence_count: stats.divergenceCount,
+      accuracy_percent: stats.accuracyPercent,
+      final_result: result,
+      updated_at: now
+    }).eq("id", conference.id);
+    if (response.error) throw response.error;
+    await recordConferenceEvent(conference.id, "", "CONFERENCE_FINISHED", "", stats.totalCheckedQuantity, status, { stats: stats, finalResult: result });
+    await loadConferenceData();
+    conferenceState.activeConferenceId = conference.id;
+    conferenceState.recheckOnly = false;
+    renderConferences();
+    setStatus("conferenceWorkStatus", status === "CONFERENCIA_APROVADA" ? "Conferência finalizada sem divergência." : "Conferência finalizada com divergência.", status === "CONFERENCIA_APROVADA" ? "success" : "warning");
+  }
+
+  async function saveConferenceDivergences(conference) {
+    var items = getConferenceItems(conference.id).filter(isConferenceItemDivergent);
+    for (var i = 0; i < items.length; i += 1) {
+      var item = items[i];
+      var response = await supabaseDb.from("wms_conference_divergences").insert({
+        id: "cdvg-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        conference_id: conference.id,
+        item_id: item.id,
+        sku: item.sku || "",
+        ean: item.ean || "",
+        descricao: item.description || "",
+        divergence_type: item.divergenceType || "QUANTIDADE_DIVERGENTE",
+        expected_quantity: Number(item.expectedQty || 0),
+        checked_quantity: Number(item.checkedQty || 0),
+        difference_quantity: Number(item.difference || 0),
+        user_id: authState.currentUser.id,
+        user_name: authState.currentUser.name,
+        resolved: false,
+        observation: item.observation || "",
+        payload: {}
+      });
+      if (response.error && !isMissingConferenceTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+    }
+  }
+
+  async function handleConferenceActionClick(event) {
+    var button = event.target.closest("button");
+    if (!button) return;
+    if (button.dataset.conferenceOpen) await openConferenceWork(button.dataset.conferenceOpen);
+    if (button.dataset.conferenceCancel) await cancelConference(button.dataset.conferenceCancel);
+    if (button.dataset.conferenceExport) exportConferenceReport(button.dataset.conferenceExport);
+  }
+
+  async function cancelConference(id) {
+    if (!isAdminOrSupervisor()) return;
+    var conference = getConferenceById(id);
+    if (!conference || !window.confirm("Cancelar a conferência " + (conference.name || conference.documentNumber || id) + "?")) return;
+    await updateConferenceStatus(conference, "CANCELADA", {}, "CONFERENCE_CANCELLED");
+    await loadConferenceData();
+    renderConferences();
+    showToast("Conferência cancelada.", "success");
+  }
+
+  function exportConferenceReport(id) {
+    var conference = getConferenceById(id);
+    if (!conference || !window.XLSX) return;
+    var items = getConferenceItems(id);
+    var events = conferenceState.events.filter(function (event) { return event.conference_id === id; });
+    var stats = getConferenceStats(id);
+    var workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{ Conferencia: conference.name, Numero: conference.documentNumber, Chave: conference.xmlKey, Emitente: conference.issuerName, Destinatario: conference.recipientName, Responsavel: conference.assignedToName, Status: conference.status, Acerto: stats.accuracyPercent + "%", Divergencias: stats.divergenceCount, Inicio: formatDateTime(conference.startedAt), Fim: formatDateTime(conference.finishedAt) }]), "Resumo");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(items.map(function (item) { return { SKU: item.sku, EAN: item.ean, Produto: item.description, "Qtd XML": item.expectedQty, "Qtd conferida": item.checkedQty, Diferenca: item.difference, Status: item.status, Divergencia: item.divergenceType, Extra: item.isExtra ? "Sim" : "Nao" }; })), "Itens");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(items.filter(isConferenceItemDivergent).map(function (item) { return { Tipo: item.divergenceType, SKU: item.sku, Produto: item.description, Esperado: item.expectedQty, Conferido: item.checkedQty, Diferenca: item.difference, Obs: item.observation }; })), "Divergencias");
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(events.map(function (event) { return { Data: formatDateTime(event.created_at), Usuario: event.user_name, Evento: event.event_type, Codigo: event.codigo_informado, SKU: event.sku, Quantidade: event.quantidade, Entrada: event.input_type, Obs: event.observation }; })), "Linha do tempo");
+    XLSX.writeFile(workbook, "Conferencia_" + (conference.documentNumber || conference.name || id).replace(/[^a-z0-9_-]/gi, "_") + "_" + dateForFileName(new Date()) + ".xlsx");
   }
 
   function renderTransfers() {
@@ -2145,6 +3110,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     document.querySelectorAll(".transfer-tab").forEach(function (button) {
       var target = button.dataset.transferTab;
       var visible = target === "myTransfersSection" || isAdminOrSupervisor();
+      if (target === "transferConferenceSection") visible = false;
       if (target === "establishmentsSection") visible = isAdmin();
       button.hidden = !visible;
       if (button.classList.contains("active") && !visible) activateTransferTab("myTransfersSection");
@@ -5118,6 +6084,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     );
   }
 
+  function isMissingConferenceTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return (
+      message.indexOf("wms_conferences") >= 0 ||
+      message.indexOf("wms_conference_items") >= 0 ||
+      message.indexOf("wms_conference_events") >= 0 ||
+      message.indexOf("wms_conference_divergences") >= 0
+    ) && (
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0
+    );
+  }
+
   function isMissingColumnError(error) {
     var message = formatSupabaseError(error).toLowerCase();
     return (
@@ -5128,7 +6110,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfers") >= 0 ||
       message.indexOf("wms_transfer_items") >= 0 ||
       message.indexOf("wms_transfer_events") >= 0 ||
-      message.indexOf("wms_transfer_divergences") >= 0
+      message.indexOf("wms_transfer_divergences") >= 0 ||
+      message.indexOf("wms_conferences") >= 0 ||
+      message.indexOf("wms_conference_items") >= 0 ||
+      message.indexOf("wms_conference_events") >= 0 ||
+      message.indexOf("wms_conference_divergences") >= 0
     );
   }
 

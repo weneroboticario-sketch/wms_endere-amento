@@ -88,6 +88,7 @@
         <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
         <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
         <button class="menu-item transfer-full-menu" data-screen="transferencias" type="button">Transferências</button>
+        <button class="menu-item" data-screen="conferencias" type="button">Conferências <span class="menu-badge" id="conferenceMenuBadge" hidden>0</span></button>
         <button class="menu-item task-menu-item" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         <button class="menu-item" data-screen="historico" type="button">Histórico</button>
         <button class="menu-item admin-only" data-screen="usuarios" type="button">Usuários</button>
@@ -397,7 +398,7 @@
           <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
-          <button class="secondary-button transfer-tab" data-transfer-tab="transferConferenceSection" type="button">Conferência XML</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="transferConferenceSection" type="button" hidden>Conferência XML</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="finalizedTransfersSection" type="button">Finalizadas</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
         </div>
@@ -711,6 +712,160 @@
               </div>
             </section>
           </div>
+        </section>
+      </section>
+
+      <section class="screen" id="conferencias">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Conferência de recebimento</p>
+            <h2>Conferências</h2>
+          </div>
+        </div>
+
+        <div class="transfer-tabs">
+          <button class="secondary-button conference-tab active" data-conference-tab="conferencePanelSection" type="button">Painel</button>
+          <button class="secondary-button conference-tab" data-conference-tab="newConferenceSection" type="button">Nova Conferência</button>
+          <button class="secondary-button conference-tab" data-conference-tab="myConferencesSection" type="button">Minhas Conferências</button>
+          <button class="secondary-button conference-tab" data-conference-tab="finalizedConferencesSection" type="button">Finalizadas</button>
+        </div>
+
+        <section class="conference-section" id="conferencePanelSection">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Painel de Conferências</h3>
+            </div>
+            <div class="dashboard-layout transfer-filters">
+              <label>Status<select id="conferenceStatusFilter"></select></label>
+              <label>Responsável<select id="conferenceResponsibleFilter"></select></label>
+              <label>Busca<input id="conferenceQueryFilter" type="search" placeholder="Nota, emitente, destinatário"></label>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Conferência</th>
+                    <th>Emitente / Destinatário</th>
+                    <th>Responsável</th>
+                    <th>Status</th>
+                    <th>Acerto</th>
+                    <th>Divergências</th>
+                    <th>Datas</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="conferencePanelRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="conference-section" id="newConferenceSection" hidden>
+          <div class="dashboard-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Nova Conferência</h3>
+              </div>
+              <form id="newConferenceForm" autocomplete="off">
+                <label for="conferenceNameInput">Nome ou número</label>
+                <input id="conferenceNameInput" type="text" placeholder="Opcional, usa o número do XML se vazio">
+                <label for="conferenceDocTypeInput">Tipo de documento</label>
+                <select id="conferenceDocTypeInput">
+                  <option value="XML_NFE">XML NF-e</option>
+                  <option value="XML_TRANSFERENCIA">XML Transferência</option>
+                </select>
+                <label for="conferenceResponsibleInput">Responsável pela conferência</label>
+                <select id="conferenceResponsibleInput"></select>
+                <label for="conferenceXmlInput">Arquivo XML</label>
+                <input id="conferenceXmlInput" type="file" accept=".xml,text/xml,application/xml">
+                <label for="conferenceNotesInput">Observação</label>
+                <textarea id="conferenceNotesInput" rows="3" placeholder="Opcional"></textarea>
+                <div class="button-row">
+                  <button class="primary-button" id="previewConferenceXmlButton" type="button">Pré-visualizar XML</button>
+                  <button class="primary-button" id="createConferenceButton" type="submit">Criar e atribuir</button>
+                </div>
+                <div id="newConferenceStatus" class="inline-status"></div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Prévia do XML</h3>
+              </div>
+              <div id="conferencePreviewSummary" class="xml-summary"></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Descrição</th>
+                      <th>Qtd XML</th>
+                      <th>Un.</th>
+                      <th>EAN</th>
+                    </tr>
+                  </thead>
+                  <tbody id="conferencePreviewRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="conference-section" id="myConferencesSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Conferências Pendentes</h3>
+            </div>
+            <div id="myConferencesList" class="transfer-card-list"></div>
+          </section>
+        </section>
+
+        <section class="conference-section" id="finalizedConferencesSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Conferências Finalizadas</h3>
+            </div>
+            <div id="finalizedConferencesList" class="transfer-card-list"></div>
+          </section>
+        </section>
+
+        <section class="conference-section" id="conferenceWorkSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3 id="conferenceWorkTitle">Conferência</h3>
+              <button class="secondary-button" id="backToConferencesButton" type="button">Voltar</button>
+            </div>
+            <div id="conferenceWorkSummary" class="transfer-work-summary"></div>
+            <div class="transfer-work-grid">
+              <div class="transfer-scan-panel">
+                <label for="conferenceScanInput">Bipar SKU / EAN / código</label>
+                <input id="conferenceScanInput" class="big-scan-input" type="text" inputmode="text" placeholder="Digite ou bipe o código">
+                <label for="conferenceQtyInput">Quantidade conferida</label>
+                <input id="conferenceQtyInput" type="number" min="0.001" step="0.001" placeholder="Quantidade">
+                <div class="button-row">
+                  <button class="primary-button" id="confirmConferenceItemButton" type="button">Confirmar item</button>
+                  <button class="secondary-button" id="recheckConferenceButton" type="button">Reconferir divergências</button>
+                  <button class="primary-button" id="finishConferenceButton" type="button">Finalizar Conferência</button>
+                </div>
+                <div id="conferenceWorkStatus" class="inline-status"></div>
+              </div>
+              <div class="transfer-live-panel">
+                <span class="eyebrow">Item atual</span>
+                <div id="conferenceCurrentItem" class="current-item-card"></div>
+                <div id="conferenceFinalSummary" class="conference-final-summary"></div>
+              </div>
+            </div>
+            <div class="dashboard-layout">
+              <section class="leader-report-section">
+                <h4>Pendentes</h4>
+                <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>XML</th><th>Bipada</th><th>Falta</th></tr></thead><tbody id="conferencePendingRows"></tbody></table></div>
+              </section>
+              <section class="leader-report-section">
+                <h4>Divergências</h4>
+                <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>SKU</th><th>Produto</th><th>XML</th><th>Bipada</th><th>Dif.</th></tr></thead><tbody id="conferenceDivergenceRows"></tbody></table></div>
+              </section>
+            </div>
+          </section>
         </section>
       </section>
 

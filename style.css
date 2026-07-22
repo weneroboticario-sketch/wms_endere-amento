@@ -1311,6 +1311,22 @@ td {
   margin-top: 6px;
 }
 
+.conference-section[hidden] {
+  display: none;
+}
+
+.conference-final-summary {
+  margin-top: 12px;
+}
+
+.conference-section .leader-report-section {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
 .toast {
   position: fixed;
   right: 22px;
