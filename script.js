@@ -57,6 +57,38 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ["Codigo Material", "Para que o código de material seja considerado válido no processo de endereçamento, é necessário que ele esteja ativo (ou seja, não expirado).", "Não", ""],
     ["Conferencia Obrigatoria", "Conferencia Obrigatoria", "Sim", ""]
   ];
+  var LINHA_SEPARACAO_TEMPLATE = [
+    { rua: 1, rackStart: 1, rackEnd: 1, area: "2", lineEnd: 4, columnEnd: "G" },
+    { rua: 1, rackStart: 2, rackEnd: 10, area: "1", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 1, rackEnd: 1, area: "3", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 2, rackEnd: 2, area: "1", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 3, rackEnd: 3, area: "1", lineEnd: 4, columnEnd: "K" },
+    { rua: 2, rackStart: 4, rackEnd: 4, area: "1", lineEnd: 4, columnEnd: "N" },
+    { rua: 2, rackStart: 5, rackEnd: 7, area: "1", lineEnd: 4, columnEnd: "H" },
+    { rua: 2, rackStart: 8, rackEnd: 9, area: "1", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 10, rackEnd: 10, area: "1", lineEnd: 4, columnEnd: "H" },
+    { rua: 3, rackStart: 1, rackEnd: 1, area: "2", lineEnd: 4, columnEnd: "G" },
+    { rua: 3, rackStart: 2, rackEnd: 2, area: "4", lineEnd: 6, columnEnd: "F" },
+    { rua: 3, rackStart: 3, rackEnd: 3, area: "2", lineEnd: 4, columnEnd: "G" },
+    { rua: 3, rackStart: 4, rackEnd: 4, area: "2", lineEnd: 4, columnEnd: "D" },
+    { rua: 3, rackStart: 5, rackEnd: 9, area: "2", lineEnd: 4, columnEnd: "G" },
+    { rua: 1, rackStart: 11, rackEnd: 14, area: "1", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 11, rackEnd: 11, area: "1", lineEnd: 4, columnEnd: "H" },
+    { rua: 2, rackStart: 12, rackEnd: 12, area: "1", lineEnd: 4, columnEnd: "I" },
+    { rua: 2, rackStart: 13, rackEnd: 13, area: "1", lineEnd: 4, columnEnd: "G" },
+    { rua: 2, rackStart: 14, rackEnd: 14, area: "1", lineEnd: 4, columnEnd: "I" },
+    { rua: 5, rackStart: 1, rackEnd: 4, area: "1", lineEnd: 4, columnEnd: "P" },
+    { rua: 5, rackStart: 5, rackEnd: 5, area: "1", lineEnd: 7, columnEnd: "M" },
+    { rua: 5, rackStart: 6, rackEnd: 6, area: "1", lineEnd: 6, columnEnd: "M" },
+    { rua: 5, rackStart: 7, rackEnd: 8, area: "1", lineEnd: 7, columnEnd: "M" },
+    { rua: 7, rackStart: 1, rackEnd: 1, area: "4", lineEnd: 2, columnEnd: "CV" },
+    { rua: 4, rackStart: 1, rackEnd: 1, area: "5", lineEnd: 4, columnEnd: "N" },
+    { rua: 4, rackStart: 2, rackEnd: 2, area: "2", lineEnd: 4, columnEnd: "P" },
+    { rua: 4, rackStart: 3, rackEnd: 3, area: "2", lineEnd: 4, columnEnd: "N" },
+    { rua: 4, rackStart: 4, rackEnd: 4, area: "2", lineEnd: 4, columnEnd: "P" },
+    { rua: 5, rackStart: 9, rackEnd: 9, area: "1", lineEnd: 3, columnEnd: "D" },
+    { rua: 5, rackStart: 10, rackEnd: 10, area: "1", lineEnd: 5, columnEnd: "E" }
+  ];
 
   var state = {
     bindings: [],
@@ -3316,8 +3348,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
     }
-    var sortedBindings = state.bindings.slice().sort(sortByLocationThenSku);
-    var rows = [REQUIRED_COLUMNS].concat(sortedBindings.map(linhaSeparacaoRowFromBinding));
+    var exportRows = createLinhaSeparacaoExportRows();
+    var rows = [REQUIRED_COLUMNS].concat(exportRows);
     var worksheet = window.XLSX.utils.aoa_to_sheet(rows);
     var range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:G1");
     for (var row = 1; row <= range.e.r; row += 1) {
@@ -3363,21 +3395,80 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
     var fileName = "LinhaSeparacao_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
-    addHistory("Excel exportado", "", "", sortedBindings.length + " registro(s) exportado(s) no modelo LinhaSeparacao.");
+    addHistory("Excel exportado", "", "", exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao.");
     saveData();
     showToast("Excel exportado no mesmo modelo da importacao.", "success");
   }
 
   function linhaSeparacaoRowFromBinding(binding) {
+    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, binding.sku);
+  }
+
+  function createLinhaSeparacaoExportRows() {
+    var bindingsByLocation = {};
+    state.bindings.forEach(function (binding) {
+      if (!binding.locationCode) return;
+      if (!bindingsByLocation[binding.locationCode]) bindingsByLocation[binding.locationCode] = [];
+      bindingsByLocation[binding.locationCode].push(binding);
+    });
+    Object.keys(bindingsByLocation).forEach(function (locationCode) {
+      bindingsByLocation[locationCode].sort(sortByDateDesc);
+    });
+
+    var usedIds = {};
+    var rows = buildLinhaSeparacaoTemplateRows().map(function (templateRow) {
+      var bindings = bindingsByLocation[templateRow.locationCode] || [];
+      var binding = bindings.shift();
+      if (binding) usedIds[binding.id] = true;
+      return linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, binding ? binding.sku : "");
+    });
+
+    state.bindings
+      .filter(function (binding) { return !usedIds[binding.id]; })
+      .sort(sortByLocationThenSku)
+      .forEach(function (binding) {
+        rows.push(linhaSeparacaoRowFromBinding(binding));
+      });
+    return rows;
+  }
+
+  function buildLinhaSeparacaoTemplateRows() {
+    var rows = [];
+    LINHA_SEPARACAO_TEMPLATE.forEach(function (rule) {
+      for (var rack = rule.rackStart; rack <= rule.rackEnd; rack += 1) {
+        for (var linha = 1; linha <= rule.lineEnd; linha += 1) {
+          for (var columnIndex = 1; columnIndex <= vdMaisColumnLabelToNumber(rule.columnEnd); columnIndex += 1) {
+            var letra = numberToVdMaisColumnLabel(columnIndex);
+            rows.push({
+              rua: rule.rua,
+              rack: rack,
+              area: rule.area,
+              linha: linha,
+              letra: letra,
+              locationCode: normalizeLocation("R" + rule.rua + "-RK" + rack + "-L" + linha + "-" + letra).code
+            });
+          }
+        }
+      }
+    });
+    return rows;
+  }
+
+  function linhaSeparacaoRow(rua, rack, areaCode, linha, letra, sku) {
     return [
-      "Rua " + pad2(binding.rua),
-      Number(binding.rack),
-      String(binding.areaCode || 1),
-      " " + Number(binding.linha),
-      " " + String(binding.letra || "").toUpperCase(),
-      String(binding.sku || ""),
+      "Rua " + pad2(rua),
+      Number(rack),
+      String(areaCode || 1),
+      " " + Number(linha),
+      formatLinhaSeparacaoColumn(letra),
+      sku ? String(sku) : "",
       0
     ];
+  }
+
+  function formatLinhaSeparacaoColumn(letra) {
+    var column = String(letra || "").toUpperCase();
+    return column.length === 1 ? " " + column : column;
   }
 
   function sortByLocationThenSku(first, second) {
@@ -3385,7 +3476,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       Number(first.rua || 0) - Number(second.rua || 0) ||
       Number(first.rack || 0) - Number(second.rack || 0) ||
       Number(first.linha || 0) - Number(second.linha || 0) ||
-      excelLettersToNumber(first.letra || "") - excelLettersToNumber(second.letra || "");
+      vdMaisColumnLabelToNumber(first.letra || "") - vdMaisColumnLabelToNumber(second.letra || "");
     if (locationCompare) return locationCompare;
     return String(first.sku || "").localeCompare(String(second.sku || ""), "pt-BR", { numeric: true });
   }
@@ -4334,18 +4425,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function cleanExcelLetters(value) {
-    return String(value || "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+    return String(value || "").trim().toUpperCase().replace(/[^A-Z@]/g, "");
   }
 
   function normalizeLocation(value) {
     var raw = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
-    var match = raw.match(/^R(\d+)-RK(\d+)-L(\d+)-([A-Z]+)$/);
+    var match = raw.match(/^R(\d+)-RK(\d+)-L(\d+)-([A-Z@]+)$/);
     if (!match) return { valid: false };
     var rua = Number(match[1]);
     var rack = Number(match[2]);
     var linha = Number(match[3]);
     var letra = match[4];
-    if (!rua || !rack || !linha || !excelLettersToNumber(letra)) return { valid: false };
+    if (!rua || !rack || !linha || !vdMaisColumnLabelToNumber(letra)) return { valid: false };
     return {
       valid: true,
       rua: rua,
@@ -4364,6 +4455,25 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       total = total * 26 + (letters.charCodeAt(i) - 64);
     }
     return total;
+  }
+
+  function vdMaisColumnLabelToNumber(value) {
+    var label = String(value || "").trim().toUpperCase();
+    if (/^[A-Z]$/.test(label)) return label.charCodeAt(0) - 64;
+    if (!/^[A-Z][A-Z@]$/.test(label)) return 0;
+    var group = label.charCodeAt(0) - 64;
+    var suffix = label.charCodeAt(1) === 64 ? 0 : label.charCodeAt(1) - 64;
+    return 26 + ((group - 1) * 26) + suffix;
+  }
+
+  function numberToVdMaisColumnLabel(number) {
+    var n = Number(number);
+    if (!n || n < 1) return "";
+    if (n <= 26) return String.fromCharCode(64 + n);
+    var shifted = n - 26;
+    var group = Math.floor(shifted / 26) + 1;
+    var suffix = shifted % 26;
+    return String.fromCharCode(64 + group) + String.fromCharCode(64 + suffix);
   }
 
   function numberToExcelLetters(number) {
