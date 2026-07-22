@@ -560,7 +560,7 @@
             </div>
             <div id="transferWorkSummary" class="transfer-work-summary"></div>
             <div class="transfer-work-grid">
-              <div>
+              <div class="transfer-scan-panel">
                 <label for="transferScanInput">Bipar SKU</label>
                 <div class="input-action">
                   <input id="transferScanInput" type="text" inputmode="text" placeholder="Digite ou bipe o SKU">
@@ -580,21 +580,10 @@
                 <input id="boxIdInput" type="text" placeholder="Opcional">
                 <div id="transferWorkStatus" class="inline-status"></div>
               </div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>SKU</th>
-                      <th>Descrição</th>
-                      <th>Solicitada</th>
-                      <th>Separada</th>
-                      <th>Lacrada</th>
-                      <th>Pendente</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="transferWorkRows"></tbody>
-                </table>
+              <div class="transfer-live-panel">
+                <span class="eyebrow">Item atual</span>
+                <div id="transferCurrentItem" class="current-item-card"></div>
+                <div id="transferWorkRows" class="sr-only"></div>
               </div>
             </div>
             <section class="xml-conference-panel">
@@ -603,26 +592,11 @@
               </div>
               <div class="input-action">
                 <input id="transferXmlInput" type="file" accept=".xml,text/xml,application/xml">
-                <button class="primary-button" id="conferenceXmlButton" type="button">Conferir XML</button>
+                <button class="primary-button" id="conferenceXmlButton" type="button">Enviar conferência</button>
               </div>
               <div id="xmlConferenceStatus" class="inline-status"></div>
               <div id="xmlConferenceSummary" class="xml-summary"></div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>SKU</th>
-                      <th>Produto XML</th>
-                      <th>Qtd XML</th>
-                      <th>Qtd separada</th>
-                      <th>Qtd lacrada</th>
-                      <th>Diferença</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody id="xmlConferenceRows"></tbody>
-                </table>
-              </div>
+              <div id="xmlConferenceRows" class="conference-result-list"></div>
             </section>
           </section>
         </section>

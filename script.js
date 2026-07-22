@@ -2023,7 +2023,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferPanelRowHtml(transfer) {
     var stats = getTransferStats(transfer.id);
     var conferenceAssignment = getLatestTransferConferenceAssignment(transfer.id);
-    var conferenceSelectId = "transferConferenceSelect-" + transfer.id;
     return [
       "<tr>",
       "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code) + "</span></td>",
@@ -2031,12 +2030,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
       "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
       "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
-      "<td><span>Criada: " + formatDateTime(transfer.createdAt) + "</span><br><span>Início: " + formatDateTime(transfer.startedAt) + "</span><br><span>Sep.: " + formatDateTime(transfer.separationFinishedAt) + "</span><br><span>Lacre: " + formatDateTime(transfer.packingFinishedAt) + "</span></td>",
+      "<td><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
       "<td><div class=\"row-actions transfer-action-stack\">",
       "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
-      "<button class=\"edit-small\" data-transfer-export-xml=\"" + transfer.id + "\" type=\"button\">Exportar XML</button>",
-      "<select class=\"transfer-conference-select\" id=\"" + escapeHtml(conferenceSelectId) + "\">" + transferConferenceOptionsHtml(conferenceAssignment && conferenceAssignment.assignedUserId) + "</select>",
-      "<button class=\"edit-small\" data-transfer-assign-conference=\"" + transfer.id + "\" type=\"button\">Atribuir conferência</button>",
       conferenceAssignment ? "<span class=\"muted\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</span>" : "",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       "</div></td>",
@@ -2268,9 +2264,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
       "<span>Estabelecimento: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
       "<span>Status: " + escapeHtml(transfer.status) + "</span>",
-      "<span>Prioridade: Normal</span>",
-      "<span>Criada em: " + formatDateTime(transfer.createdAt) + "</span>",
-      "<span>Itens: " + stats.totalItems + " | Pendentes: " + stats.pendingSeparation + "</span>",
+      "<span>Itens: " + stats.totalItems + "</span>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
       "<button class=\"primary-button\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">" + action + "</button>",
       "</article>"
@@ -2311,6 +2305,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
       $("transferWorkRows").innerHTML = "";
+      if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
       clearXmlConferencePanel();
       return;
     }
@@ -2329,21 +2324,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     setTransferFieldHidden("sealNumberInput", mode !== "LACRE");
     setTransferFieldHidden("boxIdInput", mode !== "LACRE");
     var items = getTransferItems(transfer.id);
-    $("transferWorkRows").innerHTML = items.length ? items.map(function (item) {
-      var pending = mode === "LACRE" ? Math.max(0, item.separatedQty - item.packedQty) : Math.max(0, item.requestedQty - item.separatedQty);
-      return [
-        "<tr>",
-        "<td>" + escapeHtml(item.sku) + "</td>",
-        "<td>" + escapeHtml(item.description) + "</td>",
-        "<td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit) + "</td>",
-        "<td>" + formatQty(item.separatedQty) + "</td>",
-        "<td>" + formatQty(item.packedQty) + "</td>",
-        "<td>" + formatQty(pending) + "</td>",
-        "<td><span class=\"status-badge " + (item.status === "LACRADO" || item.status === "SEPARADO" ? "active" : "pending") + "\">" + escapeHtml(item.status) + "</span></td>",
-        "</tr>"
-      ].join("");
-    }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
+    $("transferWorkRows").innerHTML = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
+    renderCurrentTransferItem();
     renderXmlConference(transfer.id);
+  }
+
+  function renderCurrentTransferItem() {
+    if (!$("transferCurrentItem")) return;
+    var item = transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; });
+    if (!item) {
+      $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
+      return;
+    }
+    var mode = transferState.activeWorkMode;
+    var done = mode === "LACRE" ? item.packedQty : item.separatedQty;
+    var expected = mode === "LACRE" ? item.separatedQty : item.requestedQty;
+    $("transferCurrentItem").innerHTML = [
+      "<strong>" + escapeHtml(item.sku) + "</strong>",
+      "<span>" + escapeHtml(item.description || "-") + "</span>",
+      "<div class=\"current-item-meta\">",
+      "<div><span>Quantidade esperada</span><b>" + formatQty(expected) + "</b></div>",
+      "<div><span>Já bipado</span><b>" + formatQty(done) + "</b></div>",
+      "</div>"
+    ].join("");
+  }
+
+  function emptyCurrentItemHtml() {
+    return "<strong>Aguardando bipagem</strong><span>Bipe um SKU e informe a quantidade para continuar.</span>";
   }
 
   function getVisibleTransfers() {
@@ -2570,8 +2577,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var conference = getLatestXmlConference(transferId);
     if (!conference) {
       $("xmlConferenceSummary").innerHTML = "";
-      $("xmlConferenceRows").innerHTML = "<tr><td colspan=\"7\">Nenhum XML conferido nesta transferência.</td></tr>";
-      setStatus("xmlConferenceStatus", "Importe o XML da NF-e para conferir quantidades no final.", "warning");
+      $("xmlConferenceRows").innerHTML = "";
+      setStatus("xmlConferenceStatus", "Ao finalizar, importe o XML e envie a conferência para ver o resultado.", "warning");
       return;
     }
     renderXmlConferencePayload(conference);
@@ -2595,23 +2602,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Destino", (note.destinationName || "-")),
       summaryChip("Resultado final", summary.correct ? "CORRETA" : "DIVERGENTE")
     ].join("");
-    $("xmlConferenceRows").innerHTML = (conference.rows || []).length ? conference.rows.map(function (row) {
-      var ok = row.status === "CORRETO";
-      return [
-        "<tr class=\"" + (ok ? "xml-row-ok" : "xml-row-error") + "\">",
-        "<td>" + escapeHtml(row.sku || "-") + "</td>",
-        "<td>" + escapeHtml(row.xmlDescription || row.transferDescription || "-") + "</td>",
-        "<td>" + formatQty(row.xmlQty) + "</td>",
-        "<td>" + formatQty(row.separatedQty) + "</td>",
-        "<td>" + formatQty(row.packedQty) + "</td>",
-        "<td>" + formatQty(row.difference) + "</td>",
-        "<td><span class=\"status-badge " + (ok ? "active" : "pending") + "\">" + escapeHtml(row.status) + "</span></td>",
-        "</tr>"
-      ].join("");
-    }).join("") : "<tr><td colspan=\"7\">Nenhum produto encontrado no XML.</td></tr>";
+    var issues = (conference.rows || []).filter(function (row) { return row.status !== "CORRETO"; });
+    $("xmlConferenceRows").innerHTML = issues.length ? [
+      "<div class=\"conference-result-title\">Corrigir antes de finalizar</div>",
+      issues.map(function (row) {
+        return [
+          "<article class=\"conference-result-item\">",
+          "<strong>" + escapeHtml(row.sku || "-") + "</strong>",
+          "<span>" + escapeHtml(row.xmlDescription || row.transferDescription || "-") + "</span>",
+          "<b>" + escapeHtml(row.status) + "</b>",
+          "<small>XML: " + formatQty(row.xmlQty) + " | Conferido: " + formatQty(Number(row.packedQty || 0) > 0 ? row.packedQty : row.separatedQty) + "</small>",
+          "</article>"
+        ].join("");
+      }).join("")
+    ].join("") : "<div class=\"conference-result-ok\">Conferência correta. Todos os itens batem com o XML.</div>";
     setStatus(
       "xmlConferenceStatus",
-      summary.correct ? "XML conferido: quantidade final correta." : "XML conferido: existem divergências para corrigir.",
+      summary.correct ? "Conferência enviada: quantidade final correta." : "Conferência enviada: existem itens para corrigir.",
       summary.correct ? "success" : "error"
     );
   }
@@ -3398,7 +3405,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.selectedItemId = item.id;
     $("transferScanInput").value = item.sku;
     $("transferQuantityInput").value = pending ? formatQty(pending) : "";
-    setStatus("transferWorkStatus", item.description + " localizado. Pendente: " + formatQty(pending) + ".", "success");
+    renderCurrentTransferItem();
+    setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
     $("transferQuantityInput").focus();
   }
 
