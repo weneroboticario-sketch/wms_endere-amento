@@ -516,6 +516,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function fromDbTransfer(row) {
+    var normalizedStatus = row.status === "CONCLUIDA_COM_DIVERGENCIA" ? "FINALIZADA_PARA_ANALISE" : row.status;
     return {
       id: row.id,
       code: row.codigo_transferencia || "",
@@ -526,7 +527,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       establishmentCnpj: row.estabelecimento_cnpj || "",
       responsibleId: row.responsavel_id || "",
       responsibleName: row.responsavel_nome || "",
-      status: TRANSFER_STATUSES.indexOf(row.status) >= 0 ? row.status : "PENDENTE",
+      status: TRANSFER_STATUSES.indexOf(normalizedStatus) >= 0 ? normalizedStatus : "PENDENTE",
       observation: row.observacao || "",
       createdById: row.criado_por_id || "",
       createdByName: row.criado_por_nome || "",
@@ -2214,6 +2215,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var query = normalizeText($("transferCodeFilter").value).toLowerCase();
       transfers = transfers.filter(function (transfer) {
         if (status && transfer.status !== status) return false;
+        if (!status && isFinalTransferStatus(transfer.status)) return false;
         if (responsible && transfer.responsibleId !== responsible) return false;
         if (establishment && transfer.establishmentId !== establishment) return false;
         if (query) {
@@ -2223,9 +2225,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return true;
       });
     }
-    $("transferMetricTotal").textContent = getVisibleTransfers().length;
-    $("transferMetricSeparating").textContent = getVisibleTransfers().filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
-    $("transferMetricReady").textContent = getVisibleTransfers().filter(function (item) { return item.status === "PRONTA_PARA_NOTA"; }).length;
+    var operationalTransfers = getVisibleTransfers().filter(function (item) { return !isFinalTransferStatus(item.status); });
+    $("transferMetricTotal").textContent = operationalTransfers.length;
+    $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
+    $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "LACRE_CONCLUIDO"; }).length;
     $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"7\">Nenhuma transferência encontrada.</td></tr>";
   }
 
@@ -2651,7 +2654,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Divergências</span><strong>" + report.divergences.length + "</strong></div>"
     ].join("");
     var itemRows = report.items.map(function (item) {
-      var checkedQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var checkedQty = Number(item.packedQty || 0);
       var diff = checkedQty - Number(item.requestedQty || 0);
       return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.requestedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
     }).join("");
@@ -2805,7 +2808,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var finish = transfer.finishedAt || transfer.packingFinishedAt || transfer.updatedAt;
     var divergences = [];
     originalItems.forEach(function (item) {
-      var checkedQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var checkedQty = Number(item.packedQty || 0);
       var expectedQty = Number(item.requestedQty || 0);
       var diff = checkedQty - expectedQty;
       if (diff < 0) divergences.push({ sku: item.sku, description: item.description, type: "FALTA_DE_ITEM", expected: expectedQty, informed: checkedQty, difference: diff });
@@ -3050,7 +3053,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           "<strong>" + escapeHtml(row.sku || "-") + "</strong>",
           "<span>" + escapeHtml(row.xmlDescription || row.transferDescription || "-") + "</span>",
           "<b>" + escapeHtml(row.status) + "</b>",
-          "<small>Esperado: " + formatQty(row.xmlQty) + " | Conferido: " + formatQty(Number(row.packedQty || 0) > 0 ? row.packedQty : row.separatedQty) + "</small>",
+          "<small>Esperado: " + formatQty(row.xmlQty) + " | Conferido: " + formatQty(row.packedQty || 0) + "</small>",
           "</article>"
         ].join("");
       }).join("")
@@ -3064,13 +3067,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function conferenceTransferXml() {
     var transfer = getTransferById(transferState.activeTransferId);
+    if (transfer && isFinalTransferStatus(transfer.status)) {
+      setStatus("xmlConferenceStatus", "Esta conferência já foi enviada. Abra o relatório para consultar o resultado.", "warning");
+      return;
+    }
+    var button = $("conferenceXmlButton");
+    if (button && button.disabled) return;
     if (!transfer) {
       setStatus("xmlConferenceStatus", "Abra uma transferência antes de conferir XML.", "error");
       return;
     }
     try {
+      if (button) button.disabled = true;
+      setStatus("xmlConferenceStatus", "Enviando conferência...", "warning");
       var conference = buildFinalTransferConference(transfer);
       renderXmlConferencePayload(conference);
+      await finalizeTransferAfterConference(transfer, conference);
       await recordTransferEvent(
         transfer.id,
         "",
@@ -3080,12 +3092,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         conference.summary.correct ? "Conferência enviada sem divergências." : "Conferência enviada com divergências.",
         conference
       );
-      await finalizeTransferAfterConference(transfer, conference);
       await loadTransferData();
       transferState.activeTransferId = transfer.id;
       renderTransfers();
-      setStatus("xmlConferenceStatus", conference.summary.correct ? "Conferência enviada: 100% correta." : "Conferência enviada: existem itens faltando ou sobrando.", conference.summary.correct ? "success" : "error");
+      setStatus("xmlConferenceStatus", conference.summary.correct ? "Conferência enviada: 100% correta." : "Conferência enviada para análise. Existem itens faltando, sobrando ou extras.", conference.summary.correct ? "success" : "error");
     } catch (error) {
+      if (button) button.disabled = false;
       setStatus("xmlConferenceStatus", "Não foi possível enviar a conferência: " + formatSupabaseError(error), "error");
     }
   }
@@ -3093,7 +3105,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function buildFinalTransferConference(transfer) {
     var items = getTransferItems(transfer.id);
     var rows = items.map(function (item) {
-      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var actualQty = Number(item.packedQty || 0);
       var expectedQty = Number(item.requestedQty || 0);
       var diff = actualQty - expectedQty;
       return xmlConferenceRow(
@@ -3102,7 +3114,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         item.description,
         expectedQty,
         item.separatedQty,
-        item.packedQty,
+        actualQty,
         Math.abs(diff) < 0.0001 ? "CORRETO" : diff < 0 ? "Faltando " + formatQty(Math.abs(diff)) : "Sobrando " + formatQty(diff)
       );
     });
@@ -3171,13 +3183,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function finalizeTransferAfterConference(transfer, conference) {
     var report = getTransferFinalReport(transfer);
-    var finalStatus = conference.summary.correct && report.divergences.length === 0 ? "CONCLUIDA_SEM_DIVERGENCIA" : "CONCLUIDA_COM_DIVERGENCIA";
+    var finalStatus = conference.summary.correct && report.divergences.length === 0 ? "CONCLUIDA_SEM_DIVERGENCIA" : "FINALIZADA_PARA_ANALISE";
     var now = new Date().toISOString();
     var stats = report.stats;
     var update = {
       status: finalStatus,
       finalizado_em: now,
-      final_result: finalStatus === "CONCLUIDA_SEM_DIVERGENCIA" ? "CORRETA" : "COM_DIVERGENCIA",
+      final_result: finalStatus === "CONCLUIDA_SEM_DIVERGENCIA" ? "CORRETA" : "PARA_ANALISE",
       duracao_segundos: secondsBetween(transfer.startedAt || transfer.createdAt, now),
       duracao_separacao_segundos: report.separationDurationSeconds,
       duracao_lacre_segundos: report.packingDurationSeconds,
@@ -3281,7 +3293,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!item) {
         return xmlConferenceRow(xmlItem.sku, xmlItem.description, "", xmlItem.quantity, 0, 0, "SKU não está na transferência");
       }
-      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var actualQty = Number(item.packedQty || 0);
       var diff = actualQty - Number(xmlItem.quantity || 0);
       return xmlConferenceRow(
         xmlItem.sku,
@@ -3289,13 +3301,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         item.description,
         xmlItem.quantity,
         item.separatedQty,
-        item.packedQty,
+        actualQty,
         Math.abs(diff) < 0.0001 ? "CORRETO" : diff < 0 ? "Faltando " + formatQty(Math.abs(diff)) : "Sobrando " + formatQty(diff)
       );
     });
     transferItems.forEach(function (item) {
       if (seen[normalizeSkuKey(item.sku)]) return;
-      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var actualQty = Number(item.packedQty || 0);
       rows.push(xmlConferenceRow(item.sku, "", item.description, 0, item.separatedQty, item.packedQty, "SKU não consta no XML"));
       rows[rows.length - 1].difference = actualQty;
     });
@@ -3319,7 +3331,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function xmlConferenceRow(sku, xmlDescription, transferDescription, xmlQty, separatedQty, packedQty, status) {
-    var actualQty = Number(packedQty || 0) > 0 ? Number(packedQty || 0) : Number(separatedQty || 0);
+    var actualQty = Number(packedQty || 0);
     return {
       sku: sku,
       xmlDescription: xmlDescription || "",

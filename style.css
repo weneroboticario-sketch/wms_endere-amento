@@ -948,6 +948,11 @@ td {
   padding: 16px;
 }
 
+#transferencias {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 #transferencias table {
   min-width: 880px;
 }
@@ -1508,11 +1513,36 @@ td {
   }
 
   .quick-actions,
-  .button-row,
-  .transfer-tabs {
+  .button-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .transfer-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin: 0 -10px 10px;
+    padding: 0 10px 4px;
+    overflow-x: auto;
+  }
+
+  .transfer-tabs .transfer-tab {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 112px;
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 0.82rem;
+  }
+
+  #transferencias .page-title {
+    margin-bottom: 6px;
+  }
+
+  #transferencias .page-title h2 {
+    font-size: 1.35rem;
   }
 
   .transfer-work-grid,
@@ -1605,7 +1635,7 @@ td {
   }
 
   .transfer-summary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .transfer-card-grid {
@@ -1622,6 +1652,10 @@ td {
 
   #transferencias .panel {
     padding: 10px;
+  }
+
+  #transferencias table {
+    min-width: 720px;
   }
 
   .transfer-scan-panel,
