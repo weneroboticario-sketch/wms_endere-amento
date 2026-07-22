@@ -6,10 +6,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var AUTH_SESSION_KEY = "wms_auth_session_v1";
+  var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {
-    dashboard: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -66,8 +67,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   };
 
   var currentSku = "";
+  var lastSkuSearch = "";
   var currentLocation = null;
   var editingId = null;
+  var taskPollTimer = null;
+  var taskAlertState = {
+    initialized: false,
+    signature: "",
+    audioUnlocked: false,
+    pendingSound: false
+  };
   var authState = {
     currentUser: null,
     currentSession: null,
@@ -81,10 +90,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   document.addEventListener("DOMContentLoaded", async function () {
     await loadSupabaseConfig();
     fillSupabaseForm();
+    fillTaskSoundSetting();
     initSupabaseClient();
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
+    bindTaskAudioUnlock();
     updateSupabaseStatus();
     await initAuth();
   });
@@ -240,6 +251,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function fillSupabaseForm() {
     if ($("supabaseUrlInput")) $("supabaseUrlInput").value = supabaseConfig.url || "";
     if ($("supabaseKeyInput")) $("supabaseKeyInput").value = supabaseConfig.key || "";
+  }
+
+  function fillTaskSoundSetting() {
+    var enabled = localStorage.getItem(TASK_SOUND_KEY) !== "false";
+    ["taskSoundInput", "sidebarTaskSoundInput"].forEach(function (id) {
+      if ($(id)) $(id).checked = enabled;
+    });
+  }
+
+  function isTaskSoundEnabled() {
+    return localStorage.getItem(TASK_SOUND_KEY) !== "false";
+  }
+
+  function saveTaskSoundSetting() {
+    var source = document.activeElement && document.activeElement.type === "checkbox" ? document.activeElement : $("taskSoundInput");
+    var enabled = !source || source.checked;
+    localStorage.setItem(TASK_SOUND_KEY, enabled ? "true" : "false");
+    fillTaskSoundSetting();
+  }
+
+  function bindTaskAudioUnlock() {
+    var unlock = function () {
+      taskAlertState.audioUnlocked = true;
+      if (taskAlertState.pendingSound) {
+        taskAlertState.pendingSound = false;
+        playTaskSound();
+      }
+    };
+    document.addEventListener("click", unlock, { once: true });
+    document.addEventListener("keydown", unlock, { once: true });
   }
 
   function initSupabaseClient() {
@@ -793,22 +834,25 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function enterAuthenticatedApp(showWelcome) {
     document.body.classList.remove("auth-locked");
     document.body.classList.add("auth-unlocked");
+    applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
     if (isAdmin()) await loadAccessRequests();
     await loadData();
     await loadTransferData();
     await applyDataMigrations();
+    startTaskPolling();
     renderAll();
     renderUsers();
-    showScreen("dashboard");
+    showScreen(defaultScreenForUser());
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
-    focusSkuInput();
   }
 
   function showLogin(message, type) {
     authState.currentUser = null;
     authState.currentSession = null;
+    applyRoleClass();
+    stopTaskPolling();
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
     showLoginForm(false);
@@ -903,6 +947,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function logout() {
+    stopTaskPolling();
     if (authState.currentSession && authState.currentSession.sessionId && isSupabaseReady()) {
       await supabaseDb
         .from("wms_sessions")
@@ -913,6 +958,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     authState.currentUser = null;
     authState.currentSession = null;
     state = { bindings: [], history: [], products: {} };
+    transferState.transfers = [];
+    transferState.items = [];
+    taskAlertState.initialized = false;
+    taskAlertState.signature = "";
+    applyRoleClass();
     showLogin("Sessao encerrada.", "success");
   }
 
@@ -962,6 +1012,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ["topUserRole", "sidebarUserRole"].forEach(function (id) { $(id).textContent = user.role; });
   }
 
+  function applyRoleClass() {
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador");
+    if (!authState.currentUser) return;
+    document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
+  }
+
+  function defaultScreenForUser() {
+    if (!authState.currentUser) return "dashboard";
+    if (authState.currentUser.role === "OPERADOR") return "consultaSku";
+    return "dashboard";
+  }
+
   function applyRolePermissions() {
     var visibleScreens = 0;
     document.querySelectorAll(".admin-only").forEach(function (element) {
@@ -974,7 +1036,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (allowed && element.classList.contains("menu-item")) visibleScreens += 1;
     });
     if (visibleScreens === 0) showLogin("Seu perfil nao possui permissoes configuradas.", "error");
-    if ($("usuarios").classList.contains("active") && !canAccessScreen("usuarios")) showScreen("dashboard");
+    document.querySelectorAll(".screen.active").forEach(function (screen) {
+      if (!canAccessScreen(screen.id)) showScreen(defaultScreenForUser());
+    });
   }
 
   function isAdmin() {
@@ -1333,8 +1397,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     if (!canAccessScreen(screenId)) {
-      showToast("Acesso nao autorizado.", "error");
-      screenId = "dashboard";
+      showToast("Acesso não autorizado.", "error");
+      screenId = defaultScreenForUser();
+    }
+    if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") {
+      activateTransferTab("myTransfersSection");
     }
     document.querySelectorAll(".screen").forEach(function (screen) {
       screen.classList.toggle("active", screen.id === screenId);
@@ -1348,6 +1415,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
+    if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
   }
 
   function bindEvents() {
@@ -1395,6 +1463,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("skuSearchButton").addEventListener("click", function () {
       renderSkuSearch();
     });
+    $("clearSkuSearchButton").addEventListener("click", resetSkuSearchView);
+    $("newSkuSearchButton").addEventListener("click", resetSkuSearchView);
+    $("allocateSkuSearchButton").addEventListener("click", allocateLastSkuSearch);
     $("skuSearchInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -1441,6 +1512,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         await openTransferWork(button.dataset.transferAlertOpen);
       }
     });
+    $("operatorTaskAlert").addEventListener("click", function (event) {
+      if (event.target.closest("[data-open-tasks]")) showScreen("transferencias");
+    });
     ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
       $(id).addEventListener("input", renderTransferPanel);
       $(id).addEventListener("change", renderTransferPanel);
@@ -1483,6 +1557,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("clearAllButton").addEventListener("click", clearAllData);
     $("saveSupabaseButton").addEventListener("click", saveSupabaseSettings);
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
+    $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
+    $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
   }
 
   function cacheStaticOptions() {
@@ -1669,6 +1745,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderDashboard();
     renderHistory();
     renderTransfers();
+    renderOperatorTasksAlert();
   }
 
   function renderDashboard() {
@@ -1711,6 +1788,119 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span>" + stats.totalItems + " item(ns), " + stats.pendingSeparation + " pendente(s).</span>",
       "<button class=\"primary-button\" data-transfer-alert-open=\"" + transfer.id + "\" type=\"button\">Iniciar separação</button>"
     ].join("");
+  }
+
+  function getActiveUserTasks() {
+    if (!authState.currentUser) return [];
+    return transferState.transfers.filter(function (transfer) {
+      if (["CANCELADA", "PRONTA_PARA_NOTA"].indexOf(transfer.status) >= 0) return false;
+      if (authState.currentUser.role === "OPERADOR") return transfer.responsibleId === authState.currentUser.id;
+      return true;
+    });
+  }
+
+  function renderOperatorTasksAlert() {
+    if (!$("operatorTaskAlert") || !$("taskMenuBadge")) return;
+    var tasks = getActiveUserTasks();
+    var isOperatorUser = authState.currentUser && authState.currentUser.role === "OPERADOR";
+    $("taskMenuBadge").hidden = !isOperatorUser || !tasks.length;
+    $("taskMenuBadge").textContent = String(tasks.length);
+    if (!isOperatorUser || !tasks.length) {
+      $("operatorTaskAlert").hidden = true;
+      $("operatorTaskAlert").innerHTML = "";
+      rememberTaskSignature(tasks);
+      return;
+    }
+    var mainTask = tasks[0];
+    $("operatorTaskAlert").hidden = false;
+    $("operatorTaskAlert").innerHTML = [
+      "<div>",
+      "<strong>Você tem uma nova tarefa</strong>",
+      "<span>" + escapeHtml(taskMessage(mainTask)) + "</span>",
+      "<span>" + escapeHtml(mainTask.name || mainTask.code) + " - " + escapeHtml(mainTask.establishmentName || "-") + "</span>",
+      "</div>",
+      "<button class=\"primary-button\" data-open-tasks type=\"button\">Ver minhas tarefas</button>"
+    ].join("");
+    notifyTaskChanges(tasks);
+  }
+
+  function taskMessage(transfer) {
+    if (!transfer) return "Não foi possível carregar suas tarefas. Tente novamente.";
+    if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE") return "Separação concluída. Faça a etapa de caixa/lacre.";
+    if (transfer.status === "EM_SEPARACAO") return "Você possui uma transferência em andamento.";
+    return "Você recebeu uma transferência para separar.";
+  }
+
+  function taskSignature(tasks) {
+    return tasks.map(function (task) {
+      return task.id;
+    }).sort().join("|");
+  }
+
+  function rememberTaskSignature(tasks) {
+    taskAlertState.signature = taskSignature(tasks);
+    taskAlertState.initialized = true;
+  }
+
+  function notifyTaskChanges(tasks) {
+    var signature = taskSignature(tasks);
+    if (!taskAlertState.initialized) {
+      taskAlertState.initialized = true;
+      taskAlertState.signature = signature;
+      return;
+    }
+    if (signature && signature !== taskAlertState.signature) {
+      taskAlertState.signature = signature;
+      showToast("Nova tarefa recebida.", "success");
+      if (isTaskSoundEnabled()) {
+        if (taskAlertState.audioUnlocked) playTaskSound();
+        else taskAlertState.pendingSound = true;
+      }
+    }
+  }
+
+  function playTaskSound() {
+    if (!isTaskSoundEnabled()) return;
+    try {
+      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return;
+      var context = new AudioContextCtor();
+      var oscillator = context.createOscillator();
+      var gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 660;
+      gain.gain.setValueAtTime(0.001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.2);
+      oscillator.onended = function () { context.close(); };
+    } catch (error) {
+      taskAlertState.pendingSound = true;
+    }
+  }
+
+  function startTaskPolling() {
+    stopTaskPolling();
+    if (!isSupabaseReady() || !authState.currentUser) return;
+    taskPollTimer = window.setInterval(async function () {
+      try {
+        await loadTransferData();
+        renderTransfers();
+        renderOperatorTasksAlert();
+      } catch (error) {
+        if (authState.currentUser && authState.currentUser.role === "OPERADOR") showToast("Não foi possível carregar suas tarefas. Tente novamente.", "error");
+      }
+    }, 45000);
+  }
+
+  function stopTaskPolling() {
+    if (taskPollTimer) {
+      window.clearInterval(taskPollTimer);
+      taskPollTimer = null;
+    }
   }
 
   function renderTransfers() {
@@ -1820,17 +2010,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transfers = getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA" && transfer.status !== "PRONTA_PARA_NOTA";
     });
-    $("myTransfersList").innerHTML = transfers.length ? transfers.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma transferência atribuída.</div>";
+    $("myTransfersList").innerHTML = transfers.length ? transfers.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma tarefa atribuida.</div>";
   }
 
   function myTransferCardHtml(transfer) {
     var stats = getTransferStats(transfer.id);
-    var action = transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar caixa/lacre" : transfer.status === "EM_LACRE" ? "Continuar lacre" : "Iniciar separação";
+    var action = transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar caixa/lacre" : transfer.status === "EM_LACRE" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
       "<article class=\"transfer-card\">",
+      "<span class=\"eyebrow\">Transferência</span>",
       "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
-      "<span>Destino: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
+      "<span>Estabelecimento: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
       "<span>Status: " + escapeHtml(transfer.status) + "</span>",
+      "<span>Prioridade: Normal</span>",
+      "<span>Criada em: " + formatDateTime(transfer.createdAt) + "</span>",
       "<span>Itens: " + stats.totalItems + " | Pendentes: " + stats.pendingSeparation + "</span>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
       "<button class=\"primary-button\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">" + action + "</button>",
@@ -1971,20 +2164,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!sku) {
       setStatus("skuSearchStatus", "Informe ou bipe um SKU.", "error");
       $("skuResults").innerHTML = "";
+      $("skuResultCards").innerHTML = "";
+      $("skuResultActions").hidden = true;
       return;
     }
+    lastSkuSearch = sku;
     addHistory("SKU consultado", sku, "", list.length ? "Consulta por SKU encontrou registros." : "Nenhuma localizacao encontrada.");
     if (!list.length) {
       setStatus("skuSearchStatus", "Nenhuma localizacao encontrada para este SKU.", "warning");
       $("skuResults").innerHTML = "";
+      $("skuResultCards").innerHTML = "";
+      $("skuResultActions").hidden = false;
       clearSkuSearchInput();
       saveData();
       return;
     }
     refreshProductNamesForBindings(list);
+    list = list.slice().sort(sortByDateDesc);
     setStatus("skuSearchStatus", list.length + " localizacao(oes) encontrada(s).", "success");
     $("skuResults").innerHTML = list.map(skuTableRowHtml).join("");
     bindActionButtons($("skuResults"));
+    $("skuResultCards").innerHTML = list.map(function (binding, index) {
+      return skuLocationCardHtml(binding, index === 0);
+    }).join("");
+    bindActionButtons($("skuResultCards"));
+    $("skuResultActions").hidden = false;
     clearSkuSearchInput();
     saveData();
   }
@@ -1996,12 +2200,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }, 60);
   }
 
+  function resetSkuSearchView() {
+    lastSkuSearch = "";
+    $("skuSearchInput").value = "";
+    $("skuResults").innerHTML = "";
+    $("skuResultCards").innerHTML = "";
+    $("skuResultActions").hidden = true;
+    setStatus("skuSearchStatus", "", "");
+    window.setTimeout(function () { $("skuSearchInput").focus(); }, 60);
+  }
+
+  function allocateLastSkuSearch() {
+    if (lastSkuSearch) $("skuInput").value = lastSkuSearch;
+    showScreen("bipagem");
+    if (lastSkuSearch) {
+      currentSku = lastSkuSearch;
+      renderScanResults(findBySku(lastSkuSearch));
+      $("locationInput").focus();
+    }
+  }
+
   function renderShelfSearch() {
     var parsed = normalizeLocation($("shelfSearchInput").value);
     if (!parsed.valid) {
       setStatus("shelfSearchStatus", "Codigo de prateleira invalido.", "error");
       $("shelfResults").innerHTML = "";
       $("shelfSummary").innerHTML = "";
+      $("shelfResultCards").innerHTML = "";
       return;
     }
     $("shelfSearchInput").value = parsed.code;
@@ -2011,6 +2236,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("shelfSearchStatus", "Nenhum SKU encontrado nesta prateleira.", "warning");
       $("shelfResults").innerHTML = "";
       $("shelfSummary").innerHTML = "";
+      $("shelfResultCards").innerHTML = "";
       saveData();
       return;
     }
@@ -2025,7 +2251,38 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
     $("shelfResults").innerHTML = list.map(shelfTableRowHtml).join("");
     bindActionButtons($("shelfResults"));
+    $("shelfResultCards").innerHTML = list.map(function (binding) {
+      return skuLocationCardHtml(binding, false);
+    }).join("");
+    bindActionButtons($("shelfResultCards"));
     saveData();
+  }
+
+  function skuLocationCardHtml(binding, latest) {
+    var productName = binding.productName || findProductName(binding.sku) || "-";
+    return [
+      "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
+      "<div class=\"sku-card-head\">",
+      "<div><strong>" + escapeHtml(binding.sku) + "</strong><span>" + escapeHtml(productName) + "</span></div>",
+      latest ? "<span class=\"latest-pill\">Mais recente</span>" : "",
+      "</div>",
+      "<div class=\"sku-location-code\">" + escapeHtml(binding.locationCode) + "</div>",
+      "<div class=\"sku-location-grid\">",
+      "<span>Rua<strong>" + pad2(binding.rua) + "</strong></span>",
+      "<span>Rack<strong>" + binding.rack + "</strong></span>",
+      "<span>Linha<strong>" + binding.linha + "</strong></span>",
+      "<span>Letra<strong>" + escapeHtml(binding.letra) + "</strong></span>",
+      "</div>",
+      "<div class=\"sku-card-meta\">",
+      "<span>Area Linha Separacao<strong>" + escapeHtml(binding.areaName || "-") + "</strong></span>",
+      "<span>Data de cadastro<strong>" + formatDateTime(binding.createdAt) + "</strong></span>",
+      "</div>",
+      "<div class=\"result-actions\">",
+      "<button class=\"edit-small\" data-edit=\"" + binding.id + "\" type=\"button\">Editar</button>",
+      "<button class=\"remove-small\" data-remove=\"" + binding.id + "\" type=\"button\">Remover</button>",
+      "</div>",
+      "</article>"
+    ].join("");
   }
 
   function skuTableRowHtml(binding) {

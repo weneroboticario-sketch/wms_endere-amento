@@ -161,6 +161,31 @@ button {
   min-height: 46px;
 }
 
+.task-menu-item {
+  display: none;
+}
+
+.role-operador .transfer-full-menu {
+  display: none;
+}
+
+.role-operador .task-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.menu-badge {
+  min-width: 26px;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #17202a;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
 .menu-item:hover,
 .menu-item.active {
   background: rgba(255, 255, 255, 0.12);
@@ -198,6 +223,20 @@ button {
 
 .user-card .secondary-button {
   min-height: 38px;
+}
+
+.sidebar-sound-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #d7e5ee;
+  font-size: 0.82rem;
+}
+
+.sidebar-sound-toggle input {
+  width: auto;
+  min-height: 0;
 }
 
 .status-dot {
@@ -363,6 +402,52 @@ button {
   gap: 10px;
 }
 
+.task-alert {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid #c7e5d8;
+  border-left: 5px solid var(--success);
+  border-radius: var(--radius);
+  background: #e9f8f1;
+  color: #104a36;
+  box-shadow: var(--shadow);
+}
+
+.task-alert[hidden] {
+  display: none;
+}
+
+.task-alert strong,
+.task-alert span {
+  display: block;
+}
+
+.task-alert span {
+  margin-top: 3px;
+  color: #176148;
+}
+
+.operational-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.big-scan-input {
+  min-height: 64px;
+  font-size: 1.28rem;
+  font-weight: 700;
+}
+
+.operational-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 4px;
+}
+
 label {
   display: grid;
   gap: 8px;
@@ -509,6 +594,90 @@ textarea {
 
 .result-card strong {
   font-size: 1.05rem;
+}
+
+.sku-card-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.sku-location-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfdff;
+}
+
+.sku-location-card.latest {
+  border-color: #9bd2bb;
+  background: #f1fbf6;
+}
+
+.sku-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.sku-card-head strong {
+  display: block;
+  font-size: 1.18rem;
+}
+
+.sku-card-head span,
+.sku-card-meta span {
+  color: var(--muted);
+}
+
+.latest-pill {
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #d9f5e9;
+  color: var(--success);
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.sku-location-code {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: #102634;
+  color: #ffffff;
+  font-size: 1.35rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.sku-location-grid,
+.sku-card-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sku-location-grid span,
+.sku-card-meta span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  font-size: 0.78rem;
+}
+
+.sku-location-grid strong,
+.sku-card-meta strong {
+  color: var(--ink);
+  font-size: 1.1rem;
+}
+
+.sku-result-actions[hidden],
+#consultaSku .legacy-sku-table {
+  display: none;
 }
 
 .result-actions,
@@ -958,7 +1127,9 @@ td {
   .label-form-grid,
   .transfer-filter-grid,
   .transfer-work-grid,
-  .transfer-work-summary {
+  .transfer-work-summary,
+  .sku-location-grid,
+  .sku-card-meta {
     grid-template-columns: 1fr;
   }
 
@@ -987,6 +1158,20 @@ td {
     margin-bottom: 8px;
   }
 
+  .task-alert {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .big-scan-input {
+    min-height: 54px;
+    font-size: 1.1rem;
+  }
+
+  .operational-actions {
+    grid-template-columns: 1fr;
+  }
+
   .primary-button,
   .secondary-button,
   .danger-button {
@@ -1000,6 +1185,14 @@ td {
   .transfer-tabs {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .sku-card-head {
+    display: grid;
+  }
+
+  .sku-location-code {
+    font-size: 1.18rem;
   }
 
   .transfer-summary-grid {

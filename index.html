@@ -81,13 +81,14 @@
 
       <nav class="menu" aria-label="Menu principal">
         <button class="menu-item active" data-screen="dashboard" type="button">Dashboard</button>
-        <button class="menu-item" data-screen="bipagem" type="button">Bipagem</button>
+        <button class="menu-item" data-screen="bipagem" type="button">Alocar Produto</button>
         <button class="menu-item" data-screen="consultaSku" type="button">Consultar SKU</button>
         <button class="menu-item" data-screen="consultaPrateleira" type="button">Consultar Prateleira</button>
         <button class="menu-item" data-screen="etiquetas" type="button">Gerar Etiquetas</button>
         <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
         <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
-        <button class="menu-item" data-screen="transferencias" type="button">Transferências</button>
+        <button class="menu-item transfer-full-menu" data-screen="transferencias" type="button">Transferências</button>
+        <button class="menu-item task-menu-item" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         <button class="menu-item" data-screen="historico" type="button">Histórico</button>
         <button class="menu-item admin-only" data-screen="usuarios" type="button">Usuários</button>
         <button class="menu-item" data-screen="configuracoes" type="button">Configuracoes</button>
@@ -96,6 +97,10 @@
       <div class="user-card">
         <strong id="sidebarUserName">-</strong>
         <span id="sidebarUserRole">-</span>
+        <label class="sidebar-sound-toggle">
+          <input id="sidebarTaskSoundInput" type="checkbox" checked>
+          Som de tarefas
+        </label>
         <button class="secondary-button" id="logoutButton" type="button">Sair</button>
       </div>
 
@@ -118,6 +123,8 @@
         </div>
         <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
       </div>
+
+      <section class="task-alert" id="operatorTaskAlert" hidden></section>
 
       <section class="screen active" id="dashboard">
         <div class="page-title">
@@ -178,6 +185,8 @@
         <div class="quick-actions">
           <button class="secondary-button" data-screen-target="consultaSku" type="button">Consultar SKU</button>
           <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar prateleira</button>
+          <button class="secondary-button" data-screen-target="bipagem" type="button">Alocar produto</button>
+          <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas tarefas</button>
           <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
           <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
         </div>
@@ -189,7 +198,7 @@
         <div class="page-title">
           <div>
             <p class="eyebrow">Operacao principal</p>
-            <h2>Bipagem / Endereçamento</h2>
+            <h2>Alocar Produto</h2>
           </div>
         </div>
 
@@ -235,13 +244,24 @@
             <h2>Consulta por SKU</h2>
           </div>
         </div>
-        <section class="panel">
+        <section class="panel operational-panel">
           <div class="input-action">
-            <input id="skuSearchInput" inputmode="text" type="text" placeholder="Digite ou bipe o SKU">
+            <input id="skuSearchInput" class="big-scan-input" inputmode="text" type="text" placeholder="Digite ou bipe o SKU">
             <button class="primary-button" id="skuSearchButton" type="button">Consultar</button>
           </div>
+          <div class="quick-actions operational-actions">
+            <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar Prateleira</button>
+            <button class="secondary-button" data-screen-target="bipagem" type="button">Alocar Produto</button>
+            <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas Tarefas</button>
+          </div>
           <div id="skuSearchStatus" class="inline-status"></div>
-          <div class="table-wrap">
+          <div id="skuResultCards" class="sku-card-grid"></div>
+          <div class="button-row sku-result-actions" id="skuResultActions" hidden>
+            <button class="secondary-button" id="clearSkuSearchButton" type="button">Limpar</button>
+            <button class="primary-button" id="newSkuSearchButton" type="button">Nova consulta</button>
+            <button class="secondary-button" id="allocateSkuSearchButton" type="button">Alocar manualmente este produto</button>
+          </div>
+          <div class="table-wrap legacy-sku-table">
             <table>
               <thead>
                 <tr>
@@ -277,6 +297,7 @@
           </div>
           <div id="shelfSearchStatus" class="inline-status"></div>
           <div id="shelfSummary" class="shelf-summary"></div>
+          <div id="shelfResultCards" class="sku-card-grid"></div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -497,7 +518,7 @@
         <section class="transfer-section" id="myTransfersSection" hidden>
           <section class="panel">
             <div class="panel-header">
-              <h3>Minhas Transferências</h3>
+              <h3>Minhas Tarefas</h3>
             </div>
             <div id="myTransfersList" class="transfer-card-grid"></div>
           </section>
@@ -737,6 +758,10 @@
             <button class="secondary-button" id="testSupabaseButton" type="button">Testar conexao</button>
           </div>
           <div id="supabaseStatus" class="inline-status"></div>
+          <label class="checkbox-label">
+            <input id="taskSoundInput" type="checkbox" checked>
+            Som discreto ao receber nova tarefa
+          </label>
           <button class="secondary-button wide-button" id="resetSampleButton" type="button">Restaurar dados de exemplo</button>
           <button class="danger-button wide-button" id="clearAllButton" type="button">Apagar todos os dados</button>
         </section>
