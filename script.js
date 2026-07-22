@@ -1501,10 +1501,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("previewLabelsButton").addEventListener("click", function () {
       generateLabels(false);
     });
-    $("singleLabelButton").addEventListener("click", generateSingleLabel);
+    $("singleLabelButton").addEventListener("click", clearLabelsPreview);
     $("printLabelsButton").addEventListener("click", function () {
-      if (!$("labelsPreview").children.length) generateLabels(false);
-      window.print();
+      generateLabels(true);
     });
 
     $("exportExcelButton").addEventListener("click", exportExcel);
@@ -3153,15 +3152,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     addHistory("Etiqueta gerada", "", codes.length === 1 ? codes[0] : "", codes.length + " etiqueta(s) gerada(s).");
     saveData();
     showToast(codes.length + " etiqueta(s) pronta(s).", "success");
-    if (printAfter) window.print();
+    if (printAfter) {
+      window.setTimeout(function () { window.print(); }, 250);
+    }
   }
 
-  function generateSingleLabel() {
-    $("labelRuaEnd").value = $("labelRuaStart").value;
-    $("labelRackEnd").value = $("labelRackStart").value;
-    $("labelLinhaEnd").value = $("labelLinhaStart").value;
-    $("labelLetraEnd").value = $("labelLetraStart").value;
-    generateLabels(false);
+  function clearLabelsPreview() {
+    $("labelsPreview").innerHTML = "";
+    showToast("Visualizacao de etiquetas limpa.", "success");
   }
 
   function readLabelRange() {
@@ -3212,10 +3210,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         if (window.JsBarcode) {
           window.JsBarcode(svg, svg.dataset.code, {
             format: "CODE128",
-            width: 2,
-            height: 58,
+            width: 1.35,
+            height: 42,
             displayValue: false,
-            margin: 4
+            margin: 2
           });
         }
       });
