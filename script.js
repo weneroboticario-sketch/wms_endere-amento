@@ -952,11 +952,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function handleUserTableClick(event) {
-    var editId = event.target.dataset.userEdit;
-    var resetId = event.target.dataset.userReset;
-    var toggleId = event.target.dataset.userToggle;
-    var approveId = event.target.dataset.requestApprove;
-    var rejectId = event.target.dataset.requestReject;
+    var actionButton = event.target.closest("button");
+    if (!actionButton) return;
+    var editId = actionButton.dataset.userEdit;
+    var resetId = actionButton.dataset.userReset;
+    var toggleId = actionButton.dataset.userToggle;
+    var approveId = actionButton.dataset.requestApprove;
+    var rejectId = actionButton.dataset.requestReject;
     if (editId) editUser(editId);
     if (resetId) await resetUserPassword(resetId);
     if (toggleId) await toggleUserActive(toggleId);
@@ -1188,6 +1190,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     $("clearUserFormButton").addEventListener("click", resetUserForm);
     $("usersRows").addEventListener("click", handleUserTableClick);
+    $("accessRequestsRows").addEventListener("click", handleUserTableClick);
 
     $("skuReadButton").addEventListener("click", handleSkuRead);
     $("locationReadButton").addEventListener("click", handleLocationRead);
