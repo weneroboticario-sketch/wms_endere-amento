@@ -544,7 +544,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       conferenceState.tablesAvailable = !isMissingConferenceTableError(error);
       if (!conferenceState.tablesAvailable) {
-        showToast("Tabelas de conferências ausentes. Execute supabase-schema.sql.", "warning");
+        showToast("Tabelas de conferencias ausentes. Execute supabase-conference-schema.sql no Supabase.", "warning");
       } else {
         showToast("Não foi possível carregar conferências.", "error");
         console.error("Erro ao carregar conferências:", error);
@@ -2746,14 +2746,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         updatedAt: now
       };
     });
-    var response = await supabaseDb.from("wms_conferences").insert(toDbConference(conference));
-    if (response.error) {
-      setStatus("newConferenceStatus", "Erro ao criar conferência: " + formatSupabaseError(response.error), "error");
+    try {
+      var response = await supabaseDb.from("wms_conferences").insert(toDbConference(conference));
+      if (response.error) throw response.error;
+      await upsertInChunks("wms_conference_items", items.map(toDbConferenceItem), "id");
+      await recordConferenceEvent(conferenceId, "", "CONFERENCE_CREATED", "", items.length, "Conferência criada pelo XML.", { itemCount: items.length, note: note });
+      await recordConferenceEvent(conferenceId, "", "CONFERENCE_ASSIGNED", "", 0, "Conferência atribuída para " + responsible.name + ".", { assignedUserId: responsible.id, assignedUserName: responsible.name });
+    } catch (error) {
+      if (isMissingConferenceTableError(error) || isMissingColumnError(error)) {
+        conferenceState.tablesAvailable = false;
+        setStatus("newConferenceStatus", missingConferenceSchemaMessage(error), "error");
+        return;
+      }
+      setStatus("newConferenceStatus", "Erro ao criar conferência: " + formatSupabaseError(error), "error");
       return;
     }
-    await upsertInChunks("wms_conference_items", items.map(toDbConferenceItem), "id");
-    await recordConferenceEvent(conferenceId, "", "CONFERENCE_CREATED", "", items.length, "Conferência criada pelo XML.", { itemCount: items.length, note: note });
-    await recordConferenceEvent(conferenceId, "", "CONFERENCE_ASSIGNED", "", 0, "Conferência atribuída para " + responsible.name + ".", { assignedUserId: responsible.id, assignedUserName: responsible.name });
     conferenceState.preview = null;
     $("newConferenceForm").reset();
     await loadConferenceData();
@@ -6185,6 +6192,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("pgrst") >= 0 ||
       message.indexOf("404") >= 0
     );
+  }
+
+  function missingConferenceSchemaMessage(error) {
+    return "Tabelas de conferencias ausentes ou schema cache desatualizado. Execute o arquivo supabase-conference-schema.sql no SQL Editor do Supabase e depois recarregue o app. Erro original: " + formatSupabaseError(error);
   }
 
   function isMissingColumnError(error) {

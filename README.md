@@ -103,7 +103,15 @@ ou:
 Could not find the table 'public.wms_products' in the schema cache
 ```
 
-abra o Supabase do projeto, entre em `SQL Editor`, cole todo o conteúdo de `supabase-schema.sql` e execute. Esse SQL cria as tabelas `wms_bindings`, `wms_history`, `wms_products` e recria as policies que permitem leitura e gravação com a chave pública do app.
+ou:
+
+```text
+Could not find the table 'public.wms_conferences' in the schema cache
+```
+
+abra o Supabase do projeto, entre em `SQL Editor`, cole todo o conteudo de `supabase-schema.sql` e execute. Esse SQL cria as tabelas de enderecamento, usuarios, transferencias, conferencias e recria as policies que permitem leitura e gravacao com a chave publica do app.
+
+Se o problema for somente nas conferencias, tambem pode executar apenas `supabase-conference-schema.sql`. Ele cria `wms_conferences`, `wms_conference_items`, `wms_conference_events`, `wms_conference_divergences` e solicita o reload do schema cache do Supabase.
 
 ## Login e usuários
 
