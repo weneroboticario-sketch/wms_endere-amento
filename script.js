@@ -409,7 +409,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!isSupabaseReady()) return;
     try {
       var bindingRows = await fetchAllRows("wms_bindings", "created_at", false);
-      state.bindings = bindingRows.map(fromDbBinding);
+      state.bindings = expandDbBindingRows(bindingRows);
 
       var historyResponse = await supabaseDb.from("wms_history").select("*").order("datetime", { ascending: false }).limit(1000);
       var historyMessage = "";
@@ -882,10 +882,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function dedupeBindingsForSave() {
+    state.bindings = expandBindingsWithMultipleSkus(state.bindings);
     var bySkuLocation = {};
     var deduped = [];
     state.bindings.forEach(function (binding) {
-      var key = String(binding.sku || "") + "\u0001" + String(binding.locationCode || "");
+      var key = normalizeSkuKey(binding.sku) + "\u0001" + String(binding.locationCode || "");
       var existing = bySkuLocation[key];
       if (!existing) {
         bySkuLocation[key] = binding;
@@ -962,6 +963,34 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString()
     };
+  }
+
+  function expandDbBindingRows(rows) {
+    return expandBindingsWithMultipleSkus(rows.map(fromDbBinding));
+  }
+
+  function expandBindingsWithMultipleSkus(bindings) {
+    var expanded = [];
+    bindings.forEach(function (binding) {
+      var skus = splitSkuValues(binding.sku);
+      if (skus.length <= 1) {
+        var singleSku = skus[0] || normalizeSku(binding.sku);
+        expanded.push(Object.assign({}, binding, {
+          sku: singleSku,
+          productName: binding.productName || findProductName(singleSku) || ""
+        }));
+        return;
+      }
+      skus.forEach(function (sku, index) {
+        expanded.push(Object.assign({}, binding, {
+          id: String(binding.id || ("id-" + Date.now())) + "-sku-" + sku + "-" + index,
+          sku: sku,
+          productName: binding.productName || findProductName(sku) || "",
+          updatedAt: binding.updatedAt || new Date().toISOString()
+        }));
+      });
+    });
+    return expanded;
   }
 
   function toDbBinding(binding) {
@@ -5779,11 +5808,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var sheet = entry.workbook.Sheets[sheetName];
         var rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
         rows.forEach(function (row) {
-          var sku = normalizeSku(getByAliases(row, ["Codigo Material", "Cod Material"]));
+          var skuValues = splitSkuValues(getByAliases(row, ["Codigo Material", "Cod Material"]));
+          var sku = skuValues[0] || "";
           var productName = normalizeText(getByAliases(row, ["Desc Material", "Descricao Material", "Descrição Material", "Nome Produto", "Produto"]));
-          if (sku && productName) {
-            data.products[sku] = productName;
-          }
+          skuValues.forEach(function (skuValue) {
+            if (skuValue && productName) data.products[skuValue] = productName;
+          });
 
           var station = getByAliases(row, ["Nome estacao", "Estacao", "Estação"]);
           var rack = getByAliases(row, ["Nr Rack", "Rack"]);
@@ -5792,7 +5822,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           var hasAddress = [station, rack, line, column].some(function (value) {
             return normalizeText(value) !== "";
           });
-          if (!sku || !hasAddress) return;
+          if (!skuValues.length || !hasAddress) return;
+
+          var importedAreaCode = Number(getByAliases(row, ["Area Linha Separacao", "Area Linha SeparaÃ§Ã£o", "Area Linha SeparaÃ§ao"])) || 1;
+          skuValues.slice(1).forEach(function (skuValue) {
+            data.addressRows.push({
+              sku: skuValue,
+              productName: productName,
+              station: station,
+              rack: rack,
+              line: line,
+              column: column,
+              areaCode: importedAreaCode
+            });
+          });
 
           data.addressRows.push({
             sku: sku,
@@ -5862,7 +5905,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
       var existing = state.bindings.find(function (binding) {
-        return binding.sku === row.sku && binding.locationCode === parsed.code;
+        return isSameSku(binding.sku, row.sku) && binding.locationCode === parsed.code;
       });
       if (existing) {
         var newName = row.productName || findProductName(row.sku) || "";
@@ -6216,12 +6259,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function findBySku(sku) {
     var normalized = normalizeSkuKey(sku);
     return state.bindings.filter(function (binding) {
-      return binding.sku === sku || normalizeSkuKey(binding.sku) === normalized;
+      return binding.sku === sku || normalizeSkuKey(binding.sku) === normalized || skuValueContains(binding.sku, sku);
     }).sort(sortByDateDesc);
   }
 
   function isSameSku(first, second) {
-    return normalizeSkuKey(first) === normalizeSkuKey(second);
+    return normalizeSkuKey(first) === normalizeSkuKey(second) || skuValueContains(first, second) || skuValueContains(second, first);
   }
 
   function findByLocation(locationCode) {
@@ -6246,6 +6289,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return ean.slice(-6, -1);
     }
     return sku;
+  }
+
+  function splitSkuValues(value) {
+    var raw = normalizeText(value);
+    if (!raw) return [];
+    var seen = {};
+    return raw.split(/[;,\n\r\t|]+/).map(function (part) {
+      return normalizeSku(part);
+    }).filter(function (sku) {
+      if (!sku) return false;
+      var key = normalizeSkuKey(sku);
+      if (seen[key]) return false;
+      seen[key] = true;
+      return true;
+    });
+  }
+
+  function skuValueContains(value, sku) {
+    var target = normalizeSkuKey(sku);
+    if (!target) return false;
+    return splitSkuValues(value).some(function (part) {
+      return normalizeSkuKey(part) === target;
+    });
   }
 
   function normalizeSkuKey(value) {
