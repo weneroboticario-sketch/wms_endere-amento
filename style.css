@@ -34,7 +34,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -69,6 +70,10 @@ button {
 .login-card h2 {
   margin: 0 0 18px;
   font-size: 2rem;
+}
+
+.access-request-card {
+  margin-top: 18px;
 }
 
 .login-brand {
@@ -372,7 +377,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 48px;
   border: 1px solid #cbd6e2;
@@ -383,9 +389,14 @@ select {
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 3px solid rgba(23, 107, 135, 0.18);
   border-color: var(--primary);
+}
+
+textarea {
+  resize: vertical;
 }
 
 .input-action {
@@ -707,6 +718,15 @@ td {
 .status-badge.inactive {
   background: #fdeaea;
   color: var(--danger);
+}
+
+.status-badge.pending {
+  background: #fff3d6;
+  color: var(--warning);
+}
+
+.users-requests-panel {
+  grid-column: 1 / -1;
 }
 
 .toast {

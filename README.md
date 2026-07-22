@@ -7,6 +7,7 @@ Agora os dados principais ficam no Supabase:
 - Vínculos SKU + endereço
 - Histórico
 - Produtos importados
+- Usuários, sessões e solicitações de acesso
 
 O app nao usa React nem TypeScript, mas agora usa Vite para compilar o JavaScript e ler `import.meta.env.VITE_SUPABASE_URL` e `import.meta.env.VITE_SUPABASE_ANON_KEY`.
 
@@ -16,6 +17,7 @@ O app nao usa React nem TypeScript, mas agora usa Vite para compilar o JavaScrip
 index.html
 style.css
 script.js
+auth-service.js
 package.json
 vite.config.js
 supabase-schema.sql
@@ -113,6 +115,14 @@ Senha: admin123
 ```
 
 Troque essa senha inicial na tela `Usuários` após o primeiro acesso. As senhas são salvas como `password_hash` gerado no navegador, não em texto puro. A tabela `wms_sessions` registra início e encerramento de sessão de forma simples.
+
+Novos colaboradores podem clicar em `Solicitar acesso` na tela de login. O pedido fica em `wms_access_requests` com status `PENDENTE`; somente administrador consegue aprovar ou recusar na tela `Usuários`. Ao aprovar, o sistema cria o usuário como `OPERADOR` ativo.
+
+Permissões por perfil:
+
+- `ADMINISTRADOR`: acessa todas as telas.
+- `SUPERVISOR`: dashboard, bipagem e consultas.
+- `OPERADOR`: dashboard, bipagem e consultas.
 
 ## Publicar no GitHub Pages
 

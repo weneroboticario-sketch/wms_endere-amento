@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
 (function () {
   "use strict";
@@ -7,6 +8,18 @@ import { createClient } from "@supabase/supabase-js";
   var AUTH_SESSION_KEY = "wms_auth_session_v1";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
+  var SCREEN_PERMISSIONS = {
+    dashboard: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    etiquetas: ["ADMINISTRADOR"],
+    exportar: ["ADMINISTRADOR"],
+    importar: ["ADMINISTRADOR"],
+    historico: ["ADMINISTRADOR"],
+    usuarios: ["ADMINISTRADOR"],
+    configuracoes: ["ADMINISTRADOR"]
+  };
   var supabaseConfig = { url: "", key: "" };
   var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
@@ -45,8 +58,10 @@ import { createClient } from "@supabase/supabase-js";
     currentUser: null,
     currentSession: null,
     users: [],
+    accessRequests: [],
     usersTableAvailable: true,
-    sessionsTableAvailable: true
+    sessionsTableAvailable: true,
+    accessRequestsTableAvailable: true
   };
 
   document.addEventListener("DOMContentLoaded", async function () {
@@ -477,6 +492,7 @@ import { createClient } from "@supabase/supabase-js";
     }
     await ensureInitialAdmin();
     await loadUsers();
+    await loadAccessRequests();
     var savedSession = readStoredSession();
     if (savedSession) {
       var user = authState.users.find(function (item) {
@@ -512,6 +528,22 @@ import { createClient } from "@supabase/supabase-js";
     return true;
   }
 
+  async function loadAccessRequests() {
+    if (!isSupabaseReady()) return false;
+    var response = await supabaseDb
+      .from("wms_access_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (response.error) {
+      authState.accessRequests = [];
+      authState.accessRequestsTableAvailable = !isMissingAuthTableError(response.error);
+      return authState.accessRequestsTableAvailable;
+    }
+    authState.accessRequestsTableAvailable = true;
+    authState.accessRequests = (response.data || []).map(fromDbAccessRequest);
+    return true;
+  }
+
   async function ensureInitialAdmin() {
     if (authState.users.length) return;
     var now = new Date().toISOString();
@@ -523,6 +555,7 @@ import { createClient } from "@supabase/supabase-js";
       password_hash: await hashPassword("admin", "admin123"),
       role: "ADMINISTRADOR",
       active: true,
+      available_for_tasks: false,
       created_at: now,
       updated_at: now,
       last_login_at: null
@@ -549,10 +582,22 @@ import { createClient } from "@supabase/supabase-js";
       await ensureInitialAdmin();
       await loadUsers();
     }
+    await loadAccessRequests();
     var user = authState.users.find(function (item) {
-      return item.active && (String(item.username).toLowerCase() === login || String(item.matricula).toLowerCase() === login);
+      return String(item.username).toLowerCase() === login || String(item.matricula).toLowerCase() === login;
     });
-    if (!user || !(await verifyPassword(user, password))) {
+    if (!user) {
+      var pendingRequest = authState.accessRequests.find(function (item) {
+        return item.status === "PENDENTE" && String(item.username).toLowerCase() === login;
+      });
+      setStatus("loginStatus", pendingRequest ? "Usuário aguardando aprovação." : "Usuario ou senha invalidos", pendingRequest ? "warning" : "error");
+      return;
+    }
+    if (!user.active) {
+      setStatus("loginStatus", "Usuario inativo. Procure o administrador.", "error");
+      return;
+    }
+    if (!(await verifyPasswordHash(user, password))) {
       setStatus("loginStatus", "Usuario ou senha invalidos", "error");
       return;
     }
@@ -571,6 +616,7 @@ import { createClient } from "@supabase/supabase-js";
     document.body.classList.add("auth-unlocked");
     updateLoggedUserUi();
     applyRolePermissions();
+    if (isAdmin()) await loadAccessRequests();
     await loadData();
     await applyDataMigrations();
     renderAll();
@@ -585,10 +631,95 @@ import { createClient } from "@supabase/supabase-js";
     authState.currentSession = null;
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
+    showLoginForm(false);
     if (message) setStatus("loginStatus", message, type || "warning");
     window.setTimeout(function () {
       if ($("loginUserInput")) $("loginUserInput").focus();
     }, 80);
+  }
+
+  function showAccessRequestForm() {
+    $("loginForm").hidden = true;
+    $("accessRequestForm").hidden = false;
+    resetAccessRequestForm();
+    window.setTimeout(function () { $("requestNameInput").focus(); }, 60);
+  }
+
+  function showLoginForm(clearStatus) {
+    if (!$("loginForm") || !$("accessRequestForm")) return;
+    $("loginForm").hidden = false;
+    $("accessRequestForm").hidden = true;
+    if (clearStatus !== false) {
+      setStatus("loginStatus", "", "");
+      setStatus("accessRequestStatus", "", "");
+    }
+  }
+
+  function resetAccessRequestForm() {
+    ["requestNameInput", "requestUsernameInput", "requestPasswordInput", "requestPasswordConfirmInput", "requestJobInput", "requestNotesInput"].forEach(function (id) {
+      $(id).value = "";
+    });
+    setStatus("accessRequestStatus", "", "");
+  }
+
+  async function submitAccessRequest() {
+    var name = normalizeText($("requestNameInput").value);
+    var username = normalizeText($("requestUsernameInput").value).toLowerCase();
+    var password = $("requestPasswordInput").value || "";
+    var confirm = $("requestPasswordConfirmInput").value || "";
+    var jobTitle = normalizeText($("requestJobInput").value);
+    var notes = normalizeText($("requestNotesInput").value);
+    if (!name || !username || !password || !confirm) {
+      setStatus("accessRequestStatus", "Preencha nome, usuario e senha.", "error");
+      return;
+    }
+    if (password !== confirm) {
+      setStatus("accessRequestStatus", "As senhas nao conferem.", "error");
+      return;
+    }
+    var loadedUsers = await loadUsers();
+    var loadedRequests = await loadAccessRequests();
+    if (!loadedUsers || !loadedRequests) {
+      setStatus("accessRequestStatus", "Tabela de solicitacoes ausente. Execute supabase-schema.sql no SQL Editor do Supabase.", "error");
+      return;
+    }
+    var existingUser = authState.users.find(function (item) {
+      return String(item.username).toLowerCase() === username || String(item.matricula).toLowerCase() === username;
+    });
+    if (existingUser) {
+      setStatus("accessRequestStatus", "Usuario ja cadastrado. Procure o administrador.", "error");
+      return;
+    }
+    var existingRequest = authState.accessRequests.find(function (item) {
+      return item.status === "PENDENTE" && String(item.username).toLowerCase() === username;
+    });
+    if (existingRequest) {
+      setStatus("accessRequestStatus", "Ja existe uma solicitacao pendente para este usuario.", "warning");
+      return;
+    }
+    var now = new Date().toISOString();
+    var requestRow = {
+      id: "req-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      created_at: now,
+      updated_at: now,
+      name: name,
+      username: username,
+      matricula: username,
+      password_hash: await hashPassword(username, password),
+      role_requested: "OPERADOR",
+      job_title: jobTitle,
+      notes: notes,
+      status: "PENDENTE"
+    };
+    var response = await supabaseDb.from("wms_access_requests").insert(requestRow);
+    if (response.error) {
+      setStatus("accessRequestStatus", "Erro ao enviar solicitacao: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await recordAuthHistory("Solicitação de acesso criada", username, "", name);
+    await loadAccessRequests();
+    resetAccessRequestForm();
+    setStatus("accessRequestStatus", "Solicitacao enviada. Aguarde aprovacao do administrador.", "success");
   }
 
   async function logout() {
@@ -652,15 +783,28 @@ import { createClient } from "@supabase/supabase-js";
   }
 
   function applyRolePermissions() {
-    var admin = isAdmin();
+    var visibleScreens = 0;
     document.querySelectorAll(".admin-only").forEach(function (element) {
-      element.hidden = !admin;
+      element.hidden = !isAdmin();
     });
-    if (!admin && $("usuarios").classList.contains("active")) showScreen("dashboard");
+    document.querySelectorAll(".menu-item[data-screen], [data-screen-target]").forEach(function (element) {
+      var screenId = element.dataset.screen || element.dataset.screenTarget;
+      var allowed = canAccessScreen(screenId);
+      element.hidden = !allowed;
+      if (allowed && element.classList.contains("menu-item")) visibleScreens += 1;
+    });
+    if (visibleScreens === 0) showLogin("Seu perfil nao possui permissoes configuradas.", "error");
+    if ($("usuarios").classList.contains("active") && !canAccessScreen("usuarios")) showScreen("dashboard");
   }
 
   function isAdmin() {
     return authState.currentUser && authState.currentUser.role === "ADMINISTRADOR";
+  }
+
+  function canAccessScreen(screenId) {
+    if (!authState.currentUser) return false;
+    var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
+    return roles.indexOf(authState.currentUser.role) >= 0;
   }
 
   function fromDbUser(row) {
@@ -672,29 +816,37 @@ import { createClient } from "@supabase/supabase-js";
       passwordHash: row.password_hash || "",
       role: ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR",
       active: row.active !== false,
+      availableForTasks: row.available_for_tasks !== false,
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
       lastLoginAt: row.last_login_at || ""
     };
   }
 
-  async function hashPassword(username, password) {
-    var input = "wms-v1:" + normalizeText(username).toLowerCase() + ":" + String(password || "");
-    var bytes = new TextEncoder().encode(input);
-    var hashBuffer = await crypto.subtle.digest("SHA-256", bytes);
-    var hashArray = Array.from(new Uint8Array(hashBuffer));
-    return "sha256:" + hashArray.map(function (byte) {
-      return byte.toString(16).padStart(2, "0");
-    }).join("");
-  }
-
-  async function verifyPassword(user, password) {
-    return user.passwordHash === await hashPassword(user.username, password);
+  function fromDbAccessRequest(row) {
+    return {
+      id: row.id,
+      name: row.name || "",
+      username: row.username || "",
+      matricula: row.matricula || row.username || "",
+      passwordHash: row.password_hash || "",
+      roleRequested: row.role_requested || "OPERADOR",
+      jobTitle: row.job_title || "",
+      notes: row.notes || "",
+      status: row.status || "PENDENTE",
+      approvedBy: row.approved_by || "",
+      approvedAt: row.approved_at || "",
+      rejectedBy: row.rejected_by || "",
+      rejectedAt: row.rejected_at || "",
+      rejectionReason: row.rejection_reason || "",
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
   }
 
   function isMissingAuthTableError(error) {
     var message = formatSupabaseError(error).toLowerCase();
-    return (message.indexOf("wms_users") >= 0 || message.indexOf("wms_sessions") >= 0) && (
+    return (message.indexOf("wms_users") >= 0 || message.indexOf("wms_sessions") >= 0 || message.indexOf("wms_access_requests") >= 0) && (
       message.indexOf("schema cache") >= 0 ||
       message.indexOf("does not exist") >= 0 ||
       message.indexOf("not found") >= 0 ||
@@ -714,6 +866,7 @@ import { createClient } from "@supabase/supabase-js";
     var password = $("userPasswordInput").value || "";
     var role = $("userRoleInput").value;
     var active = $("userActiveInput").checked;
+    var availableForTasks = $("userAvailableInput").checked;
     if (!name || !username || ROLES.indexOf(role) === -1) {
       setStatus("userFormStatus", "Preencha nome, usuario e perfil.", "error");
       return;
@@ -730,6 +883,7 @@ import { createClient } from "@supabase/supabase-js";
       matricula: username,
       role: role,
       active: active,
+      available_for_tasks: availableForTasks,
       updated_at: now
     };
     if (!id) row.created_at = now;
@@ -740,6 +894,7 @@ import { createClient } from "@supabase/supabase-js";
       return;
     }
     await loadUsers();
+    await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role);
     resetUserForm();
     renderUsers();
     setStatus("userFormStatus", "Usuario salvo com sucesso.", "success");
@@ -754,11 +909,13 @@ import { createClient } from "@supabase/supabase-js";
     $("userPasswordInput").value = "";
     $("userRoleInput").value = "OPERADOR";
     $("userActiveInput").checked = true;
+    $("userAvailableInput").checked = true;
   }
 
   function renderUsers() {
     if (!$("usersRows") || !isAdmin()) return;
-    $("usersRows").innerHTML = authState.users.length ? authState.users.map(userRowHtml).join("") : "<tr><td colspan=\"5\">Nenhum usuario cadastrado.</td></tr>";
+    $("usersRows").innerHTML = authState.users.length ? authState.users.map(userRowHtml).join("") : "<tr><td colspan=\"6\">Nenhum usuario cadastrado.</td></tr>";
+    renderAccessRequests();
   }
 
   function userRowHtml(user) {
@@ -768,7 +925,28 @@ import { createClient } from "@supabase/supabase-js";
       "<td><span class=\"role-badge\">" + escapeHtml(user.role) + "</span></td>",
       "<td>" + formatDateTime(user.lastLoginAt) + "</td>",
       "<td><span class=\"status-badge " + (user.active ? "active" : "inactive") + "\">" + (user.active ? "Ativo" : "Inativo") + "</span></td>",
+      "<td>" + (user.availableForTasks ? "Sim" : "Nao") + "</td>",
       "<td><div class=\"row-actions\"><button class=\"edit-small\" data-user-edit=\"" + user.id + "\" type=\"button\">Editar</button><button class=\"secondary-button\" data-user-reset=\"" + user.id + "\" type=\"button\">Redefinir senha</button><button class=\"remove-small\" data-user-toggle=\"" + user.id + "\" type=\"button\">" + (user.active ? "Desativar" : "Ativar") + "</button></div></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function renderAccessRequests() {
+    if (!$("accessRequestsRows") || !isAdmin()) return;
+    var pending = authState.accessRequests.filter(function (item) {
+      return item.status === "PENDENTE";
+    });
+    $("accessRequestsRows").innerHTML = pending.length ? pending.map(accessRequestRowHtml).join("") : "<tr><td colspan=\"5\">Nenhuma solicitação pendente.</td></tr>";
+  }
+
+  function accessRequestRowHtml(request) {
+    return [
+      "<tr>",
+      "<td><strong>" + escapeHtml(request.name) + "</strong><br><span class=\"muted\">" + escapeHtml(request.username) + "</span></td>",
+      "<td>" + escapeHtml(request.jobTitle || "-") + "</td>",
+      "<td>" + formatDateTime(request.createdAt) + "</td>",
+      "<td><span class=\"status-badge pending\">" + escapeHtml(request.status) + "</span></td>",
+      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-request-approve=\"" + request.id + "\" type=\"button\">Aprovar</button><button class=\"remove-small\" data-request-reject=\"" + request.id + "\" type=\"button\">Recusar</button></div></td>",
       "</tr>"
     ].join("");
   }
@@ -777,9 +955,13 @@ import { createClient } from "@supabase/supabase-js";
     var editId = event.target.dataset.userEdit;
     var resetId = event.target.dataset.userReset;
     var toggleId = event.target.dataset.userToggle;
+    var approveId = event.target.dataset.requestApprove;
+    var rejectId = event.target.dataset.requestReject;
     if (editId) editUser(editId);
     if (resetId) await resetUserPassword(resetId);
     if (toggleId) await toggleUserActive(toggleId);
+    if (approveId) await approveAccessRequest(approveId);
+    if (rejectId) await rejectAccessRequest(rejectId);
   }
 
   function editUser(id) {
@@ -793,6 +975,7 @@ import { createClient } from "@supabase/supabase-js";
     $("userPasswordInput").value = "";
     $("userRoleInput").value = user.role;
     $("userActiveInput").checked = user.active;
+    $("userAvailableInput").checked = user.availableForTasks;
     setStatus("userFormStatus", "Editando " + user.name + ". Deixe a senha em branco para manter a atual.", "warning");
   }
 
@@ -809,6 +992,7 @@ import { createClient } from "@supabase/supabase-js";
       showToast("Nao foi possivel redefinir a senha.", "error");
       return;
     }
+    await recordAuthHistory("Senha redefinida", user.username, "", user.name);
     showToast("Senha redefinida.", "success");
   }
 
@@ -828,7 +1012,83 @@ import { createClient } from "@supabase/supabase-js";
       return;
     }
     await loadUsers();
+    await recordAuthHistory(user.active ? "Usuário desativado" : "Usuário ativado", user.username, "", user.name);
     renderUsers();
+  }
+
+  async function approveAccessRequest(id) {
+    if (!isAdmin()) return;
+    var request = authState.accessRequests.find(function (item) { return item.id === id; });
+    if (!request || request.status !== "PENDENTE") return;
+    var duplicate = authState.users.find(function (item) {
+      return String(item.username).toLowerCase() === String(request.username).toLowerCase();
+    });
+    if (duplicate) {
+      showToast("Usuario ja cadastrado.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var userRow = {
+      id: "user-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      created_at: now,
+      updated_at: now,
+      name: request.name,
+      username: request.username,
+      matricula: request.matricula || request.username,
+      password_hash: request.passwordHash,
+      role: "OPERADOR",
+      active: true,
+      available_for_tasks: true,
+      last_login_at: null
+    };
+    var userResponse = await supabaseDb.from("wms_users").insert(userRow);
+    if (userResponse.error) {
+      showToast("Erro ao aprovar: " + formatSupabaseError(userResponse.error), "error");
+      return;
+    }
+    var requestResponse = await supabaseDb
+      .from("wms_access_requests")
+      .update({
+        status: "APROVADA",
+        approved_by: authState.currentUser.username,
+        approved_at: now,
+        updated_at: now
+      })
+      .eq("id", request.id);
+    if (requestResponse.error) {
+      showToast("Usuario criado, mas a solicitacao nao foi atualizada.", "warning");
+    }
+    await recordAuthHistory("Solicitação aprovada", request.username, "", request.name);
+    await loadUsers();
+    await loadAccessRequests();
+    renderUsers();
+    showToast("Solicitação aprovada.", "success");
+  }
+
+  async function rejectAccessRequest(id) {
+    if (!isAdmin()) return;
+    var request = authState.accessRequests.find(function (item) { return item.id === id; });
+    if (!request || request.status !== "PENDENTE") return;
+    var reason = window.prompt("Motivo da recusa (opcional):") || "";
+    var now = new Date().toISOString();
+    var response = await supabaseDb
+      .from("wms_access_requests")
+      .update({
+        status: "RECUSADA",
+        rejected_by: authState.currentUser.username,
+        rejected_at: now,
+        rejection_reason: reason,
+        updated_at: now
+      })
+      .eq("id", request.id);
+    if (response.error) {
+      showToast("Erro ao recusar: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await recordAuthHistory("Solicitação recusada", request.username, "", request.name + (reason ? " - " + reason : ""));
+    await loadAccessRequests();
+    renderUsers();
+    showToast("Solicitação recusada.", "success");
   }
 
   async function seedIfEmpty() {
@@ -890,8 +1150,8 @@ import { createClient } from "@supabase/supabase-js";
       showLogin("Entre para acessar o sistema.", "warning");
       return;
     }
-    if (screenId === "usuarios" && !isAdmin()) {
-      showToast("Acesso restrito ao administrador.", "error");
+    if (!canAccessScreen(screenId)) {
+      showToast("Acesso nao autorizado.", "error");
       screenId = "dashboard";
     }
     document.querySelectorAll(".screen").forEach(function (screen) {
@@ -912,6 +1172,12 @@ import { createClient } from "@supabase/supabase-js";
     $("loginForm").addEventListener("submit", function (event) {
       event.preventDefault();
       handleLogin();
+    });
+    $("showAccessRequestButton").addEventListener("click", showAccessRequestForm);
+    $("backToLoginButton").addEventListener("click", function () { showLoginForm(true); });
+    $("accessRequestForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitAccessRequest();
     });
     ["logoutButton", "topLogoutButton", "mobileLogoutButton"].forEach(function (id) {
       $(id).addEventListener("click", logout);
@@ -2063,6 +2329,17 @@ import { createClient } from "@supabase/supabase-js";
       location: location || "",
       details: details || ""
     };
+  }
+
+  async function recordAuthHistory(action, sku, location, details) {
+    if (!isSupabaseReady()) return;
+    try {
+      var item = createHistoryItem(action, sku, location, details);
+      var response = await supabaseDb.from("wms_history").upsert(toDbHistory(item), { onConflict: "id" });
+      if (response.error && !isHistorySchemaError(response.error)) console.warn("Historico de usuarios nao salvo:", response.error);
+    } catch (error) {
+      console.warn("Historico de usuarios nao salvo:", error);
+    }
   }
 
   function getAreaByCode(code) {
