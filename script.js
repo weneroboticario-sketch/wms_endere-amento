@@ -1958,7 +1958,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function handleSkuRead() {
-    var sku = normalizeSku($("skuInput").value);
+    var sku = firstSkuValue($("skuInput").value);
     if (!sku) {
       setScanMessage("Informe ou bipe o SKU do produto.", "error");
       $("skuInput").focus();
@@ -1982,7 +1982,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function handleLocationRead() {
     if (!currentSku) {
-      var sku = normalizeSku($("skuInput").value);
+      var sku = firstSkuValue($("skuInput").value);
       if (!sku) {
         setScanMessage("Bipe o SKU antes da prateleira.", "error");
         $("skuInput").focus();
@@ -2003,7 +2003,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function saveManualScan() {
-    var sku = normalizeSku($("skuInput").value || currentSku);
+    var sku = firstSkuValue($("skuInput").value || currentSku);
     var parsed = normalizeLocation($("locationInput").value);
     var existingBinding = editingId ? state.bindings.find(function (binding) { return binding.id === editingId; }) : null;
     var areaCode = existingBinding ? existingBinding.areaCode : Number($("areaSelect").value || 1);
@@ -2793,11 +2793,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function findConferenceItemByCode(conferenceId, code) {
-    var normalized = normalizeSku(code) || normalizeText(code);
-    var key = normalizeSkuKey(normalized);
     var raw = normalizeText(code);
     return getConferenceItems(conferenceId).find(function (item) {
-      return normalizeSkuKey(item.sku) === key || normalizeSkuKey(item.code) === key || normalizeText(item.ean) === raw || normalizeText(item.ean) === normalizeText(normalized);
+      return isSameSku(item.sku, code) || isSameSku(item.code, code) || normalizeText(item.ean) === raw || isSameSku(item.ean, code);
     });
   }
 
@@ -2887,10 +2885,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("conferenceScanInput").focus();
       return;
     }
-    var description = findProductName(normalizeSku(code)) || normalizeText(window.prompt("Descrição do item extra:", "Item extra") || "Item extra");
+    var normalizedCode = firstSkuValue(code);
+    var description = findProductName(normalizedCode) || normalizeText(window.prompt("Descrição do item extra:", "Item extra") || "Item extra");
     var observation = normalizeText(window.prompt("Observação do item extra:", "Item não consta no XML") || "");
     var now = new Date().toISOString();
-    var sku = normalizeSku(code) || code;
+    var sku = normalizedCode || code;
     var item = {
       id: "citem-extra-" + Date.now() + "-" + Math.random().toString(16).slice(2),
       conferenceId: conference.id,
@@ -4442,7 +4441,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderSkuSearch() {
     window.clearTimeout(skuSearchTimer);
-    var sku = normalizeSku($("skuSearchInput").value);
+    var sku = firstSkuValue($("skuSearchInput").value);
     var list = sku ? findBySku(sku) : [];
     if (!sku) {
       setStatus("skuSearchStatus", "Informe ou bipe um SKU.", "error");
@@ -5204,12 +5203,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferWorkStatus", "Esta tarefa ja foi finalizada.", "warning");
       return;
     }
-    var sku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+    var sku = firstSkuValue($("transferScanInput").value);
     if (!sku) {
       setStatus("transferWorkStatus", "Informe ou bipe o SKU.", "error");
       return;
     }
-    var item = getTransferItems(transfer.id).find(function (entry) { return entry.sku === sku || normalizeSkuKey(entry.sku) === normalizeSkuKey(sku); });
+    var item = getTransferItems(transfer.id).find(function (entry) { return isSameSku(entry.sku, sku); });
     if (!item) {
       transferState.selectedItemId = "";
       if (isXmlConferenceTransfer(transfer)) {
@@ -5318,7 +5317,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var now = new Date().toISOString();
     var mode = transferState.activeWorkMode;
     var existing = getTransferItems(transfer.id).find(function (entry) {
-      return entry.isExtra && normalizeSkuKey(entry.sku) === normalizeSkuKey(sku) && (entry.status === "EXTRA_PENDENTE" || entry.divergenceType === "SKU_NAO_CONSTA_XML");
+      return entry.isExtra && isSameSku(entry.sku, sku) && (entry.status === "EXTRA_PENDENTE" || entry.divergenceType === "SKU_NAO_CONSTA_XML");
     });
     if (existing) {
       existing.separatedQty = Number(existing.separatedQty || 0) + qty;
@@ -5392,15 +5391,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var item = transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; });
     if (transfer && !item) {
-      var typedSku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+      var typedSku = firstSkuValue($("transferScanInput").value);
       item = getTransferItems(transfer.id).find(function (entry) {
-        return entry.sku === typedSku || normalizeSkuKey(entry.sku) === normalizeSkuKey(typedSku);
+        return isSameSku(entry.sku, typedSku);
       });
       if (item) transferState.selectedItemId = item.id;
     }
     if (!transfer || !item) {
       if (transfer && isXmlConferenceTransfer(transfer)) {
-        var extraSku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+        var extraSku = firstSkuValue($("transferScanInput").value);
         var extraQty = parseQuantity($("transferQuantityInput").value);
         if (!extraSku) {
           setStatus("transferWorkStatus", "Bipe um SKU antes de confirmar.", "error");
@@ -6257,14 +6256,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function findBySku(sku) {
-    var normalized = normalizeSkuKey(sku);
+    var targets = skuCandidateKeys(sku);
     return state.bindings.filter(function (binding) {
-      return binding.sku === sku || normalizeSkuKey(binding.sku) === normalized || skuValueContains(binding.sku, sku);
+      return skuCandidateKeys(binding.sku).some(function (candidate) {
+        return targets.indexOf(candidate) >= 0;
+      });
     }).sort(sortByDateDesc);
   }
 
   function isSameSku(first, second) {
-    return normalizeSkuKey(first) === normalizeSkuKey(second) || skuValueContains(first, second) || skuValueContains(second, first);
+    var firstCandidates = skuCandidateKeys(first);
+    var secondCandidates = skuCandidateKeys(second);
+    return firstCandidates.some(function (candidate) {
+      return secondCandidates.indexOf(candidate) >= 0;
+    });
   }
 
   function findByLocation(locationCode) {
@@ -6295,15 +6300,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var raw = normalizeText(value);
     if (!raw) return [];
     var seen = {};
-    return raw.split(/[;,\n\r\t|]+/).map(function (part) {
-      return normalizeSku(part);
-    }).filter(function (sku) {
-      if (!sku) return false;
-      var key = normalizeSkuKey(sku);
-      if (seen[key]) return false;
-      seen[key] = true;
-      return true;
+    var values = [];
+    var parts = raw.split(/[;,\n\r\t|]+/);
+    var normalizedWhole = normalizeSku(raw);
+    if (normalizedWhole !== raw || parts.length === 1) {
+      addSkuCandidate(values, seen, normalizedWhole);
+    }
+    parts.forEach(function (part) {
+      addSkuCandidate(values, seen, normalizeSku(part));
     });
+    return values;
   }
 
   function skuValueContains(value, sku) {
@@ -6312,6 +6318,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return splitSkuValues(value).some(function (part) {
       return normalizeSkuKey(part) === target;
     });
+  }
+
+  function skuCandidateKeys(value) {
+    return splitSkuValues(value).map(normalizeSkuKey).filter(Boolean);
+  }
+
+  function firstSkuValue(value) {
+    var candidates = splitSkuValues(value);
+    return candidates[0] || normalizeSku(value) || normalizeText(value);
+  }
+
+  function addSkuCandidate(values, seen, sku) {
+    sku = normalizeText(sku);
+    if (!sku || !isPlausibleSku(sku)) return;
+    var key = normalizeSkuKey(sku);
+    if (seen[key]) return;
+    seen[key] = true;
+    values.push(sku);
+  }
+
+  function isPlausibleSku(sku) {
+    if (!/^\d+$/.test(sku)) return true;
+    return sku.length >= 4;
   }
 
   function normalizeSkuKey(value) {
