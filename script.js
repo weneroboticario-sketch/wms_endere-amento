@@ -1552,6 +1552,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("finishSeparationButton").addEventListener("click", finishSeparation);
     $("startPackingButton").addEventListener("click", startPacking);
     $("finishPackingButton").addEventListener("click", finishPacking);
+    $("conferenceXmlButton").addEventListener("click", conferenceTransferXml);
     $("clearHistoryButton").addEventListener("click", clearHistory);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -2065,6 +2066,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
       $("transferWorkRows").innerHTML = "";
+      clearXmlConferencePanel();
       return;
     }
     var stats = getTransferStats(transfer.id);
@@ -2096,6 +2098,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "</tr>"
       ].join("");
     }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
+    renderXmlConference(transfer.id);
   }
 
   function getVisibleTransfers() {
@@ -2155,6 +2158,211 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (input.previousElementSibling && input.previousElementSibling.tagName === "LABEL") {
       input.previousElementSibling.hidden = hidden;
     }
+  }
+
+  function clearXmlConferencePanel() {
+    if ($("xmlConferenceSummary")) $("xmlConferenceSummary").innerHTML = "";
+    if ($("xmlConferenceRows")) $("xmlConferenceRows").innerHTML = "";
+    if ($("xmlConferenceStatus")) setStatus("xmlConferenceStatus", "", "");
+  }
+
+  function renderXmlConference(transferId) {
+    if (!$("xmlConferenceRows")) return;
+    var conference = getLatestXmlConference(transferId);
+    if (!conference) {
+      $("xmlConferenceSummary").innerHTML = "";
+      $("xmlConferenceRows").innerHTML = "<tr><td colspan=\"7\">Nenhum XML conferido nesta transferência.</td></tr>";
+      setStatus("xmlConferenceStatus", "Importe o XML da NF-e para conferir quantidades no final.", "warning");
+      return;
+    }
+    renderXmlConferencePayload(conference);
+  }
+
+  function getLatestXmlConference(transferId) {
+    var events = transferState.events.filter(function (event) {
+      return event.transfer_id === transferId && event.event_type === "XML_CONFERENCE" && event.payload;
+    }).sort(function (a, b) {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+    return events.length ? events[0].payload : null;
+  }
+
+  function renderXmlConferencePayload(conference) {
+    var summary = conference.summary || {};
+    var note = conference.note || {};
+    $("xmlConferenceSummary").innerHTML = [
+      summaryChip("NF-e", note.number || "-"),
+      summaryChip("Origem", (note.emitterName || "-")),
+      summaryChip("Destino", (note.destinationName || "-")),
+      summaryChip("Resultado final", summary.correct ? "CORRETA" : "DIVERGENTE")
+    ].join("");
+    $("xmlConferenceRows").innerHTML = (conference.rows || []).length ? conference.rows.map(function (row) {
+      var ok = row.status === "CORRETO";
+      return [
+        "<tr class=\"" + (ok ? "xml-row-ok" : "xml-row-error") + "\">",
+        "<td>" + escapeHtml(row.sku || "-") + "</td>",
+        "<td>" + escapeHtml(row.xmlDescription || row.transferDescription || "-") + "</td>",
+        "<td>" + formatQty(row.xmlQty) + "</td>",
+        "<td>" + formatQty(row.separatedQty) + "</td>",
+        "<td>" + formatQty(row.packedQty) + "</td>",
+        "<td>" + formatQty(row.difference) + "</td>",
+        "<td><span class=\"status-badge " + (ok ? "active" : "pending") + "\">" + escapeHtml(row.status) + "</span></td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"7\">Nenhum produto encontrado no XML.</td></tr>";
+    setStatus(
+      "xmlConferenceStatus",
+      summary.correct ? "XML conferido: quantidade final correta." : "XML conferido: existem divergências para corrigir.",
+      summary.correct ? "success" : "error"
+    );
+  }
+
+  async function conferenceTransferXml() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) {
+      setStatus("xmlConferenceStatus", "Abra uma transferência antes de conferir XML.", "error");
+      return;
+    }
+    var file = ($("transferXmlInput").files || [])[0];
+    if (!file) {
+      setStatus("xmlConferenceStatus", "Selecione o XML da NF-e.", "error");
+      return;
+    }
+    try {
+      var parsed = parseNfeXml(await file.text());
+      var conference = buildXmlConference(transfer, parsed);
+      renderXmlConferencePayload(conference);
+      await recordTransferEvent(
+        transfer.id,
+        "",
+        "XML_CONFERENCE",
+        "",
+        conference.summary.totalXmlQty,
+        conference.summary.correct ? "XML conferido sem divergências." : "XML conferido com divergências.",
+        conference
+      );
+      await loadTransferData();
+      transferState.activeTransferId = transfer.id;
+      renderTransfers();
+      setStatus("xmlConferenceStatus", conference.summary.correct ? "XML salvo: quantidade final correta." : "XML salvo: divergências visíveis para o operador.", conference.summary.correct ? "success" : "error");
+    } catch (error) {
+      setStatus("xmlConferenceStatus", "Não foi possível ler o XML: " + formatSupabaseError(error), "error");
+    }
+  }
+
+  function parseNfeXml(xmlText) {
+    var doc = new DOMParser().parseFromString(xmlText, "application/xml");
+    if (xmlNodes(doc, "parsererror").length) throw new Error("Arquivo XML inválido.");
+    var ide = xmlFirst(doc, "ide");
+    var emit = xmlFirst(doc, "emit");
+    var dest = xmlFirst(doc, "dest");
+    var infNfe = xmlFirst(doc, "infNFe");
+    var note = {
+      key: infNfe && infNfe.getAttribute ? (infNfe.getAttribute("Id") || "").replace(/^NFe/, "") : xmlTextValue(xmlFirst(doc, "chNFe")),
+      number: xmlTextValue(xmlFirst(ide, "nNF")),
+      issuedAt: xmlTextValue(xmlFirst(ide, "dhEmi")),
+      emitterName: xmlTextValue(xmlFirst(emit, "xNome")),
+      emitterCnpj: xmlTextValue(xmlFirst(emit, "CNPJ")),
+      destinationName: xmlTextValue(xmlFirst(dest, "xNome")),
+      destinationCnpj: xmlTextValue(xmlFirst(dest, "CNPJ"))
+    };
+    var aggregate = {};
+    xmlNodes(doc, "det").forEach(function (det) {
+      var prod = xmlFirst(det, "prod");
+      if (!prod) return;
+      var sku = normalizeSku(xmlTextValue(xmlFirst(prod, "cProd"))) || normalizeText(xmlTextValue(xmlFirst(prod, "cProd")));
+      if (!sku) return;
+      var qty = parseXmlQuantity(xmlTextValue(xmlFirst(prod, "qCom")));
+      if (!aggregate[sku]) {
+        aggregate[sku] = {
+          sku: sku,
+          description: xmlTextValue(xmlFirst(prod, "xProd")),
+          unit: xmlTextValue(xmlFirst(prod, "uCom")) || "UN",
+          quantity: 0
+        };
+      }
+      aggregate[sku].quantity += qty;
+    });
+    return { note: note, items: Object.keys(aggregate).map(function (sku) { return aggregate[sku]; }) };
+  }
+
+  function buildXmlConference(transfer, parsed) {
+    var transferItems = getTransferItems(transfer.id);
+    var transferBySku = {};
+    transferItems.forEach(function (item) {
+      transferBySku[normalizeSkuKey(item.sku)] = item;
+    });
+    var seen = {};
+    var rows = parsed.items.map(function (xmlItem) {
+      var item = transferBySku[normalizeSkuKey(xmlItem.sku)];
+      seen[normalizeSkuKey(xmlItem.sku)] = true;
+      if (!item) {
+        return xmlConferenceRow(xmlItem.sku, xmlItem.description, "", xmlItem.quantity, 0, 0, "SKU não está na transferência");
+      }
+      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var diff = actualQty - Number(xmlItem.quantity || 0);
+      return xmlConferenceRow(
+        xmlItem.sku,
+        xmlItem.description,
+        item.description,
+        xmlItem.quantity,
+        item.separatedQty,
+        item.packedQty,
+        Math.abs(diff) < 0.0001 ? "CORRETO" : diff < 0 ? "Faltando " + formatQty(Math.abs(diff)) : "Sobrando " + formatQty(diff)
+      );
+    });
+    transferItems.forEach(function (item) {
+      if (seen[normalizeSkuKey(item.sku)]) return;
+      var actualQty = Number(item.packedQty || 0) > 0 ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      rows.push(xmlConferenceRow(item.sku, "", item.description, 0, item.separatedQty, item.packedQty, "SKU não consta no XML"));
+      rows[rows.length - 1].difference = actualQty;
+    });
+    var errors = rows.filter(function (row) { return row.status !== "CORRETO"; }).length;
+    var totalXmlQty = parsed.items.reduce(function (sum, item) { return sum + Number(item.quantity || 0); }, 0);
+    return {
+      version: 1,
+      checkedAt: new Date().toISOString(),
+      checkedBy: { id: authState.currentUser.id, name: authState.currentUser.name },
+      transfer: { id: transfer.id, code: transfer.code, name: transfer.name },
+      note: parsed.note,
+      summary: {
+        correct: errors === 0,
+        xmlItems: parsed.items.length,
+        transferItems: transferItems.length,
+        totalXmlQty: totalXmlQty,
+        errors: errors
+      },
+      rows: rows
+    };
+  }
+
+  function xmlConferenceRow(sku, xmlDescription, transferDescription, xmlQty, separatedQty, packedQty, status) {
+    var actualQty = Number(packedQty || 0) > 0 ? Number(packedQty || 0) : Number(separatedQty || 0);
+    return {
+      sku: sku,
+      xmlDescription: xmlDescription || "",
+      transferDescription: transferDescription || "",
+      xmlQty: Number(xmlQty || 0),
+      separatedQty: Number(separatedQty || 0),
+      packedQty: Number(packedQty || 0),
+      difference: actualQty - Number(xmlQty || 0),
+      status: status
+    };
+  }
+
+  function xmlNodes(root, localName) {
+    if (!root) return [];
+    return Array.prototype.slice.call(root.getElementsByTagName("*")).filter(function (node) {
+      return node.localName === localName;
+    });
+  }
+
+  function xmlFirst(root, localName) {
+    return xmlNodes(root, localName)[0] || null;
+  }
+
+  function xmlTextValue(node) {
+    return node ? normalizeText(node.textContent) : "";
   }
 
   function renderSkuSearch() {
@@ -3546,6 +3754,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function parseQuantity(value) {
     if (typeof value === "number") return Number.isFinite(value) ? value : 0;
     var text = normalizeText(value).replace(/\./g, "").replace(",", ".");
+    var number = Number(text);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function parseXmlQuantity(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    var text = normalizeText(value);
+    if (text.indexOf(".") >= 0 && text.indexOf(",") >= 0) text = text.replace(/\./g, "").replace(",", ".");
+    else text = text.replace(",", ".");
     var number = Number(text);
     return Number.isFinite(number) ? number : 0;
   }

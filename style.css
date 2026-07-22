@@ -1012,6 +1012,44 @@ td {
   font-size: 0.78rem;
 }
 
+.xml-conference-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.xml-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+
+.xml-summary div {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+
+.xml-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.xml-summary strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.xml-row-error {
+  background: #fff6f6;
+}
+
+.xml-row-ok {
+  background: #f5fcf8;
+}
+
 .toast {
   position: fixed;
   right: 22px;
@@ -1128,6 +1166,7 @@ td {
   .transfer-filter-grid,
   .transfer-work-grid,
   .transfer-work-summary,
+  .xml-summary,
   .sku-location-grid,
   .sku-card-meta {
     grid-template-columns: 1fr;
