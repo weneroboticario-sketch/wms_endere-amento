@@ -1610,7 +1610,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
-  function handleLocationRead() {
+  async function handleLocationRead() {
     if (!currentSku) {
       var sku = normalizeSku($("skuInput").value);
       if (!sku) {
@@ -1628,8 +1628,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     currentLocation = parsed;
     $("locationInput").value = parsed.code;
-    setScanMessage("Endereco identificado: " + parsed.code + ". Clique em salvar.", "success");
-    $("saveManualButton").focus();
+    setScanMessage("Endereco identificado: " + parsed.code + ". Salvando...", "success");
+    await saveManualScan();
   }
 
   async function saveManualScan() {
@@ -1651,16 +1651,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       await updateBinding(editingId, sku, parsed, areaCode);
       editingId = null;
       setScanMessage("Endereco alterado. Pronto para o proximo produto.", "success");
-      resetScanSoon();
+      clearScanFieldsForNext();
       return;
     }
 
-    var duplicate = state.bindings.some(function (binding) {
-      return binding.sku === sku && binding.locationCode === parsed.code;
+    var duplicate = state.bindings.find(function (binding) {
+      return isSameSku(binding.sku, sku) && binding.locationCode === parsed.code;
     });
     if (duplicate) {
-      setScanMessage("Este SKU ja esta cadastrado neste endereco.", "error");
+      renderScanResults([duplicate]);
+      setScanMessage("Esse codigo ja esta alocado nessa localizacao.", "warning");
+      clearScanFieldsForNext();
       return;
+    }
+    var locationOccupants = findByLocation(parsed.code);
+    if (locationOccupants.length) {
+      renderScanResults(locationOccupants);
+      var occupantList = locationOccupants.map(function (binding) {
+        return binding.sku + (binding.productName ? " - " + binding.productName : "");
+      }).join(", ");
+      var shouldContinue = window.confirm("Essa locacao ja tem codigo cadastrado: " + occupantList + ". Deseja cadastrar um novo codigo nessa localizacao?");
+      if (!shouldContinue) {
+        setScanMessage("Cadastro cancelado. Pronto para o proximo produto.", "warning");
+        clearScanFieldsForNext();
+        return;
+      }
     }
     var newBinding = createBinding(sku, parsed, areaCode);
     var historyItem = createHistoryItem("SKU enderecado", sku, parsed.code, "SKU enderecado com sucesso.");
@@ -1673,13 +1688,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     state.bindings.push(newBinding);
     state.history.push(historyItem);
     renderAll();
+    renderScanResults([newBinding]);
     setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
-    resetScanSoon();
+    clearScanFieldsForNext();
   }
 
   async function updateBinding(id, sku, parsed, areaCode) {
     var duplicate = state.bindings.some(function (binding) {
-      return binding.id !== id && binding.sku === sku && binding.locationCode === parsed.code;
+      return binding.id !== id && isSameSku(binding.sku, sku) && binding.locationCode === parsed.code;
     });
     if (duplicate) {
       setScanMessage("Este SKU ja esta cadastrado neste endereco.", "error");
@@ -1704,10 +1720,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderAll();
   }
 
-  function resetScanSoon() {
-    window.setTimeout(resetScan, 850);
-  }
-
   function resetScan() {
     currentSku = "";
     currentLocation = null;
@@ -1717,6 +1729,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("areaSelect").value = "1";
     renderScanResults([]);
     setScanMessage("Pronto para o proximo produto.", "success");
+    focusSkuInput();
+  }
+
+  function clearScanFieldsForNext() {
+    currentSku = "";
+    currentLocation = null;
+    editingId = null;
+    $("skuInput").value = "";
+    $("locationInput").value = "";
+    $("areaSelect").value = "1";
     focusSkuInput();
   }
 
@@ -4120,6 +4142,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return state.bindings.filter(function (binding) {
       return binding.sku === sku || normalizeSkuKey(binding.sku) === normalized;
     }).sort(sortByDateDesc);
+  }
+
+  function isSameSku(first, second) {
+    return normalizeSkuKey(first) === normalizeSkuKey(second);
   }
 
   function findByLocation(locationCode) {
