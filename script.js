@@ -1346,6 +1346,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!user) return;
     ["topUserName", "sidebarUserName"].forEach(function (id) { $(id).textContent = user.name; });
     ["topUserRole", "sidebarUserRole"].forEach(function (id) { $(id).textContent = user.role; });
+    updateHeaderConnectionStatus();
   }
 
   function applyRoleClass() {
@@ -1374,6 +1375,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (visibleScreens === 0) showLogin("Seu perfil nao possui permissoes configuradas.", "error");
     document.querySelectorAll(".screen.active").forEach(function (screen) {
       if (!canAccessScreen(screen.id)) showScreen(defaultScreenForUser());
+    });
+    updateMenuSectionsVisibility();
+  }
+
+  function updateMenuSectionsVisibility() {
+    document.querySelectorAll(".menu-section").forEach(function (section) {
+      var hasVisibleItem = Array.from(section.querySelectorAll(".menu-item")).some(function (item) {
+        if (item.hidden) return false;
+        if (authState.currentUser && authState.currentUser.role === "OPERADOR" && item.classList.contains("transfer-full-menu")) return false;
+        if ((!authState.currentUser || authState.currentUser.role !== "OPERADOR") && item.classList.contains("task-menu-item")) return false;
+        return true;
+      });
+      section.hidden = !hasVisibleItem;
     });
   }
 
@@ -2232,6 +2246,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("metricLocations").textContent = uniqueLocations.length;
     $("metricBindings").textContent = state.bindings.length;
     $("metricUpdated").textContent = state.bindings.length ? formatDateTime(latestDate(state.bindings)) : "-";
+    setTextIfExists("metricTransfersOpen", transferState.transfers.filter(function (transfer) {
+      return transfer.status !== "CANCELADA" && !isFinalTransferStatus(transfer.status);
+    }).length);
+    setTextIfExists("metricConferencesPending", conferenceState.conferences.filter(function (conference) {
+      return !isFinalConferenceStatus(conference.status);
+    }).length);
+    setTextIfExists("metricUsersActive", authState.users.filter(function (user) {
+      return user.active !== false;
+    }).length);
+    setTextIfExists("metricTasksActive", getActiveUserTasks().length);
 
     $("areaTotals").innerHTML = AREAS.map(function (area) {
       var total = state.bindings.filter(function (binding) { return binding.areaCode === area.code; }).length;
@@ -2292,6 +2316,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transferTasks = tasks.filter(function (task) { return task.type === "TRANSFERENCIA"; });
     var conferenceTasks = tasks.filter(function (task) { return task.type === "CONFERENCIA"; });
     var isOperatorUser = authState.currentUser && authState.currentUser.role === "OPERADOR";
+    updateHeaderTaskCount(tasks.length);
     $("taskMenuBadge").hidden = !isOperatorUser || !transferTasks.length;
     $("taskMenuBadge").textContent = String(transferTasks.length);
     if ($("conferenceMenuBadge")) {
@@ -6040,6 +6065,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var ready = isSupabaseReady();
     var text = message || (ready ? "Supabase configurado. Dados serao salvos no banco." : describeSupabaseConfigProblem());
     setStatus("supabaseStatus", text, type || (ready ? "success" : "warning"));
+    updateHeaderConnectionStatus(type || (ready ? "success" : "warning"));
+  }
+
+  function updateHeaderTaskCount(count) {
+    var value = Number(count) || 0;
+    var el = $("topTaskCount");
+    if (!el) return;
+    el.textContent = String(value);
+    var pill = el.closest(".task-pill");
+    if (pill) pill.classList.toggle("has-tasks", value > 0);
+  }
+
+  function updateHeaderConnectionStatus(type) {
+    var label = $("topConnectionLabel");
+    var pill = $("topConnectionPill");
+    if (!label || !pill) return;
+    var ready = isSupabaseReady();
+    label.textContent = ready ? "Online" : "Atencao";
+    pill.classList.toggle("is-online", ready && type !== "warning" && type !== "error");
+    pill.classList.toggle("is-warning", !ready || type === "warning" || type === "error");
   }
 
   function describeSupabaseConfigProblem() {
@@ -6484,6 +6529,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var el = $(id);
     el.textContent = message;
     el.className = "inline-status" + (type ? " " + type : "");
+  }
+
+  function setTextIfExists(id, value) {
+    var el = $(id);
+    if (el) el.textContent = String(value);
   }
 
   function showToast(message, type) {

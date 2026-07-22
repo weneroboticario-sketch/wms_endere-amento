@@ -79,20 +79,32 @@
         </div>
       </div>
 
-      <nav class="menu" aria-label="Menu principal">
-        <button class="menu-item active" data-screen="dashboard" type="button">Dashboard</button>
-        <button class="menu-item" data-screen="bipagem" type="button">Alocar Produto</button>
-        <button class="menu-item" data-screen="consultaSku" type="button">Consultar SKU</button>
-        <button class="menu-item" data-screen="consultaPrateleira" type="button">Consultar Prateleira</button>
-        <button class="menu-item" data-screen="etiquetas" type="button">Gerar Etiquetas</button>
-        <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
-        <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
-        <button class="menu-item transfer-full-menu" data-screen="transferencias" type="button">Transferências</button>
-        <button class="menu-item" data-screen="conferencias" type="button">Conferências <span class="menu-badge" id="conferenceMenuBadge" hidden>0</span></button>
-        <button class="menu-item task-menu-item" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
-        <button class="menu-item" data-screen="historico" type="button">Histórico</button>
-        <button class="menu-item admin-only" data-screen="usuarios" type="button">Usuários</button>
-        <button class="menu-item" data-screen="configuracoes" type="button">Configuracoes</button>
+      <nav class="menu grouped-menu" aria-label="Menu principal">
+        <div class="menu-section">
+          <p class="menu-label">Operacao</p>
+          <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
+          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button">Prateleira</button>
+          <button class="menu-item" data-icon="ALC" data-screen="bipagem" type="button">Alocar Produto</button>
+          <button class="menu-item task-menu-item" data-icon="TAR" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
+        </div>
+        <div class="menu-section">
+          <p class="menu-label">Processos</p>
+          <button class="menu-item transfer-full-menu" data-icon="TRF" data-screen="transferencias" type="button">Transferencias</button>
+          <button class="menu-item" data-icon="XML" data-screen="conferencias" type="button">Conferencias <span class="menu-badge" id="conferenceMenuBadge" hidden>0</span></button>
+        </div>
+        <div class="menu-section">
+          <p class="menu-label">Gestao</p>
+          <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
+          <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
+          <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
+          <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button">Etiquetas</button>
+        </div>
+        <div class="menu-section">
+          <p class="menu-label">Administracao</p>
+          <button class="menu-item admin-only" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
+          <button class="menu-item" data-icon="HIS" data-screen="historico" type="button">Historico</button>
+          <button class="menu-item" data-icon="CFG" data-screen="configuracoes" type="button">Configuracoes</button>
+        </div>
       </nav>
 
       <div class="user-card">
@@ -113,14 +125,26 @@
 
     <main class="content">
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
-      <div class="user-strip">
-        <div>
-          <span>Usuário logado</span>
+      <div class="user-strip app-header">
+        <div class="app-header-title">
+          <span>Plataforma operacional</span>
+          <strong>Controle WMS</strong>
+        </div>
+        <div class="header-pill">
+          <span>Usuario</span>
           <strong id="topUserName">-</strong>
         </div>
-        <div>
+        <div class="header-pill">
           <span>Perfil</span>
           <strong id="topUserRole">-</strong>
+        </div>
+        <div class="header-pill task-pill">
+          <span>Tarefas</span>
+          <strong id="topTaskCount">0</strong>
+        </div>
+        <div class="header-pill connection-pill" id="topConnectionPill">
+          <span>Supabase</span>
+          <strong id="topConnectionLabel">Verificando</strong>
         </div>
         <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
       </div>
@@ -152,6 +176,22 @@
           <article class="metric-card">
             <span>Ultima atualizacao</span>
             <strong id="metricUpdated">-</strong>
+          </article>
+          <article class="metric-card compact-metric">
+            <span>Transferencias abertas</span>
+            <strong id="metricTransfersOpen">0</strong>
+          </article>
+          <article class="metric-card compact-metric">
+            <span>Conferencias pendentes</span>
+            <strong id="metricConferencesPending">0</strong>
+          </article>
+          <article class="metric-card compact-metric">
+            <span>Usuarios ativos</span>
+            <strong id="metricUsersActive">0</strong>
+          </article>
+          <article class="metric-card compact-metric">
+            <span>Tarefas em andamento</span>
+            <strong id="metricTasksActive">0</strong>
           </article>
         </div>
 
