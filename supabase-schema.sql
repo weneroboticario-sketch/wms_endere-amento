@@ -241,8 +241,22 @@ alter table public.wms_transfers add column if not exists observacao text defaul
 alter table public.wms_transfers add column if not exists criado_por_id text default '';
 alter table public.wms_transfers add column if not exists criado_por_nome text default '';
 alter table public.wms_transfers add column if not exists iniciado_em timestamptz;
+alter table public.wms_transfers add column if not exists finalizado_em timestamptz;
+alter table public.wms_transfers add column if not exists duracao_segundos numeric default 0;
+alter table public.wms_transfers add column if not exists separacao_iniciada_em timestamptz;
 alter table public.wms_transfers add column if not exists separacao_concluida_em timestamptz;
+alter table public.wms_transfers add column if not exists duracao_separacao_segundos numeric default 0;
+alter table public.wms_transfers add column if not exists lacre_iniciado_em timestamptz;
 alter table public.wms_transfers add column if not exists lacre_concluido_em timestamptz;
+alter table public.wms_transfers add column if not exists duracao_lacre_segundos numeric default 0;
+alter table public.wms_transfers add column if not exists total_items numeric default 0;
+alter table public.wms_transfers add column if not exists total_skus numeric default 0;
+alter table public.wms_transfers add column if not exists total_expected_quantity numeric default 0;
+alter table public.wms_transfers add column if not exists total_separated_quantity numeric default 0;
+alter table public.wms_transfers add column if not exists total_packed_quantity numeric default 0;
+alter table public.wms_transfers add column if not exists has_divergence boolean default false;
+alter table public.wms_transfers add column if not exists divergence_count numeric default 0;
+alter table public.wms_transfers add column if not exists final_result text default '';
 
 create table if not exists public.wms_transfer_items (
   id text primary key,
@@ -275,6 +289,15 @@ alter table public.wms_transfer_items add column if not exists unidades_por_caix
 alter table public.wms_transfer_items add column if not exists quantidade_total_unidades numeric default 0;
 alter table public.wms_transfer_items add column if not exists quantidade_separada numeric default 0;
 alter table public.wms_transfer_items add column if not exists quantidade_lacrada numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_extra numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_faltante numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_excedente numeric default 0;
+alter table public.wms_transfer_items add column if not exists is_extra boolean default false;
+alter table public.wms_transfer_items add column if not exists divergence_type text default '';
+alter table public.wms_transfer_items add column if not exists added_by_id text default '';
+alter table public.wms_transfer_items add column if not exists added_by_name text default '';
+alter table public.wms_transfer_items add column if not exists input_type text default '';
+alter table public.wms_transfer_items add column if not exists observation text default '';
 alter table public.wms_transfer_items add column if not exists status text default 'PENDENTE';
 
 create table if not exists public.wms_transfer_events (
@@ -300,7 +323,50 @@ alter table public.wms_transfer_events add column if not exists event_type text 
 alter table public.wms_transfer_events add column if not exists sku text default '';
 alter table public.wms_transfer_events add column if not exists quantity numeric default 0;
 alter table public.wms_transfer_events add column if not exists details text default '';
+alter table public.wms_transfer_events add column if not exists input_type text default '';
+alter table public.wms_transfer_events add column if not exists divergence_type text default '';
+alter table public.wms_transfer_events add column if not exists quantity_expected numeric default 0;
+alter table public.wms_transfer_events add column if not exists quantity_informed numeric default 0;
+alter table public.wms_transfer_events add column if not exists quantity_difference numeric default 0;
+alter table public.wms_transfer_events add column if not exists observation text default '';
 alter table public.wms_transfer_events add column if not exists payload jsonb default '{}'::jsonb;
+
+create table if not exists public.wms_transfer_divergences (
+  id text primary key,
+  created_at timestamptz default now(),
+  transfer_id text default '',
+  item_id text default '',
+  sku text default '',
+  descricao text default '',
+  divergence_type text default '',
+  expected_quantity numeric default 0,
+  informed_quantity numeric default 0,
+  difference_quantity numeric default 0,
+  user_id text default '',
+  user_name text default '',
+  input_type text default '',
+  observation text default '',
+  resolved boolean default false,
+  resolved_by text default '',
+  resolved_at timestamptz
+);
+
+alter table public.wms_transfer_divergences add column if not exists created_at timestamptz default now();
+alter table public.wms_transfer_divergences add column if not exists transfer_id text default '';
+alter table public.wms_transfer_divergences add column if not exists item_id text default '';
+alter table public.wms_transfer_divergences add column if not exists sku text default '';
+alter table public.wms_transfer_divergences add column if not exists descricao text default '';
+alter table public.wms_transfer_divergences add column if not exists divergence_type text default '';
+alter table public.wms_transfer_divergences add column if not exists expected_quantity numeric default 0;
+alter table public.wms_transfer_divergences add column if not exists informed_quantity numeric default 0;
+alter table public.wms_transfer_divergences add column if not exists difference_quantity numeric default 0;
+alter table public.wms_transfer_divergences add column if not exists user_id text default '';
+alter table public.wms_transfer_divergences add column if not exists user_name text default '';
+alter table public.wms_transfer_divergences add column if not exists input_type text default '';
+alter table public.wms_transfer_divergences add column if not exists observation text default '';
+alter table public.wms_transfer_divergences add column if not exists resolved boolean default false;
+alter table public.wms_transfer_divergences add column if not exists resolved_by text default '';
+alter table public.wms_transfer_divergences add column if not exists resolved_at timestamptz;
 
 create index if not exists wms_transfers_responsavel_status_idx
 on public.wms_transfers (responsavel_id, status);
@@ -312,6 +378,7 @@ alter table public.wms_establishments enable row level security;
 alter table public.wms_transfers enable row level security;
 alter table public.wms_transfer_items enable row level security;
 alter table public.wms_transfer_events enable row level security;
+alter table public.wms_transfer_divergences enable row level security;
 
 drop policy if exists "wms_establishments_public_all" on public.wms_establishments;
 create policy "wms_establishments_public_all"
@@ -340,6 +407,14 @@ with check (true);
 drop policy if exists "wms_transfer_events_public_all" on public.wms_transfer_events;
 create policy "wms_transfer_events_public_all"
 on public.wms_transfer_events
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_transfer_divergences_public_all" on public.wms_transfer_divergences;
+create policy "wms_transfer_divergences_public_all"
+on public.wms_transfer_divergences
 for all
 to anon
 using (true)

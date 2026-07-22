@@ -398,6 +398,7 @@
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="transferConferenceSection" type="button">Conferência XML</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="finalizedTransfersSection" type="button">Finalizadas</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
         </div>
 
@@ -418,6 +419,9 @@
                     <option value="EM_LACRE">EM_LACRE</option>
                     <option value="LACRE_CONCLUIDO">LACRE_CONCLUIDO</option>
                     <option value="PRONTA_PARA_NOTA">PRONTA_PARA_NOTA</option>
+                    <option value="FINALIZADA_PARA_ANALISE">FINALIZADA_PARA_ANALISE</option>
+                    <option value="CONCLUIDA_SEM_DIVERGENCIA">CONCLUIDA_SEM_DIVERGENCIA</option>
+                    <option value="CONCLUIDA_COM_DIVERGENCIA">CONCLUIDA_COM_DIVERGENCIA</option>
                     <option value="CANCELADA">CANCELADA</option>
                   </select>
                 </label>
@@ -522,6 +526,36 @@
               <h3>Minhas Tarefas</h3>
             </div>
             <div id="myTransfersList" class="transfer-card-grid"></div>
+            <details class="completed-tasks-panel">
+              <summary>Concluídas</summary>
+              <div id="completedTransfersList" class="transfer-card-grid"></div>
+            </details>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="finalizedTransfersSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Transferências Finalizadas</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Transferência</th>
+                    <th>Destino</th>
+                    <th>Responsável</th>
+                    <th>Status final</th>
+                    <th>Tempo total</th>
+                    <th>Itens</th>
+                    <th>Divergências</th>
+                    <th>Conclusão</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="finalizedTransferRows"></tbody>
+              </table>
+            </div>
           </section>
         </section>
 
@@ -604,6 +638,13 @@
                   <tbody id="adminTransferProgressRows"></tbody>
                 </table>
               </div>
+            </section>
+            <section class="admin-transfer-progress" id="transferFinalReportPanel" hidden>
+              <div class="panel-header">
+                <h3>Relatório do líder</h3>
+              </div>
+              <div id="transferFinalReportSummary" class="transfer-work-summary"></div>
+              <div id="transferFinalReportDetails" class="leader-report-grid"></div>
             </section>
             <section class="xml-conference-panel">
               <div class="panel-header">

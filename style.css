@@ -1030,6 +1030,20 @@ td {
   gap: 8px;
 }
 
+.completed-tasks-panel {
+  margin-top: 14px;
+}
+
+.completed-tasks-panel summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.completed-tasks-panel .transfer-card-grid {
+  margin-top: 10px;
+}
+
 .transfer-card h3 {
   margin: 0;
   font-size: 1.02rem;
@@ -1089,6 +1103,21 @@ td {
 
 .admin-progress-pending {
   background: #fffdf5;
+}
+
+.leader-report-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.leader-report-section {
+  display: grid;
+  gap: 8px;
+}
+
+.leader-report-section h4 {
+  margin: 0;
+  font-size: 0.95rem;
 }
 
 .transfer-scan-panel,
@@ -1548,8 +1577,31 @@ td {
   }
 
   .role-operador #consultaSku .sku-card-meta,
+  .role-operador #consultaSku .sku-location-grid,
+  .role-operador #consultaSku .latest-pill,
   .role-operador #consultaSku .result-actions {
     display: none;
+  }
+
+  .role-operador #consultaSku .sku-location-card {
+    padding: 10px;
+  }
+
+  .role-operador #consultaSku .sku-card-head strong {
+    font-size: 1.2rem;
+  }
+
+  .role-operador #consultaSku .sku-location-code {
+    font-size: 1.2rem;
+  }
+
+  .transfer-alert {
+    margin-top: 8px;
+    padding: 12px;
+  }
+
+  .transfer-alert strong {
+    margin-bottom: 3px;
   }
 
   .transfer-summary-grid {
