@@ -254,8 +254,8 @@ button {
 }
 
 .content {
-  width: 100%;
-  max-width: 1420px;
+  width: calc(100% - 280px);
+  max-width: none;
   margin-left: 280px;
   padding: 30px;
 }
@@ -1465,6 +1465,7 @@ td {
   }
 
   .content {
+    width: 100%;
     margin-left: 0;
     padding: 8px 10px 18px;
   }
@@ -1875,6 +1876,8 @@ td {
   .content,
   #etiquetas {
     display: block !important;
+    width: 100%;
+    margin-left: 0;
     padding: 0;
     max-width: none;
   }
