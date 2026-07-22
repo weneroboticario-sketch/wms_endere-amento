@@ -107,14 +107,7 @@ abra o Supabase do projeto, entre em `SQL Editor`, cole todo o conteúdo de `sup
 
 ## Login e usuários
 
-O sistema possui login simples para operação de estoque. Depois de executar `supabase-schema.sql`, o app cria automaticamente o primeiro administrador se ainda não existir usuário:
-
-```text
-Usuário: admin
-Senha: admin123
-```
-
-Troque essa senha inicial na tela `Usuários` após o primeiro acesso. As senhas são salvas como `password_hash` gerado no navegador, não em texto puro. A tabela `wms_sessions` registra início e encerramento de sessão de forma simples.
+O sistema possui login simples para operação de estoque. Depois de executar `supabase-schema.sql`, o app cria automaticamente o primeiro administrador se ainda não existir usuário. Troque a senha inicial na tela `Usuários` após o primeiro acesso. As senhas são salvas como `password_hash` gerado no navegador, não em texto puro. A tabela `wms_sessions` registra início e encerramento de sessão de forma simples.
 
 Novos colaboradores podem clicar em `Solicitar acesso` na tela de login. O pedido fica em `wms_access_requests` com status `PENDENTE`; somente administrador consegue aprovar ou recusar na tela `Usuários`. Ao aprovar, o sistema cria o usuário como `OPERADOR` ativo.
 

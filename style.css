@@ -96,11 +96,6 @@ button {
   font-weight: 700;
 }
 
-.admin-warning {
-  margin-bottom: 0;
-  font-size: 0.88rem;
-}
-
 .app-shell {
   min-height: 100vh;
   display: grid;
