@@ -724,6 +724,125 @@ td {
   grid-column: 1 / -1;
 }
 
+.transfer-alert {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #b7ead4;
+  border-radius: var(--radius);
+  background: #e4f7ef;
+  color: #0f5c43;
+}
+
+.transfer-alert strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.transfer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.transfer-tab {
+  width: auto;
+}
+
+.transfer-tab.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.transfer-section[hidden] {
+  display: none;
+}
+
+.transfer-filter-grid,
+.transfer-work-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.transfer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transfer-summary-grid div,
+.transfer-work-summary,
+.transfer-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfdff;
+}
+
+.transfer-summary-grid span,
+.transfer-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.transfer-summary-grid strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1.8rem;
+}
+
+.transfer-progress {
+  min-width: 150px;
+}
+
+.transfer-progress-bar {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbe6ee;
+}
+
+.transfer-progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.transfer-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.transfer-card {
+  display: grid;
+  gap: 10px;
+}
+
+.transfer-card h3 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.transfer-work-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.transfer-work-summary div {
+  display: grid;
+  gap: 4px;
+}
+
+.transfer-work-summary span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .toast {
   position: fixed;
   right: 22px;
@@ -836,7 +955,10 @@ td {
 
   .dashboard-layout,
   .scan-grid,
-  .label-form-grid {
+  .label-form-grid,
+  .transfer-filter-grid,
+  .transfer-work-grid,
+  .transfer-work-summary {
     grid-template-columns: 1fr;
   }
 
@@ -874,9 +996,22 @@ td {
   }
 
   .quick-actions,
-  .button-row {
+  .button-row,
+  .transfer-tabs {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .transfer-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .transfer-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #transferencias .table-wrap {
+    overflow-x: auto;
   }
 
   .panel {

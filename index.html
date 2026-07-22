@@ -87,6 +87,7 @@
         <button class="menu-item" data-screen="etiquetas" type="button">Gerar Etiquetas</button>
         <button class="menu-item" data-screen="exportar" type="button">Exportar Excel</button>
         <button class="menu-item" data-screen="importar" type="button">Importar Excel</button>
+        <button class="menu-item" data-screen="transferencias" type="button">Transferências</button>
         <button class="menu-item" data-screen="historico" type="button">Histórico</button>
         <button class="menu-item admin-only" data-screen="usuarios" type="button">Usuários</button>
         <button class="menu-item" data-screen="configuracoes" type="button">Configuracoes</button>
@@ -180,6 +181,8 @@
           <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
           <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
         </div>
+
+        <section class="transfer-alert" id="transferDashboardAlert" hidden></section>
       </section>
 
       <section class="screen" id="bipagem">
@@ -358,6 +361,246 @@
           <input id="excelFileInput" type="file" accept=".xlsx,.xls" multiple>
           <button class="primary-button wide-button" id="importExcelButton" type="button">Importar planilha</button>
           <div id="importStatus" class="inline-status"></div>
+        </section>
+      </section>
+
+      <section class="screen" id="transferencias">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Operação logística</p>
+            <h2>Transferências</h2>
+          </div>
+        </div>
+
+        <div class="transfer-tabs">
+          <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
+        </div>
+
+        <section class="transfer-section" id="transferPanelSection">
+          <div class="dashboard-layout transfer-filters">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Filtros</h3>
+              </div>
+              <div class="transfer-filter-grid">
+                <label>Status
+                  <select id="transferStatusFilter">
+                    <option value="">Todos</option>
+                    <option value="PENDENTE">PENDENTE</option>
+                    <option value="ATRIBUIDA">ATRIBUIDA</option>
+                    <option value="EM_SEPARACAO">EM_SEPARACAO</option>
+                    <option value="SEPARACAO_CONCLUIDA">SEPARACAO_CONCLUIDA</option>
+                    <option value="EM_LACRE">EM_LACRE</option>
+                    <option value="LACRE_CONCLUIDO">LACRE_CONCLUIDO</option>
+                    <option value="PRONTA_PARA_NOTA">PRONTA_PARA_NOTA</option>
+                    <option value="CANCELADA">CANCELADA</option>
+                  </select>
+                </label>
+                <label>Responsável
+                  <select id="transferResponsibleFilter"></select>
+                </label>
+                <label>Estabelecimento
+                  <select id="transferEstablishmentFilter"></select>
+                </label>
+                <label>Código ou nome
+                  <input id="transferCodeFilter" type="search" placeholder="Buscar transferência">
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Resumo</h3>
+              </div>
+              <div class="transfer-summary-grid">
+                <div><span>Total</span><strong id="transferMetricTotal">0</strong></div>
+                <div><span>Em separação</span><strong id="transferMetricSeparating">0</strong></div>
+                <div><span>Prontas para nota</span><strong id="transferMetricReady">0</strong></div>
+              </div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Painel de Transferências</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Transferência</th>
+                    <th>Destino</th>
+                    <th>Responsável</th>
+                    <th>Status</th>
+                    <th>Progresso</th>
+                    <th>Datas</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="transferPanelRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="newTransferSection" hidden>
+          <div class="dashboard-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Nova Transferência</h3>
+              </div>
+              <form id="newTransferForm" autocomplete="off">
+                <label for="transferNameInput">Nome ou número da transferência</label>
+                <input id="transferNameInput" type="text" placeholder="Ex.: TRANSF-001">
+                <label for="transferDestinationInput">Estabelecimento de destino</label>
+                <select id="transferDestinationInput"></select>
+                <label for="transferResponsibleInput">Responsável pela separação</label>
+                <select id="transferResponsibleInput"></select>
+                <label for="transferObservationInput">Observação</label>
+                <textarea id="transferObservationInput" rows="3" placeholder="Opcional"></textarea>
+                <label for="transferExcelInput">Planilha Excel da transferência</label>
+                <input id="transferExcelInput" type="file" accept=".xlsx,.xls">
+                <div class="button-row">
+                  <button class="secondary-button" id="previewTransferExcelButton" type="button">Pré-visualizar</button>
+                  <button class="primary-button" id="createTransferButton" type="submit">Criar transferência</button>
+                </div>
+                <div id="transferImportStatus" class="inline-status"></div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Prévia da planilha</h3>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Descrição</th>
+                      <th>Qtd</th>
+                      <th>Unidade</th>
+                      <th>Tipo</th>
+                      <th>Erros</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transferPreviewRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="transfer-section" id="myTransfersSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Minhas Transferências</h3>
+            </div>
+            <div id="myTransfersList" class="transfer-card-grid"></div>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="transferWorkSection" hidden>
+          <section class="panel">
+            <div class="panel-header">
+              <h3 id="transferWorkTitle">Separação</h3>
+              <button class="secondary-button" id="backToTransfersButton" type="button">Voltar</button>
+            </div>
+            <div id="transferWorkSummary" class="transfer-work-summary"></div>
+            <div class="transfer-work-grid">
+              <div>
+                <label for="transferScanInput">Bipar SKU</label>
+                <div class="input-action">
+                  <input id="transferScanInput" type="text" inputmode="text" placeholder="Digite ou bipe o SKU">
+                  <button class="primary-button" id="transferScanButton" type="button">Localizar</button>
+                </div>
+                <label for="transferQuantityInput">Quantidade</label>
+                <input id="transferQuantityInput" type="number" min="0.001" step="0.001" placeholder="Quantidade">
+                <div class="button-row">
+                  <button class="primary-button" id="confirmTransferItemButton" type="button">Confirmar item</button>
+                  <button class="secondary-button" id="startPackingButton" type="button">Iniciar caixa/lacre</button>
+                  <button class="primary-button" id="finishSeparationButton" type="button">Concluir separação</button>
+                  <button class="primary-button" id="finishPackingButton" type="button">Concluir lacre</button>
+                </div>
+                <label for="sealNumberInput">Número do lacre</label>
+                <input id="sealNumberInput" type="text" placeholder="Opcional">
+                <label for="boxIdInput">Identificação da caixa</label>
+                <input id="boxIdInput" type="text" placeholder="Opcional">
+                <div id="transferWorkStatus" class="inline-status"></div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Descrição</th>
+                      <th>Solicitada</th>
+                      <th>Separada</th>
+                      <th>Lacrada</th>
+                      <th>Pendente</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="transferWorkRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="establishmentsSection" hidden>
+          <div class="dashboard-layout">
+            <section class="panel">
+              <div class="panel-header">
+                <h3 id="establishmentFormTitle">Cadastrar estabelecimento</h3>
+              </div>
+              <form id="establishmentForm" autocomplete="off">
+                <input id="establishmentEditId" type="hidden">
+                <label for="establishmentCodeInput">Código</label>
+                <input id="establishmentCodeInput" type="text" placeholder="Ex.: 001">
+                <label for="establishmentNameInput">Nome</label>
+                <input id="establishmentNameInput" type="text" placeholder="Nome do estabelecimento">
+                <label for="establishmentCnpjInput">CNPJ</label>
+                <input id="establishmentCnpjInput" type="text" placeholder="Opcional">
+                <label class="checkbox-label">
+                  <input id="establishmentActiveInput" type="checkbox" checked>
+                  Estabelecimento ativo
+                </label>
+                <div class="button-row">
+                  <button class="primary-button" id="saveEstablishmentButton" type="submit">Salvar</button>
+                  <button class="secondary-button" id="clearEstablishmentButton" type="button">Limpar</button>
+                </div>
+                <div id="establishmentStatus" class="inline-status"></div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Estabelecimentos</h3>
+              </div>
+              <div class="input-action">
+                <input id="establishmentSearchInput" type="search" placeholder="Buscar por código, nome ou CNPJ">
+                <button class="secondary-button" id="establishmentSearchButton" type="button">Buscar</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Código</th>
+                      <th>Nome</th>
+                      <th>CNPJ</th>
+                      <th>Status</th>
+                      <th>Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody id="establishmentsRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </section>
       </section>
 

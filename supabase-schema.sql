@@ -187,3 +187,160 @@ for all
 to anon
 using (true)
 with check (true);
+
+create table if not exists public.wms_establishments (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  codigo text default '',
+  nome text default '',
+  cnpj text default '',
+  ativo boolean default true
+);
+
+alter table public.wms_establishments add column if not exists created_at timestamptz default now();
+alter table public.wms_establishments add column if not exists updated_at timestamptz default now();
+alter table public.wms_establishments add column if not exists codigo text default '';
+alter table public.wms_establishments add column if not exists nome text default '';
+alter table public.wms_establishments add column if not exists cnpj text default '';
+alter table public.wms_establishments add column if not exists ativo boolean default true;
+
+create table if not exists public.wms_transfers (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  codigo_transferencia text default '',
+  nome_transferencia text default '',
+  estabelecimento_id text default '',
+  estabelecimento_codigo text default '',
+  estabelecimento_nome text default '',
+  estabelecimento_cnpj text default '',
+  responsavel_id text default '',
+  responsavel_nome text default '',
+  status text default 'PENDENTE',
+  observacao text default '',
+  criado_por_id text default '',
+  criado_por_nome text default '',
+  iniciado_em timestamptz,
+  separacao_concluida_em timestamptz,
+  lacre_concluido_em timestamptz
+);
+
+alter table public.wms_transfers add column if not exists created_at timestamptz default now();
+alter table public.wms_transfers add column if not exists updated_at timestamptz default now();
+alter table public.wms_transfers add column if not exists codigo_transferencia text default '';
+alter table public.wms_transfers add column if not exists nome_transferencia text default '';
+alter table public.wms_transfers add column if not exists estabelecimento_id text default '';
+alter table public.wms_transfers add column if not exists estabelecimento_codigo text default '';
+alter table public.wms_transfers add column if not exists estabelecimento_nome text default '';
+alter table public.wms_transfers add column if not exists estabelecimento_cnpj text default '';
+alter table public.wms_transfers add column if not exists responsavel_id text default '';
+alter table public.wms_transfers add column if not exists responsavel_nome text default '';
+alter table public.wms_transfers add column if not exists status text default 'PENDENTE';
+alter table public.wms_transfers add column if not exists observacao text default '';
+alter table public.wms_transfers add column if not exists criado_por_id text default '';
+alter table public.wms_transfers add column if not exists criado_por_nome text default '';
+alter table public.wms_transfers add column if not exists iniciado_em timestamptz;
+alter table public.wms_transfers add column if not exists separacao_concluida_em timestamptz;
+alter table public.wms_transfers add column if not exists lacre_concluido_em timestamptz;
+
+create table if not exists public.wms_transfer_items (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  transfer_id text default '',
+  sku text default '',
+  descricao text default '',
+  quantidade_solicitada numeric default 0,
+  unidade_medida text default '',
+  tipo_quantidade text default 'UNIDADE',
+  quantidade_caixas numeric default 0,
+  unidades_por_caixa numeric default 0,
+  quantidade_total_unidades numeric default 0,
+  quantidade_separada numeric default 0,
+  quantidade_lacrada numeric default 0,
+  status text default 'PENDENTE'
+);
+
+alter table public.wms_transfer_items add column if not exists created_at timestamptz default now();
+alter table public.wms_transfer_items add column if not exists updated_at timestamptz default now();
+alter table public.wms_transfer_items add column if not exists transfer_id text default '';
+alter table public.wms_transfer_items add column if not exists sku text default '';
+alter table public.wms_transfer_items add column if not exists descricao text default '';
+alter table public.wms_transfer_items add column if not exists quantidade_solicitada numeric default 0;
+alter table public.wms_transfer_items add column if not exists unidade_medida text default '';
+alter table public.wms_transfer_items add column if not exists tipo_quantidade text default 'UNIDADE';
+alter table public.wms_transfer_items add column if not exists quantidade_caixas numeric default 0;
+alter table public.wms_transfer_items add column if not exists unidades_por_caixa numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_total_unidades numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_separada numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_lacrada numeric default 0;
+alter table public.wms_transfer_items add column if not exists status text default 'PENDENTE';
+
+create table if not exists public.wms_transfer_events (
+  id text primary key,
+  created_at timestamptz default now(),
+  transfer_id text default '',
+  item_id text default '',
+  user_id text default '',
+  user_name text default '',
+  event_type text default '',
+  sku text default '',
+  quantity numeric default 0,
+  details text default '',
+  payload jsonb default '{}'::jsonb
+);
+
+alter table public.wms_transfer_events add column if not exists created_at timestamptz default now();
+alter table public.wms_transfer_events add column if not exists transfer_id text default '';
+alter table public.wms_transfer_events add column if not exists item_id text default '';
+alter table public.wms_transfer_events add column if not exists user_id text default '';
+alter table public.wms_transfer_events add column if not exists user_name text default '';
+alter table public.wms_transfer_events add column if not exists event_type text default '';
+alter table public.wms_transfer_events add column if not exists sku text default '';
+alter table public.wms_transfer_events add column if not exists quantity numeric default 0;
+alter table public.wms_transfer_events add column if not exists details text default '';
+alter table public.wms_transfer_events add column if not exists payload jsonb default '{}'::jsonb;
+
+create index if not exists wms_transfers_responsavel_status_idx
+on public.wms_transfers (responsavel_id, status);
+
+create index if not exists wms_transfer_items_transfer_sku_idx
+on public.wms_transfer_items (transfer_id, sku);
+
+alter table public.wms_establishments enable row level security;
+alter table public.wms_transfers enable row level security;
+alter table public.wms_transfer_items enable row level security;
+alter table public.wms_transfer_events enable row level security;
+
+drop policy if exists "wms_establishments_public_all" on public.wms_establishments;
+create policy "wms_establishments_public_all"
+on public.wms_establishments
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_transfers_public_all" on public.wms_transfers;
+create policy "wms_transfers_public_all"
+on public.wms_transfers
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_transfer_items_public_all" on public.wms_transfer_items;
+create policy "wms_transfer_items_public_all"
+on public.wms_transfer_items
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_transfer_events_public_all" on public.wms_transfer_events;
+create policy "wms_transfer_events_public_all"
+on public.wms_transfer_events
+for all
+to anon
+using (true)
+with check (true);

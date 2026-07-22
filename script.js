@@ -16,10 +16,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     etiquetas: ["ADMINISTRADOR"],
     exportar: ["ADMINISTRADOR"],
     importar: ["ADMINISTRADOR"],
+    transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
+  var TRANSFER_STATUSES = ["PENDENTE", "ATRIBUIDA", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE", "LACRE_CONCLUIDO", "PRONTA_PARA_NOTA", "CANCELADA"];
   var supabaseConfig = { url: "", key: "" };
   var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
@@ -49,6 +51,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     bindings: [],
     history: [],
     products: {}
+  };
+  var transferState = {
+    establishments: [],
+    transfers: [],
+    items: [],
+    events: [],
+    previewItems: [],
+    previewErrors: [],
+    activeTransferId: "",
+    activeWorkMode: "SEPARACAO",
+    selectedItemId: "",
+    tablesAvailable: true
   };
 
   var currentSku = "";
@@ -346,6 +360,171 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  async function loadTransferData() {
+    transferState.establishments = [];
+    transferState.transfers = [];
+    transferState.items = [];
+    transferState.events = [];
+    if (!isSupabaseReady()) return false;
+    try {
+      var establishmentsResponse = await supabaseDb.from("wms_establishments").select("*").order("codigo", { ascending: true });
+      if (establishmentsResponse.error) throw establishmentsResponse.error;
+      var transfersResponse = await supabaseDb.from("wms_transfers").select("*").order("created_at", { ascending: false });
+      if (transfersResponse.error) throw transfersResponse.error;
+      var itemsResponse = await supabaseDb.from("wms_transfer_items").select("*").order("created_at", { ascending: true });
+      if (itemsResponse.error) throw itemsResponse.error;
+      var eventsResponse = await supabaseDb.from("wms_transfer_events").select("*").order("created_at", { ascending: false }).limit(1000);
+      if (eventsResponse.error) throw eventsResponse.error;
+      transferState.establishments = (establishmentsResponse.data || []).map(fromDbEstablishment);
+      transferState.transfers = (transfersResponse.data || []).map(fromDbTransfer);
+      transferState.items = (itemsResponse.data || []).map(fromDbTransferItem);
+      transferState.events = eventsResponse.data || [];
+      transferState.tablesAvailable = true;
+      return true;
+    } catch (error) {
+      transferState.tablesAvailable = !isMissingTransferTableError(error);
+      if (!transferState.tablesAvailable) {
+        showToast("Tabelas de transferencias ausentes. Execute supabase-schema.sql.", "warning");
+      } else {
+        showToast("Nao foi possivel carregar transferencias.", "error");
+        console.error("Erro ao carregar transferencias:", error);
+      }
+      return false;
+    }
+  }
+
+  function fromDbEstablishment(row) {
+    return {
+      id: row.id,
+      code: row.codigo || "",
+      name: row.nome || "",
+      cnpj: row.cnpj || "",
+      active: row.ativo !== false,
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function fromDbTransfer(row) {
+    return {
+      id: row.id,
+      code: row.codigo_transferencia || "",
+      name: row.nome_transferencia || "",
+      establishmentId: row.estabelecimento_id || "",
+      establishmentCode: row.estabelecimento_codigo || "",
+      establishmentName: row.estabelecimento_nome || "",
+      establishmentCnpj: row.estabelecimento_cnpj || "",
+      responsibleId: row.responsavel_id || "",
+      responsibleName: row.responsavel_nome || "",
+      status: TRANSFER_STATUSES.indexOf(row.status) >= 0 ? row.status : "PENDENTE",
+      observation: row.observacao || "",
+      createdById: row.criado_por_id || "",
+      createdByName: row.criado_por_nome || "",
+      startedAt: row.iniciado_em || "",
+      separationFinishedAt: row.separacao_concluida_em || "",
+      packingFinishedAt: row.lacre_concluido_em || "",
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function fromDbTransferItem(row) {
+    return {
+      id: row.id,
+      transferId: row.transfer_id || "",
+      sku: row.sku || "",
+      description: row.descricao || "",
+      requestedQty: Number(row.quantidade_solicitada || 0),
+      unit: row.unidade_medida || "UN",
+      quantityType: row.tipo_quantidade || "UNIDADE",
+      boxQty: Number(row.quantidade_caixas || 0),
+      unitsPerBox: Number(row.unidades_por_caixa || 0),
+      totalUnits: Number(row.quantidade_total_unidades || row.quantidade_solicitada || 0),
+      separatedQty: Number(row.quantidade_separada || 0),
+      packedQty: Number(row.quantidade_lacrada || 0),
+      status: row.status || "PENDENTE",
+      createdAt: row.created_at || new Date().toISOString(),
+      updatedAt: row.updated_at || row.created_at || new Date().toISOString()
+    };
+  }
+
+  function toDbEstablishment(item) {
+    return {
+      id: item.id,
+      codigo: item.code,
+      nome: item.name,
+      cnpj: item.cnpj || "",
+      ativo: item.active !== false,
+      created_at: item.createdAt || new Date().toISOString(),
+      updated_at: item.updatedAt || new Date().toISOString()
+    };
+  }
+
+  function toDbTransfer(item) {
+    return {
+      id: item.id,
+      codigo_transferencia: item.code,
+      nome_transferencia: item.name,
+      estabelecimento_id: item.establishmentId,
+      estabelecimento_codigo: item.establishmentCode,
+      estabelecimento_nome: item.establishmentName,
+      estabelecimento_cnpj: item.establishmentCnpj,
+      responsavel_id: item.responsibleId,
+      responsavel_nome: item.responsibleName,
+      status: item.status,
+      observacao: item.observation || "",
+      criado_por_id: item.createdById,
+      criado_por_nome: item.createdByName,
+      iniciado_em: item.startedAt || null,
+      separacao_concluida_em: item.separationFinishedAt || null,
+      lacre_concluido_em: item.packingFinishedAt || null,
+      created_at: item.createdAt || new Date().toISOString(),
+      updated_at: item.updatedAt || new Date().toISOString()
+    };
+  }
+
+  function toDbTransferItem(item) {
+    return {
+      id: item.id,
+      transfer_id: item.transferId,
+      sku: item.sku,
+      descricao: item.description,
+      quantidade_solicitada: Number(item.requestedQty || 0),
+      unidade_medida: item.unit || "UN",
+      tipo_quantidade: item.quantityType || "UNIDADE",
+      quantidade_caixas: Number(item.boxQty || 0),
+      unidades_por_caixa: Number(item.unitsPerBox || 0),
+      quantidade_total_unidades: Number(item.totalUnits || item.requestedQty || 0),
+      quantidade_separada: Number(item.separatedQty || 0),
+      quantidade_lacrada: Number(item.packedQty || 0),
+      status: item.status || "PENDENTE",
+      created_at: item.createdAt || new Date().toISOString(),
+      updated_at: item.updatedAt || new Date().toISOString()
+    };
+  }
+
+  async function recordTransferEvent(transferId, itemId, eventType, sku, quantity, details, payload) {
+    if (!isSupabaseReady()) return;
+    var user = authState.currentUser || {};
+    var row = {
+      id: "tevt-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      created_at: new Date().toISOString(),
+      transfer_id: transferId || "",
+      item_id: itemId || "",
+      user_id: user.id || "",
+      user_name: user.name || "",
+      event_type: eventType,
+      sku: sku || "",
+      quantity: Number(quantity || 0),
+      details: details || "",
+      payload: payload || {}
+    };
+    var response = await supabaseDb.from("wms_transfer_events").insert(row);
+    if (response.error && !isMissingTransferTableError(response.error)) {
+      console.warn("Evento de transferencia nao salvo:", response.error);
+    }
+  }
+
   async function upsertInChunks(tableName, rows, onConflict) {
     var chunkSize = 500;
     for (var i = 0; i < rows.length; i += chunkSize) {
@@ -618,6 +797,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     applyRolePermissions();
     if (isAdmin()) await loadAccessRequests();
     await loadData();
+    await loadTransferData();
     await applyDataMigrations();
     renderAll();
     renderUsers();
@@ -1248,6 +1428,56 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("importExcelButton").addEventListener("click", importExcel);
     $("historyFilterButton").addEventListener("click", renderHistory);
     $("historyFilterInput").addEventListener("input", renderHistory);
+    document.querySelectorAll(".transfer-tab").forEach(function (button) {
+      button.addEventListener("click", function () {
+        activateTransferTab(button.dataset.transferTab);
+        renderTransfers();
+      });
+    });
+    $("transferDashboardAlert").addEventListener("click", async function (event) {
+      var button = event.target.closest("[data-transfer-alert-open]");
+      if (button) {
+        showScreen("transferencias");
+        await openTransferWork(button.dataset.transferAlertOpen);
+      }
+    });
+    ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
+      $(id).addEventListener("input", renderTransferPanel);
+      $(id).addEventListener("change", renderTransferPanel);
+    });
+    $("previewTransferExcelButton").addEventListener("click", previewTransferExcel);
+    $("newTransferForm").addEventListener("submit", createTransferFromForm);
+    $("transferPanelRows").addEventListener("click", handleTransferActionClick);
+    $("myTransfersList").addEventListener("click", handleTransferActionClick);
+    $("establishmentForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      saveEstablishmentFromForm();
+    });
+    $("clearEstablishmentButton").addEventListener("click", resetEstablishmentForm);
+    $("establishmentsRows").addEventListener("click", handleTransferActionClick);
+    $("establishmentSearchButton").addEventListener("click", renderEstablishments);
+    $("establishmentSearchInput").addEventListener("input", renderEstablishments);
+    $("backToTransfersButton").addEventListener("click", function () {
+      activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
+      renderTransfers();
+    });
+    $("transferScanButton").addEventListener("click", locateTransferItem);
+    $("transferScanInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        locateTransferItem();
+      }
+    });
+    $("transferQuantityInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        confirmTransferItem();
+      }
+    });
+    $("confirmTransferItemButton").addEventListener("click", confirmTransferItem);
+    $("finishSeparationButton").addEventListener("click", finishSeparation);
+    $("startPackingButton").addEventListener("click", startPacking);
+    $("finishPackingButton").addEventListener("click", finishPacking);
     $("clearHistoryButton").addEventListener("click", clearHistory);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -1438,6 +1668,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function renderAll() {
     renderDashboard();
     renderHistory();
+    renderTransfers();
   }
 
   function renderDashboard() {
@@ -1457,6 +1688,280 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("recentBindings").innerHTML = recent.length ? recent.map(function (binding) {
       return "<tr><td>" + escapeHtml(binding.sku) + "</td><td>" + escapeHtml(binding.locationCode) + "</td><td>" + escapeHtml(binding.areaName) + "</td><td>" + formatDateTime(binding.createdAt) + "</td></tr>";
     }).join("") : "<tr><td colspan=\"4\">Nenhum endereco cadastrado.</td></tr>";
+
+    renderTransferDashboardAlert();
+  }
+
+  function renderTransferDashboardAlert() {
+    if (!$("transferDashboardAlert") || !authState.currentUser) return;
+    var assigned = getVisibleTransfers().filter(function (transfer) {
+      return ["ATRIBUIDA", "PENDENTE", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE"].indexOf(transfer.status) >= 0;
+    });
+    if (!assigned.length || isAdminOrSupervisor()) {
+      $("transferDashboardAlert").hidden = true;
+      $("transferDashboardAlert").innerHTML = "";
+      return;
+    }
+    var transfer = assigned[0];
+    var stats = getTransferStats(transfer.id);
+    $("transferDashboardAlert").hidden = false;
+    $("transferDashboardAlert").innerHTML = [
+      "<strong>Você tem uma transferência para separar</strong>",
+      "<span>" + escapeHtml(transfer.name || transfer.code) + " - " + escapeHtml(transfer.establishmentName || "-") + "</span>",
+      "<span>" + stats.totalItems + " item(ns), " + stats.pendingSeparation + " pendente(s).</span>",
+      "<button class=\"primary-button\" data-transfer-alert-open=\"" + transfer.id + "\" type=\"button\">Iniciar separação</button>"
+    ].join("");
+  }
+
+  function renderTransfers() {
+    if (!$("transferencias")) return;
+    renderTransferTabVisibility();
+    renderTransferSelects();
+    renderTransferPanel();
+    renderMyTransfers();
+    renderEstablishments();
+    renderTransferPreview();
+    renderTransferWork();
+  }
+
+  function renderTransferTabVisibility() {
+    var workVisible = $("transferWorkSection") && !$("transferWorkSection").hidden;
+    document.querySelectorAll(".transfer-tab").forEach(function (button) {
+      var target = button.dataset.transferTab;
+      var visible = target === "myTransfersSection" || isAdminOrSupervisor();
+      if (target === "establishmentsSection") visible = isAdmin();
+      button.hidden = !visible;
+      if (button.classList.contains("active") && !visible) activateTransferTab("myTransfersSection");
+    });
+    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
+  }
+
+  function activateTransferTab(sectionId) {
+    document.querySelectorAll(".transfer-section").forEach(function (section) {
+      section.hidden = section.id !== sectionId;
+    });
+    document.querySelectorAll(".transfer-tab").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.transferTab === sectionId);
+    });
+    if (sectionId === "transferWorkSection") {
+      document.querySelectorAll(".transfer-tab").forEach(function (button) { button.classList.remove("active"); });
+    }
+  }
+
+  function renderTransferSelects() {
+    var activeEstablishments = transferState.establishments.filter(function (item) { return item.active; });
+    var operators = authState.users.filter(function (user) {
+      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
+    });
+    if ($("transferDestinationInput")) {
+      $("transferDestinationInput").innerHTML = "<option value=\"\">Selecione</option>" + activeEstablishments.map(function (item) {
+        return "<option value=\"" + item.id + "\">" + escapeHtml(item.code + " - " + item.name) + "</option>";
+      }).join("");
+    }
+    if ($("transferResponsibleInput")) {
+      $("transferResponsibleInput").innerHTML = "<option value=\"\">Selecione</option>" + operators.map(function (user) {
+        return "<option value=\"" + user.id + "\">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+      }).join("");
+    }
+    if ($("transferResponsibleFilter")) {
+      $("transferResponsibleFilter").innerHTML = "<option value=\"\">Todos</option>" + authState.users.map(function (user) {
+        return "<option value=\"" + user.id + "\">" + escapeHtml(user.name) + "</option>";
+      }).join("");
+    }
+    if ($("transferEstablishmentFilter")) {
+      $("transferEstablishmentFilter").innerHTML = "<option value=\"\">Todos</option>" + transferState.establishments.map(function (item) {
+        return "<option value=\"" + item.id + "\">" + escapeHtml(item.name) + "</option>";
+      }).join("");
+    }
+  }
+
+  function renderTransferPanel() {
+    if (!$("transferPanelRows")) return;
+    var transfers = getVisibleTransfers();
+    if (isAdminOrSupervisor()) {
+      var status = $("transferStatusFilter").value;
+      var responsible = $("transferResponsibleFilter").value;
+      var establishment = $("transferEstablishmentFilter").value;
+      var query = normalizeText($("transferCodeFilter").value).toLowerCase();
+      transfers = transfers.filter(function (transfer) {
+        if (status && transfer.status !== status) return false;
+        if (responsible && transfer.responsibleId !== responsible) return false;
+        if (establishment && transfer.establishmentId !== establishment) return false;
+        if (query) {
+          var haystack = [transfer.code, transfer.name, transfer.establishmentName, transfer.responsibleName].join(" ").toLowerCase();
+          if (haystack.indexOf(query) === -1) return false;
+        }
+        return true;
+      });
+    }
+    $("transferMetricTotal").textContent = getVisibleTransfers().length;
+    $("transferMetricSeparating").textContent = getVisibleTransfers().filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
+    $("transferMetricReady").textContent = getVisibleTransfers().filter(function (item) { return item.status === "PRONTA_PARA_NOTA"; }).length;
+    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"7\">Nenhuma transferência encontrada.</td></tr>";
+  }
+
+  function transferPanelRowHtml(transfer) {
+    var stats = getTransferStats(transfer.id);
+    return [
+      "<tr>",
+      "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code) + "</span></td>",
+      "<td>" + escapeHtml(transfer.establishmentName || "-") + "</td>",
+      "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
+      "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
+      "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
+      "<td><span>Criada: " + formatDateTime(transfer.createdAt) + "</span><br><span>Início: " + formatDateTime(transfer.startedAt) + "</span><br><span>Sep.: " + formatDateTime(transfer.separationFinishedAt) + "</span><br><span>Lacre: " + formatDateTime(transfer.packingFinishedAt) + "</span></td>",
+      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>" + (canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "") + "</div></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function renderMyTransfers() {
+    if (!$("myTransfersList")) return;
+    var transfers = getVisibleTransfers().filter(function (transfer) {
+      return transfer.status !== "CANCELADA" && transfer.status !== "PRONTA_PARA_NOTA";
+    });
+    $("myTransfersList").innerHTML = transfers.length ? transfers.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma transferência atribuída.</div>";
+  }
+
+  function myTransferCardHtml(transfer) {
+    var stats = getTransferStats(transfer.id);
+    var action = transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar caixa/lacre" : transfer.status === "EM_LACRE" ? "Continuar lacre" : "Iniciar separação";
+    return [
+      "<article class=\"transfer-card\">",
+      "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
+      "<span>Destino: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
+      "<span>Status: " + escapeHtml(transfer.status) + "</span>",
+      "<span>Itens: " + stats.totalItems + " | Pendentes: " + stats.pendingSeparation + "</span>",
+      "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
+      "<button class=\"primary-button\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">" + action + "</button>",
+      "</article>"
+    ].join("");
+  }
+
+  function renderEstablishments() {
+    if (!$("establishmentsRows")) return;
+    var query = normalizeText($("establishmentSearchInput").value).toLowerCase();
+    var establishments = transferState.establishments.filter(function (item) {
+      if (!query) return true;
+      return [item.code, item.name, item.cnpj].join(" ").toLowerCase().indexOf(query) >= 0;
+    });
+    $("establishmentsRows").innerHTML = establishments.length ? establishments.map(establishmentRowHtml).join("") : "<tr><td colspan=\"5\">Nenhum estabelecimento cadastrado.</td></tr>";
+  }
+
+  function establishmentRowHtml(item) {
+    return [
+      "<tr>",
+      "<td>" + escapeHtml(item.code) + "</td>",
+      "<td>" + escapeHtml(item.name) + "</td>",
+      "<td>" + escapeHtml(item.cnpj || "-") + "</td>",
+      "<td><span class=\"status-badge " + (item.active ? "active" : "inactive") + "\">" + (item.active ? "Ativo" : "Inativo") + "</span></td>",
+      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-establishment-edit=\"" + item.id + "\" type=\"button\">Editar</button><button class=\"remove-small\" data-establishment-toggle=\"" + item.id + "\" type=\"button\">" + (item.active ? "Inativar" : "Ativar") + "</button></div></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function renderTransferPreview() {
+    if (!$("transferPreviewRows")) return;
+    $("transferPreviewRows").innerHTML = transferState.previewItems.length ? transferState.previewItems.map(function (item) {
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + "</td><td>" + escapeHtml(item.unit) + "</td><td>" + escapeHtml(item.quantityType) + "</td><td>" + escapeHtml(item.errors.join("; ") || "-") + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"6\">Nenhuma prévia carregada.</td></tr>";
+  }
+
+  function renderTransferWork() {
+    if (!$("transferWorkRows")) return;
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) {
+      $("transferWorkRows").innerHTML = "";
+      return;
+    }
+    var stats = getTransferStats(transfer.id);
+    var mode = transferState.activeWorkMode;
+    $("transferWorkTitle").textContent = (mode === "LACRE" ? "Caixa / Lacre" : "Separação") + " - " + (transfer.name || transfer.code);
+    $("transferWorkSummary").innerHTML = [
+      "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
+      "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
+      "<div><span>Itens</span><strong>" + stats.totalItems + "</strong></div>",
+      "<div><span>Progresso</span><strong>" + stats.progress + "%</strong></div>"
+    ].join("");
+    $("startPackingButton").hidden = transfer.status !== "SEPARACAO_CONCLUIDA";
+    $("finishSeparationButton").hidden = mode !== "SEPARACAO";
+    $("finishPackingButton").hidden = mode !== "LACRE";
+    setTransferFieldHidden("sealNumberInput", mode !== "LACRE");
+    setTransferFieldHidden("boxIdInput", mode !== "LACRE");
+    var items = getTransferItems(transfer.id);
+    $("transferWorkRows").innerHTML = items.length ? items.map(function (item) {
+      var pending = mode === "LACRE" ? Math.max(0, item.separatedQty - item.packedQty) : Math.max(0, item.requestedQty - item.separatedQty);
+      return [
+        "<tr>",
+        "<td>" + escapeHtml(item.sku) + "</td>",
+        "<td>" + escapeHtml(item.description) + "</td>",
+        "<td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit) + "</td>",
+        "<td>" + formatQty(item.separatedQty) + "</td>",
+        "<td>" + formatQty(item.packedQty) + "</td>",
+        "<td>" + formatQty(pending) + "</td>",
+        "<td><span class=\"status-badge " + (item.status === "LACRADO" || item.status === "SEPARADO" ? "active" : "pending") + "\">" + escapeHtml(item.status) + "</span></td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
+  }
+
+  function getVisibleTransfers() {
+    if (!authState.currentUser) return [];
+    if (isAdminOrSupervisor()) return transferState.transfers.slice();
+    return transferState.transfers.filter(function (transfer) {
+      return transfer.responsibleId === authState.currentUser.id;
+    });
+  }
+
+  function isAdminOrSupervisor() {
+    return authState.currentUser && ["ADMINISTRADOR", "SUPERVISOR"].indexOf(authState.currentUser.role) >= 0;
+  }
+
+  function getTransferById(id) {
+    return transferState.transfers.find(function (transfer) { return transfer.id === id; });
+  }
+
+  function getTransferItems(transferId) {
+    return transferState.items.filter(function (item) { return item.transferId === transferId; });
+  }
+
+  function getTransferStats(transferId) {
+    var items = getTransferItems(transferId);
+    var totalItems = items.length;
+    var pendingSeparation = items.filter(function (item) { return item.separatedQty < item.requestedQty; }).length;
+    var pendingPacking = items.filter(function (item) { return item.packedQty < item.separatedQty; }).length;
+    var requested = items.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
+    var packed = items.reduce(function (sum, item) { return sum + Math.min(Number(item.packedQty || 0), Number(item.requestedQty || 0)); }, 0);
+    var separated = items.reduce(function (sum, item) { return sum + Math.min(Number(item.separatedQty || 0), Number(item.requestedQty || 0)); }, 0);
+    var progress = requested ? Math.round(((packed || separated) / requested) * 100) : 0;
+    return {
+      totalItems: totalItems,
+      pendingSeparation: pendingSeparation,
+      pendingPacking: pendingPacking,
+      requested: requested,
+      separated: separated,
+      packed: packed,
+      progress: Math.max(0, Math.min(100, progress))
+    };
+  }
+
+  function canCancelTransfer(transfer) {
+    if (!isAdmin()) return transfer.status !== "LACRE_CONCLUIDO" && transfer.status !== "PRONTA_PARA_NOTA";
+    return transfer.status !== "CANCELADA";
+  }
+
+  function formatQty(value) {
+    var number = Number(value || 0);
+    return Number.isInteger(number) ? String(number) : number.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  }
+
+  function setTransferFieldHidden(inputId, hidden) {
+    var input = $(inputId);
+    if (!input) return;
+    input.hidden = hidden;
+    if (input.previousElementSibling && input.previousElementSibling.tagName === "LABEL") {
+      input.previousElementSibling.hidden = hidden;
+    }
   }
 
   function renderSkuSearch() {
@@ -1739,6 +2244,389 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     addHistory("Excel exportado", "", "", rows.length + " registro(s) exportado(s).");
     saveData();
     showToast("Excel exportado no modelo LinhaSeparacao.", "success");
+  }
+
+  async function saveEstablishmentFromForm() {
+    if (!isAdmin()) {
+      setStatus("establishmentStatus", "Acesso restrito ao administrador.", "error");
+      return;
+    }
+    var id = $("establishmentEditId").value;
+    var code = normalizeText($("establishmentCodeInput").value);
+    var name = normalizeText($("establishmentNameInput").value);
+    var cnpj = normalizeText($("establishmentCnpjInput").value);
+    var active = $("establishmentActiveInput").checked;
+    if (!code || !name) {
+      setStatus("establishmentStatus", "Informe código e nome.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var item = {
+      id: id || "est-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      code: code,
+      name: name,
+      cnpj: cnpj,
+      active: active,
+      createdAt: id ? (transferState.establishments.find(function (entry) { return entry.id === id; }) || {}).createdAt : now,
+      updatedAt: now
+    };
+    var response = await supabaseDb.from("wms_establishments").upsert(toDbEstablishment(item), { onConflict: "id" });
+    if (response.error) {
+      setStatus("establishmentStatus", "Erro ao salvar: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await loadTransferData();
+    resetEstablishmentForm();
+    renderTransfers();
+    setStatus("establishmentStatus", "Estabelecimento salvo.", "success");
+  }
+
+  function resetEstablishmentForm() {
+    $("establishmentEditId").value = "";
+    $("establishmentFormTitle").textContent = "Cadastrar estabelecimento";
+    $("establishmentCodeInput").value = "";
+    $("establishmentNameInput").value = "";
+    $("establishmentCnpjInput").value = "";
+    $("establishmentActiveInput").checked = true;
+  }
+
+  function editEstablishment(id) {
+    var item = transferState.establishments.find(function (entry) { return entry.id === id; });
+    if (!item) return;
+    $("establishmentEditId").value = item.id;
+    $("establishmentFormTitle").textContent = "Editar estabelecimento";
+    $("establishmentCodeInput").value = item.code;
+    $("establishmentNameInput").value = item.name;
+    $("establishmentCnpjInput").value = item.cnpj;
+    $("establishmentActiveInput").checked = item.active;
+    setStatus("establishmentStatus", "Editando " + item.name + ".", "warning");
+  }
+
+  async function toggleEstablishment(id) {
+    if (!isAdmin()) return;
+    var item = transferState.establishments.find(function (entry) { return entry.id === id; });
+    if (!item) return;
+    var response = await supabaseDb.from("wms_establishments").update({ ativo: !item.active, updated_at: new Date().toISOString() }).eq("id", id);
+    if (response.error) {
+      showToast("Nao foi possivel alterar o estabelecimento.", "error");
+      return;
+    }
+    await loadTransferData();
+    renderTransfers();
+  }
+
+  async function previewTransferExcel() {
+    if (!window.XLSX) {
+      setStatus("transferImportStatus", "Biblioteca xlsx nao carregada.", "error");
+      return;
+    }
+    var file = ($("transferExcelInput").files || [])[0];
+    if (!file) {
+      setStatus("transferImportStatus", "Selecione uma planilha Excel.", "error");
+      return;
+    }
+    try {
+      var entry = await readWorkbookFile(file);
+      var parsed = parseTransferWorkbook(entry.workbook);
+      transferState.previewItems = parsed.items;
+      transferState.previewErrors = parsed.errors;
+      renderTransferPreview();
+      setStatus("transferImportStatus", parsed.errors.length ? "Prévia carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Prévia carregada: " + parsed.items.length + " item(ns).", parsed.errors.length ? "error" : "success");
+    } catch (error) {
+      setStatus("transferImportStatus", "Falha ao ler planilha: " + formatSupabaseError(error), "error");
+    }
+  }
+
+  function parseTransferWorkbook(workbook) {
+    var rows = [];
+    workbook.SheetNames.forEach(function (sheetName) {
+      var sheetRows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: false });
+      if (!rows.length && sheetRows.length) rows = sheetRows;
+    });
+    var items = [];
+    var errors = [];
+    rows.forEach(function (row, index) {
+      var rawSku = getByAliases(row, ["Código", "Codigo", "Código Material", "Codigo Material", "SKU", "Produto", "Cod Material"]);
+      var sku = normalizeSku(rawSku) || normalizeText(rawSku);
+      var description = normalizeText(getByAliases(row, ["Descrição", "Descricao", "Nome", "Produto", "Descrição do Item", "Descricao do Item", "Desc Material"]));
+      var qty = parseQuantity(getByAliases(row, ["Quantidade", "Qtde", "Qtd", "Quantidade Solicitada"]));
+      var unit = normalizeText(getByAliases(row, ["Unidade", "Unidade de medida", "UM", "Un"])) || "UN";
+      var quantityType = normalizeText(getByAliases(row, ["Tipo", "Tipo Quantidade", "Unidade/Caixa"])).toUpperCase();
+      quantityType = quantityType.indexOf("CAIX") >= 0 ? "CAIXA" : "UNIDADE";
+      var boxes = parseQuantity(getByAliases(row, ["Quantidade Caixas", "Qtd Caixas", "Caixas"])) || (quantityType === "CAIXA" ? qty : 0);
+      var unitsPerBox = parseQuantity(getByAliases(row, ["Unidades por Caixa", "Und por Caixa", "Un por Caixa"]));
+      var itemErrors = [];
+      if (!sku) itemErrors.push("Código obrigatório");
+      if (!description) itemErrors.push("Descrição obrigatória");
+      if (!qty || qty <= 0) itemErrors.push("Quantidade maior que zero obrigatória");
+      if (quantityType === "CAIXA" && unitsPerBox > 0) qty = boxes * unitsPerBox;
+      var item = {
+        sku: sku,
+        description: description,
+        requestedQty: qty,
+        unit: unit,
+        quantityType: quantityType,
+        boxQty: boxes,
+        unitsPerBox: unitsPerBox || 0,
+        totalUnits: quantityType === "CAIXA" && unitsPerBox > 0 ? qty : qty,
+        errors: itemErrors
+      };
+      if (itemErrors.length) errors.push("Linha " + (index + 2) + ": " + itemErrors.join(", "));
+      items.push(item);
+    });
+    return { items: items, errors: errors };
+  }
+
+  async function createTransferFromForm(event) {
+    event.preventDefault();
+    if (!isAdminOrSupervisor()) {
+      setStatus("transferImportStatus", "Acesso restrito.", "error");
+      return;
+    }
+    if (!transferState.previewItems.length) {
+      await previewTransferExcel();
+    }
+    if (transferState.previewErrors.length) {
+      setStatus("transferImportStatus", "Corrija os erros da planilha antes de criar.", "error");
+      return;
+    }
+    var name = normalizeText($("transferNameInput").value);
+    var establishment = transferState.establishments.find(function (item) { return item.id === $("transferDestinationInput").value; });
+    var responsible = authState.users.find(function (user) { return user.id === $("transferResponsibleInput").value; });
+    if (!name || !establishment || !responsible || !transferState.previewItems.length) {
+      setStatus("transferImportStatus", "Informe transferência, estabelecimento, responsável e planilha.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var transferId = "trf-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    var transfer = {
+      id: transferId,
+      code: name,
+      name: name,
+      establishmentId: establishment.id,
+      establishmentCode: establishment.code,
+      establishmentName: establishment.name,
+      establishmentCnpj: establishment.cnpj,
+      responsibleId: responsible.id,
+      responsibleName: responsible.name,
+      status: "ATRIBUIDA",
+      observation: normalizeText($("transferObservationInput").value),
+      createdById: authState.currentUser.id,
+      createdByName: authState.currentUser.name,
+      startedAt: "",
+      separationFinishedAt: "",
+      packingFinishedAt: "",
+      createdAt: now,
+      updatedAt: now
+    };
+    var items = transferState.previewItems.map(function (item) {
+      return {
+        id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        transferId: transferId,
+        sku: item.sku,
+        description: item.description,
+        requestedQty: item.requestedQty,
+        unit: item.unit,
+        quantityType: item.quantityType,
+        boxQty: item.boxQty,
+        unitsPerBox: item.unitsPerBox,
+        totalUnits: item.totalUnits,
+        separatedQty: 0,
+        packedQty: 0,
+        status: "PENDENTE",
+        createdAt: now,
+        updatedAt: now
+      };
+    });
+    var transferResponse = await supabaseDb.from("wms_transfers").insert(toDbTransfer(transfer));
+    if (transferResponse.error) {
+      setStatus("transferImportStatus", "Erro ao criar transferência: " + formatSupabaseError(transferResponse.error), "error");
+      return;
+    }
+    await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
+    await recordTransferEvent(transferId, "", "TRANSFER_CREATED", "", 0, "Transferência criada.", { itemCount: items.length });
+    await recordTransferEvent(transferId, "", "TRANSFER_ASSIGNED", "", 0, "Responsável atribuído.", { responsibleId: responsible.id });
+    transferState.previewItems = [];
+    transferState.previewErrors = [];
+    $("newTransferForm").reset();
+    await loadTransferData();
+    renderTransfers();
+    setStatus("transferImportStatus", "Transferência criada e atribuída.", "success");
+  }
+
+  async function openTransferWork(transferId) {
+    var transfer = getTransferById(transferId);
+    if (!transfer) return;
+    if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id) {
+      showToast("Você não tem acesso a esta transferência.", "error");
+      return;
+    }
+    transferState.activeTransferId = transferId;
+    transferState.selectedItemId = "";
+    transferState.activeWorkMode = (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE") ? "LACRE" : "SEPARACAO";
+    if (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE") {
+      await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: new Date().toISOString() }, "SEPARATION_STARTED");
+    }
+    activateTransferTab("transferWorkSection");
+    renderTransferWork();
+    setStatus("transferWorkStatus", "Bipe um SKU da transferência.", "warning");
+    window.setTimeout(function () { $("transferScanInput").focus(); }, 80);
+  }
+
+  async function updateTransferStatus(transfer, status, extra, eventType) {
+    var now = new Date().toISOString();
+    var update = Object.assign({ status: status, updated_at: now }, extra || {});
+    var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
+    if (response.error) throw response.error;
+    transfer.status = status;
+    transfer.updatedAt = now;
+    if (update.iniciado_em) transfer.startedAt = update.iniciado_em;
+    if (update.separacao_concluida_em) transfer.separationFinishedAt = update.separacao_concluida_em;
+    if (update.lacre_concluido_em) transfer.packingFinishedAt = update.lacre_concluido_em;
+    if (eventType) await recordTransferEvent(transfer.id, "", eventType, "", 0, status, {});
+  }
+
+  function locateTransferItem() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) return;
+    var sku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+    if (!sku) {
+      setStatus("transferWorkStatus", "Informe ou bipe o SKU.", "error");
+      return;
+    }
+    var item = getTransferItems(transfer.id).find(function (entry) { return entry.sku === sku || normalizeSkuKey(entry.sku) === normalizeSkuKey(sku); });
+    if (!item) {
+      transferState.selectedItemId = "";
+      setStatus("transferWorkStatus", "Item não pertence a esta transferência.", "error");
+      return;
+    }
+    var pending = transferState.activeWorkMode === "LACRE" ? Math.max(0, item.separatedQty - item.packedQty) : Math.max(0, item.requestedQty - item.separatedQty);
+    transferState.selectedItemId = item.id;
+    $("transferScanInput").value = item.sku;
+    $("transferQuantityInput").value = pending ? formatQty(pending) : "";
+    setStatus("transferWorkStatus", item.description + " localizado. Pendente: " + formatQty(pending) + ".", "success");
+    $("transferQuantityInput").focus();
+  }
+
+  async function confirmTransferItem() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    var item = transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; });
+    if (!transfer || !item) {
+      setStatus("transferWorkStatus", "Bipe um SKU válido antes de confirmar.", "error");
+      return;
+    }
+    var qty = parseQuantity($("transferQuantityInput").value);
+    if (!qty || qty <= 0) {
+      setStatus("transferWorkStatus", "Informe uma quantidade maior que zero.", "error");
+      return;
+    }
+    var mode = transferState.activeWorkMode;
+    var now = new Date().toISOString();
+    if (mode === "LACRE") {
+      var pendingPack = Math.max(0, item.separatedQty - item.packedQty);
+      if (qty > pendingPack) {
+        setStatus("transferWorkStatus", "Quantidade maior que a separada. Confirme com o responsável.", "error");
+        return;
+      }
+      item.packedQty += qty;
+      item.status = item.packedQty >= item.separatedQty ? "LACRADO" : "PARCIAL";
+      var packResponse = await supabaseDb.from("wms_transfer_items").update({
+        quantidade_lacrada: item.packedQty,
+        status: item.status,
+        updated_at: now
+      }).eq("id", item.id);
+      if (packResponse.error) throw packResponse.error;
+      await recordTransferEvent(transfer.id, item.id, "ITEM_PACKED", item.sku, qty, "Item colocado na caixa.", {
+        seal: $("sealNumberInput").value,
+        box: $("boxIdInput").value
+      });
+    } else {
+      var pendingSep = Math.max(0, item.requestedQty - item.separatedQty);
+      if (qty > pendingSep) {
+        setStatus("transferWorkStatus", "Quantidade maior que a solicitada. Confirme com o responsável.", "error");
+        return;
+      }
+      item.separatedQty += qty;
+      item.status = item.separatedQty >= item.requestedQty ? "SEPARADO" : "PARCIAL";
+      var sepResponse = await supabaseDb.from("wms_transfer_items").update({
+        quantidade_separada: item.separatedQty,
+        status: item.status,
+        updated_at: now
+      }).eq("id", item.id);
+      if (sepResponse.error) throw sepResponse.error;
+      await recordTransferEvent(transfer.id, item.id, "ITEM_SEPARATED", item.sku, qty, "Item separado.", {});
+    }
+    transferState.selectedItemId = "";
+    $("transferScanInput").value = "";
+    $("transferQuantityInput").value = "";
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = mode;
+    renderTransfers();
+    setStatus("transferWorkStatus", "Quantidade confirmada.", "success");
+    $("transferScanInput").focus();
+  }
+
+  async function finishSeparation() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) return;
+    var pending = getTransferItems(transfer.id).filter(function (item) { return item.separatedQty < item.requestedQty; });
+    if (pending.length) {
+      setStatus("transferWorkStatus", "Só é possível concluir quando todos os itens estiverem separados.", "error");
+      return;
+    }
+    await updateTransferStatus(transfer, "SEPARACAO_CONCLUIDA", { separacao_concluida_em: new Date().toISOString() }, "SEPARATION_FINISHED");
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = "LACRE";
+    renderTransfers();
+    setStatus("transferWorkStatus", "Separação concluída. Inicie caixa/lacre.", "success");
+  }
+
+  async function startPacking() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) return;
+    await updateTransferStatus(transfer, "EM_LACRE", {}, "PACKING_STARTED");
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = "LACRE";
+    renderTransfers();
+    setStatus("transferWorkStatus", "Caixa/lacre iniciado. Bipe os itens colocados na caixa.", "success");
+  }
+
+  async function finishPacking() {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!transfer) return;
+    var pending = getTransferItems(transfer.id).filter(function (item) { return item.packedQty < item.separatedQty; });
+    if (pending.length) {
+      setStatus("transferWorkStatus", "Só é possível concluir lacre quando todos os itens estiverem lacrados.", "error");
+      return;
+    }
+    await updateTransferStatus(transfer, "PRONTA_PARA_NOTA", { lacre_concluido_em: new Date().toISOString() }, "PACKING_FINISHED");
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = "LACRE";
+    renderTransfers();
+    setStatus("transferWorkStatus", "Lacre concluído. Transferência pronta para nota.", "success");
+  }
+
+  async function cancelTransfer(id) {
+    var transfer = getTransferById(id);
+    if (!transfer || !canCancelTransfer(transfer)) return;
+    if (!window.confirm("Cancelar a transferência " + (transfer.name || transfer.code) + "?")) return;
+    await updateTransferStatus(transfer, "CANCELADA", {}, "TRANSFER_CANCELLED");
+    await loadTransferData();
+    renderTransfers();
+    showToast("Transferência cancelada.", "success");
+  }
+
+  async function handleTransferActionClick(event) {
+    var button = event.target.closest("button");
+    if (!button) return;
+    if (button.dataset.transferOpen) await openTransferWork(button.dataset.transferOpen);
+    if (button.dataset.transferCancel) await cancelTransfer(button.dataset.transferCancel);
+    if (button.dataset.establishmentEdit) editEstablishment(button.dataset.establishmentEdit);
+    if (button.dataset.establishmentToggle) await toggleEstablishment(button.dataset.establishmentToggle);
   }
 
   async function importExcel() {
@@ -2115,6 +3003,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     );
   }
 
+  function isMissingTransferTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return (
+      message.indexOf("wms_establishments") >= 0 ||
+      message.indexOf("wms_transfers") >= 0 ||
+      message.indexOf("wms_transfer_items") >= 0 ||
+      message.indexOf("wms_transfer_events") >= 0
+    ) && (
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0
+    );
+  }
+
   function isHistorySchemaError(error) {
     var message = formatSupabaseError(error).toLowerCase();
     return message.indexOf("wms_history") >= 0 && (
@@ -2380,6 +3284,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function positiveInt(value) {
     var number = Number(String(value || "").trim());
     return Number.isInteger(number) && number > 0 ? number : 0;
+  }
+
+  function parseQuantity(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    var text = normalizeText(value).replace(/\./g, "").replace(",", ".");
+    var number = Number(text);
+    return Number.isFinite(number) ? number : 0;
   }
 
   function extractNumber(value) {
