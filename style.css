@@ -1281,6 +1281,54 @@ td {
   background: var(--success);
 }
 
+.decision-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(8, 20, 30, 0.56);
+}
+
+.decision-modal[hidden] {
+  display: none;
+}
+
+.decision-card {
+  width: min(100%, 520px);
+  padding: 22px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(8, 20, 30, 0.28);
+}
+
+.decision-card h2 {
+  margin: 4px 0 10px;
+  font-size: 1.45rem;
+}
+
+.decision-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.decision-list span {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  font-weight: 700;
+}
+
+.decision-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 0.8fr;
+  gap: 10px;
+}
+
 @media (max-width: 1040px) {
   .metric-grid,
   .dashboard-layout,
@@ -1614,6 +1662,14 @@ td {
 
   #consultaSku .row-actions button {
     width: 100%;
+  }
+
+  .decision-card {
+    padding: 18px;
+  }
+
+  .decision-actions {
+    grid-template-columns: 1fr;
   }
 
   .toast {

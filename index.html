@@ -815,5 +815,18 @@
       </section>
     </main>
   </div>
+  <div class="decision-modal" id="locationConflictModal" hidden role="dialog" aria-modal="true" aria-labelledby="locationConflictTitle">
+    <div class="decision-card">
+      <p class="eyebrow">Localizacao ocupada</p>
+      <h2 id="locationConflictTitle">Essa locacao ja tem codigo cadastrado</h2>
+      <p id="locationConflictMessage" class="muted"></p>
+      <div id="locationConflictList" class="decision-list"></div>
+      <div class="decision-actions">
+        <button class="primary-button" data-location-decision="add" type="button">Adicionar junto</button>
+        <button class="danger-button" data-location-decision="replace" type="button">Apagar e substituir</button>
+        <button class="secondary-button" data-location-decision="cancel" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

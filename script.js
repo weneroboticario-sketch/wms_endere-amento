@@ -1667,14 +1667,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var locationOccupants = findByLocation(parsed.code);
     if (locationOccupants.length) {
       renderScanResults(locationOccupants);
-      var occupantList = locationOccupants.map(function (binding) {
-        return binding.sku + (binding.productName ? " - " + binding.productName : "");
-      }).join(", ");
-      var shouldContinue = window.confirm("Essa locacao ja tem codigo cadastrado: " + occupantList + ". Deseja cadastrar um novo codigo nessa localizacao?");
-      if (!shouldContinue) {
+      var decision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
+      if (decision === "cancel") {
         setScanMessage("Cadastro cancelado. Pronto para o proximo produto.", "warning");
         clearScanFieldsForNext();
         return;
+      }
+      if (decision === "replace") {
+        var removed = await removeLocationOccupants(locationOccupants);
+        if (!removed.ok) {
+          setScanMessage("Nao foi possivel apagar a locacao antiga: " + removed.message, "error");
+          return;
+        }
+        setScanMessage("Locacao antiga apagada. Salvando novo codigo...", "warning");
       }
     }
     var newBinding = createBinding(sku, parsed, areaCode);
@@ -1691,6 +1696,66 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderScanResults([newBinding]);
     setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
     clearScanFieldsForNext();
+  }
+
+  function askLocationConflictDecision(locationCode, sku, occupants) {
+    var modal = $("locationConflictModal");
+    if (!modal) {
+      var fallback = window.prompt("Essa locacao ja tem codigo cadastrado. Digite A para adicionar junto, S para apagar e substituir, ou C para cancelar.", "A");
+      fallback = String(fallback || "C").trim().toUpperCase();
+      if (fallback === "S") return Promise.resolve("replace");
+      if (fallback === "A") return Promise.resolve("add");
+      return Promise.resolve("cancel");
+    }
+    $("locationConflictMessage").textContent = "Voce bipou o SKU " + sku + " para " + locationCode + ". Escolha se quer manter os codigos atuais e adicionar mais um, ou apagar os codigos atuais para colocar somente o novo.";
+    $("locationConflictList").innerHTML = occupants.map(function (binding) {
+      var product = binding.productName || findProductName(binding.sku) || "";
+      return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
+    }).join("");
+    modal.hidden = false;
+
+    return new Promise(function (resolve) {
+      var buttons = modal.querySelectorAll("[data-location-decision]");
+      function finish(decision) {
+        modal.hidden = true;
+        buttons.forEach(function (button) { button.onclick = null; });
+        document.removeEventListener("keydown", handleEscape);
+        resolve(decision);
+      }
+      function handleEscape(event) {
+        if (event.key === "Escape") finish("cancel");
+      }
+      buttons.forEach(function (button) {
+        button.onclick = function () {
+          finish(button.dataset.locationDecision);
+        };
+      });
+      document.addEventListener("keydown", handleEscape);
+      var firstButton = modal.querySelector("[data-location-decision='add']");
+      if (firstButton) firstButton.focus();
+    });
+  }
+
+  async function removeLocationOccupants(occupants) {
+    var ids = occupants.map(function (binding) { return binding.id; }).filter(Boolean);
+    if (!ids.length) return { ok: true };
+    if (isSupabaseReady()) {
+      try {
+        var response = await supabaseDb.from("wms_bindings").delete().in("id", ids);
+        if (response.error) throw response.error;
+      } catch (error) {
+        return { ok: false, message: formatSupabaseError(error) };
+      }
+    }
+    var idSet = {};
+    ids.forEach(function (id) { idSet[id] = true; });
+    occupants.forEach(function (binding) {
+      addHistory("Endereco substituido", binding.sku, binding.locationCode, "Vinculo antigo removido para novo cadastro.");
+    });
+    state.bindings = state.bindings.filter(function (binding) {
+      return !idSet[binding.id];
+    });
+    return { ok: true };
   }
 
   async function updateBinding(id, sku, parsed, areaCode) {
