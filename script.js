@@ -529,6 +529,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       responsibleName: row.responsavel_nome || "",
       status: TRANSFER_STATUSES.indexOf(normalizedStatus) >= 0 ? normalizedStatus : "PENDENTE",
       observation: row.observacao || "",
+      flowType: row.tipo_fluxo || row.flow_type || row.tipo_transferencia || "",
       createdById: row.criado_por_id || "",
       createdByName: row.criado_por_nome || "",
       startedAt: row.iniciado_em || "",
@@ -2356,6 +2357,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       responsibleId: responsible.id,
       responsibleName: responsible.name,
       status: "ATRIBUIDA",
+      flowType: "CONFERENCIA_XML",
       observation: "Conferência criada pelo XML " + (fileName || "") + ". Origem: " + (note.emitterName || "-") + ".",
       createdById: authState.currentUser.id,
       createdByName: authState.currentUser.name,
@@ -2559,7 +2561,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var stats = getTransferStats(transfer.id);
     var mode = transferState.activeWorkMode;
     var finalized = isFinalTransferStatus(transfer.status);
-    $("transferWorkTitle").textContent = (mode === "LACRE" ? "Caixa / Lacre" : "Separação") + " - " + (transfer.name || transfer.code);
+    var isConference = isXmlConferenceTransfer(transfer);
+    $("transferWorkTitle").textContent = (isConference ? "Conferência de recebimento" : mode === "LACRE" ? "Caixa / Lacre" : "Separação") + " - " + (transfer.name || transfer.code);
     $("transferWorkSummary").innerHTML = isAdminOrSupervisor() ? [
       "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
@@ -2569,15 +2572,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>"
     ].join("");
-    $("startPackingButton").hidden = finalized || transfer.status !== "SEPARACAO_CONCLUIDA";
-    $("finishSeparationButton").hidden = finalized || mode !== "SEPARACAO";
-    $("finishPackingButton").hidden = finalized || mode !== "LACRE";
+    $("startPackingButton").hidden = isConference || finalized || transfer.status !== "SEPARACAO_CONCLUIDA";
+    $("finishSeparationButton").hidden = isConference || finalized || mode !== "SEPARACAO";
+    $("finishPackingButton").hidden = isConference || finalized || mode !== "LACRE";
     $("confirmTransferItemButton").hidden = finalized;
-    $("conferenceXmlButton").hidden = finalized;
+    $("conferenceXmlButton").hidden = finalized || !isConference;
     $("transferScanInput").disabled = finalized;
     $("transferQuantityInput").disabled = finalized;
-    setTransferFieldHidden("sealNumberInput", mode !== "LACRE");
-    setTransferFieldHidden("boxIdInput", mode !== "LACRE");
+    setTransferFieldHidden("sealNumberInput", isConference || mode !== "LACRE");
+    setTransferFieldHidden("boxIdInput", isConference || mode !== "LACRE");
     var items = getTransferItems(transfer.id);
     $("transferWorkRows").innerHTML = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
     renderTransferProductList(items);
@@ -2603,9 +2606,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("adminTransferProgressPanel").hidden = !visible;
     if (!visible) return;
     var items = getTransferItems(transfer.id);
+    var isConference = isXmlConferenceTransfer(transfer);
     var rows = items.map(function (item) {
-      var checkedQty = mode === "LACRE" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
-      var expectedQty = mode === "LACRE" ? Number(item.separatedQty || 0) : Number(item.requestedQty || 0);
+      var checkedQty = isConference ? getTransferCheckedQty(item, transfer) : mode === "LACRE" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var expectedQty = isConference ? Number(item.requestedQty || 0) : mode === "LACRE" ? Number(item.separatedQty || 0) : Number(item.requestedQty || 0);
       var remainingQty = Math.max(0, expectedQty - checkedQty);
       return {
         sku: item.sku,
@@ -2654,7 +2658,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Divergências</span><strong>" + report.divergences.length + "</strong></div>"
     ].join("");
     var itemRows = report.items.map(function (item) {
-      var checkedQty = Number(item.packedQty || 0);
+      var checkedQty = getTransferCheckedQty(item, transfer);
       var diff = checkedQty - Number(item.requestedQty || 0);
       return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.requestedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
     }).join("");
@@ -2770,6 +2774,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return FINAL_TRANSFER_STATUSES.indexOf(status) >= 0;
   }
 
+  function getTransferFlow(transfer) {
+    if (!transfer) return "TRANSFERENCIA_EXCEL";
+    if (transfer.flowType === "CONFERENCIA_XML" || transfer.flowType === "TRANSFERENCIA_EXCEL") return transfer.flowType;
+    var text = normalizeText([transfer.code, transfer.name, transfer.observation].join(" ")).toLowerCase();
+    return text.indexOf("xml") >= 0 || text.indexOf("conferencia criada pelo xml") >= 0 ? "CONFERENCIA_XML" : "TRANSFERENCIA_EXCEL";
+  }
+
+  function isXmlConferenceTransfer(transfer) {
+    return getTransferFlow(transfer) === "CONFERENCIA_XML";
+  }
+
+  function getTransferCheckedQty(item, transfer) {
+    return isXmlConferenceTransfer(transfer) ? Number(item.separatedQty || 0) : Number(item.packedQty || 0);
+  }
+
   function countTransferDivergences(transferId) {
     var items = getTransferItems(transferId);
     var count = 0;
@@ -2808,7 +2827,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var finish = transfer.finishedAt || transfer.packingFinishedAt || transfer.updatedAt;
     var divergences = [];
     originalItems.forEach(function (item) {
-      var checkedQty = Number(item.packedQty || 0);
+      var checkedQty = getTransferCheckedQty(item, transfer);
       var expectedQty = Number(item.requestedQty || 0);
       var diff = checkedQty - expectedQty;
       if (diff < 0) divergences.push({ sku: item.sku, description: item.description, type: "FALTA_DE_ITEM", expected: expectedQty, informed: checkedQty, difference: diff });
@@ -3065,6 +3084,37 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     );
   }
 
+  async function resolvePendingConferenceExtras(transfer) {
+    if (!isXmlConferenceTransfer(transfer)) return transfer;
+    var pendingExtras = getTransferItems(transfer.id).filter(function (item) {
+      return item.isExtra && (item.status === "EXTRA_PENDENTE" || item.divergenceType === "SKU_NAO_CONSTA_XML");
+    });
+    if (!pendingExtras.length) return transfer;
+    var include = window.confirm("Existem " + pendingExtras.length + " SKU(s) que não fazem parte do XML. Deseja incluir esses itens como divergência nesta conferência?");
+    if (include) {
+      for (var i = 0; i < pendingExtras.length; i += 1) {
+        var item = pendingExtras[i];
+        await recordTransferEvent(transfer.id, item.id, "CONFERENCE_EXTRA_INCLUDED", item.sku, Number(item.extraQty || item.separatedQty || 0), "SKU fora do XML incluído na conferência final.", {
+          divergenceType: "SKU_NAO_CONSTA_XML",
+          inputType: item.inputType || ""
+        });
+      }
+      return transfer;
+    }
+    var ids = pendingExtras.map(function (item) { return item.id; });
+    var deleteResponse = await supabaseDb.from("wms_transfer_items").delete().in("id", ids);
+    if (deleteResponse.error) throw deleteResponse.error;
+    for (var j = 0; j < pendingExtras.length; j += 1) {
+      await recordTransferEvent(transfer.id, "", "CONFERENCE_EXTRA_IGNORED", pendingExtras[j].sku, Number(pendingExtras[j].extraQty || pendingExtras[j].separatedQty || 0), "SKU fora do XML removido da conferência final.", {
+        divergenceType: "SKU_NAO_CONSTA_XML",
+        inputType: pendingExtras[j].inputType || ""
+      });
+    }
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    return getTransferById(transfer.id) || transfer;
+  }
+
   async function conferenceTransferXml() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (transfer && isFinalTransferStatus(transfer.status)) {
@@ -3080,6 +3130,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     try {
       if (button) button.disabled = true;
       setStatus("xmlConferenceStatus", "Enviando conferência...", "warning");
+      transfer = await resolvePendingConferenceExtras(transfer);
       var conference = buildFinalTransferConference(transfer);
       renderXmlConferencePayload(conference);
       await finalizeTransferAfterConference(transfer, conference);
@@ -3105,7 +3156,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function buildFinalTransferConference(transfer) {
     var items = getTransferItems(transfer.id);
     var rows = items.map(function (item) {
-      var actualQty = Number(item.packedQty || 0);
+      var actualQty = getTransferCheckedQty(item, transfer);
       var expectedQty = Number(item.requestedQty || 0);
       var diff = actualQty - expectedQty;
       return xmlConferenceRow(
@@ -3293,7 +3344,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!item) {
         return xmlConferenceRow(xmlItem.sku, xmlItem.description, "", xmlItem.quantity, 0, 0, "SKU não está na transferência");
       }
-      var actualQty = Number(item.packedQty || 0);
+      var actualQty = getTransferCheckedQty(item, transfer);
       var diff = actualQty - Number(xmlItem.quantity || 0);
       return xmlConferenceRow(
         xmlItem.sku,
@@ -3307,8 +3358,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     transferItems.forEach(function (item) {
       if (seen[normalizeSkuKey(item.sku)]) return;
-      var actualQty = Number(item.packedQty || 0);
-      rows.push(xmlConferenceRow(item.sku, "", item.description, 0, item.separatedQty, item.packedQty, "SKU não consta no XML"));
+      var actualQty = getTransferCheckedQty(item, transfer);
+      rows.push(xmlConferenceRow(item.sku, "", item.description, 0, item.separatedQty, actualQty, "SKU não consta no XML"));
       rows[rows.length - 1].difference = actualQty;
     });
     var errors = rows.filter(function (row) { return row.status !== "CORRETO"; }).length;
@@ -3966,6 +4017,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       responsibleId: responsible.id,
       responsibleName: responsible.name,
       status: "ATRIBUIDA",
+      flowType: "TRANSFERENCIA_EXCEL",
       observation: normalizeText($("transferObservationInput").value),
       createdById: authState.currentUser.id,
       createdByName: authState.currentUser.name,
@@ -4019,14 +4071,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     transferState.activeTransferId = transferId;
     transferState.selectedItemId = "";
-    transferState.activeWorkMode = (["SEPARACAO_CONCLUIDA", "EM_LACRE", "LACRE_CONCLUIDO", "PRONTA_PARA_NOTA"].indexOf(transfer.status) >= 0 || isFinalTransferStatus(transfer.status)) ? "LACRE" : "SEPARACAO";
+    var isConference = isXmlConferenceTransfer(transfer);
+    transferState.activeWorkMode = isConference ? "CONFERENCIA" : (["SEPARACAO_CONCLUIDA", "EM_LACRE", "LACRE_CONCLUIDO", "PRONTA_PARA_NOTA"].indexOf(transfer.status) >= 0 || isFinalTransferStatus(transfer.status)) ? "LACRE" : "SEPARACAO";
     if (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE") {
       var startedAt = new Date().toISOString();
       await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt }, "SEPARATION_STARTED");
     }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
-    setStatus("transferWorkStatus", "Bipe um SKU da transferência.", "warning");
+    setStatus("transferWorkStatus", isConference ? "Bipe o SKU, informe a quantidade e confirme. Itens fora do XML entram no resultado final." : "Bipe um SKU da transferência.", "warning");
     window.setTimeout(function () { $("transferScanInput").focus(); }, 80);
     if (isFinalTransferStatus(transfer.status)) {
       setStatus("transferWorkStatus", "Tarefa finalizada. Confira o resultado no relatório do líder.", transfer.status === "CONCLUIDA_SEM_DIVERGENCIA" ? "success" : "warning");
@@ -4129,6 +4182,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var item = getTransferItems(transfer.id).find(function (entry) { return entry.sku === sku || normalizeSkuKey(entry.sku) === normalizeSkuKey(sku); });
     if (!item) {
       transferState.selectedItemId = "";
+      if (isXmlConferenceTransfer(transfer)) {
+        renderCurrentTransferItem();
+        setStatus("transferWorkStatus", "SKU não consta no XML. Informe a quantidade e confirme para registrar como divergência.", "warning");
+        $("transferQuantityInput").focus();
+        return;
+      }
       await handleUnknownTransferSku(transfer, sku);
       return;
       setStatus("transferWorkStatus", "Item não pertence a esta transferência.", "error");
@@ -4225,6 +4284,76 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferScanInput").focus();
   }
 
+  async function addDeferredConferenceExtraItem(transfer, sku, qty, inputType) {
+    var now = new Date().toISOString();
+    var mode = transferState.activeWorkMode;
+    var existing = getTransferItems(transfer.id).find(function (entry) {
+      return entry.isExtra && normalizeSkuKey(entry.sku) === normalizeSkuKey(sku) && (entry.status === "EXTRA_PENDENTE" || entry.divergenceType === "SKU_NAO_CONSTA_XML");
+    });
+    if (existing) {
+      existing.separatedQty = Number(existing.separatedQty || 0) + qty;
+      existing.extraQty = Number(existing.extraQty || 0) + qty;
+      existing.excessQty = Number(existing.excessQty || 0) + qty;
+      existing.updatedAt = now;
+      var updateResponse = await supabaseDb.from("wms_transfer_items").update(Object.assign({
+        quantidade_separada: existing.separatedQty,
+        updated_at: now
+      }, transferItemAuditDbFields(existing))).eq("id", existing.id);
+      if (updateResponse.error) throw updateResponse.error;
+      await recordTransferEvent(transfer.id, existing.id, "CONFERENCE_EXTRA_SCANNED", sku, qty, "SKU fora do XML somado para decisão final.", {
+        inputType: inputType,
+        divergenceType: "SKU_NAO_CONSTA_XML"
+      });
+      await loadTransferData();
+      transferState.activeTransferId = transfer.id;
+      transferState.activeWorkMode = mode;
+      clearTransferInputs();
+      renderTransfers();
+      setStatus("transferWorkStatus", "Quantidade somada ao SKU fora do XML. Continue a conferência.", "warning");
+      $("transferScanInput").focus();
+      return;
+    }
+    var item = {
+      id: "trfi-extra-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      transferId: transfer.id,
+      sku: sku,
+      description: findProductName(sku) || "Item fora do XML",
+      requestedQty: 0,
+      unit: "UN",
+      quantityType: "UNIDADE",
+      boxQty: 0,
+      unitsPerBox: 0,
+      totalUnits: 0,
+      separatedQty: qty,
+      packedQty: 0,
+      extraQty: qty,
+      missingQty: 0,
+      excessQty: qty,
+      isExtra: true,
+      divergenceType: "SKU_NAO_CONSTA_XML",
+      addedById: authState.currentUser.id,
+      addedByName: authState.currentUser.name,
+      inputType: inputType,
+      observation: "Item bipado na conferência; decisão pendente no envio final.",
+      status: "EXTRA_PENDENTE",
+      createdAt: now,
+      updatedAt: now
+    };
+    var response = await supabaseDb.from("wms_transfer_items").insert(Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item)));
+    if (response.error) throw response.error;
+    await recordTransferEvent(transfer.id, item.id, "CONFERENCE_EXTRA_SCANNED", sku, qty, "SKU fora do XML registrado para decisão final.", {
+      inputType: inputType,
+      divergenceType: "SKU_NAO_CONSTA_XML"
+    });
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = mode;
+    clearTransferInputs();
+    renderTransfers();
+    setStatus("transferWorkStatus", "SKU fora do XML registrado para análise final. Continue a conferência.", "warning");
+    $("transferScanInput").focus();
+  }
+
   async function confirmTransferItem() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (transfer && isFinalTransferStatus(transfer.status)) {
@@ -4240,6 +4369,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (item) transferState.selectedItemId = item.id;
     }
     if (!transfer || !item) {
+      if (transfer && isXmlConferenceTransfer(transfer)) {
+        var extraSku = normalizeSku($("transferScanInput").value) || normalizeText($("transferScanInput").value);
+        var extraQty = parseQuantity($("transferQuantityInput").value);
+        if (!extraSku) {
+          setStatus("transferWorkStatus", "Bipe um SKU antes de confirmar.", "error");
+          $("transferScanInput").focus();
+          return;
+        }
+        if (!extraQty || extraQty <= 0) {
+          setStatus("transferWorkStatus", "Informe a quantidade conferida.", "error");
+          $("transferQuantityInput").focus();
+          return;
+        }
+        await addDeferredConferenceExtraItem(transfer, extraSku, extraQty, detectTransferInputType());
+        return;
+      }
       setStatus("transferWorkStatus", "Bipe um SKU válido antes de confirmar.", "error");
       return;
     }
@@ -4297,7 +4442,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var sepExpected = item.isExtra ? Number(item.separatedQty || 0) + qty : Number(item.requestedQty || 0);
       var sepCurrent = Number(item.separatedQty || 0);
       var sepExcess = Math.max(0, sepCurrent + qty - sepExpected);
-      if (sepExcess > 0 && !item.isExtra && !window.confirm("Quantidade maior que a solicitada. Deseja registrar excesso?")) {
+      if (sepExcess > 0 && !item.isExtra && !isXmlConferenceTransfer(transfer) && !window.confirm("Quantidade maior que a solicitada. Deseja registrar excesso?")) {
         setStatus("transferWorkStatus", "Corrija a quantidade antes de confirmar.", "warning");
         $("transferQuantityInput").focus();
         return;
