@@ -41,11 +41,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var REQUIRED_COLUMNS = [
     "Nome estacao",
     "Nr Rack",
-    "Area Linha Separação",
+    "Area Linha Separaçao",
     "Linha",
     "Coluna",
     "Codigo Material",
     "Conferencia Obrigatoria"
+  ];
+  var LEGEND_ROWS = [
+    ["Nome", "Descrição", "Obrigatório", "Obs"],
+    ["Nome estacao", "Nome estacao", "Sim", ""],
+    ["Nr Rack", "Nr Rack", "Sim", ""],
+    ["Area Linha Separaçao", "Area Linha Separaçao", "Não", "1 - Alto Giro <br/> 2 - Médio Giro <br/> 3 - Área RF <br/> 4 - Baixo Giro <br/> 5 - Picking by Light"],
+    ["Linha", "Linha", "Sim", ""],
+    ["Coluna", "Coluna", "Sim", ""],
+    ["Codigo Material", "Para que o código de material seja considerado válido no processo de endereçamento, é necessário que ele esteja ativo (ou seja, não expirado).", "Não", ""],
+    ["Conferencia Obrigatoria", "Conferencia Obrigatoria", "Sim", ""]
   ];
 
   var state = {
@@ -3306,33 +3316,78 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
     }
-    var rows = state.bindings.map(function (binding) {
-      return {
-        "Nome estacao": "Rua " + pad2(binding.rua),
-        "Nr Rack": Number(binding.rack),
-        "Area Linha Separação": Number(binding.areaCode),
-        "Linha": Number(binding.linha),
-        "Coluna": binding.letra,
-        "Codigo Material": String(binding.sku),
-        "Conferencia Obrigatoria": 0
-      };
-    });
-    var worksheet = window.XLSX.utils.json_to_sheet(rows, { header: REQUIRED_COLUMNS });
+    var sortedBindings = state.bindings.slice().sort(sortByLocationThenSku);
+    var rows = [REQUIRED_COLUMNS].concat(sortedBindings.map(linhaSeparacaoRowFromBinding));
+    var worksheet = window.XLSX.utils.aoa_to_sheet(rows);
     var range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:G1");
     for (var row = 1; row <= range.e.r; row += 1) {
+      var areaCellRef = window.XLSX.utils.encode_cell({ r: row, c: 2 });
+      if (worksheet[areaCellRef]) {
+        worksheet[areaCellRef].t = "s";
+        worksheet[areaCellRef].v = String(worksheet[areaCellRef].v);
+      }
+      var lineCellRef = window.XLSX.utils.encode_cell({ r: row, c: 3 });
+      if (worksheet[lineCellRef]) {
+        worksheet[lineCellRef].t = "s";
+        worksheet[lineCellRef].v = String(worksheet[lineCellRef].v);
+      }
+      var columnCellRef = window.XLSX.utils.encode_cell({ r: row, c: 4 });
+      if (worksheet[columnCellRef]) {
+        worksheet[columnCellRef].t = "s";
+        worksheet[columnCellRef].v = String(worksheet[columnCellRef].v);
+      }
       var skuCellRef = window.XLSX.utils.encode_cell({ r: row, c: 5 });
       if (worksheet[skuCellRef]) {
         worksheet[skuCellRef].t = "s";
         worksheet[skuCellRef].v = String(worksheet[skuCellRef].v);
       }
     }
+    worksheet["!cols"] = [
+      { wch: 14 },
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 10 },
+      { wch: 10 },
+      { wch: 16 },
+      { wch: 24 }
+    ];
+    var legendSheet = window.XLSX.utils.aoa_to_sheet(LEGEND_ROWS);
+    legendSheet["!cols"] = [
+      { wch: 28 },
+      { wch: 90 },
+      { wch: 14 },
+      { wch: 80 }
+    ];
     var workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "LinhaSeparacao");
+    window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
     var fileName = "LinhaSeparacao_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
-    addHistory("Excel exportado", "", "", rows.length + " registro(s) exportado(s).");
+    addHistory("Excel exportado", "", "", sortedBindings.length + " registro(s) exportado(s) no modelo LinhaSeparacao.");
     saveData();
-    showToast("Excel exportado no modelo LinhaSeparacao.", "success");
+    showToast("Excel exportado no mesmo modelo da importacao.", "success");
+  }
+
+  function linhaSeparacaoRowFromBinding(binding) {
+    return [
+      "Rua " + pad2(binding.rua),
+      Number(binding.rack),
+      String(binding.areaCode || 1),
+      " " + Number(binding.linha),
+      " " + String(binding.letra || "").toUpperCase(),
+      String(binding.sku || ""),
+      0
+    ];
+  }
+
+  function sortByLocationThenSku(first, second) {
+    var locationCompare =
+      Number(first.rua || 0) - Number(second.rua || 0) ||
+      Number(first.rack || 0) - Number(second.rack || 0) ||
+      Number(first.linha || 0) - Number(second.linha || 0) ||
+      excelLettersToNumber(first.letra || "") - excelLettersToNumber(second.letra || "");
+    if (locationCompare) return locationCompare;
+    return String(first.sku || "").localeCompare(String(second.sku || ""), "pt-BR", { numeric: true });
   }
 
   async function saveEstablishmentFromForm() {
