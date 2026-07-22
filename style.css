@@ -1294,6 +1294,23 @@ td {
   font-weight: 700;
 }
 
+.report-adjust-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 160px;
+}
+
+.report-adjust-form input {
+  width: 82px;
+  min-height: 34px;
+  padding: 6px 8px;
+}
+
+.report-adjust-form + .remove-small {
+  margin-top: 6px;
+}
+
 .toast {
   position: fixed;
   right: 22px;

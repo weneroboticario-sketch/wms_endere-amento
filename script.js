@@ -1645,10 +1645,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("assignConferenceSelectedButton").addEventListener("click", assignSelectedTransferConference);
     $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
     $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
+    $("deleteConferenceSelectedButton").addEventListener("click", deleteSelectedTransferConference);
     $("previewTransferExcelButton").addEventListener("click", previewTransferExcel);
     $("newTransferForm").addEventListener("submit", createTransferFromForm);
     $("transferPanelRows").addEventListener("click", handleTransferActionClick);
     $("finalizedTransferRows").addEventListener("click", handleTransferActionClick);
+    $("transferFinalReportDetails").addEventListener("click", handleTransferActionClick);
     $("myTransfersList").addEventListener("click", handleTransferActionClick);
     $("completedTransfersList").addEventListener("click", handleTransferActionClick);
     $("establishmentForm").addEventListener("submit", function (event) {
@@ -2248,6 +2250,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       conferenceAssignment ? "<span class=\"muted\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</span>" : "",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
+      isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "",
       "</div></td>",
       "</tr>"
     ].join("");
@@ -2460,6 +2463,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await openTransferWork(transferId);
   }
 
+  async function deleteSelectedTransferConference() {
+    var transferId = $("conferenceTransferSelect").value;
+    if (!transferId) {
+      setStatus("conferenceAdminStatus", "Selecione uma conferência para excluir.", "error");
+      return;
+    }
+    var deleted = await deleteTransferPermanently(transferId);
+    if (deleted) setStatus("conferenceAdminStatus", "Conferência excluída.", "success");
+  }
+
   function renderMyTransfers() {
     if (!$("myTransfersList")) return;
     var visible = getVisibleTransfers().filter(function (transfer) {
@@ -2512,7 +2525,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
       "<td>" + formatDateTime(report.finishedAt) + "</td>",
-      "<td><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button></td>",
+      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button><button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button></div></td>",
       "</tr>"
     ].join("");
   }
@@ -2657,13 +2670,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Extras</span><strong>" + report.extraItems.length + "</strong></div>",
       "<div><span>Divergências</span><strong>" + report.divergences.length + "</strong></div>"
     ].join("");
+    var isConference = isXmlConferenceTransfer(transfer);
     var itemRows = report.items.map(function (item) {
       var checkedQty = getTransferCheckedQty(item, transfer);
-      var diff = checkedQty - Number(item.requestedQty || 0);
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.requestedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
+      var expectedQty = Number(item.requestedQty || 0);
+      var diff = checkedQty - expectedQty;
+      var missingQty = Math.max(0, expectedQty - checkedQty);
+      var excessQty = Math.max(0, checkedQty - expectedQty);
+      if (isConference) {
+        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
+      }
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.extraQty || item.separatedQty || item.packedQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + escapeHtml(item.observation || "-") + "</td></tr>";
+      var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
+      var actions = isConference ? conferenceAdjustHtml(item.id, extraQty) + "<button class=\"remove-small\" data-transfer-delete-extra=\"" + item.id + "\" type=\"button\">Remover</button>" : escapeHtml(item.observation || "-");
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
     }).join("");
     var divergenceRows = report.divergences.map(function (item) {
       return "<tr><td>" + escapeHtml(item.type) + "</td><td>" + escapeHtml(item.sku || "-") + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.expected) + "</td><td>" + formatQty(item.informed) + "</td><td>" + formatQty(item.difference) + "</td></tr>";
@@ -2672,11 +2694,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var inputType = event.input_type || (event.payload && event.payload.inputType) || "-";
       return "<tr><td>" + formatDateTime(event.created_at) + "</td><td>" + escapeHtml(event.user_name || "-") + "</td><td>" + escapeHtml(event.event_type || "-") + "</td><td>" + escapeHtml(event.sku || "-") + "</td><td>" + formatQty(event.quantity || 0) + "</td><td>" + escapeHtml(inputType) + "</td></tr>";
     }).join("");
+    var itemHeaders = isConference ? ["SKU", "Produto", "Prevista", "Bipada", "Falta", "Sobra", "Ajustar"] : ["SKU", "Produto", "Prevista", "Separada", "Lacrada", "Dif."];
+    var extraHeaders = ["SKU", "Produto", "Qtd bipada", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."];
     $("transferFinalReportDetails").innerHTML = [
-      reportTableHtml("Itens originais", ["SKU", "Produto", "Prevista", "Separada", "Lacrada", "Diferença"], itemRows, 6),
-      reportTableHtml("Itens extras", ["SKU", "Produto", "Qtd", "Quem", "Entrada", "Obs."], extraRows, 6),
+      reportTableHtml(isConference ? "Itens do XML" : "Itens originais", itemHeaders, itemRows, itemHeaders.length),
+      reportTableHtml("Itens extras", extraHeaders, extraRows, extraHeaders.length),
       reportTableHtml("Divergências", ["Tipo", "SKU", "Produto", "Prevista", "Informada", "Dif."], divergenceRows, 6),
       reportTableHtml("Eventos", ["Hora", "Usuário", "Evento", "SKU", "Qtd", "Entrada"], eventRows, 6)
+    ].join("");
+  }
+
+  function conferenceAdjustHtml(itemId, qty) {
+    return [
+      "<div class=\"report-adjust-form\">",
+      "<input type=\"number\" min=\"0\" step=\"0.001\" value=\"" + Number(qty || 0) + "\" data-transfer-adjust-input=\"" + itemId + "\">",
+      "<button class=\"edit-small\" data-transfer-adjust-item=\"" + itemId + "\" type=\"button\">Salvar</button>",
+      "</div>"
     ].join("");
   }
 
@@ -2834,7 +2867,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (diff > 0 || Number(item.excessQty || 0) > 0) divergences.push({ sku: item.sku, description: item.description, type: "QUANTIDADE_EXCEDENTE", expected: expectedQty, informed: checkedQty, difference: diff });
     });
     extraItems.forEach(function (item) {
-      divergences.push({ sku: item.sku, description: item.description, type: "ITEM_EXTRA", expected: 0, informed: Number(item.extraQty || item.separatedQty || item.packedQty || 0), difference: Number(item.extraQty || item.separatedQty || item.packedQty || 0), observation: item.observation || "" });
+      var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
+      if (extraQty <= 0) return;
+      divergences.push({ sku: item.sku, description: item.description, type: "ITEM_EXTRA", expected: 0, informed: extraQty, difference: extraQty, observation: item.observation || "" });
     });
     return {
       transfer: transfer,
@@ -4556,6 +4591,118 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     setStatus("transferWorkStatus", "Lacre concluído. Transferência pronta para nota.", "success");
   }
 
+  async function rebuildConferenceAfterAdminChange(transfer, message) {
+    var conference = buildFinalTransferConference(transfer);
+    renderXmlConferencePayload(conference);
+    await finalizeTransferAfterConference(transfer, conference);
+    await recordTransferEvent(
+      transfer.id,
+      "",
+      "XML_CONFERENCE",
+      "",
+      conference.summary.totalXmlQty,
+      message || "Conferência recalculada após ajuste administrativo.",
+      conference
+    );
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transferState.activeWorkMode = isXmlConferenceTransfer(transfer) ? "CONFERENCIA" : transferState.activeWorkMode;
+    renderTransfers();
+    setStatus("xmlConferenceStatus", conference.summary.correct ? "Conferência ajustada: 100% correta." : "Conferência ajustada. Ainda existem divergências.", conference.summary.correct ? "success" : "warning");
+  }
+
+  async function adjustConferenceItemQuantity(itemId) {
+    if (!isAdminOrSupervisor()) return;
+    var item = transferState.items.find(function (entry) { return entry.id === itemId; });
+    var transfer = item ? getTransferById(item.transferId) : null;
+    var input = document.querySelector("[data-transfer-adjust-input=\"" + itemId + "\"]");
+    if (!item || !transfer || !input) return;
+    var qty = parseQuantity(input.value);
+    if (qty < 0) {
+      setStatus("xmlConferenceStatus", "Informe uma quantidade válida.", "error");
+      input.focus();
+      return;
+    }
+    var now = new Date().toISOString();
+    var expectedQty = Number(item.requestedQty || 0);
+    if (isXmlConferenceTransfer(transfer)) item.separatedQty = qty;
+    else item.packedQty = qty;
+    if (item.isExtra) {
+      item.extraQty = qty;
+      item.excessQty = qty;
+      item.missingQty = 0;
+      item.divergenceType = qty > 0 ? (item.divergenceType || "ITEM_EXTRA") : "";
+      item.status = qty > 0 ? "EXTRA" : "REMOVIDO";
+    } else {
+      item.missingQty = Math.max(0, expectedQty - qty);
+      item.excessQty = Math.max(0, qty - expectedQty);
+      item.divergenceType = item.missingQty > 0 ? "FALTA_DE_ITEM" : item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
+      item.status = qty >= expectedQty ? "CONFERIDO" : "PARCIAL";
+    }
+    item.updatedAt = now;
+    var update = Object.assign({
+      quantidade_separada: item.separatedQty,
+      quantidade_lacrada: item.packedQty,
+      status: item.status,
+      updated_at: now
+    }, transferItemAuditDbFields(item));
+    var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
+    if (response.error) throw response.error;
+    var diff = qty - expectedQty;
+    await recordTransferEvent(transfer.id, item.id, "CONFERENCE_ITEM_ADJUSTED", item.sku, qty, "Quantidade ajustada pelo líder após envio da conferência.", {
+      inputType: "AJUSTE_ADMIN",
+      divergenceType: item.divergenceType || "",
+      previousStatus: transfer.status
+    }, {
+      inputType: "AJUSTE_ADMIN",
+      divergenceType: item.divergenceType || "",
+      quantityExpected: expectedQty,
+      quantityInformed: qty,
+      quantityDifference: diff
+    });
+    await rebuildConferenceAfterAdminChange(transfer, "Conferência recalculada após ajuste de item.");
+  }
+
+  async function deleteConferenceExtraItem(itemId) {
+    if (!isAdminOrSupervisor()) return;
+    var item = transferState.items.find(function (entry) { return entry.id === itemId; });
+    var transfer = item ? getTransferById(item.transferId) : null;
+    if (!item || !transfer || !item.isExtra) return;
+    if (!window.confirm("Remover o item extra " + item.sku + " desta conferência?")) return;
+    var response = await supabaseDb.from("wms_transfer_items").delete().eq("id", item.id);
+    if (response.error) throw response.error;
+    await recordTransferEvent(transfer.id, "", "CONFERENCE_EXTRA_REMOVED", item.sku, Number(item.extraQty || item.separatedQty || 0), "Item extra removido pelo líder após envio.", {
+      inputType: "AJUSTE_ADMIN",
+      divergenceType: "ITEM_EXTRA_REMOVIDO"
+    });
+    await loadTransferData();
+    transferState.activeTransferId = transfer.id;
+    transfer = getTransferById(transfer.id) || transfer;
+    await rebuildConferenceAfterAdminChange(transfer, "Conferência recalculada após remoção de item extra.");
+  }
+
+  async function deleteTransferPermanently(id) {
+    if (!isAdminOrSupervisor()) return false;
+    var transfer = getTransferById(id);
+    if (!transfer) return false;
+    if (!window.confirm("Excluir definitivamente " + (transfer.name || transfer.code) + "? Isso remove o XML, a conferência, itens, eventos e divergências.")) return false;
+    var tables = [
+      { name: "wms_transfer_divergences", column: "transfer_id" },
+      { name: "wms_transfer_events", column: "transfer_id" },
+      { name: "wms_transfer_items", column: "transfer_id" },
+      { name: "wms_transfers", column: "id" }
+    ];
+    for (var i = 0; i < tables.length; i += 1) {
+      var deleteResponse = await supabaseDb.from(tables[i].name).delete().eq(tables[i].column, id);
+      if (deleteResponse.error && !isMissingTransferTableError(deleteResponse.error)) throw deleteResponse.error;
+    }
+    if (transferState.activeTransferId === id) transferState.activeTransferId = "";
+    await loadTransferData();
+    renderTransfers();
+    showToast("Conferência excluída.", "success");
+    return true;
+  }
+
   async function cancelTransfer(id) {
     var transfer = getTransferById(id);
     if (!transfer || !canCancelTransfer(transfer)) return;
@@ -4573,6 +4720,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (button.dataset.transferExportXml) await exportTransferConferenceXml(button.dataset.transferExportXml);
     if (button.dataset.transferAssignConference) await assignTransferConference(button.dataset.transferAssignConference);
     if (button.dataset.transferCancel) await cancelTransfer(button.dataset.transferCancel);
+    if (button.dataset.transferDeletePermanent) await deleteTransferPermanently(button.dataset.transferDeletePermanent);
+    if (button.dataset.transferAdjustItem) await adjustConferenceItemQuantity(button.dataset.transferAdjustItem);
+    if (button.dataset.transferDeleteExtra) await deleteConferenceExtraItem(button.dataset.transferDeleteExtra);
     if (button.dataset.establishmentEdit) editEstablishment(button.dataset.establishmentEdit);
     if (button.dataset.establishmentToggle) await toggleEstablishment(button.dataset.establishmentToggle);
   }
