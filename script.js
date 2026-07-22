@@ -1521,6 +1521,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     $("conferenceTransferSelect").addEventListener("change", renderTransferConferenceAdminPanel);
     $("conferenceUserSelect").addEventListener("change", renderTransferConferenceAdminPanel);
+    $("conferenceXmlCreateInput").addEventListener("change", renderTransferConferenceAdminPanel);
+    $("createConferenceFromXmlButton").addEventListener("click", createConferenceFromXmlFile);
     $("assignConferenceSelectedButton").addEventListener("click", assignSelectedTransferConference);
     $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
     $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
@@ -2057,10 +2059,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("conferenceAdminSummary").innerHTML = "";
       return;
     }
+    var selectedUser = authState.users.find(function (user) { return user.id === $("conferenceUserSelect").value; });
+    var file = ($("conferenceXmlCreateInput").files || [])[0];
     var transfer = getTransferById($("conferenceTransferSelect").value);
     if (!transfer) {
       $("conferenceAdminSummary").innerHTML = "";
-      setStatus("conferenceAdminStatus", "Nenhuma transferência disponível para conferência.", "warning");
+      if (file && selectedUser) {
+        setStatus("conferenceAdminStatus", "XML selecionado. Clique em Criar conferência pelo XML para gerar a tarefa para " + selectedUser.name + ".", "success");
+      } else if (file) {
+        setStatus("conferenceAdminStatus", "XML selecionado. Escolha a pessoa que vai conferir.", "warning");
+      } else {
+        setStatus("conferenceAdminStatus", "Nenhuma transferência disponível. Você pode selecionar um XML para criar uma nova conferência.", "warning");
+      }
       return;
     }
     var stats = getTransferStats(transfer.id);
@@ -2075,8 +2085,143 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Separada", formatQty(stats.separated)),
       summaryChip("Lacrada", formatQty(stats.packed))
     ].join("");
-    var selectedUser = authState.users.find(function (user) { return user.id === $("conferenceUserSelect").value; });
+    if (file && selectedUser) {
+      setStatus("conferenceAdminStatus", "XML selecionado. Clique em Criar conferência pelo XML para gerar a tarefa para " + selectedUser.name + ".", "success");
+      return;
+    }
     setStatus("conferenceAdminStatus", selectedUser ? "Pronto para atribuir ou exportar o XML para " + selectedUser.name + "." : "Selecione a pessoa que vai conferir antes de atribuir.", selectedUser ? "success" : "warning");
+  }
+
+  async function createConferenceFromXmlFile() {
+    if (!isAdminOrSupervisor()) return;
+    if (!isSupabaseReady()) {
+      setStatus("conferenceAdminStatus", "Supabase não conectado. Confira as variáveis antes de criar a conferência.", "error");
+      return;
+    }
+    var file = ($("conferenceXmlCreateInput").files || [])[0];
+    var responsible = authState.users.find(function (user) { return user.id === $("conferenceUserSelect").value; });
+    if (!file) {
+      setStatus("conferenceAdminStatus", "Selecione o arquivo XML da conferência.", "error");
+      return;
+    }
+    if (!responsible) {
+      setStatus("conferenceAdminStatus", "Selecione a pessoa que vai conferir.", "error");
+      return;
+    }
+    try {
+      setStatus("conferenceAdminStatus", "Lendo XML e criando conferência...", "warning");
+      var parsed = parseNfeXml(await file.text());
+      if (!parsed.items.length) {
+        setStatus("conferenceAdminStatus", "O XML não possui produtos para conferir.", "error");
+        return;
+      }
+      var created = await createTransferFromParsedXml(parsed, responsible, file.name);
+      await loadTransferData();
+      $("conferenceTransferSelect").value = created.transferId;
+      $("conferenceXmlCreateInput").value = "";
+      renderTransfers();
+      activateTransferTab("transferConferenceSection");
+      $("conferenceTransferSelect").value = created.transferId;
+      renderTransferConferenceAdminPanel();
+      setStatus("conferenceAdminStatus", "Conferência criada e atribuída para " + responsible.name + " com " + created.itemCount + " item(ns).", "success");
+    } catch (error) {
+      console.error("Erro ao criar conferencia pelo XML:", error);
+      setStatus("conferenceAdminStatus", "Não foi possível criar a conferência pelo XML: " + formatSupabaseError(error), "error");
+    }
+  }
+
+  async function createTransferFromParsedXml(parsed, responsible, fileName) {
+    var note = parsed.note || {};
+    var now = new Date().toISOString();
+    var suffix = note.number || (note.key ? note.key.slice(-8) : dateForFileName(new Date()));
+    var transferId = "trf-xml-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    var establishment = findXmlDestinationEstablishment(note);
+    var transferName = "XML " + suffix;
+    var transfer = {
+      id: transferId,
+      code: transferName,
+      name: transferName,
+      establishmentId: establishment.id,
+      establishmentCode: establishment.code,
+      establishmentName: establishment.name,
+      establishmentCnpj: establishment.cnpj,
+      responsibleId: responsible.id,
+      responsibleName: responsible.name,
+      status: "ATRIBUIDA",
+      observation: "Conferência criada pelo XML " + (fileName || "") + ". Origem: " + (note.emitterName || "-") + ".",
+      createdById: authState.currentUser.id,
+      createdByName: authState.currentUser.name,
+      startedAt: "",
+      separationFinishedAt: "",
+      packingFinishedAt: "",
+      createdAt: now,
+      updatedAt: now
+    };
+    var items = parsed.items.map(function (item) {
+      return {
+        id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        transferId: transferId,
+        sku: item.sku,
+        description: item.description,
+        requestedQty: Number(item.quantity || 0),
+        unit: item.unit || "UN",
+        quantityType: "UNIDADE",
+        boxQty: 0,
+        unitsPerBox: 0,
+        totalUnits: Number(item.quantity || 0),
+        separatedQty: 0,
+        packedQty: 0,
+        status: "PENDENTE",
+        createdAt: now,
+        updatedAt: now
+      };
+    });
+    var transferResponse = await supabaseDb.from("wms_transfers").insert(toDbTransfer(transfer));
+    if (transferResponse.error) throw transferResponse.error;
+    await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
+    await recordTransferEvent(transferId, "", "TRANSFER_CREATED_FROM_XML", "", items.length, "Conferência criada a partir de XML.", { fileName: fileName || "", note: note, itemCount: items.length });
+    await recordTransferEvent(transferId, "", "TRANSFER_ASSIGNED", "", 0, "Responsável atribuído.", { responsibleId: responsible.id });
+    await recordTransferEvent(
+      transferId,
+      "",
+      "XML_CONFERENCE_ASSIGNED",
+      "",
+      0,
+      "Conferência XML atribuída para " + responsible.name + ".",
+      {
+        assignedAt: now,
+        assignedUserId: responsible.id,
+        assignedUserName: responsible.name,
+        assignedUsername: responsible.username,
+        transferId: transferId,
+        transferCode: transfer.code,
+        transferName: transfer.name,
+        sourceFileName: fileName || ""
+      }
+    );
+    return { transferId: transferId, itemCount: items.length };
+  }
+
+  function findXmlDestinationEstablishment(note) {
+    var destinationCnpj = normalizeText(note.destinationCnpj || "");
+    var destinationName = normalizeText(note.destinationName || "Destino do XML");
+    var existing = transferState.establishments.find(function (item) {
+      return (destinationCnpj && item.cnpj === destinationCnpj) || item.name.toLowerCase() === destinationName.toLowerCase();
+    });
+    if (existing) {
+      return {
+        id: existing.id,
+        code: existing.code,
+        name: existing.name,
+        cnpj: existing.cnpj
+      };
+    }
+    return {
+      id: "",
+      code: destinationCnpj || "XML",
+      name: destinationName || "Destino do XML",
+      cnpj: destinationCnpj
+    };
   }
 
   async function assignSelectedTransferConference() {
@@ -3206,7 +3351,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function openTransferWork(transferId) {
     var transfer = getTransferById(transferId);
     if (!transfer) return;
-    if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id) {
+    if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id && !isTransferConferenceAssignedToCurrentUser(transfer.id)) {
       showToast("Você não tem acesso a esta transferência.", "error");
       return;
     }
