@@ -586,6 +586,27 @@
                 <div id="transferWorkRows" class="sr-only"></div>
               </div>
             </div>
+            <section class="admin-transfer-progress" id="adminTransferProgressPanel" hidden>
+              <div class="panel-header">
+                <h3>Acompanhamento da conferência</h3>
+                <button class="secondary-button" id="refreshTransferProgressButton" type="button">Atualizar</button>
+              </div>
+              <div id="adminTransferProgressSummary" class="transfer-work-summary"></div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Produto</th>
+                      <th>Quantidade</th>
+                      <th>Bipada</th>
+                      <th>Falta</th>
+                    </tr>
+                  </thead>
+                  <tbody id="adminTransferProgressRows"></tbody>
+                </table>
+              </div>
+            </section>
             <section class="xml-conference-panel">
               <div class="panel-header">
                 <h3>Conferência XML / NF-e</h3>

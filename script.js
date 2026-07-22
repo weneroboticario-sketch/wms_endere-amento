@@ -1542,6 +1542,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
       renderTransfers();
     });
+    $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
     $("transferScanButton").addEventListener("click", locateTransferItem);
     $("transferScanInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
@@ -2306,6 +2307,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!transfer) {
       $("transferWorkRows").innerHTML = "";
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
+      if ($("adminTransferProgressPanel")) $("adminTransferProgressPanel").hidden = true;
       clearXmlConferencePanel();
       return;
     }
@@ -2326,7 +2328,59 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var items = getTransferItems(transfer.id);
     $("transferWorkRows").innerHTML = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
     renderCurrentTransferItem();
+    renderAdminTransferProgress(transfer, mode);
     renderXmlConference(transfer.id);
+  }
+
+  function renderAdminTransferProgress(transfer, mode) {
+    if (!$("adminTransferProgressPanel")) return;
+    var visible = isAdminOrSupervisor();
+    $("adminTransferProgressPanel").hidden = !visible;
+    if (!visible) return;
+    var items = getTransferItems(transfer.id);
+    var rows = items.map(function (item) {
+      var checkedQty = mode === "LACRE" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+      var expectedQty = mode === "LACRE" ? Number(item.separatedQty || 0) : Number(item.requestedQty || 0);
+      var remainingQty = Math.max(0, expectedQty - checkedQty);
+      return {
+        sku: item.sku,
+        description: item.description,
+        expectedQty: expectedQty,
+        checkedQty: checkedQty,
+        remainingQty: remainingQty
+      };
+    });
+    var checkedProducts = rows.filter(function (row) { return row.checkedQty > 0; }).length;
+    var remainingProducts = rows.filter(function (row) { return row.remainingQty > 0; }).length;
+    var checkedQtyTotal = rows.reduce(function (sum, row) { return sum + row.checkedQty; }, 0);
+    var remainingQtyTotal = rows.reduce(function (sum, row) { return sum + row.remainingQty; }, 0);
+    $("adminTransferProgressSummary").innerHTML = [
+      "<div><span>Produtos</span><strong>" + rows.length + "</strong></div>",
+      "<div><span>Produtos bipados</span><strong>" + checkedProducts + "</strong></div>",
+      "<div><span>Produtos faltando</span><strong>" + remainingProducts + "</strong></div>",
+      "<div><span>Qtd bipada</span><strong>" + formatQty(checkedQtyTotal) + "</strong></div>",
+      "<div><span>Qtd faltando</span><strong>" + formatQty(remainingQtyTotal) + "</strong></div>"
+    ].join("");
+    $("adminTransferProgressRows").innerHTML = rows.length ? rows.map(function (row) {
+      return [
+        "<tr class=\"" + (row.remainingQty > 0 ? "admin-progress-pending" : "admin-progress-ok") + "\">",
+        "<td><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
+        "<td>" + escapeHtml(row.description || "-") + "</td>",
+        "<td>" + formatQty(row.expectedQty) + "</td>",
+        "<td>" + formatQty(row.checkedQty) + "</td>",
+        "<td>" + formatQty(row.remainingQty) + "</td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"5\">Nenhum item nesta transferência.</td></tr>";
+  }
+
+  async function refreshTransferProgress() {
+    var transferId = transferState.activeTransferId;
+    if (!transferId) return;
+    await loadTransferData();
+    transferState.activeTransferId = transferId;
+    renderTransferWork();
+    setStatus("transferWorkStatus", "Acompanhamento atualizado.", "success");
   }
 
   function renderCurrentTransferItem() {

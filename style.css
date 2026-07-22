@@ -1052,6 +1052,24 @@ td {
   font-size: 0.78rem;
 }
 
+.admin-transfer-progress {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-transfer-progress .transfer-work-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.admin-progress-ok {
+  background: #f7fcf9;
+}
+
+.admin-progress-pending {
+  background: #fffdf5;
+}
+
 .transfer-scan-panel,
 .transfer-live-panel {
   padding: 14px;
@@ -1310,6 +1328,7 @@ td {
   .transfer-conference-admin-grid,
   .transfer-work-grid,
   .transfer-work-summary,
+  .admin-transfer-progress .transfer-work-summary,
   .xml-summary,
   .sku-location-grid,
   .sku-card-meta {
@@ -1372,6 +1391,7 @@ td {
   }
 
   .transfer-work-grid,
+  .admin-transfer-progress .transfer-work-summary,
   .xml-summary,
   .conference-result-item {
     grid-template-columns: 1fr;
