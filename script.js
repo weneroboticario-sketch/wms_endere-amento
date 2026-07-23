@@ -787,6 +787,74 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
+  function stripOptionalTransferColumns(row) {
+    return pickColumns(row, [
+      "id",
+      "codigo_transferencia",
+      "nome_transferencia",
+      "estabelecimento_id",
+      "estabelecimento_codigo",
+      "estabelecimento_nome",
+      "estabelecimento_cnpj",
+      "responsavel_id",
+      "responsavel_nome",
+      "status",
+      "observacao",
+      "criado_por_id",
+      "criado_por_nome",
+      "iniciado_em",
+      "separacao_concluida_em",
+      "lacre_concluido_em",
+      "created_at",
+      "updated_at"
+    ]);
+  }
+
+  function stripOptionalTransferItemColumns(row) {
+    return pickColumns(row, [
+      "id",
+      "created_at",
+      "updated_at",
+      "transfer_id",
+      "sku",
+      "descricao",
+      "quantidade_solicitada",
+      "unidade_medida",
+      "tipo_quantidade",
+      "quantidade_caixas",
+      "unidades_por_caixa",
+      "quantidade_total_unidades",
+      "quantidade_separada",
+      "quantidade_lacrada",
+      "status"
+    ]);
+  }
+
+  function pickColumns(row, allowed) {
+    var output = {};
+    allowed.forEach(function (key) {
+      if (Object.prototype.hasOwnProperty.call(row, key)) output[key] = row[key];
+    });
+    return output;
+  }
+
+  async function insertTransferRows(rows) {
+    var response = await supabaseDb.from("wms_transfers").insert(rows);
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb.from("wms_transfers").insert(rows.map(stripOptionalTransferColumns));
+    }
+    if (response.error) throw response.error;
+  }
+
+  async function upsertTransferItemRows(rows) {
+    try {
+      await upsertInChunks("wms_transfer_items", rows, "id");
+    } catch (error) {
+      if (!isMissingColumnError(error)) throw error;
+      await upsertInChunks("wms_transfer_items", rows.map(stripOptionalTransferItemColumns), "id");
+    }
+  }
+
   function fromDbConference(row) {
     return {
       id: row.id,
@@ -3491,9 +3559,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       };
       return applyTransferItemLocation(transferItem);
     });
-    var transferResponse = await supabaseDb.from("wms_transfers").insert(toDbTransfer(transfer));
-    if (transferResponse.error) throw transferResponse.error;
-    await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
+    await insertTransferRows([toDbTransfer(transfer)]);
+    await upsertTransferItemRows(items.map(toDbTransferItem));
     await recordTransferEvent(transferId, "", "TRANSFER_CREATED_FROM_XML", "", items.length, "Conferência criada a partir de XML.", { fileName: fileName || "", note: note, itemCount: items.length });
     await recordTransferEvent(transferId, "", "TRANSFER_ASSIGNED", "", 0, "Responsável atribuído.", { responsibleId: responsible.id });
     await recordTransferEvent(
@@ -5431,9 +5498,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     });
     try {
-      var transferResponse = await supabaseDb.from("wms_transfers").insert(transfers.map(toDbTransfer));
-      if (transferResponse.error) throw transferResponse.error;
-      await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
+      await insertTransferRows(transfers.map(toDbTransfer));
+      await upsertTransferItemRows(items.map(toDbTransferItem));
       for (var i = 0; i < transfers.length; i += 1) {
         await recordTransferEvent(transfers[i].id, "", "TRANSFER_CREATED", "", 0, "Transferencia criada por importacao inteligente.", { itemCount: getPreparedTransferItems(items, transfers[i].id).length, importSource: transfers[i].importSource });
         await recordTransferEvent(transfers[i].id, "", "TRANSFER_ASSIGNED", "", 0, "Responsavel atribuido.", { responsibleId: transfers[i].responsibleId });
