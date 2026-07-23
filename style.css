@@ -2372,7 +2372,7 @@ td {
   .labels-print-sheet {
     display: grid;
     grid-template-columns: repeat(2, 98mm);
-    grid-auto-rows: 53mm;
+    grid-auto-rows: 25.5mm;
     column-gap: 4mm;
     row-gap: 3mm;
     align-items: start;
@@ -2386,9 +2386,9 @@ td {
   .label-card {
     width: 98mm;
     max-width: 98mm;
-    height: 53mm;
-    min-height: 53mm;
-    padding: 4mm 5mm 3mm;
+    height: 25.5mm;
+    min-height: 25.5mm;
+    padding: 2mm 4mm 1.6mm;
     border: 0.45mm solid #111111;
     border-radius: 2mm;
     break-inside: avoid;
@@ -2397,11 +2397,11 @@ td {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 2mm;
+    gap: 1mm;
     overflow: hidden;
   }
 
-  .label-card:nth-child(10n):not(:last-child) {
+  .label-card:nth-child(20n):not(:last-child) {
     break-after: page;
     page-break-after: always;
   }
@@ -2409,14 +2409,14 @@ td {
   .barcode {
     display: block;
     width: 100%;
-    height: 27mm;
-    max-height: 27mm;
+    height: 13mm;
+    max-height: 13mm;
     flex: 0 0 auto;
   }
 
   .label-card h3 {
     margin: 0;
-    font-size: 23pt;
+    font-size: 15pt;
     font-weight: 900;
     line-height: 1;
     color: #111827;
