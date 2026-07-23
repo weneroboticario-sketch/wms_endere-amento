@@ -1903,10 +1903,32 @@ td {
     gap: 8px;
   }
 
+  .transfer-mode-montagem .transfer-live-panel {
+    order: 0;
+  }
+
   .transfer-scan-panel {
     display: grid;
     gap: 8px;
     padding: 10px;
+  }
+
+  .transfer-mode-montagem .transfer-scan-panel {
+    order: -2;
+  }
+
+  .transfer-scan-panel .button-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .transfer-scan-panel .button-row button {
+    width: 100%;
+    min-height: 44px;
+    white-space: normal;
+    line-height: 1.15;
+    padding: 10px 12px;
   }
 
   .current-item-head strong {

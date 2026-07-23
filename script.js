@@ -3900,6 +3900,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var stats = getTransferStats(transfer.id);
     var mode = getTransferWorkMode(transfer);
     transferState.activeWorkMode = mode;
+    $("transferWorkSection").classList.toggle("transfer-mode-montagem", mode === "MONTAGEM");
+    $("transferWorkSection").classList.toggle("transfer-mode-separacao", mode === "SEPARACAO");
+    $("transferWorkSection").classList.toggle("transfer-mode-finalizacao", mode === "FINALIZACAO");
     var finalized = isFinalTransferStatus(transfer.status);
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
     var activeItem = getTransferActiveItem(items, mode);
@@ -3925,7 +3928,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
-    $("startPackingButton").hidden = finalized || transfer.status !== "SEPARACAO_CONCLUIDA";
+    $("startPackingButton").hidden = true;
     $("finishSeparationButton").hidden = true;
     $("finishPackingButton").hidden = finalized || mode !== "MONTAGEM";
     $("confirmTransferItemButton").hidden = finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty);
@@ -3939,8 +3942,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("separationPendingHint").textContent = !allSeparated && mode === "SEPARACAO" ? "Finalize todos os itens para concluir a separação." : "";
     $("separationPendingHint").className = "inline-status warning";
     $("transferStepHelp").parentElement.hidden = mode === "SEPARACAO" && !transferState.manualSeparationQty;
-    setTransferFieldHidden("sealNumberInput", mode !== "MONTAGEM");
-    setTransferFieldHidden("boxIdInput", mode !== "MONTAGEM");
+    setTransferFieldHidden("sealNumberInput", true);
+    setTransferFieldHidden("boxIdInput", true);
     $("transferWorkRows").innerHTML = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
     renderTransferProductList(items);
     renderCurrentTransferItem();
@@ -6535,16 +6538,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     var separationFinishedAt = new Date().toISOString();
-    await updateTransferStatus(transfer, "SEPARACAO_CONCLUIDA", {
+    await updateTransferStatus(transfer, "EM_MONTAGEM_CAIXA", {
       separacao_concluida_em: separationFinishedAt,
-      duracao_separacao_segundos: secondsBetween(transfer.separationStartedAt || transfer.startedAt, separationFinishedAt)
+      duracao_separacao_segundos: secondsBetween(transfer.separationStartedAt || transfer.startedAt, separationFinishedAt),
+      lacre_iniciado_em: separationFinishedAt
     }, "SEPARATION_FINISHED");
+    await recordTransferEvent(transfer.id, "", "PACKING_STARTED", "", 0, "Montagem da caixa iniciada.", {});
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
     transferState.activeWorkMode = "MONTAGEM";
     transferState.manualSeparationQty = false;
     renderTransfers();
-    setStatus("transferWorkStatus", "Separação concluída. Inicie a montagem da caixa.", "success");
+    setStatus("transferWorkStatus", "Separação concluída. Bipe o SKU e informe a quantidade.", "success");
   }
 
   async function startPacking() {
