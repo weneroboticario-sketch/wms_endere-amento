@@ -306,6 +306,13 @@ alter table public.wms_transfer_items add column if not exists loja_destino text
 alter table public.wms_transfer_items add column if not exists razao_social_origem text default '';
 alter table public.wms_transfer_items add column if not exists razao_social_destino text default '';
 alter table public.wms_transfer_items add column if not exists agrupamento_razao_social text default '';
+alter table public.wms_transfer_items add column if not exists endereco_rua text default '';
+alter table public.wms_transfer_items add column if not exists endereco_rack text default '';
+alter table public.wms_transfer_items add column if not exists endereco_linha text default '';
+alter table public.wms_transfer_items add column if not exists endereco_letra text default '';
+alter table public.wms_transfer_items add column if not exists endereco_codigo text default '';
+alter table public.wms_transfer_items add column if not exists has_location boolean default false;
+alter table public.wms_transfer_items add column if not exists location_warning text default '';
 alter table public.wms_transfer_items add column if not exists tipo_quantidade text default 'UNIDADE';
 alter table public.wms_transfer_items add column if not exists quantidade_caixas numeric default 0;
 alter table public.wms_transfer_items add column if not exists unidades_por_caixa numeric default 0;

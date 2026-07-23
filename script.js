@@ -663,6 +663,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       sourceLegalName: row.razao_social_origem || "",
       destinationLegalName: row.razao_social_destino || "",
       legalNameGroup: row.agrupamento_razao_social || "",
+      addressRua: row.endereco_rua || "",
+      addressRack: row.endereco_rack || "",
+      addressLinha: row.endereco_linha || "",
+      addressLetra: row.endereco_letra || "",
+      addressCode: row.endereco_codigo || "",
+      hasLocation: row.has_location === true,
+      locationWarning: row.location_warning || "",
       quantityType: row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
       unitsPerBox: Number(row.unidades_por_caixa || 0),
@@ -747,6 +754,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       razao_social_origem: item.sourceLegalName || "",
       razao_social_destino: item.destinationLegalName || "",
       agrupamento_razao_social: item.legalNameGroup || "",
+      endereco_rua: item.addressRua || "",
+      endereco_rack: item.addressRack || "",
+      endereco_linha: item.addressLinha || "",
+      endereco_letra: item.addressLetra || "",
+      endereco_codigo: item.addressCode || "",
+      has_location: item.hasLocation === true,
+      location_warning: item.locationWarning || "",
       tipo_quantidade: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
       unidades_por_caixa: Number(item.unitsPerBox || 0),
@@ -3458,7 +3472,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       updatedAt: now
     };
     var items = parsed.items.map(function (item) {
-      return {
+      var transferItem = {
         id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
         transferId: transferId,
         sku: item.sku,
@@ -3475,6 +3489,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         createdAt: now,
         updatedAt: now
       };
+      return applyTransferItemLocation(transferItem);
     });
     var transferResponse = await supabaseDb.from("wms_transfers").insert(toDbTransfer(transfer));
     if (transferResponse.error) throw transferResponse.error;
@@ -3658,8 +3673,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("transferPreviewGroups")) $("transferPreviewGroups").innerHTML = groups.length ? groups.map(transferPreviewGroupHtml).join("") : "";
     $("transferPreviewRows").innerHTML = transferState.previewItems.length ? transferState.previewItems.map(function (item) {
       var status = item.errors && item.errors.length ? item.errors.join("; ") : "OK";
-      return "<tr><td>" + escapeHtml(item.sourceCode || "-") + "</td><td>" + escapeHtml(item.destinationCode || "-") + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(status) + "</td></tr>";
-    }).join("") : "<tr><td colspan=\"7\">Nenhuma previa carregada.</td></tr>";
+      return "<tr><td>" + escapeHtml(item.sourceCode || "-") + "</td><td>" + escapeHtml(item.destinationCode || "-") + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(transferLocationLabel(item)) + "</td><td>" + escapeHtml(status) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"8\">Nenhuma previa carregada.</td></tr>";
   }
 
   function transferPreviewGroupHtml(group) {
@@ -3767,7 +3782,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferProductList").innerHTML = items.length ? [
       "<span class=\"eyebrow\">Produtos da conferência</span>",
       items.map(function (item) {
-        return "<article><strong>" + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(item.description || "-") + "</span></article>";
+        return "<article><strong>" + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(item.description || "-") + "</span><span>" + escapeHtml(transferLocationLabel(item)) + "</span></article>";
       }).join("")
     ].join("") : "";
   }
@@ -3784,6 +3799,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var expectedQty = isConference ? Number(item.requestedQty || 0) : mode === "LACRE" ? Number(item.separatedQty || 0) : Number(item.requestedQty || 0);
       var remainingQty = Math.max(0, expectedQty - checkedQty);
       return {
+        item: item,
         sku: item.sku,
         description: item.description,
         expectedQty: expectedQty,
@@ -3807,12 +3823,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "<tr class=\"" + (row.remainingQty > 0 ? "admin-progress-pending" : "admin-progress-ok") + "\">",
         "<td><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
         "<td>" + escapeHtml(row.description || "-") + "</td>",
+        transferLocationCells(row.item),
         "<td>" + formatQty(row.expectedQty) + "</td>",
         "<td>" + formatQty(row.checkedQty) + "</td>",
         "<td>" + formatQty(row.remainingQty) + "</td>",
         "</tr>"
       ].join("");
-    }).join("") : "<tr><td colspan=\"5\">Nenhum item nesta transferência.</td></tr>";
+    }).join("") : "<tr><td colspan=\"11\">Nenhum item nesta transferência.</td></tr>";
   }
 
   function renderTransferFinalReport(transfer) {
@@ -3837,28 +3854,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var missingQty = Math.max(0, expectedQty - checkedQty);
       var excessQty = Math.max(0, checkedQty - expectedQty);
       if (isConference) {
-        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
+        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.separatedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
       var actions = isConference ? conferenceAdjustHtml(item.id, extraQty) + "<button class=\"remove-small\" data-transfer-delete-extra=\"" + item.id + "\" type=\"button\">Remover</button>" : escapeHtml(item.observation || "-");
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
     }).join("");
     var divergenceRows = report.divergences.map(function (item) {
-      return "<tr><td>" + escapeHtml(item.type) + "</td><td>" + escapeHtml(item.sku || "-") + "</td><td>" + escapeHtml(item.description || "-") + "</td><td>" + formatQty(item.expected) + "</td><td>" + formatQty(item.informed) + "</td><td>" + formatQty(item.difference) + "</td></tr>";
+      return "<tr><td>" + escapeHtml(item.type) + "</td><td>" + escapeHtml(item.sku || "-") + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(item.expected) + "</td><td>" + formatQty(item.informed) + "</td><td>" + formatQty(item.difference) + "</td></tr>";
     }).join("");
     var eventRows = report.events.slice().sort(function (a, b) { return new Date(b.created_at || 0) - new Date(a.created_at || 0); }).slice(0, 40).map(function (event) {
       var inputType = event.input_type || (event.payload && event.payload.inputType) || "-";
       return "<tr><td>" + formatDateTime(event.created_at) + "</td><td>" + escapeHtml(event.user_name || "-") + "</td><td>" + escapeHtml(event.event_type || "-") + "</td><td>" + escapeHtml(event.sku || "-") + "</td><td>" + formatQty(event.quantity || 0) + "</td><td>" + escapeHtml(inputType) + "</td></tr>";
     }).join("");
-    var itemHeaders = isConference ? ["SKU", "Produto", "Prevista", "Bipada", "Falta", "Sobra", "Ajustar"] : ["SKU", "Produto", "Prevista", "Separada", "Lacrada", "Dif."];
-    var extraHeaders = ["SKU", "Produto", "Qtd bipada", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."];
+    var locationHeaders = ["Rua", "Rack", "Linha", "Letra", "Endereço", "Localização"];
+    var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Separada", "Lacrada", "Dif."]);
+    var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
+    var divergenceHeaders = ["Tipo", "SKU", "Produto"].concat(locationHeaders, ["Prevista", "Informada", "Dif."]);
     $("transferFinalReportDetails").innerHTML = [
       reportTableHtml(isConference ? "Itens do XML" : "Itens originais", itemHeaders, itemRows, itemHeaders.length),
       reportTableHtml("Itens extras", extraHeaders, extraRows, extraHeaders.length),
-      reportTableHtml("Divergências", ["Tipo", "SKU", "Produto", "Prevista", "Informada", "Dif."], divergenceRows, 6),
+      reportTableHtml("Divergências", divergenceHeaders, divergenceRows, divergenceHeaders.length),
       reportTableHtml("Eventos", ["Hora", "Usuário", "Evento", "SKU", "Qtd", "Entrada"], eventRows, 6)
     ].join("");
   }
@@ -3903,7 +3922,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     $("transferCurrentItem").innerHTML = [
       "<strong>" + escapeHtml(item.sku) + "</strong>",
-      "<span>" + escapeHtml(item.description || "-") + "</span>"
+      "<span>" + escapeHtml(item.description || "-") + "</span>",
+      "<span>" + escapeHtml(transferLocationLabel(item)) + "</span>"
     ].join("");
   }
 
@@ -5263,6 +5283,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function buildTransferPreviewGroups(items, errors, importSource, rawText, fileName) {
     var groupsByKey = {};
     items.forEach(function (item) {
+      applyTransferItemLocation(item);
       var key = (item.sourceCode || "") + ">" + (item.destinationCode || "");
       if (!groupsByKey[key]) groupsByKey[key] = {
         id: "grp-" + Object.keys(groupsByKey).length,
@@ -5467,6 +5488,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function buildImportedTransferItem(item, transferId, now) {
+    applyTransferItemLocation(item);
     return {
       id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
       transferId: transferId,
@@ -5480,6 +5502,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       sourceLegalName: item.sourceLegalName || "",
       destinationLegalName: item.destinationLegalName || "",
       legalNameGroup: item.legalNameGroup || "",
+      addressRua: item.addressRua || "",
+      addressRack: item.addressRack || "",
+      addressLinha: item.addressLinha || "",
+      addressLetra: item.addressLetra || "",
+      addressCode: item.addressCode || "",
+      hasLocation: item.hasLocation === true,
+      locationWarning: item.locationWarning || "",
       quantityType: item.quantityType || "UNIDADE",
       boxQty: item.boxQty || 0,
       unitsPerBox: item.unitsPerBox || 0,
@@ -5494,6 +5523,73 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getPreparedTransferItems(items, transferId) {
     return items.filter(function (item) { return item.transferId === transferId; });
+  }
+
+  function applyTransferItemLocation(item) {
+    var location = findTransferLocationForSku(item.sku);
+    if (location) {
+      item.addressRua = "R" + pad2(location.rua);
+      item.addressRack = "RK" + pad2(location.rack);
+      item.addressLinha = "L" + pad2(location.linha);
+      item.addressLetra = location.letra || "";
+      item.addressCode = location.locationCode || "";
+      item.hasLocation = true;
+      item.locationWarning = "";
+    } else {
+      item.addressRua = "";
+      item.addressRack = "";
+      item.addressLinha = "";
+      item.addressLetra = "";
+      item.addressCode = "";
+      item.hasLocation = false;
+      item.locationWarning = "Sem localização cadastrada.";
+    }
+    return item;
+  }
+
+  function findTransferLocationForSku(sku) {
+    return state.bindings.filter(function (binding) {
+      return isSameSku(binding.sku, sku);
+    }).sort(sortByDateDesc)[0] || null;
+  }
+
+  function transferLocationStatus(item) {
+    var code = item.addressCode || "";
+    if (!code && item.hasLocation !== true) {
+      var location = findTransferLocationForSku(item.sku);
+      if (location) {
+        item.addressRua = "R" + pad2(location.rua);
+        item.addressRack = "RK" + pad2(location.rack);
+        item.addressLinha = "L" + pad2(location.linha);
+        item.addressLetra = location.letra || "";
+        item.addressCode = location.locationCode || "";
+        item.hasLocation = true;
+        item.locationWarning = "";
+      }
+    }
+    if (item.hasLocation || item.addressCode) {
+      return {
+        hasLocation: true,
+        rua: item.addressRua || "",
+        rack: item.addressRack || "",
+        linha: item.addressLinha || "",
+        letra: item.addressLetra || "",
+        code: item.addressCode || ""
+      };
+    }
+    return { hasLocation: false, warning: item.locationWarning || "Sem localização cadastrada." };
+  }
+
+  function transferLocationLabel(item) {
+    var status = transferLocationStatus(item);
+    if (!status.hasLocation) return status.warning;
+    return "Rua: " + status.rua + " | Rack: " + status.rack + " | Linha: " + status.linha + " | Letra: " + status.letra + " | Endereço: " + status.code;
+  }
+
+  function transferLocationCells(item) {
+    var status = transferLocationStatus(item);
+    if (!status.hasLocation) return "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>Sem localização cadastrada.</td>";
+    return "<td>" + escapeHtml(status.rua) + "</td><td>" + escapeHtml(status.rack) + "</td><td>" + escapeHtml(status.linha) + "</td><td>" + escapeHtml(status.letra) + "</td><td>" + escapeHtml(status.code) + "</td><td>Localizado</td>";
   }
 
   function compactDateTimeForCode(date) {
