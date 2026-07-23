@@ -5313,6 +5313,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function clearLabelsPreview() {
     $("labelsPreview").innerHTML = "";
+    if ($("labelsPrintSheet")) $("labelsPrintSheet").innerHTML = "";
     showToast("Visualizacao de etiquetas limpa.", "success");
   }
 
@@ -5344,15 +5345,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderLabels(codes) {
     var container = $("labelsPreview");
-    container.innerHTML = codes.map(function (code, index) {
-      var parsed = normalizeLocation(code);
-      return [
-        "<article class=\"label-card\">",
-        "<svg class=\"barcode\" id=\"barcode-" + index + "\" data-code=\"" + parsed.code + "\"></svg>",
-        "<h3>" + parsed.code + "</h3>",
-        "</article>"
-      ].join("");
-    }).join("");
+    var labelsHtml = codes.map(labelCardHtml).join("");
+    container.innerHTML = labelsHtml;
+    if ($("labelsPrintSheet")) $("labelsPrintSheet").innerHTML = labelsHtml;
     window.setTimeout(function () {
       document.querySelectorAll(".barcode").forEach(function (svg) {
         if (window.JsBarcode) {
@@ -5366,6 +5361,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         }
       });
     }, 50);
+  }
+
+  function labelCardHtml(code, index) {
+    var parsed = normalizeLocation(code);
+    return [
+      "<article class=\"label-card\">",
+      "<svg class=\"barcode\" data-label-index=\"" + index + "\" data-code=\"" + parsed.code + "\" aria-label=\"" + parsed.code + "\"></svg>",
+      "<h3>" + parsed.code + "</h3>",
+      "</article>"
+    ].join("");
   }
 
   function exportExcel() {

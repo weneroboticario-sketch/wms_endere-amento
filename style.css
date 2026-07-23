@@ -883,6 +883,10 @@ td {
   margin-top: 18px;
 }
 
+.labels-print-sheet {
+  display: none;
+}
+
 .label-card {
   width: 100%;
   max-width: 420px;
@@ -2350,74 +2354,74 @@ td {
     margin: 5mm;
   }
 
+  html,
   body {
+    width: 210mm;
+    min-height: auto;
+    margin: 0;
     background: #ffffff;
+    overflow: visible;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  .sidebar,
-  .mobile-topbar,
-  .page-title,
-  .panel,
-  .toast {
+  body > :not(#labelsPrintSheet) {
     display: none !important;
   }
 
-  .app-shell,
-  .content,
-  #etiquetas {
-    display: block !important;
-    width: 100%;
-    margin-left: 0;
-    padding: 0;
-    max-width: none;
-  }
-
-  .screen:not(#etiquetas),
-  #etiquetas > :not(#labelsPreview) {
-    display: none !important;
-  }
-
-  .labels-area {
+  .labels-print-sheet {
     display: grid;
     grid-template-columns: repeat(2, 98mm);
-    grid-auto-rows: 54mm;
+    grid-auto-rows: 53mm;
     column-gap: 4mm;
-    row-gap: 4mm;
+    row-gap: 3mm;
     align-items: start;
-    justify-content: start;
+    justify-content: center;
+    width: 200mm;
     margin: 0;
+    padding: 0;
+    background: #ffffff;
   }
 
   .label-card {
     width: 98mm;
     max-width: 98mm;
-    height: 54mm;
-    min-height: 54mm;
-    padding: 5mm 5mm 4mm;
+    height: 53mm;
+    min-height: 53mm;
+    padding: 4mm 5mm 3mm;
     border: 0.45mm solid #111111;
     border-radius: 2mm;
     break-inside: avoid;
     page-break-inside: avoid;
     box-shadow: none;
-    align-content: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2mm;
+    overflow: hidden;
   }
 
-  .label-card:nth-child(10n) {
+  .label-card:nth-child(10n):not(:last-child) {
     break-after: page;
     page-break-after: always;
   }
 
   .barcode {
+    display: block;
+    width: 100%;
     height: 27mm;
+    max-height: 27mm;
+    flex: 0 0 auto;
   }
 
   .label-card h3 {
-    font-size: 25pt;
+    margin: 0;
+    font-size: 23pt;
     font-weight: 900;
     line-height: 1;
     color: #111827;
+    text-align: center;
+    white-space: nowrap;
   }
 
   .label-meta div {
