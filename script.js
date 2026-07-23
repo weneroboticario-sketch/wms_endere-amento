@@ -3684,8 +3684,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div>",
       "<strong>" + escapeHtml(group.sourceCode || "-") + " &gt; " + escapeHtml(group.destinationCode || "-") + "</strong>",
       "<span>" + group.items.length + " item(ns) | " + formatQty(qty) + " un.</span>",
-      "<span>Origem: " + escapeHtml(establishmentPreviewLabel(group.origin)) + "</span>",
-      "<span>Destino: " + escapeHtml(establishmentPreviewLabel(group.destination)) + "</span>",
+      "<span>Origem: " + escapeHtml(establishmentPreviewLabel(group.origin, group.sourceCode)) + "</span>",
+      "<span>Destino: " + escapeHtml(establishmentPreviewLabel(group.destination, group.destinationCode)) + "</span>",
+      group.warnings && group.warnings.length ? "<span class=\"muted\">" + escapeHtml(group.warnings.join("; ")) + "</span>" : "",
       group.errors.length ? "<span class=\"danger-text\">" + escapeHtml(group.errors.join("; ")) + "</span>" : "",
       "</div>",
       "<div class=\"transfer-preview-group-actions\">",
@@ -3702,8 +3703,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).join("");
   }
 
-  function establishmentPreviewLabel(item) {
-    if (!item) return "Nao encontrada";
+  function establishmentPreviewLabel(item, fallbackCode) {
+    if (!item) return (fallbackCode || "-") + " (sem cadastro)";
     return [item.code, item.name, item.cnpj].filter(Boolean).join(" - ");
   }
 
@@ -5215,7 +5216,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function parseTransferRoute(line) {
-    var text = normalizeText(line).replace(/\u2192/g, ">").replace(/\u2013|\u2014/g, "-");
+    var text = normalizeText(line)
+      .replace(/\u2192/g, ">")
+      .replace(/\s*-\s*>\s*/g, ">")
+      .replace(/\s*=>\s*/g, ">")
+      .replace(/\u2013|\u2014/g, "-");
     var parts = [];
     if (text.indexOf(">") >= 0) parts = text.split(">");
     else if (/\s+para\s+/i.test(text)) parts = text.split(/\s+para\s+/i);
@@ -5226,17 +5231,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function parseTransferMessageItem(line, lineNumber) {
     var normalized = normalizeText(line).replace(/\u2013|\u2014/g, "-");
-    var match = normalized.match(/^(\S+)\s+(.+?)\s+-\s*([\d.,]+)\s*(un|und|unidade|unidades)?$/i)
-      || normalized.match(/^(\S+)\s+(.+?)\s+([\d.,]+)\s*(un|und|unidade|unidades)$/i);
+    var match = normalized.match(/^(\S+)\s+(.+?)\s+-\s*([\d.,]+)\s*(un|und|unidade|unidades|cx|caixa|caixas)?$/i)
+      || normalized.match(/^(\S+)\s+(.+?)\s+([\d.,]+)\s*(un|und|unidade|unidades|cx|caixa|caixas)$/i);
     var errors = [];
     if (!match) return { sku: "", description: line, requestedQty: 0, unit: "UN", quantityType: "UNIDADE", boxQty: 0, unitsPerBox: 0, totalUnits: 0, sourceLine: lineNumber, errors: ["Linha nao interpretada"] };
     var sku = normalizeSku(match[1]) || normalizeText(match[1]);
     var description = normalizeText(match[2]);
     var qty = parseXmlQuantity(match[3]);
+    var unit = /^cx|caixa/i.test(match[4] || "") ? "CX" : "UN";
     if (!sku) errors.push("Codigo vazio");
     if (!description) errors.push("Descricao vazia");
     if (!qty || qty <= 0) errors.push("Quantidade invalida");
-    return { sku: sku, description: description, requestedQty: qty, unit: "UN", quantityType: "UNIDADE", boxQty: 0, unitsPerBox: 0, totalUnits: qty, sourceLine: lineNumber, errors: errors };
+    return { sku: sku, description: description, requestedQty: qty, unit: unit, quantityType: unit === "CX" ? "CAIXA" : "UNIDADE", boxQty: unit === "CX" ? qty : 0, unitsPerBox: 0, totalUnits: qty, sourceLine: lineNumber, errors: errors };
   }
 
   function detectTransferHeader(matrix) {
@@ -5294,6 +5300,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         destination: findTransferEstablishment(item.destinationCode),
         items: [],
         errors: [],
+        warnings: [],
         responsibleId: "",
         skipped: false,
         importSource: importSource,
@@ -5304,8 +5311,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var groups = Object.keys(groupsByKey).map(function (key) {
       var group = groupsByKey[key];
-      if (!group.origin) group.errors.push("Loja de origem nao encontrada: " + (group.sourceCode || "-"));
-      if (!group.destination) group.errors.push("Loja de destino nao encontrada: " + (group.destinationCode || "-"));
+      if (!group.origin) group.warnings.push("Origem sem cadastro: " + (group.sourceCode || "-"));
+      if (!group.destination) group.warnings.push("Destino sem cadastro: " + (group.destinationCode || "-"));
       group.items.forEach(function (item) {
         if (group.errors.length) item.errors = unique(item.errors.concat(group.errors));
       });
@@ -5318,7 +5325,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function normalizeStoreToken(value) {
-    return normalizeText(value).replace(/\s+/g, " ").toUpperCase();
+    return normalizeText(value)
+      .replace(/\u2192/g, ">")
+      .replace(/\s*-\s*>\s*/g, ">")
+      .replace(/^[\s;:,.>\-]+|[\s;:,.>\-]+$/g, "")
+      .replace(/\s+/g, " ")
+      .toUpperCase();
   }
 
   function findTransferEstablishment(token) {
