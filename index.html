@@ -65,7 +65,7 @@
       <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu">☰</button>
       <div>
         <strong>WMS Estoque</strong>
-        <span>Endereçamento</span>
+        <span id="mobileModuleSubtitle">Endereçamento</span>
       </div>
       <button class="secondary-button logout-button" id="mobileLogoutButton" type="button">Sair</button>
     </header>
@@ -75,7 +75,7 @@
         <div class="brand-mark">W</div>
         <div>
           <h1>WMS Estoque</h1>
-          <p>Endereçamento</p>
+          <p id="sidebarModuleSubtitle">Endereçamento</p>
         </div>
       </div>
 
@@ -668,15 +668,21 @@
                 <input id="sealNumberInput" type="text" placeholder="Opcional">
                 <label for="boxIdInput">Identificação da caixa</label>
                 <input id="boxIdInput" type="text" placeholder="Opcional">
-                <div id="transferWorkStatus" class="inline-status"></div>
               </div>
               <div class="transfer-live-panel">
                 <span class="eyebrow">Item atual</span>
                 <div id="transferCurrentItem" class="current-item-card"></div>
+                <div id="transferPrimaryActions" class="transfer-primary-actions">
+                  <button class="primary-button wide-button" id="confirmCurrentCollectButton" type="button">Confirmar coleta</button>
+                  <button class="secondary-button wide-button" id="differentSeparationQtyButton" type="button">Separar quantidade diferente</button>
+                  <button class="primary-button wide-button" id="finishSeparationReadyButton" type="button">Concluir separação</button>
+                  <div id="separationPendingHint" class="inline-status"></div>
+                </div>
                 <div id="transferProductList" class="transfer-product-list"></div>
                 <div id="transferWorkRows" class="sr-only"></div>
               </div>
             </div>
+            <div id="transferWorkStatus" class="inline-status"></div>
             <section class="admin-transfer-progress" id="adminTransferProgressPanel" hidden>
               <div class="panel-header">
                 <h3>Acompanhamento da conferência</h3>

@@ -1315,6 +1315,13 @@ td {
   background: #f4fbf8;
 }
 
+.current-item-kicker {
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
 .current-item-head,
 .transfer-work-item-head {
   display: flex;
@@ -1332,6 +1339,7 @@ td {
   padding: 4px 8px;
   border-radius: 999px;
   background: #e8f0f5;
+  color: var(--text);
   font-size: 0.75rem;
   font-weight: 900;
 }
@@ -1343,6 +1351,8 @@ td {
 }
 
 .current-qty-highlight {
+  display: grid;
+  gap: 4px;
   padding: 12px;
   border-radius: var(--radius);
   background: var(--nav);
@@ -1350,8 +1360,38 @@ td {
   font-weight: 800;
 }
 
+.current-qty-highlight span,
+.current-qty-highlight strong {
+  color: #ffffff;
+}
+
 .current-qty-highlight strong {
   font-size: 1.45rem;
+}
+
+.current-location-line {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(17, 116, 139, 0.2);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.current-location-line span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.current-location-line strong {
+  color: var(--text);
+  font-size: 1.12rem;
+}
+
+.transfer-primary-actions {
+  display: grid;
+  gap: 8px;
 }
 
 .transfer-qty-row {
@@ -1453,6 +1493,26 @@ td {
 
 .current-item-card span {
   color: var(--muted);
+}
+
+.current-item-card .current-item-head span,
+.current-item-card .current-item-kicker,
+.current-item-card .current-location-line strong,
+.current-item-card .current-qty-highlight span,
+.current-item-card .current-qty-highlight strong {
+  color: inherit;
+}
+
+.current-item-card .current-item-head span {
+  color: var(--text);
+}
+
+.current-item-card .current-item-kicker {
+  color: var(--primary);
+}
+
+.current-item-card .current-location-line strong {
+  color: var(--text);
 }
 
 .transfer-product-list {
@@ -1809,7 +1869,7 @@ td {
   }
 
   #transferWorkTitle {
-    font-size: 1.15rem;
+    font-size: 1.05rem;
     line-height: 1.2;
   }
 
@@ -1819,59 +1879,94 @@ td {
 
   .transfer-execution-summary {
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 6px;
     margin-bottom: 0;
   }
 
   .transfer-execution-summary div,
-  .step-pill,
-  .step-next,
   .transfer-step-help,
-  .current-item-card,
   .transfer-work-item {
     padding: 8px;
   }
 
   .transfer-step-summary {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .step-next {
-    grid-column: 1 / -1;
+    display: none;
   }
 
   .transfer-work-grid {
-    gap: 10px;
+    gap: 8px;
   }
 
   .transfer-live-panel {
     order: -1;
+    padding: 10px;
+    gap: 8px;
   }
 
   .transfer-scan-panel {
     display: grid;
     gap: 8px;
+    padding: 10px;
   }
 
   .current-item-head strong {
-    font-size: 1.2rem;
+    font-size: 1.38rem;
+  }
+
+  .current-item-head span,
+  .transfer-work-item-head span {
+    max-width: 45%;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.1;
+  }
+
+  .current-item-card {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .current-item-card p {
+    font-size: 1.02rem;
+    font-weight: 800;
+    line-height: 1.25;
   }
 
   .current-qty-highlight {
-    padding: 10px;
+    padding: 12px;
   }
 
   .current-qty-highlight strong {
     display: block;
-    font-size: 1.65rem;
+    font-size: 2rem;
+    line-height: 1.05;
+  }
+
+  .current-location-line {
+    padding: 9px;
+  }
+
+  .current-location-line strong {
+    font-size: 1.15rem;
   }
 
   .transfer-qty-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .transfer-qty-row span {
+    padding: 7px;
   }
 
   .transfer-product-list {
     max-height: none;
+    gap: 7px;
+  }
+
+  .transfer-primary-actions .wide-button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .transfer-preview-summary {
