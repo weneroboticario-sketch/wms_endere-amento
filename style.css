@@ -1047,7 +1047,7 @@ td {
 }
 
 #transferencias table {
-  min-width: 820px;
+  min-width: 940px;
 }
 
 #transferencias th,
@@ -1076,6 +1076,55 @@ td {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.transfer-preview-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.transfer-preview-groups {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.transfer-preview-group {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fbfdff;
+}
+
+.transfer-preview-group.skipped {
+  opacity: 0.55;
+}
+
+.transfer-preview-group strong,
+.transfer-preview-group span {
+  display: block;
+}
+
+.transfer-preview-group span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.transfer-preview-group-actions {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.danger-text {
+  color: var(--danger) !important;
+  font-weight: 700;
 }
 
 .transfer-summary-grid div,
@@ -1587,11 +1636,16 @@ td {
   .transfer-filter-grid,
   .transfer-conference-admin-grid,
   .transfer-work-grid,
+  .transfer-preview-group,
   .transfer-work-summary,
   .admin-transfer-progress .transfer-work-summary,
   .xml-summary,
   .sku-card-meta {
     grid-template-columns: 1fr;
+  }
+
+  .transfer-preview-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .metric-grid {

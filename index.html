@@ -499,9 +499,12 @@
                 <thead>
                   <tr>
                     <th>Transferência</th>
+                    <th>Origem</th>
                     <th>Destino</th>
                     <th>Responsável</th>
                     <th>Status</th>
+                    <th>Itens</th>
+                    <th>Origem importação</th>
                     <th>Progresso</th>
                     <th>Datas</th>
                     <th>Ações</th>
@@ -520,19 +523,26 @@
                 <h3>Nova Transferência</h3>
               </div>
               <form id="newTransferForm" autocomplete="off">
-                <label for="transferNameInput">Nome ou número da transferência</label>
-                <input id="transferNameInput" type="text" placeholder="Ex.: TRANSF-001">
-                <label for="transferDestinationInput">Estabelecimento de destino</label>
-                <select id="transferDestinationInput"></select>
-                <label for="transferResponsibleInput">Responsável pela separação</label>
+                <label for="transferImportModeInput">Formato de entrada</label>
+                <select id="transferImportModeInput">
+                  <option value="MESSAGE">Colar mensagem</option>
+                  <option value="EXCEL">Importar Excel</option>
+                </select>
+                <div class="transfer-message-import" id="transferMessageImportBox">
+                  <label for="transferMessageInput">Mensagem da transferência</label>
+                  <textarea id="transferMessageInput" rows="8" placeholder="VDCG > VDAR&#10;53415 LIZ DES COL INTENSO 100ml - 7UN&#10;53355 SIAGE MASC CAP PRO CRONOLOGY 250g - 10UN"></textarea>
+                </div>
+                <div class="transfer-excel-import" id="transferExcelImportBox" hidden>
+                  <label for="transferExcelInput">Planilha Excel da transferência</label>
+                  <input id="transferExcelInput" type="file" accept=".xlsx,.xls">
+                </div>
+                <label for="transferResponsibleInput">Responsável para todas</label>
                 <select id="transferResponsibleInput"></select>
                 <label for="transferObservationInput">Observação</label>
                 <textarea id="transferObservationInput" rows="3" placeholder="Opcional"></textarea>
-                <label for="transferExcelInput">Planilha Excel da transferência</label>
-                <input id="transferExcelInput" type="file" accept=".xlsx,.xls">
                 <div class="button-row">
-                  <button class="secondary-button" id="previewTransferExcelButton" type="button">Pré-visualizar</button>
-                  <button class="primary-button" id="createTransferButton" type="submit">Criar transferência</button>
+                  <button class="secondary-button" id="previewTransferExcelButton" type="button">Gerar prévia</button>
+                  <button class="primary-button" id="createTransferButton" type="submit">Criar transferências</button>
                 </div>
                 <div id="transferImportStatus" class="inline-status"></div>
               </form>
@@ -540,18 +550,21 @@
 
             <section class="panel">
               <div class="panel-header">
-                <h3>Prévia da planilha</h3>
+                <h3>Prévia inteligente</h3>
               </div>
+              <div id="transferPreviewSummary" class="transfer-preview-summary"></div>
+              <div id="transferPreviewGroups" class="transfer-preview-groups"></div>
               <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
+                      <th>Origem</th>
+                      <th>Destino</th>
                       <th>Código</th>
                       <th>Descrição</th>
                       <th>Qtd</th>
-                      <th>Unidade</th>
-                      <th>Tipo</th>
-                      <th>Erros</th>
+                      <th>Tipo movimentação</th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody id="transferPreviewRows"></tbody>

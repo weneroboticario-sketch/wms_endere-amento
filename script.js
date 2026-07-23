@@ -116,6 +116,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     events: [],
     previewItems: [],
     previewErrors: [],
+    previewGroups: [],
+    previewSource: "",
+    previewRawText: "",
+    previewFileName: "",
     activeTransferId: "",
     activeWorkMode: "SEPARACAO",
     selectedItemId: "",
@@ -581,6 +585,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       id: row.id,
       code: row.codigo || "",
+      storeCode: row.codigo_loja || row.codigo || "",
+      internalCode: row.codigo_interno || "",
+      channel: row.canal || "",
       name: row.nome || "",
       cnpj: row.cnpj || "",
       active: row.ativo !== false,
@@ -599,6 +606,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       establishmentCode: row.estabelecimento_codigo || "",
       establishmentName: row.estabelecimento_nome || "",
       establishmentCnpj: row.estabelecimento_cnpj || "",
+      importSource: row.import_source || "",
+      rawSourceText: row.raw_source_text || "",
+      originId: row.origem_id || "",
+      originName: row.origem_nome || "",
+      originCnpj: row.origem_cnpj || "",
+      originStoreCode: row.origem_codigo_loja || "",
+      originInternalCode: row.origem_codigo_interno || "",
+      originChannel: row.origem_canal || "",
+      destinationId: row.destino_id || row.estabelecimento_id || "",
+      destinationName: row.destino_nome || row.estabelecimento_nome || "",
+      destinationCnpj: row.destino_cnpj || row.estabelecimento_cnpj || "",
+      destinationStoreCode: row.destino_codigo_loja || row.estabelecimento_codigo || "",
+      destinationInternalCode: row.destino_codigo_interno || "",
+      destinationChannel: row.destino_canal || "",
       responsibleId: row.responsavel_id || "",
       responsibleName: row.responsavel_nome || "",
       status: TRANSFER_STATUSES.indexOf(normalizedStatus) >= 0 ? normalizedStatus : "PENDENTE",
@@ -636,6 +657,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       description: row.descricao || "",
       requestedQty: Number(row.quantidade_solicitada || 0),
       unit: row.unidade_medida || "UN",
+      movementType: row.tipo_movimentacao || "",
+      sourceStore: row.loja_origem || "",
+      destinationStore: row.loja_destino || "",
+      sourceLegalName: row.razao_social_origem || "",
+      destinationLegalName: row.razao_social_destino || "",
+      legalNameGroup: row.agrupamento_razao_social || "",
       quantityType: row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
       unitsPerBox: Number(row.unidades_por_caixa || 0),
@@ -678,6 +705,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       estabelecimento_codigo: item.establishmentCode,
       estabelecimento_nome: item.establishmentName,
       estabelecimento_cnpj: item.establishmentCnpj,
+      import_source: item.importSource || "",
+      raw_source_text: item.rawSourceText || "",
+      origem_id: item.originId || "",
+      origem_nome: item.originName || "",
+      origem_cnpj: item.originCnpj || "",
+      origem_codigo_loja: item.originStoreCode || "",
+      origem_codigo_interno: item.originInternalCode || "",
+      origem_canal: item.originChannel || "",
+      destino_id: item.destinationId || item.establishmentId || "",
+      destino_nome: item.destinationName || item.establishmentName || "",
+      destino_cnpj: item.destinationCnpj || item.establishmentCnpj || "",
+      destino_codigo_loja: item.destinationStoreCode || item.establishmentCode || "",
+      destino_codigo_interno: item.destinationInternalCode || "",
+      destino_canal: item.destinationChannel || "",
       responsavel_id: item.responsibleId,
       responsavel_nome: item.responsibleName,
       status: item.status,
@@ -700,6 +741,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       descricao: item.description,
       quantidade_solicitada: Number(item.requestedQty || 0),
       unidade_medida: item.unit || "UN",
+      tipo_movimentacao: item.movementType || "",
+      loja_origem: item.sourceStore || "",
+      loja_destino: item.destinationStore || "",
+      razao_social_origem: item.sourceLegalName || "",
+      razao_social_destino: item.destinationLegalName || "",
+      agrupamento_razao_social: item.legalNameGroup || "",
       tipo_quantidade: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
       unidades_por_caixa: Number(item.unitsPerBox || 0),
@@ -1881,8 +1928,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
     $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
     $("deleteConferenceSelectedButton").addEventListener("click", deleteSelectedTransferConference);
+    $("transferImportModeInput").addEventListener("change", handleTransferImportModeChange);
+    $("transferResponsibleInput").addEventListener("change", function () {
+      applyDefaultResponsibleToTransferGroups(true);
+      renderTransferPreview();
+    });
     $("previewTransferExcelButton").addEventListener("click", previewTransferExcel);
     $("newTransferForm").addEventListener("submit", createTransferFromForm);
+    $("transferPreviewGroups").addEventListener("change", handleTransferPreviewGroupChange);
+    $("transferPreviewGroups").addEventListener("click", handleTransferPreviewGroupClick);
     $("transferPanelRows").addEventListener("click", handleTransferActionClick);
     $("finalizedTransferRows").addEventListener("click", handleTransferActionClick);
     $("transferFinalReportDetails").addEventListener("click", handleTransferActionClick);
@@ -3192,9 +3246,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferSelects() {
     var activeEstablishments = transferState.establishments.filter(function (item) { return item.active; });
-    var operators = authState.users.filter(function (user) {
-      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
-    });
+    var operators = getTaskAssignableUsers();
     if ($("transferDestinationInput")) {
       $("transferDestinationInput").innerHTML = "<option value=\"\">Selecione</option>" + activeEstablishments.map(function (item) {
         return "<option value=\"" + item.id + "\">" + escapeHtml(item.code + " - " + item.name) + "</option>";
@@ -3234,6 +3286,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  function getTaskAssignableUsers() {
+    return authState.users.filter(function (user) {
+      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
+    });
+  }
+
   function renderTransferPanel() {
     if (!$("transferPanelRows")) return;
     var transfers = getVisibleTransfers();
@@ -3258,7 +3316,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "LACRE_CONCLUIDO"; }).length;
-    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"7\">Nenhuma transferência encontrada.</td></tr>";
+    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"9\">Nenhuma transferência encontrada.</td></tr>";
   }
 
   function transferPanelRowHtml(transfer) {
@@ -3267,9 +3325,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return [
       "<tr>",
       "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code) + "</span></td>",
-      "<td>" + escapeHtml(transfer.establishmentName || "-") + "</td>",
+      "<td>" + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</td>",
+      "<td>" + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
       "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
+      "<td>" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
+      "<td>" + escapeHtml(transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL")) + "</td>",
       "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
       "<td><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
       "<td><div class=\"row-actions transfer-action-stack\">",
@@ -3520,7 +3581,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<article class=\"transfer-card\">",
       "<span class=\"eyebrow\">" + (conferenceAssigned ? "Conferência XML" : "Transferência") + "</span>",
       "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
-      "<span>Estabelecimento: " + escapeHtml(transfer.establishmentName || "-") + "</span>",
+      "<span>Origem: " + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</span>",
+      "<span>Destino: " + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</span>",
       "<span>Status: " + escapeHtml(transfer.status) + "</span>",
       "<span>Itens: " + stats.totalItems + "</span>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
@@ -3580,9 +3642,78 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferPreview() {
     if (!$("transferPreviewRows")) return;
+    var groups = transferState.previewGroups || [];
+    var activeGroups = groups.filter(function (group) { return !group.skipped; });
+    var totalQty = activeGroups.reduce(function (sum, group) {
+      return sum + group.items.reduce(function (itemSum, item) { return itemSum + Number(item.requestedQty || 0); }, 0);
+    }, 0);
+    if ($("transferPreviewSummary")) {
+      $("transferPreviewSummary").innerHTML = groups.length ? [
+        summaryChip("Transferencias", activeGroups.length),
+        summaryChip("Itens", activeGroups.reduce(function (sum, group) { return sum + group.items.length; }, 0)),
+        summaryChip("Quantidade total", formatQty(totalQty)),
+        summaryChip("Erros", transferState.previewErrors.length)
+      ].join("") : "<div class=\"empty-state\">Nenhuma previa carregada.</div>";
+    }
+    if ($("transferPreviewGroups")) $("transferPreviewGroups").innerHTML = groups.length ? groups.map(transferPreviewGroupHtml).join("") : "";
     $("transferPreviewRows").innerHTML = transferState.previewItems.length ? transferState.previewItems.map(function (item) {
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + "</td><td>" + escapeHtml(item.unit) + "</td><td>" + escapeHtml(item.quantityType) + "</td><td>" + escapeHtml(item.errors.join("; ") || "-") + "</td></tr>";
-    }).join("") : "<tr><td colspan=\"6\">Nenhuma prévia carregada.</td></tr>";
+      var status = item.errors && item.errors.length ? item.errors.join("; ") : "OK";
+      return "<tr><td>" + escapeHtml(item.sourceCode || "-") + "</td><td>" + escapeHtml(item.destinationCode || "-") + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(status) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"7\">Nenhuma previa carregada.</td></tr>";
+  }
+
+  function transferPreviewGroupHtml(group) {
+    var qty = group.items.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
+    return [
+      "<article class=\"transfer-preview-group" + (group.skipped ? " skipped" : "") + "\">",
+      "<div>",
+      "<strong>" + escapeHtml(group.sourceCode || "-") + " &gt; " + escapeHtml(group.destinationCode || "-") + "</strong>",
+      "<span>" + group.items.length + " item(ns) | " + formatQty(qty) + " un.</span>",
+      "<span>Origem: " + escapeHtml(establishmentPreviewLabel(group.origin)) + "</span>",
+      "<span>Destino: " + escapeHtml(establishmentPreviewLabel(group.destination)) + "</span>",
+      group.errors.length ? "<span class=\"danger-text\">" + escapeHtml(group.errors.join("; ")) + "</span>" : "",
+      "</div>",
+      "<div class=\"transfer-preview-group-actions\">",
+      "<select data-transfer-group-responsible=\"" + group.id + "\">" + transferResponsibleOptionsHtml(group.responsibleId) + "</select>",
+      "<button class=\"secondary-button\" data-transfer-group-toggle=\"" + group.id + "\" type=\"button\">" + (group.skipped ? "Incluir" : "Cancelar grupo") + "</button>",
+      "</div>",
+      "</article>"
+    ].join("");
+  }
+
+  function transferResponsibleOptionsHtml(selectedId) {
+    return "<option value=\"\">Selecionar responsavel</option>" + getTaskAssignableUsers().map(function (user) {
+      return "<option value=\"" + user.id + "\"" + (user.id === selectedId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+    }).join("");
+  }
+
+  function establishmentPreviewLabel(item) {
+    if (!item) return "Nao encontrada";
+    return [item.code, item.name, item.cnpj].filter(Boolean).join(" - ");
+  }
+
+  function handleTransferPreviewGroupChange(event) {
+    var select = event.target.closest("[data-transfer-group-responsible]");
+    if (!select) return;
+    var group = transferState.previewGroups.find(function (entry) { return entry.id === select.dataset.transferGroupResponsible; });
+    if (group) group.responsibleId = select.value;
+  }
+
+  function handleTransferPreviewGroupClick(event) {
+    var button = event.target.closest("[data-transfer-group-toggle]");
+    if (!button) return;
+    var group = transferState.previewGroups.find(function (entry) { return entry.id === button.dataset.transferGroupToggle; });
+    if (!group) return;
+    group.skipped = !group.skipped;
+    renderTransferPreview();
+  }
+
+  function applyDefaultResponsibleToTransferGroups(force) {
+    var responsibleId = $("transferResponsibleInput").value;
+    if (!responsibleId) return;
+    transferState.previewGroups.forEach(function (group) {
+      if (force || !group.responsibleId) group.responsibleId = responsibleId;
+    });
   }
 
   function renderTransferWork() {
@@ -3603,12 +3734,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var isConference = isXmlConferenceTransfer(transfer);
     $("transferWorkTitle").textContent = (isConference ? "Conferência de recebimento" : mode === "LACRE" ? "Caixa / Lacre" : "Separação") + " - " + (transfer.name || transfer.code);
     $("transferWorkSummary").innerHTML = isAdminOrSupervisor() ? [
-      "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
+      "<div><span>Origem</span><strong>" + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</strong></div>",
+      "<div><span>Destino</span><strong>" + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
       "<div><span>Itens</span><strong>" + stats.totalItems + "</strong></div>",
       "<div><span>Progresso</span><strong>" + stats.progress + "%</strong></div>"
     ].join("") : [
-      "<div><span>Destino</span><strong>" + escapeHtml(transfer.establishmentName || "-") + "</strong></div>",
+      "<div><span>Origem</span><strong>" + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</strong></div>",
+      "<div><span>Destino</span><strong>" + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>"
     ].join("");
     $("startPackingButton").hidden = isConference || finalized || transfer.status !== "SEPARACAO_CONCLUIDA";
@@ -4984,65 +5117,250 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function previewTransferExcel() {
-    if (!window.XLSX) {
-      setStatus("transferImportStatus", "Biblioteca xlsx nao carregada.", "error");
-      return;
-    }
-    var file = ($("transferExcelInput").files || [])[0];
-    if (!file) {
-      setStatus("transferImportStatus", "Selecione uma planilha Excel.", "error");
-      return;
-    }
+    var mode = $("transferImportModeInput").value || "MESSAGE";
     try {
-      var entry = await readWorkbookFile(file);
-      var parsed = parseTransferWorkbook(entry.workbook);
+      var parsed;
+      if (mode === "EXCEL") {
+        if (!window.XLSX) {
+          setStatus("transferImportStatus", "Biblioteca xlsx nao carregada.", "error");
+          return;
+        }
+        var file = ($("transferExcelInput").files || [])[0];
+        if (!file) {
+          setStatus("transferImportStatus", "Selecione uma planilha Excel.", "error");
+          return;
+        }
+        var entry = await readWorkbookFile(file);
+        parsed = parseTransferWorkbook(entry.workbook, file.name);
+      } else {
+        parsed = parseTransferMessage($("transferMessageInput").value);
+      }
+      transferState.previewSource = mode;
+      transferState.previewRawText = mode === "MESSAGE" ? $("transferMessageInput").value : "";
+      transferState.previewFileName = parsed.fileName || "";
+      transferState.previewGroups = parsed.groups;
       transferState.previewItems = parsed.items;
       transferState.previewErrors = parsed.errors;
+      applyDefaultResponsibleToTransferGroups();
       renderTransferPreview();
-      setStatus("transferImportStatus", parsed.errors.length ? "Prévia carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Prévia carregada: " + parsed.items.length + " item(ns).", parsed.errors.length ? "error" : "success");
+      var activeGroups = transferState.previewGroups.filter(function (group) { return !group.skipped; });
+      setStatus("transferImportStatus", parsed.errors.length ? "Previa carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Previa carregada: " + activeGroups.length + " transferencia(s), " + parsed.items.length + " item(ns).", parsed.errors.length ? "error" : "success");
     } catch (error) {
-      setStatus("transferImportStatus", "Falha ao ler planilha: " + formatSupabaseError(error), "error");
+      setStatus("transferImportStatus", "Falha ao ler importacao: " + formatSupabaseError(error), "error");
     }
   }
 
-  function parseTransferWorkbook(workbook) {
-    var rows = [];
-    workbook.SheetNames.forEach(function (sheetName) {
-      var sheetRows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: false });
-      if (!rows.length && sheetRows.length) rows = sheetRows;
+  function handleTransferImportModeChange() {
+    var mode = $("transferImportModeInput").value || "MESSAGE";
+    $("transferMessageImportBox").hidden = mode !== "MESSAGE";
+    $("transferExcelImportBox").hidden = mode !== "EXCEL";
+    clearTransferPreview();
+    setStatus("transferImportStatus", "", "");
+  }
+
+  function clearTransferPreview() {
+    transferState.previewItems = [];
+    transferState.previewErrors = [];
+    transferState.previewGroups = [];
+    transferState.previewSource = "";
+    transferState.previewRawText = "";
+    transferState.previewFileName = "";
+    renderTransferPreview();
+  }
+
+  function parseTransferMessage(rawText) {
+    var raw = String(rawText || "");
+    var lines = raw.split(/\r?\n/).map(normalizeText).filter(Boolean);
+    var errors = [];
+    var items = [];
+    if (!lines.length) return { groups: [], items: [], errors: ["Cole a mensagem da transferencia."], fileName: "" };
+    var route = parseTransferRoute(lines[0]);
+    if (!route.ok) errors.push("Nao foi possivel identificar origem e destino na primeira linha.");
+    for (var i = 1; i < lines.length; i += 1) {
+      var item = parseTransferMessageItem(lines[i], i + 1);
+      item.sourceCode = route.source || "";
+      item.destinationCode = route.destination || "";
+      item.sourceRaw = route.source || "";
+      item.destinationRaw = route.destination || "";
+      item.movementType = "";
+      item.sourceLegalName = "";
+      item.destinationLegalName = "";
+      item.legalNameGroup = "";
+      item.importSource = "MENSAGEM";
+      if (item.errors.length) errors.push("Linha " + (i + 1) + ": " + item.errors.join(", "));
+      items.push(item);
+    }
+    if (route.ok && !items.length) errors.push("Nenhum item encontrado na mensagem.");
+    return buildTransferPreviewGroups(items, errors, "MENSAGEM", raw, "");
+  }
+
+  function parseTransferRoute(line) {
+    var text = normalizeText(line).replace(/\u2192/g, ">").replace(/\u2013|\u2014/g, "-");
+    var parts = [];
+    if (text.indexOf(">") >= 0) parts = text.split(">");
+    else if (/\s+para\s+/i.test(text)) parts = text.split(/\s+para\s+/i);
+    else if (/\s+-\s+/.test(text)) parts = text.split(/\s+-\s+/);
+    if (parts.length < 2) return { ok: false, source: "", destination: "" };
+    return { ok: true, source: normalizeStoreToken(parts[0]), destination: normalizeStoreToken(parts[1]) };
+  }
+
+  function parseTransferMessageItem(line, lineNumber) {
+    var normalized = normalizeText(line).replace(/\u2013|\u2014/g, "-");
+    var match = normalized.match(/^(\S+)\s+(.+?)\s+-\s*([\d.,]+)\s*(un|und|unidade|unidades)?$/i)
+      || normalized.match(/^(\S+)\s+(.+?)\s+([\d.,]+)\s*(un|und|unidade|unidades)$/i);
+    var errors = [];
+    if (!match) return { sku: "", description: line, requestedQty: 0, unit: "UN", quantityType: "UNIDADE", boxQty: 0, unitsPerBox: 0, totalUnits: 0, sourceLine: lineNumber, errors: ["Linha nao interpretada"] };
+    var sku = normalizeSku(match[1]) || normalizeText(match[1]);
+    var description = normalizeText(match[2]);
+    var qty = parseXmlQuantity(match[3]);
+    if (!sku) errors.push("Codigo vazio");
+    if (!description) errors.push("Descricao vazia");
+    if (!qty || qty <= 0) errors.push("Quantidade invalida");
+    return { sku: sku, description: description, requestedQty: qty, unit: "UN", quantityType: "UNIDADE", boxQty: 0, unitsPerBox: 0, totalUnits: qty, sourceLine: lineNumber, errors: errors };
+  }
+
+  function detectTransferHeader(matrix) {
+    var aliases = transferHeaderAliases();
+    for (var r = 0; r < Math.min(matrix.length, 20); r += 1) {
+      var row = matrix[r] || [];
+      var map = {};
+      row.forEach(function (cell, index) {
+        if (normalizeText(cell) === "&" && map.legalNameGroup === undefined) map.legalNameGroup = index;
+        var normalized = normalizeHeader(cell);
+        if (!normalized) return;
+        Object.keys(aliases).forEach(function (field) {
+          if (aliases[field].indexOf(normalized) >= 0 && map[field] === undefined) map[field] = index;
+        });
+      });
+      if (map.sku !== undefined && map.description !== undefined && map.quantity !== undefined && map.source !== undefined && map.destination !== undefined) {
+        map.rowIndex = r;
+        return map;
+      }
+    }
+    return null;
+  }
+
+  function transferHeaderAliases() {
+    return {
+      sku: ["cod", "codigo", "sku", "codmaterial", "codigomaterial"].map(normalizeHeader),
+      description: ["descricao", "produto", "nome", "item"].map(normalizeHeader),
+      quantity: ["qtdtransferir", "qtd", "qtde", "quantidade", "quantidadetransferir"].map(normalizeHeader),
+      source: ["retirarde", "origem", "lojaorigem", "de"].map(normalizeHeader),
+      destination: ["levarpara", "destino", "lojadestino", "para"].map(normalizeHeader),
+      movementType: ["perdacomo", "tipo", "tipomovimentacao"].map(normalizeHeader),
+      sourceLegalName: ["razaosocial"].map(normalizeHeader),
+      destinationLegalName: ["razaosocial2"].map(normalizeHeader),
+      legalNameGroup: ["agrupamento", "agrupamentorazaosocial"].map(normalizeHeader),
+      unit: ["unidade", "un", "um"].map(normalizeHeader)
+    };
+  }
+
+  function valueAtHeader(row, header, field) {
+    var index = header[field];
+    return index === undefined ? "" : row[index];
+  }
+
+  function buildTransferPreviewGroups(items, errors, importSource, rawText, fileName) {
+    var groupsByKey = {};
+    items.forEach(function (item) {
+      var key = (item.sourceCode || "") + ">" + (item.destinationCode || "");
+      if (!groupsByKey[key]) groupsByKey[key] = {
+        id: "grp-" + Object.keys(groupsByKey).length,
+        key: key,
+        sourceCode: item.sourceCode || "",
+        destinationCode: item.destinationCode || "",
+        origin: findTransferEstablishment(item.sourceCode),
+        destination: findTransferEstablishment(item.destinationCode),
+        items: [],
+        errors: [],
+        responsibleId: "",
+        skipped: false,
+        importSource: importSource,
+        rawSourceText: rawText || "",
+        fileName: fileName || ""
+      };
+      groupsByKey[key].items.push(item);
     });
+    var groups = Object.keys(groupsByKey).map(function (key) {
+      var group = groupsByKey[key];
+      if (!group.origin) group.errors.push("Loja de origem nao encontrada: " + (group.sourceCode || "-"));
+      if (!group.destination) group.errors.push("Loja de destino nao encontrada: " + (group.destinationCode || "-"));
+      group.items.forEach(function (item) {
+        if (group.errors.length) item.errors = unique(item.errors.concat(group.errors));
+      });
+      return group;
+    });
+    groups.forEach(function (group) {
+      group.errors.forEach(function (error) { errors.push(error); });
+    });
+    return { groups: groups, items: items, errors: unique(errors), fileName: fileName || "" };
+  }
+
+  function normalizeStoreToken(value) {
+    return normalizeText(value).replace(/\s+/g, " ").toUpperCase();
+  }
+
+  function findTransferEstablishment(token) {
+    var wanted = normalizeHeader(token);
+    if (!wanted) return null;
+    return transferState.establishments.find(function (item) {
+      if (item.active === false) return false;
+      var candidates = [item.code, item.storeCode, item.internalCode, item.name, item.cnpj].map(normalizeHeader);
+      return candidates.some(function (candidate) {
+        return candidate && (candidate === wanted || candidate.indexOf(wanted) >= 0 || wanted.indexOf(candidate) >= 0);
+      });
+    }) || null;
+  }
+
+  function parseTransferWorkbook(workbook, fileName) {
+    var sheetName = workbook.SheetNames.find(function (name) { return normalizeHeader(name) === "planilha1"; }) || workbook.SheetNames[0];
+    var sheet = workbook.Sheets[sheetName];
+    if (!sheet) return { groups: [], items: [], errors: ["Planilha sem abas reconhecidas."], fileName: fileName || "" };
+    var matrix = window.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: false });
+    var header = detectTransferHeader(matrix);
+    if (!header) return { groups: [], items: [], errors: ["Nao foi possivel identificar as colunas da planilha."], fileName: fileName || "" };
     var items = [];
     var errors = [];
-    rows.forEach(function (row, index) {
-      var rawSku = getByAliases(row, ["Código", "Codigo", "Código Material", "Codigo Material", "SKU", "Produto", "Cod Material"]);
+    for (var rowIndex = header.rowIndex + 1; rowIndex < matrix.length; rowIndex += 1) {
+      var row = matrix[rowIndex] || [];
+      if (!row.some(function (value) { return normalizeText(value) !== ""; })) continue;
+      var rawSku = valueAtHeader(row, header, "sku");
       var sku = normalizeSku(rawSku) || normalizeText(rawSku);
-      var description = normalizeText(getByAliases(row, ["Descrição", "Descricao", "Nome", "Produto", "Descrição do Item", "Descricao do Item", "Desc Material"]));
-      var qty = parseQuantity(getByAliases(row, ["Quantidade", "Qtde", "Qtd", "Quantidade Solicitada"]));
-      var unit = normalizeText(getByAliases(row, ["Unidade", "Unidade de medida", "UM", "Un"])) || "UN";
-      var quantityType = normalizeText(getByAliases(row, ["Tipo", "Tipo Quantidade", "Unidade/Caixa"])).toUpperCase();
-      quantityType = quantityType.indexOf("CAIX") >= 0 ? "CAIXA" : "UNIDADE";
-      var boxes = parseQuantity(getByAliases(row, ["Quantidade Caixas", "Qtd Caixas", "Caixas"])) || (quantityType === "CAIXA" ? qty : 0);
-      var unitsPerBox = parseQuantity(getByAliases(row, ["Unidades por Caixa", "Und por Caixa", "Un por Caixa"]));
+      var description = normalizeText(valueAtHeader(row, header, "description"));
+      var qty = parseQuantity(valueAtHeader(row, header, "quantity"));
+      var origin = normalizeStoreToken(valueAtHeader(row, header, "source"));
+      var destination = normalizeStoreToken(valueAtHeader(row, header, "destination"));
       var itemErrors = [];
-      if (!sku) itemErrors.push("Código obrigatório");
-      if (!description) itemErrors.push("Descrição obrigatória");
-      if (!qty || qty <= 0) itemErrors.push("Quantidade maior que zero obrigatória");
-      if (quantityType === "CAIXA" && unitsPerBox > 0) qty = boxes * unitsPerBox;
+      if (!sku) itemErrors.push("Codigo vazio");
+      if (!description) itemErrors.push("Descricao vazia");
+      if (!qty || qty <= 0) itemErrors.push("Quantidade invalida");
+      if (!origin) itemErrors.push("Origem vazia");
+      if (!destination) itemErrors.push("Destino vazio");
       var item = {
         sku: sku,
         description: description,
         requestedQty: qty,
-        unit: unit,
-        quantityType: quantityType,
-        boxQty: boxes,
-        unitsPerBox: unitsPerBox || 0,
-        totalUnits: quantityType === "CAIXA" && unitsPerBox > 0 ? qty : qty,
+        unit: normalizeText(valueAtHeader(row, header, "unit")) || "UN",
+        quantityType: "UNIDADE",
+        boxQty: 0,
+        unitsPerBox: 0,
+        totalUnits: qty,
+        sourceCode: origin,
+        destinationCode: destination,
+        sourceRaw: origin,
+        destinationRaw: destination,
+        movementType: normalizeText(valueAtHeader(row, header, "movementType")),
+        sourceLegalName: normalizeText(valueAtHeader(row, header, "sourceLegalName")),
+        destinationLegalName: normalizeText(valueAtHeader(row, header, "destinationLegalName")),
+        legalNameGroup: normalizeText(valueAtHeader(row, header, "legalNameGroup")),
+        importSource: "EXCEL",
+        sourceLine: rowIndex + 1,
         errors: itemErrors
       };
-      if (itemErrors.length) errors.push("Linha " + (index + 2) + ": " + itemErrors.join(", "));
+      if (itemErrors.length) errors.push("Linha " + (rowIndex + 1) + ": " + itemErrors.join(", "));
       items.push(item);
-    });
-    return { items: items, errors: errors };
+    }
+    return buildTransferPreviewGroups(items, errors, "EXCEL", "", fileName || "");
   }
 
   async function createTransferFromForm(event) {
@@ -5051,30 +5369,88 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferImportStatus", "Acesso restrito.", "error");
       return;
     }
-    if (!transferState.previewItems.length) {
+    if (!transferState.previewGroups.length) {
       await previewTransferExcel();
     }
-    if (transferState.previewErrors.length) {
-      setStatus("transferImportStatus", "Corrija os erros da planilha antes de criar.", "error");
+    var groups = transferState.previewGroups.filter(function (group) { return !group.skipped; });
+    if (!groups.length) {
+      setStatus("transferImportStatus", "Nenhuma transferencia valida selecionada.", "error");
       return;
     }
-    var name = normalizeText($("transferNameInput").value);
-    var establishment = transferState.establishments.find(function (item) { return item.id === $("transferDestinationInput").value; });
-    var responsible = authState.users.find(function (user) { return user.id === $("transferResponsibleInput").value; });
-    if (!name || !establishment || !responsible || !transferState.previewItems.length) {
-      setStatus("transferImportStatus", "Informe transferência, estabelecimento, responsável e planilha.", "error");
+    if (transferState.previewErrors.length || groups.some(function (group) { return group.errors.length || group.items.some(function (item) { return item.errors.length; }); })) {
+      setStatus("transferImportStatus", "Existem itens com erro. Corrija antes de continuar.", "error");
+      return;
+    }
+    if (groups.some(function (group) { return !group.responsibleId; })) {
+      setStatus("transferImportStatus", "Selecione um responsavel para a transferencia.", "error");
       return;
     }
     var now = new Date().toISOString();
-    var transferId = "trf-" + Date.now() + "-" + Math.random().toString(16).slice(2);
-    var transfer = {
+    var transfers = [];
+    var items = [];
+    groups.forEach(function (group, groupIndex) {
+      var responsible = authState.users.find(function (user) { return user.id === group.responsibleId; });
+      var transferId = "trf-" + Date.now() + "-" + groupIndex + "-" + Math.random().toString(16).slice(2);
+      var transfer = buildImportedTransferRecord(group, responsible, transferId, buildTransferCode(group, groupIndex), buildTransferName(group), now);
+      transfers.push(transfer);
+      group.items.forEach(function (item) {
+        items.push(buildImportedTransferItem(item, transferId, now));
+      });
+    });
+    try {
+      var transferResponse = await supabaseDb.from("wms_transfers").insert(transfers.map(toDbTransfer));
+      if (transferResponse.error) throw transferResponse.error;
+      await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
+      for (var i = 0; i < transfers.length; i += 1) {
+        await recordTransferEvent(transfers[i].id, "", "TRANSFER_CREATED", "", 0, "Transferencia criada por importacao inteligente.", { itemCount: getPreparedTransferItems(items, transfers[i].id).length, importSource: transfers[i].importSource });
+        await recordTransferEvent(transfers[i].id, "", "TRANSFER_ASSIGNED", "", 0, "Responsavel atribuido.", { responsibleId: transfers[i].responsibleId });
+      }
+    } catch (error) {
+      setStatus("transferImportStatus", missingTransferImportSchemaMessage(error), "error");
+      return;
+    }
+    clearTransferPreview();
+    $("newTransferForm").reset();
+    handleTransferImportModeChange();
+    await loadTransferData();
+    renderTransfers();
+    setStatus("transferImportStatus", "Transferencias criadas com sucesso.", "success");
+  }
+
+  function buildTransferName(group) {
+    return group.sourceCode + " > " + group.destinationCode + " - " + new Date().toLocaleDateString("pt-BR");
+  }
+
+  function buildTransferCode(group, index) {
+    var stamp = compactDateTimeForCode(new Date());
+    return "TRF-" + stamp + "-" + sanitizeCodePart(group.sourceCode) + "-" + sanitizeCodePart(group.destinationCode) + (index ? "-" + (index + 1) : "");
+  }
+
+  function buildImportedTransferRecord(group, responsible, transferId, code, name, now) {
+    var origin = group.origin || {};
+    var destination = group.destination || {};
+    return {
       id: transferId,
-      code: name,
+      code: code,
       name: name,
-      establishmentId: establishment.id,
-      establishmentCode: establishment.code,
-      establishmentName: establishment.name,
-      establishmentCnpj: establishment.cnpj,
+      establishmentId: destination.id || "",
+      establishmentCode: destination.code || group.destinationCode || "",
+      establishmentName: destination.name || group.destinationCode || "",
+      establishmentCnpj: destination.cnpj || "",
+      importSource: group.importSource,
+      rawSourceText: group.rawSourceText || group.fileName || "",
+      originId: origin.id || "",
+      originName: origin.name || group.sourceCode || "",
+      originCnpj: origin.cnpj || "",
+      originStoreCode: origin.storeCode || origin.code || group.sourceCode || "",
+      originInternalCode: origin.internalCode || "",
+      originChannel: origin.channel || "",
+      destinationId: destination.id || "",
+      destinationName: destination.name || group.destinationCode || "",
+      destinationCnpj: destination.cnpj || "",
+      destinationStoreCode: destination.storeCode || destination.code || group.destinationCode || "",
+      destinationInternalCode: destination.internalCode || "",
+      destinationChannel: destination.channel || "",
       responsibleId: responsible.id,
       responsibleName: responsible.name,
       status: "ATRIBUIDA",
@@ -5088,39 +5464,50 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createdAt: now,
       updatedAt: now
     };
-    var items = transferState.previewItems.map(function (item) {
-      return {
-        id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
-        transferId: transferId,
-        sku: item.sku,
-        description: item.description,
-        requestedQty: item.requestedQty,
-        unit: item.unit,
-        quantityType: item.quantityType,
-        boxQty: item.boxQty,
-        unitsPerBox: item.unitsPerBox,
-        totalUnits: item.totalUnits,
-        separatedQty: 0,
-        packedQty: 0,
-        status: "PENDENTE",
-        createdAt: now,
-        updatedAt: now
-      };
-    });
-    var transferResponse = await supabaseDb.from("wms_transfers").insert(toDbTransfer(transfer));
-    if (transferResponse.error) {
-      setStatus("transferImportStatus", "Erro ao criar transferência: " + formatSupabaseError(transferResponse.error), "error");
-      return;
-    }
-    await upsertInChunks("wms_transfer_items", items.map(toDbTransferItem), "id");
-    await recordTransferEvent(transferId, "", "TRANSFER_CREATED", "", 0, "Transferência criada.", { itemCount: items.length });
-    await recordTransferEvent(transferId, "", "TRANSFER_ASSIGNED", "", 0, "Responsável atribuído.", { responsibleId: responsible.id });
-    transferState.previewItems = [];
-    transferState.previewErrors = [];
-    $("newTransferForm").reset();
-    await loadTransferData();
-    renderTransfers();
-    setStatus("transferImportStatus", "Transferência criada e atribuída.", "success");
+  }
+
+  function buildImportedTransferItem(item, transferId, now) {
+    return {
+      id: "trfi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      transferId: transferId,
+      sku: item.sku,
+      description: item.description,
+      requestedQty: item.requestedQty,
+      unit: item.unit || "UN",
+      movementType: item.movementType || "",
+      sourceStore: item.sourceCode || "",
+      destinationStore: item.destinationCode || "",
+      sourceLegalName: item.sourceLegalName || "",
+      destinationLegalName: item.destinationLegalName || "",
+      legalNameGroup: item.legalNameGroup || "",
+      quantityType: item.quantityType || "UNIDADE",
+      boxQty: item.boxQty || 0,
+      unitsPerBox: item.unitsPerBox || 0,
+      totalUnits: item.totalUnits || item.requestedQty || 0,
+      separatedQty: 0,
+      packedQty: 0,
+      status: "PENDENTE",
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  function getPreparedTransferItems(items, transferId) {
+    return items.filter(function (item) { return item.transferId === transferId; });
+  }
+
+  function compactDateTimeForCode(date) {
+    return date.getFullYear() + String(date.getMonth() + 1).padStart(2, "0") + String(date.getDate()).padStart(2, "0") + "-" + String(date.getHours()).padStart(2, "0") + String(date.getMinutes()).padStart(2, "0") + String(date.getSeconds()).padStart(2, "0");
+  }
+
+  function sanitizeCodePart(value) {
+    return normalizeStoreToken(value).replace(/[^A-Z0-9]/g, "").slice(0, 12) || "LOJA";
+  }
+
+  function missingTransferImportSchemaMessage(error) {
+    var message = formatSupabaseError(error);
+    if (isMissingTransferTableError(error) || isMissingColumnError(error)) return "Estrutura de transferencias desatualizada no Supabase. Execute supabase-schema.sql no SQL Editor e recarregue o app. Erro original: " + message;
+    return "Erro ao criar transferencias: " + message;
   }
 
   async function openTransferWork(transferId) {
