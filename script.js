@@ -37,6 +37,40 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     "CANCELADA"
   ];
   var FINAL_TRANSFER_STATUSES = ["CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE"];
+  var STORE_REFERENCE_ROWS = [
+    { cnpj: "00.138.798/0001-32", loja: "14A1", cod: "5508", canal: "VAREJO", codVf: "743" },
+    { cnpj: "00.138.798/0014-57", loja: "14D2", cod: "20004", canal: "VAREJO", codVf: "744" },
+    { cnpj: "00.138.798/0003-02", loja: "AERO", cod: "14411", canal: "VAREJO", codVf: "21136" },
+    { cnpj: "00.138.798/0006-47", loja: "AQUI", cod: "18021", canal: "VAREJO", codVf: "144634" },
+    { cnpj: "00.138.798/0005-66", loja: "BOSQ", cod: "14559", canal: "VAREJO", codVf: "21138" },
+    { cnpj: "33.761.917/0005-91", loja: "BRIL", cod: "13230", canal: "VAREJO", codVf: "21135" },
+    { cnpj: "03.386.879/0003-01", loja: "CORU", cod: "11121", canal: "VAREJO", codVf: "144641" },
+    { cnpj: "00.138.798/0016-19", loja: "ECO1", cod: "21343", canal: "VAREJO", codVf: "144636" },
+    { cnpj: "00.138.798/0021-86", loja: "ECO2", cod: "21928", canal: "VAREJO", codVf: "144639" },
+    { cnpj: "00.138.798/0020-03", loja: "ECO3", cod: "21929", canal: "VAREJO", codVf: "144638" },
+    { cnpj: "00.138.798/0004-85", loja: "EULE", cod: "14472", canal: "VAREJO", codVf: "21137" },
+    { cnpj: "33.761.917/0002-49", loja: "HYPE", cod: "11655", canal: "VAREJO", codVf: "21143" },
+    { cnpj: "33.761.917/0003-20", loja: "JARD", cod: "11673", canal: "VAREJO", codVf: "21144" },
+    { cnpj: "00.138.798/0007-28", loja: "MIRA", cod: "18024", canal: "HIBRIDA", codVf: "144635" },
+    { cnpj: "00.138.798/0008-09", loja: "MORE", cod: "17520", canal: "VAREJO", codVf: "21139" },
+    { cnpj: "33.761.917/0004-00", loja: "NSUL", cod: "12907", canal: "VAREJO", codVf: "21134" },
+    { cnpj: "00.138.798/0015-38", loja: "PARA", cod: "19986", canal: "VAREJO", codVf: "21140" },
+    { cnpj: "33.761.917/0007-53", loja: "PARK", cod: "21526", canal: "VAREJO", codVf: "144644" },
+    { cnpj: "00.138.798/0011-04", loja: "PATI", cod: "20002", canal: "VAREJO", codVf: "745" },
+    { cnpj: "00.138.798/0012-95", loja: "SAMS", cod: "20003", canal: "VAREJO", codVf: "746" },
+    { cnpj: "00.138.798/0019-61", loja: "SHOP", cod: "22776", canal: "VAREJO", codVf: "922776" },
+    { cnpj: "00.138.798/0022-67", loja: "SIDR", cod: "22208", canal: "VAREJO", codVf: "144640" },
+    { cnpj: "33.761.917/0001-68", loja: "SPIP", cod: "4780", canal: "VAREJO", codVf: "4780" },
+    { cnpj: "00.138.798/0002-13", loja: "TAMA", cod: "11892", canal: "VAREJO", codVf: "747" },
+    { cnpj: "00.138.798/0018-80", loja: "ZAHR", cod: "22105", canal: "VAREJO", codVf: "144637" },
+    { cnpj: "08.575.189/0004-03", loja: "VDAQ", cod: "14482", canal: "VD", codVf: "144643" },
+    { cnpj: "18.325.344/0004-89", loja: "VDAR", cod: "21973", canal: "VD", codVf: "740" },
+    { cnpj: "08.575.189/0001-52", loja: "VDCG", cod: "13437", canal: "VD", codVf: "21141" },
+    { cnpj: "08.575.189/0002-33", loja: "VDCO", cod: "14145", canal: "VD", codVf: "144642" },
+    { cnpj: "00.138.798/0023-48", loja: "VDSI", cod: "22209", canal: "VD", codVf: "5508" },
+    { cnpj: "18.325.344/0001-36", loja: "QDCG", cod: "910102", canal: "VAREJO", codVf: "21145" },
+    { cnpj: "00.138.798/0024-29", loja: "VDMO", cod: "23812", canal: "VD", codVf: "4227" }
+  ];
   var supabaseConfig = { url: "", key: "" };
   var supabaseConfigDiagnostics = null;
   var supabaseDb = null;
@@ -3740,7 +3774,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("transferPreviewGroups")) $("transferPreviewGroups").innerHTML = groups.length ? groups.map(transferPreviewGroupHtml).join("") : "";
     $("transferPreviewRows").innerHTML = transferState.previewItems.length ? transferState.previewItems.map(function (item) {
       var status = item.errors && item.errors.length ? item.errors.join("; ") : "OK";
-      return "<tr><td>" + escapeHtml(item.sourceCode || "-") + "</td><td>" + escapeHtml(item.destinationCode || "-") + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(transferLocationLabel(item)) + "</td><td>" + escapeHtml(status) + "</td></tr>";
+      return "<tr><td>" + escapeHtml(transferPreviewStoreLabel(item.sourceCode)) + "</td><td>" + escapeHtml(transferPreviewStoreLabel(item.destinationCode)) + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(transferLocationLabel(item)) + "</td><td>" + escapeHtml(status) + "</td></tr>";
     }).join("") : "<tr><td colspan=\"8\">Nenhuma previa carregada.</td></tr>";
   }
 
@@ -3771,12 +3805,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function establishmentPreviewLabel(item, fallbackCode) {
-    if (!item) return formatCodVfLabel(fallbackCode) + " (sem cadastro)";
-    return [formatCodVfLabel(item.code), item.name, item.cnpj].filter(Boolean).join(" - ");
+    if (!item) return formatStoreReferenceLabel(null, fallbackCode) + " (sem cadastro)";
+    return formatStoreReferenceLabel(item, fallbackCode);
   }
 
-  function formatCodVfLabel(code) {
-    return "COD VF " + (normalizeText(code) || "-");
+  function transferPreviewStoreLabel(code) {
+    return establishmentPreviewLabel(findTransferEstablishment(code), code);
+  }
+
+  function formatStoreReferenceLabel(item, fallbackCode) {
+    var storeName = normalizeText(item && (item.name || item.code)) || normalizeText(fallbackCode) || "-";
+    var codVf = normalizeText(item && item.storeCode);
+    var internalCode = normalizeText(item && item.internalCode);
+    var label = "COD VF " + (codVf || "-") + " - " + storeName;
+    if (internalCode) label += " | CÓD " + internalCode;
+    if (item && item.cnpj) label += " | " + item.cnpj;
+    return label;
+  }
+
+  function formatCodVfLabel(item, fallbackCode) {
+    return formatStoreReferenceLabel(item, fallbackCode);
   }
 
   function handleTransferPreviewGroupChange(event) {
@@ -5382,8 +5430,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var groups = Object.keys(groupsByKey).map(function (key) {
       var group = groupsByKey[key];
-      if (!group.origin) group.warnings.push("Origem sem cadastro: " + formatCodVfLabel(group.sourceCode));
-      if (!group.destination) group.warnings.push("Destino sem cadastro: " + formatCodVfLabel(group.destinationCode));
+      if (!group.origin) group.warnings.push("Origem sem cadastro: " + formatCodVfLabel(null, group.sourceCode));
+      if (!group.destination) group.warnings.push("Destino sem cadastro: " + formatCodVfLabel(null, group.destinationCode));
       group.items.forEach(function (item) {
         if (group.errors.length) item.errors = unique(item.errors.concat(group.errors));
       });
@@ -5407,13 +5455,52 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function findTransferEstablishment(token) {
     var wanted = normalizeHeader(token);
     if (!wanted) return null;
-    return transferState.establishments.find(function (item) {
+    var establishment = transferState.establishments.find(function (item) {
       if (item.active === false) return false;
       var candidates = [item.code, item.storeCode, item.internalCode, item.name, item.cnpj].map(normalizeHeader);
       return candidates.some(function (candidate) {
         return candidate && (candidate === wanted || candidate.indexOf(wanted) >= 0 || wanted.indexOf(candidate) >= 0);
       });
-    }) || null;
+    });
+    return enrichEstablishmentWithStoreReference(establishment, token) || findStoreReference(token);
+  }
+
+  function enrichEstablishmentWithStoreReference(establishment, token) {
+    if (!establishment) return null;
+    var reference = findStoreReference(establishment.code || establishment.name || token);
+    if (!reference) return establishment;
+    return Object.assign({}, establishment, {
+      code: establishment.code || reference.code,
+      storeCode: establishment.storeCode && establishment.storeCode !== establishment.code ? establishment.storeCode : reference.storeCode,
+      internalCode: establishment.internalCode || reference.internalCode,
+      channel: establishment.channel || reference.channel,
+      name: establishment.name || reference.name,
+      cnpj: establishment.cnpj || reference.cnpj,
+      fromReference: reference.fromReference
+    });
+  }
+
+  function findStoreReference(token) {
+    var wanted = normalizeHeader(token);
+    if (!wanted) return null;
+    var row = STORE_REFERENCE_ROWS.find(function (item) {
+      var candidates = [item.loja, item.cod, item.codVf, item.cnpj].map(normalizeHeader);
+      return candidates.some(function (candidate) {
+        return candidate && (candidate === wanted || candidate.indexOf(wanted) >= 0 || wanted.indexOf(candidate) >= 0);
+      });
+    });
+    if (!row) return null;
+    return {
+      id: "",
+      code: row.loja,
+      storeCode: row.codVf,
+      internalCode: row.cod,
+      channel: row.canal,
+      name: row.loja,
+      cnpj: row.cnpj,
+      active: true,
+      fromReference: true
+    };
   }
 
   function parseTransferWorkbook(workbook, fileName) {
