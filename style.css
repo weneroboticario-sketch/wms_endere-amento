@@ -1072,6 +1072,68 @@ td {
   gap: 14px;
 }
 
+.transfer-execution-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.transfer-step-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.step-pill,
+.step-next {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fbfd;
+}
+
+.step-pill span {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.step-pill.active {
+  border-color: rgba(17, 116, 139, 0.35);
+  background: #edf9f7;
+}
+
+.step-pill.active span {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.step-next span,
+.transfer-step-help span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.transfer-step-help {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: #f8fbfd;
+}
+
+.transfer-final-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .transfer-summary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1244,6 +1306,100 @@ td {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.current-item-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(17, 116, 139, 0.25);
+  border-radius: var(--radius);
+  background: #f4fbf8;
+}
+
+.current-item-head,
+.transfer-work-item-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.current-item-head strong {
+  font-size: 1.35rem;
+}
+
+.current-item-head span,
+.transfer-work-item-head span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e8f0f5;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.current-item-card p,
+.transfer-work-item p {
+  margin: 0;
+  color: var(--text);
+}
+
+.current-qty-highlight {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--nav);
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.current-qty-highlight strong {
+  font-size: 1.45rem;
+}
+
+.transfer-qty-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transfer-qty-row span {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: #eef4f8;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transfer-qty-row b {
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.transfer-product-list {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-work-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.transfer-work-item.selected {
+  border-color: rgba(17, 116, 139, 0.5);
+  background: #f3fbfa;
+}
+
+.transfer-work-item small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .admin-progress-ok {
   background: #f7fcf9;
 }
@@ -1284,11 +1440,11 @@ td {
 .current-item-card {
   display: grid;
   gap: 10px;
-  min-height: 164px;
-  padding: 18px;
+  min-height: 0;
+  padding: 14px;
   border-radius: var(--radius);
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: #f4fbf8;
+  border: 1px solid rgba(17, 116, 139, 0.25);
 }
 
 .current-item-card strong {
@@ -1302,17 +1458,17 @@ td {
 .transfer-product-list {
   display: grid;
   gap: 8px;
-  max-height: 260px;
-  overflow-y: auto;
+  max-height: none;
+  overflow-y: visible;
   padding-right: 4px;
 }
 
 .transfer-product-list article {
   display: grid;
-  grid-template-columns: 82px minmax(0, 1fr);
+  grid-template-columns: 1fr;
   gap: 8px;
   align-items: start;
-  padding: 9px 10px;
+  padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #ffffff;
@@ -1638,10 +1794,84 @@ td {
   .transfer-work-grid,
   .transfer-preview-group,
   .transfer-work-summary,
+  .transfer-step-summary,
+  .transfer-final-summary,
   .admin-transfer-progress .transfer-work-summary,
   .xml-summary,
   .sku-card-meta {
     grid-template-columns: 1fr;
+  }
+
+  #transferWorkSection .panel-header {
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0;
+  }
+
+  #transferWorkTitle {
+    font-size: 1.15rem;
+    line-height: 1.2;
+  }
+
+  .transfer-execution-panel {
+    gap: 8px;
+  }
+
+  .transfer-execution-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 0;
+  }
+
+  .transfer-execution-summary div,
+  .step-pill,
+  .step-next,
+  .transfer-step-help,
+  .current-item-card,
+  .transfer-work-item {
+    padding: 8px;
+  }
+
+  .transfer-step-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .step-next {
+    grid-column: 1 / -1;
+  }
+
+  .transfer-work-grid {
+    gap: 10px;
+  }
+
+  .transfer-live-panel {
+    order: -1;
+  }
+
+  .transfer-scan-panel {
+    display: grid;
+    gap: 8px;
+  }
+
+  .current-item-head strong {
+    font-size: 1.2rem;
+  }
+
+  .current-qty-highlight {
+    padding: 10px;
+  }
+
+  .current-qty-highlight strong {
+    display: block;
+    font-size: 1.65rem;
+  }
+
+  .transfer-qty-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .transfer-product-list {
+    max-height: none;
   }
 
   .transfer-preview-summary {
@@ -1730,6 +1960,7 @@ td {
 
   .transfer-work-grid,
   .admin-transfer-progress .transfer-work-summary,
+  .transfer-final-summary,
   .xml-summary,
   .conference-result-item {
     grid-template-columns: 1fr;

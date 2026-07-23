@@ -643,23 +643,26 @@
         </section>
 
         <section class="transfer-section" id="transferWorkSection" hidden>
-          <section class="panel">
+          <section class="panel transfer-execution-panel">
             <div class="panel-header">
               <h3 id="transferWorkTitle">Separação</h3>
               <button class="secondary-button" id="backToTransfersButton" type="button">Voltar</button>
             </div>
-            <div id="transferWorkSummary" class="transfer-work-summary"></div>
+            <div id="transferWorkSummary" class="transfer-work-summary transfer-execution-summary"></div>
+            <div id="transferStepSummary" class="transfer-step-summary"></div>
+            <div id="transferFinalSummary" class="transfer-final-summary" hidden></div>
             <div class="transfer-work-grid">
               <div class="transfer-scan-panel">
-                <label for="transferScanInput">Bipar SKU</label>
+                <div id="transferStepHelp" class="transfer-step-help"></div>
+                <label for="transferScanInput">SKU bipado</label>
                 <input id="transferScanInput" type="text" inputmode="text" placeholder="Digite ou bipe o SKU">
                 <label for="transferQuantityInput">Quantidade</label>
                 <input id="transferQuantityInput" type="number" min="0.001" step="0.001" placeholder="Quantidade">
                 <div class="button-row">
                   <button class="primary-button" id="confirmTransferItemButton" type="button">Confirmar item</button>
-                  <button class="secondary-button" id="startPackingButton" type="button">Iniciar caixa/lacre</button>
+                  <button class="secondary-button" id="startPackingButton" type="button">Iniciar montagem da caixa</button>
                   <button class="primary-button" id="finishSeparationButton" type="button">Concluir separação</button>
-                  <button class="primary-button" id="finishPackingButton" type="button">Concluir lacre</button>
+                  <button class="primary-button" id="finishPackingButton" type="button">Finalizar transferência</button>
                 </div>
                 <label for="sealNumberInput">Número do lacre</label>
                 <input id="sealNumberInput" type="text" placeholder="Opcional">
@@ -707,17 +710,6 @@
               </div>
               <div id="transferFinalReportSummary" class="transfer-work-summary"></div>
               <div id="transferFinalReportDetails" class="leader-report-grid"></div>
-            </section>
-            <section class="xml-conference-panel">
-              <div class="panel-header">
-                <h3>Finalização da conferência</h3>
-              </div>
-              <div class="button-row">
-                <button class="primary-button" id="conferenceXmlButton" type="button">Enviar conferência</button>
-              </div>
-              <div id="xmlConferenceStatus" class="inline-status"></div>
-              <div id="xmlConferenceSummary" class="xml-summary"></div>
-              <div id="xmlConferenceRows" class="conference-result-list"></div>
             </section>
           </section>
         </section>
