@@ -3771,8 +3771,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function establishmentPreviewLabel(item, fallbackCode) {
-    if (!item) return (fallbackCode || "-") + " (sem cadastro)";
-    return [item.code, item.name, item.cnpj].filter(Boolean).join(" - ");
+    if (!item) return formatCodVfLabel(fallbackCode) + " (sem cadastro)";
+    return [formatCodVfLabel(item.code), item.name, item.cnpj].filter(Boolean).join(" - ");
+  }
+
+  function formatCodVfLabel(code) {
+    return "COD VF " + (normalizeText(code) || "-");
   }
 
   function handleTransferPreviewGroupChange(event) {
@@ -5378,8 +5382,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var groups = Object.keys(groupsByKey).map(function (key) {
       var group = groupsByKey[key];
-      if (!group.origin) group.warnings.push("Origem sem cadastro: " + (group.sourceCode || "-"));
-      if (!group.destination) group.warnings.push("Destino sem cadastro: " + (group.destinationCode || "-"));
+      if (!group.origin) group.warnings.push("Origem sem cadastro: " + formatCodVfLabel(group.sourceCode));
+      if (!group.destination) group.warnings.push("Destino sem cadastro: " + formatCodVfLabel(group.destinationCode));
       group.items.forEach(function (item) {
         if (group.errors.length) item.errors = unique(item.errors.concat(group.errors));
       });
