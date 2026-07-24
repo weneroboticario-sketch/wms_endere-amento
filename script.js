@@ -3493,21 +3493,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA" || item.status === "LACRE_CONCLUIDO" || item.status === "MONTAGEM_CAIXA_CONCLUIDA"; }).length;
-    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"9\">Nenhuma transferência encontrada.</td></tr>";
+    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"8\">Nenhuma transferência encontrada.</td></tr>";
   }
 
   function transferPanelRowHtml(transfer) {
     var stats = getTransferStats(transfer.id);
     var conferenceAssignment = getLatestTransferConferenceAssignment(transfer.id);
+    var origin = transfer.originName || transfer.originStoreCode || "-";
+    var destination = transfer.destinationName || transfer.establishmentName || "-";
+    var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
     return [
       "<tr>",
-      "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code) + "</span></td>",
-      "<td>" + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</td>",
-      "<td>" + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</td>",
+      "<td class=\"transfer-name-cell\"><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
+      "<td class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
       "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
       "<td>" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
-      "<td>" + escapeHtml(transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL")) + "</td>",
       "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
       "<td><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
       "<td><div class=\"row-actions transfer-action-stack\">",
@@ -4247,14 +4248,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "<tr class=\"" + (row.remainingQty > 0 ? "admin-progress-pending" : "admin-progress-ok") + "\">",
         "<td><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
         "<td>" + escapeHtml(row.description || "-") + "</td>",
-        transferLocationCells(row.item),
+        transferLocationSummaryCell(row.item),
         "<td>" + formatQty(row.expectedQty) + "</td>",
         "<td>" + formatQty(row.checkedQty) + "</td>",
         "<td>" + formatQty(row.remainingQty) + "</td>",
         "<td>" + formatQty(row.differenceQty) + "</td>",
         "</tr>"
       ].join("");
-    }).join("") : "<tr><td colspan=\"12\">Nenhum item nesta transferência.</td></tr>";
+    }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
   }
 
   function renderTransferFinalReport(transfer) {
@@ -4289,16 +4290,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var missingQty = Math.max(0, expectedQty - checkedQty);
       var excessQty = Math.max(0, checkedQty - expectedQty);
       if (isConference) {
-        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
+        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td><td>" + escapeHtml(Math.abs(diff) < 0.0001 ? "Correto" : "Com diferenca") + "</td></tr>";
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td><td>" + escapeHtml(Math.abs(diff) < 0.0001 ? "Correto" : "Com diferenca") + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
       var actions = isConference ? conferenceAdjustHtml(item.id, extraQty) + "<button class=\"remove-small\" data-transfer-delete-extra=\"" + item.id + "\" type=\"button\">Remover</button>" : escapeHtml(item.observation || "-");
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationCells(item) + "<td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
     }).join("");
-    var locationHeaders = ["Rua", "Rack", "Linha", "Letra", "Endereco", "Localizacao"];
+    var locationHeaders = ["Localizacao"];
     var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
     var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
     $("transferFinalReportDetails").innerHTML = [
@@ -4320,7 +4321,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return [
       "<section class=\"leader-report-section\">",
       "<h4>" + escapeHtml(title) + "</h4>",
-      "<div class=\"table-wrap\"><table><thead><tr>",
+      "<div class=\"table-wrap\"><table class=\"leader-report-table\"><thead><tr>",
       headers.map(function (header) { return "<th>" + escapeHtml(header) + "</th>"; }).join(""),
       "</tr></thead><tbody>",
       rows || "<tr><td colspan=\"" + colspan + "\">Nenhum registro.</td></tr>",
@@ -6093,6 +6094,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var status = transferLocationStatus(item);
     if (!status.hasLocation) return "<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>Sem localização cadastrada.</td>";
     return "<td>" + escapeHtml(status.rua) + "</td><td>" + escapeHtml(status.rack) + "</td><td>" + escapeHtml(status.linha) + "</td><td>" + escapeHtml(status.letra) + "</td><td>" + escapeHtml(status.code) + "</td><td>Localizado</td>";
+  }
+
+  function transferLocationSummaryCell(item) {
+    var status = transferLocationStatus(item);
+    if (!status.hasLocation) {
+      return "<td class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span></td>";
+    }
+    return [
+      "<td class=\"transfer-location-cell\">",
+      "<strong>" + escapeHtml(status.code) + "</strong>",
+      "<span>" + escapeHtml(status.rua) + " | " + escapeHtml(status.rack) + " | " + escapeHtml(status.linha) + " | " + escapeHtml(status.letra) + "</span>",
+      "<em>Localizado</em>",
+      "</td>"
+    ].join("");
   }
 
   function compactDateTimeForCode(date) {

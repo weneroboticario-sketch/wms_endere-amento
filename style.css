@@ -1216,7 +1216,7 @@ td {
 }
 
 .transfer-progress {
-  min-width: 150px;
+  min-width: 116px;
 }
 
 .transfer-progress-bar {
@@ -1269,12 +1269,127 @@ td {
 .transfer-action-stack {
   align-items: stretch;
   flex-direction: column;
-  min-width: 190px;
+  min-width: 132px;
 }
 
 .transfer-action-stack button,
 .transfer-action-stack select {
   width: 100%;
+}
+
+.transfer-action-stack button {
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.transfer-panel-table {
+  min-width: 940px;
+  table-layout: fixed;
+}
+
+.transfer-panel-table th:nth-child(1) {
+  width: 20%;
+}
+
+.transfer-panel-table th:nth-child(2) {
+  width: 14%;
+}
+
+.transfer-panel-table th:nth-child(3) {
+  width: 12%;
+}
+
+.transfer-panel-table th:nth-child(4) {
+  width: 12%;
+}
+
+.transfer-panel-table th:nth-child(5) {
+  width: 7%;
+}
+
+.transfer-panel-table th:nth-child(6) {
+  width: 14%;
+}
+
+.transfer-panel-table th:nth-child(7) {
+  width: 11%;
+}
+
+.transfer-panel-table th:nth-child(8) {
+  width: 10%;
+}
+
+.transfer-name-cell strong,
+.transfer-route-cell strong {
+  display: block;
+  line-height: 1.18;
+}
+
+.transfer-code {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.transfer-source-pill {
+  display: inline-flex;
+  margin-top: 6px;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 8px;
+  background: #eef4f8;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.transfer-route-cell span {
+  display: block;
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-progress-table,
+.leader-report-table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+.leader-report-table th:nth-child(2),
+.admin-progress-table th:nth-child(2) {
+  width: 28%;
+}
+
+.leader-report-table th:nth-child(3),
+.admin-progress-table th:nth-child(3) {
+  width: 20%;
+}
+
+.transfer-location-cell strong {
+  display: block;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.transfer-location-cell span,
+.transfer-location-cell em {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+}
+
+.transfer-location-cell.no-location strong {
+  color: var(--warning);
 }
 
 .transfer-conference-select {
