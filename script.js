@@ -3081,7 +3081,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferDashboardAlert").hidden = false;
     $("transferDashboardAlert").innerHTML = [
       "<strong>Você tem uma transferência para separar</strong>",
-      "<span>" + escapeHtml(transfer.name || transfer.code) + " - " + escapeHtml(transfer.establishmentName || "-") + "</span>",
+      "<span>" + escapeHtml(transferDisplayName(transfer)) + " - " + escapeHtml(transferRouteDestinationLabel(transfer)) + "</span>",
       "<span>" + stats.totalItems + " item(ns), " + stats.pendingSeparation + " pendente(s).</span>",
       "<button class=\"primary-button\" data-transfer-alert-open=\"" + transfer.id + "\" type=\"button\">Iniciar separação</button>"
     ].join("");
@@ -3098,7 +3098,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (transfer.status === "PRONTA_PARA_NOTA" || transfer.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA") return false;
       return true;
     }).map(function (transfer) {
-      return { type: "TRANSFERENCIA", id: transfer.id, title: transfer.name || transfer.code, subtitle: transfer.establishmentName || "-", source: transfer };
+      return { type: "TRANSFERENCIA", id: transfer.id, title: transferDisplayName(transfer), subtitle: transferRouteDestinationLabel(transfer), source: transfer };
     });
     var conferences = getActiveUserConferences().map(function (conference) {
       return { type: "CONFERENCIA", id: conference.id, title: conference.name || conference.documentNumber || "Conferência", subtitle: (conference.issuerName || "-") + " / " + (conference.recipientName || "-"), source: conference };
@@ -4038,7 +4038,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!selectedTransfer && transferOptions.length) selectedTransfer = transferOptions[0].id;
       $("conferenceTransferSelect").innerHTML = transferOptions.length
         ? transferOptions.map(function (transfer) {
-          var label = (transfer.name || transfer.code) + " - " + (transfer.establishmentName || "-") + " - " + transfer.status;
+          var label = transferDisplayName(transfer) + " - " + transferRouteDestinationLabel(transfer) + " - " + transfer.status;
           return "<option value=\"" + transfer.id + "\"" + (transfer.id === selectedTransfer ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
         }).join("")
         : "<option value=\"\">Nenhuma transferência disponível</option>";
@@ -4081,12 +4081,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferPanelRowHtml(transfer) {
     var stats = getTransferStats(transfer.id);
     var conferenceAssignment = getLatestTransferConferenceAssignment(transfer.id);
-    var origin = transfer.originName || transfer.originStoreCode || "-";
-    var destination = transfer.destinationName || transfer.establishmentName || "-";
+    var origin = transferRouteOriginLabel(transfer);
+    var destination = transferRouteDestinationLabel(transfer);
     var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
     return [
       "<tr>",
-      "<td data-label=\"Transferência\" class=\"transfer-name-cell\"><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
+      "<td data-label=\"Transferência\" class=\"transfer-name-cell\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
       "<td data-label=\"Rota\" class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
       "<td data-label=\"Responsável\">" + escapeHtml(transfer.responsibleName || "-") + "</td>",
       "<td data-label=\"Status\"><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
@@ -4135,8 +4135,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var stats = getTransferStats(transfer.id);
     var assignment = getLatestTransferConferenceAssignment(transfer.id);
     $("conferenceAdminSummary").innerHTML = [
-      summaryChip("Transferência", transfer.name || transfer.code || "-"),
-      summaryChip("Destino", transfer.establishmentName || "-"),
+      summaryChip("Transferência", transferDisplayName(transfer)),
+      summaryChip("Destino", transferRouteDestinationLabel(transfer)),
       summaryChip("Status", transferStatusDisplayLabel(transfer.status)),
       summaryChip("Conferente", assignment && assignment.assignedUserName ? assignment.assignedUserName : "Não atribuído"),
       summaryChip("Itens", stats.totalItems),
@@ -4342,9 +4342,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return [
       "<article class=\"transfer-card\">",
       "<span class=\"eyebrow\">Transferência</span>",
-      "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
-      "<span>Origem: " + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</span>",
-      "<span>Destino: " + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</span>",
+      "<h3>" + escapeHtml(transferDisplayName(transfer)) + "</h3>",
+      "<span>Origem: " + escapeHtml(transferRouteOriginLabel(transfer)) + "</span>",
+      "<span>Destino: " + escapeHtml(transferRouteDestinationLabel(transfer)) + "</span>",
       "<span>Status: " + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span>",
       "<span>Itens: " + stats.totalItems + "</span>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
@@ -4367,8 +4367,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var report = getTransferFinalReport(transfer);
     return [
       "<tr>",
-      "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || "-") + "</span></td>",
-      "<td>" + escapeHtml(transfer.establishmentName || "-") + "</td>",
+      "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || "-") + "</span></td>",
+      "<td>" + escapeHtml(transferRouteDestinationLabel(transfer)) + "</td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
       "<td><span class=\"status-badge " + (transfer.status === "CONCLUIDA_SEM_DIVERGENCIA" ? "active" : "pending") + "\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
       "<td>" + formatDuration(report.totalDurationSeconds) + "</td>",
@@ -4401,7 +4401,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("maintenanceTestRows").innerHTML = report.testTransfers.length ? report.testTransfers.map(function (transfer) {
       return [
         "<tr>",
-        "<td><strong>" + escapeHtml(transfer.name || transfer.code || "-") + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || transfer.id) + "</span></td>",
+        "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || transfer.id) + "</span></td>",
         "<td><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
         "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
         "<td>" + formatDateTime(transfer.createdAt) + "</td>",
@@ -4722,7 +4722,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return [
       "<article class=\"transfer-preview-group" + (group.skipped ? " skipped" : "") + "\">",
       "<div>",
-      "<strong>" + escapeHtml(group.sourceCode || "-") + " &gt; " + escapeHtml(group.destinationCode || "-") + "</strong>",
+      "<strong>" + escapeHtml(groupRouteLabel(group)) + "</strong>",
       "<span>" + group.items.length + " item(ns) | " + formatQty(qty) + " un.</span>",
       "<span>Origem: " + escapeHtml(establishmentPreviewLabel(group.origin, group.sourceCode)) + "</span>",
       "<span>Destino: " + escapeHtml(establishmentPreviewLabel(group.destination, group.destinationCode)) + "</span>",
@@ -4764,6 +4764,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function formatCodVfLabel(item, fallbackCode) {
     return formatStoreReferenceLabel(item, fallbackCode);
+  }
+
+  function storeRouteName(item, fallbackCode) {
+    return normalizeText(item && (item.name || item.code)) || normalizeText(fallbackCode) || "-";
+  }
+
+  function storeRouteLabelWithCodVf(item, fallbackCode, fallbackCodVf) {
+    var storeName = storeRouteName(item, fallbackCode);
+    var rawCodVf = normalizeText(fallbackCodVf || (item && item.storeCode));
+    var reference = findStoreReference(storeName) || findStoreReference(fallbackCode) || findStoreReference(rawCodVf);
+    var codVf = normalizeText(reference && reference.storeCode ? reference.storeCode : rawCodVf);
+    if (codVf && codVf !== storeName) return storeName + " (" + codVf + ")";
+    return storeName;
+  }
+
+  function groupRouteLabel(group) {
+    return storeRouteName(group && group.origin, group && group.sourceCode) + " -> " + storeRouteLabelWithCodVf(group && group.destination, group && group.destinationCode);
   }
 
   function handleTransferPreviewGroupChange(event) {
@@ -4824,7 +4841,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (mode === "SEPARACAO" && selectedForQty && transferState.manualSeparationQty && !$("transferQuantityInput").value) {
       $("transferQuantityInput").value = formatInputQty(Math.max(0, Number(selectedForQty.requestedQty || 0) - Number(selectedForQty.separatedQty || 0)) || Number(selectedForQty.requestedQty || 0));
     }
-    $("transferWorkTitle").textContent = transferStageLabel(mode) + " - " + (transfer.name || transfer.code);
+    $("transferWorkTitle").textContent = transferStageLabel(mode) + " - " + transferDisplayName(transfer);
     $("transferWorkSummary").innerHTML = [
       "<div><span>Rota</span><strong>" + escapeHtml(transferRouteLabel(transfer)) + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</strong></div>",
@@ -4915,7 +4932,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function transferRouteLabel(transfer) {
-    return (transfer.originStoreCode || transfer.originName || "-") + " > " + (transfer.destinationStoreCode || transfer.destinationName || transfer.establishmentName || "-");
+    return transferRouteOriginLabel(transfer) + " -> " + transferRouteDestinationLabel(transfer);
+  }
+
+  function transferDisplayName(transfer) {
+    if (!transfer) return "-";
+    var current = normalizeText(transfer.name || transfer.code);
+    if (current && /\(\s*\d+\s*\)/.test(current)) return current;
+    if (transfer.originName || transfer.originStoreCode || transfer.destinationName || transfer.destinationStoreCode || transfer.establishmentName) {
+      var dateMatch = current.match(/\s-\s(\d{2}\/\d{2}\/\d{4})$/);
+      return transferRouteLabel(transfer) + (dateMatch ? " - " + dateMatch[1] : "");
+    }
+    return current || "-";
+  }
+
+  function transferRouteOriginLabel(transfer) {
+    return normalizeText(transfer && (transfer.originName || transfer.originStoreCode)) || "-";
+  }
+
+  function transferRouteDestinationLabel(transfer) {
+    if (!transfer) return "-";
+    return storeRouteLabelWithCodVf({
+      name: transfer.destinationName || transfer.establishmentName || "",
+      code: transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "",
+      storeCode: transfer.destinationStoreCode || transfer.establishmentCode || ""
+    }, transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "-");
   }
 
   function transferProgressText(stats, mode) {
@@ -5451,8 +5492,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var expectedTotal = report.items.reduce(function (sum, item) { return sum + (isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item)); }, 0);
     var packedTotal = report.items.reduce(function (sum, item) { return sum + getTransferCheckedQty(item, transfer); }, 0);
     var totalDifference = packedTotal - expectedTotal;
-    var origin = transfer.originName || transfer.originStoreCode || "-";
-    var destination = transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "-";
+    var origin = transferRouteOriginLabel(transfer);
+    var destination = transferRouteDestinationLabel(transfer);
     var correctItems = report.items.filter(function (item) {
       var expectedQty = isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
       return Math.abs(getTransferCheckedQty(item, transfer) - expectedQty) < 0.0001 && !item.divergenceType;
@@ -6084,10 +6125,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transfer: { id: transfer.id, code: transfer.code, name: transfer.name },
       note: {
         key: transfer.id,
-        number: transfer.name || transfer.code || transfer.id,
+        number: transferDisplayName(transfer) || transfer.code || transfer.id,
         issuedAt: transfer.createdAt,
         emitterName: "WMS Estoque",
-        destinationName: transfer.establishmentName || "-",
+        destinationName: transferRouteDestinationLabel(transfer),
         destinationCnpj: transfer.establishmentCnpj || ""
       },
       summary: {
@@ -7230,7 +7271,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function buildTransferName(group) {
-    return group.sourceCode + " > " + group.destinationCode + " - " + new Date().toLocaleDateString("pt-BR");
+    return groupRouteLabel(group) + " - " + new Date().toLocaleDateString("pt-BR");
   }
 
   function buildTransferCode(group, index) {
@@ -8148,7 +8189,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
-    var transferLabel = transfer.name || transfer.code || id;
+    var transferLabel = transferDisplayName(transfer) || transfer.code || id;
     if (!window.confirm("Esta ação remove apenas dados de teste e registros vinculados a esta transferência. Deseja continuar?")) return false;
     var typed = window.prompt("Para confirmar, digite EXCLUIR TESTE:\n" + transferLabel);
     if (normalizeText(typed).toUpperCase() !== "EXCLUIR TESTE") {
@@ -8187,7 +8228,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function cancelTransfer(id) {
     var transfer = getTransferById(id);
     if (!transfer || !canCancelTransfer(transfer)) return;
-    if (!window.confirm("Cancelar a transferência " + (transfer.name || transfer.code) + "?")) return;
+    if (!window.confirm("Cancelar a transferência " + transferDisplayName(transfer) + "?")) return;
     await updateTransferStatus(transfer, "CANCELADA", {}, "TRANSFER_CANCELLED");
     await loadTransferData();
     renderTransfers();
