@@ -542,7 +542,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     try {
       if (state.bindings.length) {
-        await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "sku,location_code");
+        await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "id");
       }
       if (state.history.length && historySchemaAvailable) {
         try {
@@ -1140,11 +1140,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function dedupeBindingsForSave() {
-    state.bindings = expandBindingsWithMultipleSkus(state.bindings);
     var bySkuLocation = {};
     var deduped = [];
     state.bindings.forEach(function (binding) {
-      var key = normalizeSkuKey(binding.sku) + "\u0001" + String(binding.locationCode || "");
+      binding.sku = firstSkuValue(binding.sku);
+      var key = normalizeSkuKey(binding.sku) + "\u0001" + locationKeyFromBinding(binding);
       var existing = bySkuLocation[key];
       if (!existing) {
         bySkuLocation[key] = binding;
@@ -2271,6 +2271,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("clearHistoryButton").addEventListener("click", clearHistory);
     $("verifyMaintenanceButton").addEventListener("click", verifyMaintenanceResidues);
     $("cleanResiduesButton").addEventListener("click", cleanMaintenanceResidues);
+    if ($("verifyAddressMaintenanceButton")) $("verifyAddressMaintenanceButton").addEventListener("click", verifyAddressMaintenance);
+    if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
     $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -2348,66 +2350,159 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!getAreaByCode(areaCode)) areaCode = 1;
 
     if (editingId) {
-      await updateBinding(editingId, sku, parsed, areaCode);
+      var edited = await allocateSkuToLocation(sku, parsed, areaCode, editingId);
+      if (!edited.ok) {
+        setScanMessage(edited.message, edited.type || "error");
+        return;
+      }
       editingId = null;
       setScanMessage("Endereco alterado. Pronto para o proximo produto.", "success");
       clearScanFieldsForNext();
       return;
     }
 
-    var duplicate = state.bindings.find(function (binding) {
-      return isSameSku(binding.sku, sku) && binding.locationCode === parsed.code;
-    });
-    if (duplicate) {
-      renderScanResults([duplicate]);
-      setScanMessage("Esse codigo ja esta alocado nessa localizacao.", "warning");
-      clearScanFieldsForNext();
+    var allocated = await allocateSkuToLocation(sku, parsed, areaCode, "");
+    if (!allocated.ok) {
+      setScanMessage(allocated.message, allocated.type || "error");
       return;
     }
-    var locationOccupants = findByLocation(parsed.code);
+    renderScanResults([allocated.binding]);
+    setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
+    clearScanFieldsForNext();
+  }
+
+  async function allocateSkuToLocation(sku, parsed, areaCode, sourceBindingId) {
+    if (!locationExistsInMaster(parsed.code)) {
+      var createLocation = window.confirm("Localizacao nao encontrada na base. Deseja criar nova localizacao?");
+      if (!createLocation) return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
+    }
+
+    var locationOccupants = findByLocation(parsed.code).filter(function (binding) {
+      return !sourceBindingId || binding.id !== sourceBindingId;
+    });
+    var sameLocation = locationOccupants.find(function (binding) { return isSameSku(binding.sku, sku); });
+    if (sameLocation && locationOccupants.length === 1) {
+      renderScanResults([sameLocation]);
+      clearScanFieldsForNext();
+      return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
+    }
+
     if (locationOccupants.length) {
       renderScanResults(locationOccupants);
       var decision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
-      if (decision === "cancel") {
-        setScanMessage("Cadastro cancelado. Pronto para o proximo produto.", "warning");
+      if (decision !== "replace") {
         clearScanFieldsForNext();
-        return;
-      }
-      if (decision === "replace") {
-        var removed = await removeLocationOccupants(locationOccupants);
-        if (!removed.ok) {
-          setScanMessage("Nao foi possivel apagar a locacao antiga: " + removed.message, "error");
-          return;
-        }
-        setScanMessage("Locacao antiga apagada. Salvando novo codigo...", "warning");
+        return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
       }
     }
-    var newBinding = createBinding(sku, parsed, areaCode);
-    var historyItem = createHistoryItem("SKU enderecado", sku, parsed.code, "SKU enderecado com sucesso.");
+
+    var skuLocations = findBySku(sku).filter(function (binding) {
+      return binding.locationCode !== parsed.code && (!sourceBindingId || binding.id !== sourceBindingId);
+    });
+    if (skuLocations.length) {
+      renderScanResults(skuLocations);
+      var move = window.confirm("Este SKU ja esta alocado em outra localizacao. Deseja mover para a nova localizacao?");
+      if (!move) {
+        clearScanFieldsForNext();
+        return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
+      }
+    }
+
+    var target = sourceBindingId ? state.bindings.find(function (binding) { return binding.id === sourceBindingId; }) : null;
+    if (!target) target = locationOccupants.slice().sort(sortByDateDesc)[0] || null;
+    var binding = target ? Object.assign({}, target) : createBinding(sku, parsed, areaCode);
+    var now = new Date().toISOString();
+    binding.sku = String(sku);
+    binding.rua = parsed.rua;
+    binding.rack = parsed.rack;
+    binding.linha = parsed.linha;
+    binding.letra = parsed.letra;
+    binding.locationCode = parsed.code;
+    binding.areaCode = target ? target.areaCode : areaCode;
+    binding.areaName = (getAreaByCode(binding.areaCode) || getAreaByCode(1)).name;
+    binding.productName = findProductName(sku) || binding.productName || "";
+    binding.createdAt = binding.createdAt || now;
+    binding.updatedAt = now;
+
+    var idsToRemoveMap = {};
+    locationOccupants.concat(skuLocations).forEach(function (item) {
+      if (item.id && item.id !== binding.id) idsToRemoveMap[item.id] = true;
+    });
+    var idsToRemove = Object.keys(idsToRemoveMap);
+    var historyItems = [
+      createHistoryItem(target ? "Endereco alterado" : "SKU enderecado", sku, parsed.code, target ? "Localizacao atualizada sem criar duplicidade." : "SKU enderecado com sucesso.")
+    ];
+    skuLocations.forEach(function (oldBinding) {
+      historyItems.push(createHistoryItem("SKU movido", oldBinding.sku, oldBinding.locationCode, "SKU removido da localizacao antiga ao mover para " + parsed.code + "."));
+    });
+    locationOccupants.forEach(function (oldBinding) {
+      if (oldBinding.id !== binding.id) historyItems.push(createHistoryItem("Endereco substituido", oldBinding.sku, oldBinding.locationCode, "SKU substituido por " + sku + " na mesma localizacao."));
+    });
+
     setScanMessage("Salvando no Supabase...", "warning");
-    var saved = await saveBindingAndHistory(newBinding, historyItem);
-    if (!saved.ok) {
-      setScanMessage("Nao foi possivel salvar no Supabase: " + saved.message, "error");
-      return;
-    }
-    state.bindings.push(newBinding);
-    state.history.push(historyItem);
+    var saved = await persistAllocationChange(binding, idsToRemove, historyItems);
+    if (!saved.ok) return { ok: false, message: "Nao foi possivel salvar no Supabase: " + saved.message, type: "error" };
+
+    var removeSet = {};
+    idsToRemove.forEach(function (id) { removeSet[id] = true; });
+    state.bindings = state.bindings.filter(function (item) { return !removeSet[item.id] && item.id !== binding.id; });
+    state.bindings.push(binding);
+    state.history = state.history.concat(historyItems);
     renderAll();
-    renderScanResults([newBinding]);
-    setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
-    clearScanFieldsForNext();
+    return { ok: true, binding: binding };
+  }
+
+  async function persistAllocationChange(binding, idsToRemove, historyItems) {
+    if (!isSupabaseReady()) {
+      var problem = describeSupabaseConfigProblem();
+      updateSupabaseStatus("Supabase nao conectado. O SKU nao foi salvo. " + problem, "error");
+      return { ok: false, message: "Supabase nao conectado. " + problem };
+    }
+    try {
+      var bindingResponse = await supabaseDb
+        .from("wms_bindings")
+        .upsert(toDbBinding(binding), { onConflict: "id" });
+      if (bindingResponse.error) throw bindingResponse.error;
+
+      if (idsToRemove.length) {
+        var deleteResponse = await supabaseDb.from("wms_bindings").delete().in("id", idsToRemove);
+        if (deleteResponse.error) throw deleteResponse.error;
+      }
+
+      if (historyItems.length && historySchemaAvailable) {
+        var historyResponse = await supabaseDb
+          .from("wms_history")
+          .upsert(historyItems.map(toDbHistory), { onConflict: "id" });
+        if (historyResponse.error) {
+          if (!isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
+          historySchemaAvailable = false;
+          updateSupabaseStatus("SKU salvo em wms_bindings. Historico nao salvo porque wms_history esta sem a coluna datetime; execute supabase-schema.sql no Supabase.", "warning");
+        }
+      }
+
+      var verifyResponse = await supabaseDb
+        .from("wms_bindings")
+        .select("id, sku, location_code")
+        .eq("id", binding.id)
+        .maybeSingle();
+      if (verifyResponse.error) throw verifyResponse.error;
+      if (!verifyResponse.data) throw new Error("Registro nao encontrado apos salvar.");
+      return { ok: true };
+    } catch (error) {
+      var message = formatSupabaseError(error);
+      console.error("Falha ao atualizar alocacao no Supabase:", error);
+      updateSupabaseStatus("Falha ao gravar no Supabase: " + message, "error");
+      return { ok: false, message: message };
+    }
   }
 
   function askLocationConflictDecision(locationCode, sku, occupants) {
     var modal = $("locationConflictModal");
     if (!modal) {
-      var fallback = window.prompt("Essa locacao ja tem codigo cadastrado. Digite A para adicionar junto, S para apagar e substituir, ou C para cancelar.", "A");
-      fallback = String(fallback || "C").trim().toUpperCase();
-      if (fallback === "S") return Promise.resolve("replace");
-      if (fallback === "A") return Promise.resolve("add");
-      return Promise.resolve("cancel");
+      return Promise.resolve(window.confirm("Esta localizacao ja possui o SKU " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja substituir pelo SKU " + sku + "?") ? "replace" : "cancel");
     }
-    $("locationConflictMessage").textContent = "Voce bipou o SKU " + sku + " para " + locationCode + ". Escolha se quer manter os codigos atuais e adicionar mais um, ou apagar os codigos atuais para colocar somente o novo.";
+    $("locationConflictTitle").textContent = "Localizacao ja possui SKU";
+    $("locationConflictMessage").textContent = "Esta localizacao ja possui o SKU " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja substituir pelo SKU " + sku + "?";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
@@ -2431,58 +2526,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         };
       });
       document.addEventListener("keydown", handleEscape);
-      var firstButton = modal.querySelector("[data-location-decision='add']");
+      var firstButton = modal.querySelector("[data-location-decision='replace']");
       if (firstButton) firstButton.focus();
     });
-  }
-
-  async function removeLocationOccupants(occupants) {
-    var ids = occupants.map(function (binding) { return binding.id; }).filter(Boolean);
-    if (!ids.length) return { ok: true };
-    if (isSupabaseReady()) {
-      try {
-        var response = await supabaseDb.from("wms_bindings").delete().in("id", ids);
-        if (response.error) throw response.error;
-      } catch (error) {
-        return { ok: false, message: formatSupabaseError(error) };
-      }
-    }
-    var idSet = {};
-    ids.forEach(function (id) { idSet[id] = true; });
-    occupants.forEach(function (binding) {
-      addHistory("Endereco substituido", binding.sku, binding.locationCode, "Vinculo antigo removido para novo cadastro.");
-    });
-    state.bindings = state.bindings.filter(function (binding) {
-      return !idSet[binding.id];
-    });
-    return { ok: true };
-  }
-
-  async function updateBinding(id, sku, parsed, areaCode) {
-    var duplicate = state.bindings.some(function (binding) {
-      return binding.id !== id && isSameSku(binding.sku, sku) && binding.locationCode === parsed.code;
-    });
-    if (duplicate) {
-      setScanMessage("Este SKU ja esta cadastrado neste endereco.", "error");
-      return;
-    }
-    var target = state.bindings.find(function (binding) {
-      return binding.id === id;
-    });
-    if (!target) return;
-    target.sku = sku;
-    target.locationCode = parsed.code;
-    target.rua = parsed.rua;
-    target.rack = parsed.rack;
-    target.linha = parsed.linha;
-    target.letra = parsed.letra;
-    target.areaCode = areaCode;
-    target.areaName = getAreaByCode(areaCode).name;
-    target.productName = state.products[sku] || target.productName || "";
-    target.updatedAt = new Date().toISOString();
-    addHistory("Endereco alterado", sku, parsed.code, "Vinculo editado manualmente.");
-    await saveData();
-    renderAll();
   }
 
   function resetScan() {
@@ -3903,9 +3949,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("maintenanceSummary").innerHTML = "";
       $("maintenanceTestRows").innerHTML = "";
       $("maintenanceResidueRows").innerHTML = "";
+      if ($("addressMaintenanceSummary")) $("addressMaintenanceSummary").innerHTML = "";
+      if ($("maintenanceAddressRows")) $("maintenanceAddressRows").innerHTML = "";
       return;
     }
     var report = maintenanceState.lastReport || buildLocalMaintenanceReport();
+    var addressReport = buildAddressMaintenanceReport();
     $("maintenanceSummary").innerHTML = [
       summaryChip("Transferências", report.transferCount),
       summaryChip("Testes encontrados", report.testTransfers.length, report.testTransfers.length ? "result-changed" : "result-ok"),
@@ -3932,6 +3981,114 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "</tr>"
       ].join("");
     }).join("") : "<tr><td colspan=\"3\">Clique em Verificar resíduos para avaliar o banco.</td></tr>";
+    renderAddressMaintenance(addressReport);
+  }
+
+  function renderAddressMaintenance(report) {
+    if (!$("addressMaintenanceSummary") || !$("maintenanceAddressRows")) return;
+    $("addressMaintenanceSummary").innerHTML = [
+      summaryChip("Localizacoes duplicadas", report.locationDuplicates.length, report.locationDuplicates.length ? "result-missing" : "result-ok"),
+      summaryChip("SKUs em mais de uma BP", report.skuDuplicates.length, report.skuDuplicates.length ? "result-changed" : "result-ok"),
+      summaryChip("Registros invalidos", report.invalidRows.length, report.invalidRows.length ? "result-missing" : "result-ok"),
+      summaryChip("Registros a corrigir", report.deleteIds.length, report.deleteIds.length ? "result-changed" : "result-ok")
+    ].join("");
+    var rows = [];
+    report.locationDuplicates.forEach(function (entry) {
+      rows.push(maintenanceAddressRowHtml("Localizacao duplicada", entry.key, entry.items, "Manter o mais recente e remover duplicados."));
+    });
+    report.skuDuplicates.forEach(function (entry) {
+      rows.push(maintenanceAddressRowHtml("SKU em mais de uma BP", entry.key, entry.items, "Manter o mais recente e remover antigos."));
+    });
+    report.invalidRows.forEach(function (entry) {
+      rows.push(maintenanceAddressRowHtml("Registro invalido", entry.key, entry.items, "Corrigir cadastro ou remover manualmente."));
+    });
+    $("maintenanceAddressRows").innerHTML = rows.length ? rows.join("") : "<tr><td colspan=\"4\">Nenhuma duplicidade encontrada no enderecamento.</td></tr>";
+  }
+
+  function maintenanceAddressRowHtml(type, key, items, action) {
+    var records = items.map(function (binding) {
+      return escapeHtml(binding.sku || "-") + " em " + escapeHtml(binding.locationCode || "-");
+    }).join("<br>");
+    return [
+      "<tr>",
+      "<td>" + escapeHtml(type) + "</td>",
+      "<td><strong>" + escapeHtml(key || "-") + "</strong></td>",
+      "<td>" + records + "</td>",
+      "<td>" + escapeHtml(action) + "</td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function buildAddressMaintenanceReport() {
+    var byLocation = {};
+    var bySku = {};
+    var invalidRows = [];
+    state.bindings.forEach(function (binding) {
+      var parsed = normalizeLocation(binding.locationCode);
+      if (!binding.id || !binding.sku || !parsed.valid) {
+        invalidRows.push({ key: binding.locationCode || binding.id || "-", items: [binding] });
+        return;
+      }
+      var locationKey = locationKeyFromBinding(binding);
+      if (!byLocation[locationKey]) byLocation[locationKey] = [];
+      byLocation[locationKey].push(binding);
+      var skuKey = normalizeSkuKey(binding.sku);
+      if (!bySku[skuKey]) bySku[skuKey] = [];
+      bySku[skuKey].push(binding);
+    });
+    var deleteIds = {};
+    var locationDuplicates = Object.keys(byLocation).filter(function (key) { return byLocation[key].length > 1; }).map(function (key) {
+      var items = byLocation[key].slice().sort(sortByDateDesc);
+      items.slice(1).forEach(function (binding) { if (binding.id) deleteIds[binding.id] = true; });
+      return { key: key, items: items };
+    });
+    var skuDuplicates = Object.keys(bySku).filter(function (key) { return key && bySku[key].length > 1; }).map(function (key) {
+      var items = bySku[key].slice().sort(sortByDateDesc);
+      items.slice(1).forEach(function (binding) { if (binding.id) deleteIds[binding.id] = true; });
+      return { key: key, items: items };
+    });
+    return {
+      locationDuplicates: locationDuplicates,
+      skuDuplicates: skuDuplicates,
+      invalidRows: invalidRows,
+      deleteIds: Object.keys(deleteIds)
+    };
+  }
+
+  function verifyAddressMaintenance() {
+    if (!isAdmin()) return;
+    var report = buildAddressMaintenanceReport();
+    renderAddressMaintenance(report);
+    var total = report.locationDuplicates.length + report.skuDuplicates.length + report.invalidRows.length;
+    setStatus("maintenanceStatus", total ? "Relatorio de enderecamento pronto. Nada foi apagado." : "Enderecamento sem duplicidades.", total ? "warning" : "success");
+  }
+
+  async function cleanAddressDuplicates() {
+    if (!isAdmin()) return;
+    var report = buildAddressMaintenanceReport();
+    if (!report.deleteIds.length) {
+      setStatus("maintenanceStatus", "Nenhuma duplicidade de enderecamento para corrigir.", "success");
+      renderAddressMaintenance(report);
+      return;
+    }
+    if (!window.confirm("Esta acao remove apenas registros duplicados, mantendo o registro mais recente por BP/SKU. Deseja continuar?")) return;
+    if (isSupabaseReady()) {
+      try {
+        var response = await supabaseDb.from("wms_bindings").delete().in("id", report.deleteIds);
+        if (response.error) throw response.error;
+      } catch (error) {
+        setStatus("maintenanceStatus", "Erro ao corrigir duplicidades: " + formatSupabaseError(error), "error");
+        return;
+      }
+    }
+    var removeSet = {};
+    report.deleteIds.forEach(function (id) { removeSet[id] = true; });
+    state.bindings = state.bindings.filter(function (binding) { return !removeSet[binding.id]; });
+    addHistory("Duplicidades corrigidas", "", "", report.deleteIds.length + " registro(s) duplicado(s) removido(s) do enderecamento.");
+    await saveData();
+    await loadData();
+    renderAll();
+    setStatus("maintenanceStatus", report.deleteIds.length + " duplicidade(s) corrigida(s).", "success");
   }
 
   function buildLocalMaintenanceReport() {
@@ -6025,6 +6182,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
     }
+    var validation = validateAddressExportState();
+    if (!validation.valid) {
+      showToast(validation.message, "error");
+      if ($("exportStatus")) setStatus("exportStatus", validation.message, "error");
+      return;
+    }
     var exportRows = createLinhaSeparacaoExportRows();
     var rows = [REQUIRED_COLUMNS].concat(exportRows);
     var worksheet = window.XLSX.utils.aoa_to_sheet(rows);
@@ -6077,8 +6240,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     showToast("Excel exportado no mesmo modelo da importacao.", "success");
   }
 
+  function validateAddressExportState() {
+    var report = buildAddressMaintenanceReport();
+    if (report.locationDuplicates.length) {
+      return { valid: false, message: "Existem localizacoes duplicadas. Corrija antes de exportar." };
+    }
+    if (report.skuDuplicates.length) {
+      return { valid: false, message: "Existem SKUs alocados em mais de uma localizacao. Corrija antes de exportar." };
+    }
+    if (report.invalidRows.length) {
+      return { valid: false, message: "Existem enderecamentos com campos invalidos. Corrija antes de exportar." };
+    }
+    return { valid: true, message: "" };
+  }
+
   function linhaSeparacaoRowFromBinding(binding) {
-    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, binding.sku);
+    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, firstSkuValue(binding.sku));
   }
 
   function createLinhaSeparacaoExportRows() {
@@ -6097,7 +6274,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var bindings = bindingsByLocation[templateRow.locationCode] || [];
       var binding = bindings.shift();
       if (binding) usedIds[binding.id] = true;
-      return linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, binding ? binding.sku : "");
+      return linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, binding ? firstSkuValue(binding.sku) : "");
     });
 
     state.bindings
@@ -7680,19 +7857,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           });
           if (!skuValues.length || !hasAddress) return;
 
-          var importedAreaCode = Number(getByAliases(row, ["Area Linha Separacao", "Area Linha SeparaÃ§Ã£o", "Area Linha SeparaÃ§ao"])) || 1;
-          skuValues.slice(1).forEach(function (skuValue) {
-            data.addressRows.push({
-              sku: skuValue,
-              productName: productName,
-              station: station,
-              rack: rack,
-              line: line,
-              column: column,
-              areaCode: importedAreaCode
-            });
-          });
-
           data.addressRows.push({
             sku: sku,
             productName: productName,
@@ -7752,6 +7916,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function importRows(rows) {
     var result = { created: 0, updated: 0, skipped: 0, invalid: 0, changedIds: [] };
+    var usedLocations = {};
+    var usedSkus = {};
     rows.forEach(function (row) {
       var parsed = buildLocationFromParts(row.station, row.rack, row.line, row.column);
       var areaCode = getAreaByCode(row.areaCode) ? row.areaCode : 1;
@@ -7760,18 +7926,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         result.invalid += 1;
         return;
       }
+      var locationKey = locationKeyFromCode(parsed.code);
+      var skuKey = normalizeSkuKey(row.sku);
+      if (usedLocations[locationKey] || usedSkus[skuKey]) {
+        result.skipped += 1;
+        return;
+      }
+      usedLocations[locationKey] = true;
+      usedSkus[skuKey] = true;
       var existing = state.bindings.find(function (binding) {
-        return isSameSku(binding.sku, row.sku) && binding.locationCode === parsed.code;
+        return locationKeyFromBinding(binding) === locationKey;
       });
       if (existing) {
         var newName = row.productName || findProductName(row.sku) || "";
-        if (newName && existing.productName !== newName) {
-          existing.productName = newName;
-          existing.updatedAt = new Date().toISOString();
-          result.updated += 1;
-          result.changedIds.push(existing.id);
-        }
-        result.skipped += 1;
+        existing.sku = row.sku;
+        existing.rua = parsed.rua;
+        existing.rack = parsed.rack;
+        existing.linha = parsed.linha;
+        existing.letra = parsed.letra;
+        existing.locationCode = parsed.code;
+        existing.areaCode = areaCode;
+        existing.areaName = area.name;
+        existing.productName = newName;
+        existing.updatedAt = new Date().toISOString();
+        result.updated += 1;
+        result.changedIds.push(existing.id);
         return;
       }
       var newBinding = createBinding(row.sku, parsed, areaCode, row.productName || findProductName(row.sku) || "");
@@ -8160,6 +8339,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function findByLocation(locationCode) {
     return state.bindings.filter(function (binding) { return binding.locationCode === locationCode; }).sort(sortByDateDesc);
+  }
+
+  function locationKeyFromCode(locationCode) {
+    var parsed = normalizeLocation(locationCode);
+    return parsed.valid ? parsed.code : normalizeText(locationCode).toUpperCase();
+  }
+
+  function locationKeyFromBinding(binding) {
+    return locationKeyFromCode(binding.locationCode || ("R" + binding.rua + "-RK" + binding.rack + "-L" + binding.linha + "-" + binding.letra));
+  }
+
+  function locationExistsInMaster(locationCode) {
+    var key = locationKeyFromCode(locationCode);
+    if (state.bindings.some(function (binding) { return locationKeyFromBinding(binding) === key; })) return true;
+    return buildLinhaSeparacaoTemplateRows().some(function (row) { return locationKeyFromCode(row.locationCode) === key; });
   }
 
   function findProductName(sku) {

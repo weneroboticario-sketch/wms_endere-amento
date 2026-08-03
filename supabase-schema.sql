@@ -28,6 +28,9 @@ alter table public.wms_bindings add column if not exists updated_at timestamptz 
 create unique index if not exists wms_bindings_sku_location_idx
 on public.wms_bindings (sku, location_code);
 
+create index if not exists wms_bindings_location_code_idx
+on public.wms_bindings (location_code);
+
 create table if not exists public.wms_products (
   sku text primary key,
   product_name text not null

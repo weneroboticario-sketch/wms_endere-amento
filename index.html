@@ -1042,6 +1042,30 @@
           </section>
           <section class="panel">
             <div class="panel-header">
+              <h3>ManutenÃ§Ã£o do EndereÃ§amento</h3>
+            </div>
+            <p class="muted">Verifica localizaÃ§Ãµes duplicadas e SKUs ativos em mais de uma BP antes da exportaÃ§Ã£o para o Videmais.</p>
+            <div id="addressMaintenanceSummary" class="transfer-summary-grid"></div>
+            <div class="button-row">
+              <button class="primary-button" id="verifyAddressMaintenanceButton" type="button">Verificar duplicidades</button>
+              <button class="danger-button" id="cleanAddressDuplicatesButton" type="button">Corrigir duplicidades</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tipo</th>
+                    <th>Chave</th>
+                    <th>Registros</th>
+                    <th>AÃ§Ã£o sugerida</th>
+                  </tr>
+                </thead>
+                <tbody id="maintenanceAddressRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
               <h3>Transferências de teste</h3>
             </div>
             <div class="table-wrap">
@@ -1114,8 +1138,7 @@
       <p id="locationConflictMessage" class="muted"></p>
       <div id="locationConflictList" class="decision-list"></div>
       <div class="decision-actions">
-        <button class="primary-button" data-location-decision="add" type="button">Adicionar junto</button>
-        <button class="danger-button" data-location-decision="replace" type="button">Apagar e substituir</button>
+        <button class="danger-button" data-location-decision="replace" type="button">Sim, substituir</button>
         <button class="secondary-button" data-location-decision="cancel" type="button">Cancelar</button>
       </div>
     </div>
