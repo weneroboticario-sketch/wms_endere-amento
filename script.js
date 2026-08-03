@@ -27,7 +27,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR"],
-    manutencao: ["ADMINISTRADOR"],
+    manutencao: ["ADMINISTRADOR", "SUPERVISOR"],
     estoques: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
@@ -2589,6 +2589,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     });
     $("transferDashboardAlert").addEventListener("click", async function (event) {
+      if (event.target.closest("[data-address-conflicts-open]")) {
+        showScreen("manutencao");
+        verifyAddressMaintenance();
+        return;
+      }
       var button = event.target.closest("[data-transfer-alert-open]");
       if (button) {
         showScreen("transferencias");
@@ -2709,6 +2714,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("cleanResiduesButton").addEventListener("click", cleanMaintenanceResidues);
     if ($("verifyAddressMaintenanceButton")) $("verifyAddressMaintenanceButton").addEventListener("click", verifyAddressMaintenance);
     if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
+    if ($("maintenanceAddressRows")) $("maintenanceAddressRows").addEventListener("click", handleAddressMaintenanceAction);
     $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -2775,6 +2781,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function saveManualScan() {
     if (!ensureActiveWarehouse()) return;
+    var actionButton = $("saveManualButton");
+    if (!beginTransferAction("save-manual-scan", actionButton, "Salvando...")) return;
+    try {
     var sku = firstSkuValue($("skuInput").value || currentSku);
     var parsed = normalizeLocation($("locationInput").value);
     var existingBinding = editingId ? state.bindings.find(function (binding) { return binding.id === editingId; }) : null;
@@ -2809,6 +2818,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderScanResults([allocated.binding]);
     setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
     clearScanFieldsForNext();
+    } finally {
+      endTransferAction(actionButton);
+    }
   }
 
   async function allocateSkuToLocation(sku, parsed, areaCode, sourceBindingId) {
@@ -2839,10 +2851,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var skuLocations = findBySku(sku).filter(function (binding) {
       return binding.locationCode !== parsed.code && (!sourceBindingId || binding.id !== sourceBindingId);
     });
+    var keepSkuInMultipleLocations = false;
     if (skuLocations.length) {
       renderScanResults(skuLocations);
-      var move = window.confirm("Este SKU ja esta alocado em outra localizacao. Deseja mover para a nova localizacao?");
-      if (!move) {
+      keepSkuInMultipleLocations = askSkuDuplicateDecision(sku, parsed.code, skuLocations);
+      if (!keepSkuInMultipleLocations) {
         clearScanFieldsForNext();
         return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
       }
@@ -2865,16 +2878,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     binding.updatedAt = now;
 
     var idsToRemoveMap = {};
-    locationOccupants.concat(skuLocations).forEach(function (item) {
+    locationOccupants.forEach(function (item) {
       if (item.id && item.id !== binding.id) idsToRemoveMap[item.id] = true;
     });
     var idsToRemove = Object.keys(idsToRemoveMap);
     var historyItems = [
       createHistoryItem(target ? "Endereco alterado" : "SKU enderecado", sku, parsed.code, target ? "Localizacao atualizada sem criar duplicidade." : "SKU enderecado com sucesso.")
     ];
-    skuLocations.forEach(function (oldBinding) {
-      historyItems.push(createHistoryItem("SKU movido", oldBinding.sku, oldBinding.locationCode, "SKU removido da localizacao antiga ao mover para " + parsed.code + "."));
-    });
+    if (keepSkuInMultipleLocations) {
+      historyItems.push(createHistoryItem("SKU duplicado detectado", sku, parsed.code, "SKU mantido tambem em: " + skuLocations.map(function (item) { return item.locationCode; }).join(", ") + ". Lider deve revisar."));
+    }
     locationOccupants.forEach(function (oldBinding) {
       if (oldBinding.id !== binding.id) historyItems.push(createHistoryItem("Endereco substituido", oldBinding.sku, oldBinding.locationCode, "SKU substituido por " + sku + " na mesma localizacao."));
     });
@@ -2979,6 +2992,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var firstButton = modal.querySelector("[data-location-decision='replace']");
       if (firstButton) firstButton.focus();
     });
+  }
+
+  function askSkuDuplicateDecision(sku, newLocationCode, currentLocations) {
+    var product = findProductName(sku) || "";
+    var message = [
+      "Este SKU ja esta alocado em outra localizacao. Deseja registrar tambem nesta nova localizacao?",
+      "",
+      "SKU: " + sku,
+      product ? "Produto: " + product : "",
+      "Localizacao atual: " + currentLocations.map(function (binding) { return binding.locationCode; }).join(", "),
+      "Nova localizacao: " + newLocationCode
+    ].filter(Boolean).join("\n");
+    return window.confirm(message);
   }
 
   function resetScan() {
@@ -3086,6 +3112,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferDashboardAlert() {
     if (!$("transferDashboardAlert") || !authState.currentUser) return;
+    if (isAdminOrSupervisor()) {
+      var report = buildAddressMaintenanceReport();
+      var totalConflicts = report.skuConflicts.length + report.locationDuplicates.length + report.invalidRows.length;
+      if (totalConflicts) {
+        $("transferDashboardAlert").hidden = false;
+        $("transferDashboardAlert").innerHTML = [
+          "<strong>Enderecamento com pendencias para revisar</strong>",
+          "<span>" + report.skuConflicts.length + " conflito(s) de SKU, " + report.locationDuplicates.length + " localizacao(oes) duplicada(s).</span>",
+          "<span>Resolva antes de exportar para o Videmais.</span>",
+          "<button class=\"primary-button\" data-address-conflicts-open type=\"button\">Abrir manutencao</button>"
+        ].join("");
+        return;
+      }
+    }
     var assigned = getVisibleTransfers().filter(function (transfer) {
       return ["ATRIBUIDA", "PENDENTE", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA"].indexOf(transfer.status) >= 0;
     });
@@ -4457,16 +4497,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!$("addressMaintenanceSummary") || !$("maintenanceAddressRows")) return;
     $("addressMaintenanceSummary").innerHTML = [
       summaryChip("Localizacoes duplicadas", report.locationDuplicates.length, report.locationDuplicates.length ? "result-missing" : "result-ok"),
-      summaryChip("SKUs em mais de uma BP", report.skuDuplicates.length, report.skuDuplicates.length ? "result-changed" : "result-ok"),
+      summaryChip("Conflitos de SKU", report.skuConflicts.length, report.skuConflicts.length ? "result-changed" : "result-ok"),
       summaryChip("Registros invalidos", report.invalidRows.length, report.invalidRows.length ? "result-missing" : "result-ok"),
       summaryChip("Registros a corrigir", report.deleteIds.length, report.deleteIds.length ? "result-changed" : "result-ok")
     ].join("");
     var rows = [];
     report.locationDuplicates.forEach(function (entry) {
-      rows.push(maintenanceAddressRowHtml("Localizacao duplicada", entry.key, entry.items, "Manter o mais recente e remover duplicados."));
+      rows.push(maintenanceAddressRowHtml("Localizacao duplicada", entry.key, entry.items, "<button class=\"danger-button\" data-address-remove-duplicates=\"" + escapeHtml(entry.key) + "\" type=\"button\">Remover duplicadas</button>"));
     });
-    report.skuDuplicates.forEach(function (entry) {
-      rows.push(maintenanceAddressRowHtml("SKU em mais de uma BP", entry.key, entry.items, "Manter o mais recente e remover antigos."));
+    report.skuConflicts.forEach(function (entry) {
+      rows.push(maintenanceAddressRowHtml("SKU em mais de uma BP", entry.key, entry.items, "<button class=\"primary-button\" data-address-resolve-sku=\"" + escapeHtml(entry.key) + "\" type=\"button\">Resolver conflito</button><button class=\"secondary-button\" data-address-ignore-sku=\"" + escapeHtml(entry.key) + "\" type=\"button\">Manter temporariamente</button>"));
     });
     report.invalidRows.forEach(function (entry) {
       rows.push(maintenanceAddressRowHtml("Registro invalido", entry.key, entry.items, "Corrigir cadastro ou remover manualmente."));
@@ -4483,7 +4523,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td>" + escapeHtml(type) + "</td>",
       "<td><strong>" + escapeHtml(key || "-") + "</strong></td>",
       "<td>" + records + "</td>",
-      "<td>" + escapeHtml(action) + "</td>",
+      "<td><div class=\"row-actions\">" + action + "</div></td>",
       "</tr>"
     ].join("");
   }
@@ -4511,36 +4551,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       items.slice(1).forEach(function (binding) { if (binding.id) deleteIds[binding.id] = true; });
       return { key: key, items: items };
     });
-    var skuDuplicates = Object.keys(bySku).filter(function (key) { return key && bySku[key].length > 1; }).map(function (key) {
+    var skuConflicts = Object.keys(bySku).filter(function (key) { return key && bySku[key].length > 1; }).map(function (key) {
       var items = bySku[key].slice().sort(sortByDateDesc);
-      items.slice(1).forEach(function (binding) { if (binding.id) deleteIds[binding.id] = true; });
       return { key: key, items: items };
     });
     return {
       locationDuplicates: locationDuplicates,
-      skuDuplicates: skuDuplicates,
+      skuConflicts: skuConflicts,
+      skuDuplicates: skuConflicts,
       invalidRows: invalidRows,
       deleteIds: Object.keys(deleteIds)
     };
   }
 
   function verifyAddressMaintenance() {
-    if (!isAdmin()) return;
+    if (!isAdminOrSupervisor()) return;
     var report = buildAddressMaintenanceReport();
     renderAddressMaintenance(report);
-    var total = report.locationDuplicates.length + report.skuDuplicates.length + report.invalidRows.length;
+    var total = report.locationDuplicates.length + report.skuConflicts.length + report.invalidRows.length;
     setStatus("maintenanceStatus", total ? "Relatorio de enderecamento pronto. Nada foi apagado." : "Enderecamento sem duplicidades.", total ? "warning" : "success");
   }
 
   async function cleanAddressDuplicates() {
-    if (!isAdmin()) return;
+    if (!isAdminOrSupervisor()) return;
     var report = buildAddressMaintenanceReport();
     if (!report.deleteIds.length) {
       setStatus("maintenanceStatus", "Nenhuma duplicidade de enderecamento para corrigir.", "success");
       renderAddressMaintenance(report);
       return;
     }
-    if (!window.confirm("Esta acao remove apenas registros duplicados, mantendo o registro mais recente por BP/SKU. Deseja continuar?")) return;
+    if (!window.confirm("Esta acao remove apenas localizacoes duplicadas, mantendo o registro mais recente por BP. Conflitos de SKU continuam para decisao do lider. Deseja continuar?")) return;
     if (isSupabaseReady()) {
       try {
         var response = await supabaseDb.from("wms_bindings").delete().in("id", report.deleteIds);
@@ -4558,6 +4598,82 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await loadData();
     renderAll();
     setStatus("maintenanceStatus", report.deleteIds.length + " duplicidade(s) corrigida(s).", "success");
+  }
+
+  async function handleAddressMaintenanceAction(event) {
+    var button = event.target.closest("button");
+    if (!button || !isAdminOrSupervisor()) return;
+    if (button.dataset.addressResolveSku) {
+      await resolveSkuLocationConflict(button.dataset.addressResolveSku);
+      return;
+    }
+    if (button.dataset.addressIgnoreSku) {
+      addHistory("Conflito mantido temporariamente", button.dataset.addressIgnoreSku, "", "Lider optou por manter SKU em multiplas localizacoes temporariamente.");
+      await saveData();
+      renderMaintenance();
+      setStatus("maintenanceStatus", "Conflito mantido temporariamente. A exportacao continuara alertando.", "warning");
+      return;
+    }
+    if (button.dataset.addressRemoveDuplicates) {
+      await removeLocationDuplicateRows(button.dataset.addressRemoveDuplicates);
+    }
+  }
+
+  async function resolveSkuLocationConflict(skuKey) {
+    var items = state.bindings.filter(function (binding) { return normalizeSkuKey(binding.sku) === skuKey; }).sort(sortByDateDesc);
+    if (items.length < 2) {
+      setStatus("maintenanceStatus", "Conflito nao encontrado.", "warning");
+      renderMaintenance();
+      return;
+    }
+    var options = items.map(function (binding, index) {
+      return (index + 1) + " - " + binding.locationCode + " (" + binding.sku + ")";
+    }).join("\n");
+    var choice = window.prompt("Escolha a localizacao oficial para o SKU " + skuKey + ":\n\n" + options, "1");
+    var index = Number(choice) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= items.length) {
+      setStatus("maintenanceStatus", "Resolucao cancelada.", "warning");
+      return;
+    }
+    var official = items[index];
+    var removeIds = items.filter(function (binding) { return binding.id !== official.id; }).map(function (binding) { return binding.id; });
+    if (!window.confirm("Manter " + official.locationCode + " como oficial e remover " + removeIds.length + " outra(s) localizacao(oes)?")) return;
+    await removeBindingIds(removeIds);
+    addHistory("Conflito resolvido", official.sku, official.locationCode, "Localizacao oficial definida pelo lider.");
+    await saveData();
+    await loadData();
+    renderAll();
+    setStatus("maintenanceStatus", "Conflito resolvido para SKU " + skuKey + ".", "success");
+  }
+
+  async function removeLocationDuplicateRows(locationKey) {
+    var items = state.bindings.filter(function (binding) { return locationKeyFromBinding(binding) === locationKey; }).sort(sortByDateDesc);
+    if (items.length < 2) {
+      setStatus("maintenanceStatus", "Duplicidade de localizacao nao encontrada.", "warning");
+      renderMaintenance();
+      return;
+    }
+    var keep = items[0];
+    var removeIds = items.slice(1).map(function (binding) { return binding.id; });
+    if (!window.confirm("Manter o registro mais recente da localizacao " + locationKey + " e remover " + removeIds.length + " duplicado(s)?")) return;
+    await removeBindingIds(removeIds);
+    addHistory("Duplicidade de localizacao corrigida", keep.sku, keep.locationCode, removeIds.length + " registro(s) duplicado(s) removido(s).");
+    await saveData();
+    await loadData();
+    renderAll();
+    setStatus("maintenanceStatus", "Duplicidade corrigida para " + locationKey + ".", "success");
+  }
+
+  async function removeBindingIds(ids) {
+    ids = (ids || []).filter(Boolean);
+    if (!ids.length) return;
+    if (isSupabaseReady()) {
+      var response = await supabaseDb.from("wms_bindings").delete().in("id", ids);
+      if (response.error) throw response.error;
+    }
+    var removeSet = {};
+    ids.forEach(function (id) { removeSet[id] = true; });
+    state.bindings = state.bindings.filter(function (binding) { return !removeSet[binding.id]; });
   }
 
   function buildLocalMaintenanceReport() {
@@ -6450,7 +6566,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     refreshProductNamesForBindings(list);
     list = list.slice().sort(sortByDateDesc);
-    setStatus("skuSearchStatus", list.length + " localizacao(oes) encontrada(s).", "success");
+    var hasSkuConflict = list.length > 1;
+    setStatus("skuSearchStatus", hasSkuConflict ? "Atencao: este SKU possui mais de uma localizacao cadastrada." : list.length + " localizacao(oes) encontrada(s).", hasSkuConflict ? "warning" : "success");
     $("skuResults").innerHTML = list.map(skuTableRowHtml).join("");
     bindActionButtons($("skuResults"));
     $("skuResultCards").innerHTML = list.map(function (binding, index) {
@@ -6510,7 +6627,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     refreshProductNamesForBindings(list);
-    setStatus("shelfSearchStatus", list.length + " SKU(s) encontrado(s) nesta prateleira.", "success");
+    var hasShelfConflict = list.some(function (binding) { return findBySku(binding.sku).length > 1; });
+    setStatus("shelfSearchStatus", hasShelfConflict ? "Prateleira encontrada com SKU em conflito de localizacao." : list.length + " SKU(s) encontrado(s) nesta prateleira.", hasShelfConflict ? "warning" : "success");
     $("shelfSummary").innerHTML = [
       summaryChip("Prateleira", parsed.code),
       summaryChip("Rua", pad2(parsed.rua)),
@@ -6529,11 +6647,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function skuLocationCardHtml(binding, latest) {
     var productName = binding.productName || findProductName(binding.sku) || "-";
+    var hasConflict = findBySku(binding.sku).length > 1;
     return [
       "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
       "<div class=\"sku-card-head\">",
       "<div><strong>" + escapeHtml(binding.sku) + "</strong><span>" + escapeHtml(productName) + "</span></div>",
       latest ? "<span class=\"latest-pill\">Mais recente</span>" : "",
+      hasConflict ? "<span class=\"status-badge pending\">SKU em conflito</span>" : "",
       "</div>",
       "<div class=\"sku-location-code\">" + escapeHtml(binding.locationCode) + "</div>",
       "<div class=\"sku-location-grid\">",
@@ -6556,6 +6676,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function skuTableRowHtml(binding) {
     var productName = binding.productName || findProductName(binding.sku) || "-";
+    var hasConflict = findBySku(binding.sku).length > 1;
     return [
       "<tr>",
       "<td class=\"mobile-result-summary\">",
@@ -6563,7 +6684,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"mobile-result-product\">" + escapeHtml(binding.sku) + " - " + escapeHtml(productName) + "</div>",
       "<div class=\"mobile-result-grid\"><span>Rua<strong>" + pad2(binding.rua) + "</strong></span><span>Rack<strong>" + binding.rack + "</strong></span><span>Linha<strong>" + binding.linha + "</strong></span><span>Letra<strong>" + escapeHtml(binding.letra) + "</strong></span></div>",
       "</td>",
-      "<td data-label=\"SKU\">" + escapeHtml(binding.sku) + "</td>",
+      "<td data-label=\"SKU\">" + escapeHtml(binding.sku) + (hasConflict ? "<br><span class=\"status-badge pending\">Conflito</span>" : "") + "</td>",
       "<td data-label=\"Produto\">" + escapeHtml(productName) + "</td>",
       "<td data-label=\"Rua\">" + pad2(binding.rua) + "</td>",
       "<td data-label=\"Rack\">" + binding.rack + "</td>",
@@ -6578,9 +6699,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function shelfTableRowHtml(binding) {
+    var hasConflict = findBySku(binding.sku).length > 1;
     return [
       "<tr>",
-      "<td>" + escapeHtml(binding.sku) + "</td>",
+      "<td>" + escapeHtml(binding.sku) + (hasConflict ? "<br><span class=\"status-badge pending\">Conflito</span>" : "") + "</td>",
       "<td>" + escapeHtml(binding.productName || findProductName(binding.sku) || "-") + "</td>",
       "<td>" + escapeHtml(binding.locationCode) + "</td>",
       "<td>" + pad2(binding.rua) + "</td>",
@@ -6742,11 +6864,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
     }
+    var actionButton = $("exportExcelButton");
+    if (!beginTransferAction("export-addresses", actionButton, "Exportando...")) return;
+    try {
     var validation = validateAddressExportState();
     if (!validation.valid) {
+      if (validation.type === "sku-conflict" && isAdmin()) {
+        var proceed = window.confirm("Exportar com conflito pode gerar duplicidade no Videmais. Deseja continuar?");
+        if (!proceed) {
+          showToast(validation.message, "error");
+          if ($("exportStatus")) setStatus("exportStatus", validation.message, "error");
+          return;
+        }
+      } else {
       showToast(validation.message, "error");
       if ($("exportStatus")) setStatus("exportStatus", validation.message, "error");
       return;
+      }
     }
     var exportRows = createLinhaSeparacaoExportRows();
     var rows = [REQUIRED_COLUMNS].concat(exportRows);
@@ -6797,7 +6931,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     window.XLSX.writeFile(workbook, fileName);
     addHistory("Excel exportado", "", "", exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao.");
     saveData();
+    if ($("exportStatus")) setStatus("exportStatus", "Excel exportado no modelo LinhaSeparacao.", "success");
     showToast("Excel exportado no mesmo modelo da importacao.", "success");
+    } finally {
+      endTransferAction(actionButton);
+    }
   }
 
   function validateAddressExportState() {
@@ -6805,8 +6943,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (report.locationDuplicates.length) {
       return { valid: false, message: "Existem localizacoes duplicadas. Corrija antes de exportar." };
     }
-    if (report.skuDuplicates.length) {
-      return { valid: false, message: "Existem SKUs alocados em mais de uma localizacao. Corrija antes de exportar." };
+    if (report.skuConflicts.length) {
+      return { valid: false, type: "sku-conflict", message: "Existem SKUs em mais de uma localizacao. Revise antes de exportar." };
     }
     if (report.invalidRows.length) {
       return { valid: false, message: "Existem enderecamentos com campos invalidos. Corrija antes de exportar." };
@@ -8446,6 +8584,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
 
+    var actionButton = $("importExcelButton");
+    if (!beginTransferAction("import-addresses", actionButton, "Importando...")) return;
     try {
       setStatus("importStatus", "Lendo planilha e preparando importacao...", "warning");
       var workbooks = await Promise.all(files.map(readWorkbookFile));
@@ -8489,6 +8629,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       console.error("Falha na importacao:", error);
       setStatus("importStatus", "Falha na importacao: " + message, "error");
       updateSupabaseStatus("Falha na importacao: " + message, "error");
+    } finally {
+      endTransferAction(actionButton);
     }
   }
 
