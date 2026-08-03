@@ -2203,6 +2203,115 @@ td {
   margin-top: 4px;
 }
 
+#transferWorkSection .current-item-card {
+  gap: 8px;
+  padding: 10px;
+}
+
+#transferWorkSection .current-item-kicker {
+  font-size: 0.68rem;
+}
+
+.current-item-compact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.42fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.current-item-main-info {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+#transferWorkSection .current-item-head {
+  align-items: flex-start;
+}
+
+#transferWorkSection .current-item-head strong {
+  font-size: 1.22rem;
+  line-height: 1.1;
+}
+
+#transferWorkSection .current-item-head span {
+  padding: 3px 7px;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+#transferWorkSection .current-item-card p {
+  font-size: 0.88rem;
+  line-height: 1.2;
+}
+
+#transferWorkSection .current-qty-highlight {
+  align-content: center;
+  padding: 10px;
+}
+
+#transferWorkSection .current-qty-highlight strong {
+  font-size: 1.18rem;
+  line-height: 1.08;
+}
+
+#transferWorkSection .current-location-line {
+  padding: 8px;
+}
+
+#transferWorkSection .current-location-line strong {
+  font-size: 0.98rem;
+}
+
+#transferWorkSection .current-item-meta {
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 6px;
+}
+
+#transferWorkSection .transfer-qty-row span,
+#transferWorkSection .current-item-meta div {
+  min-width: 0;
+  padding: 6px 7px;
+  font-size: 0.7rem;
+  line-height: 1.12;
+}
+
+#transferWorkSection .transfer-qty-row b {
+  font-size: 0.9rem;
+}
+
+#transferWorkSection .transfer-list-heading {
+  padding: 6px 8px;
+}
+
+#transferWorkSection .transfer-work-list-section {
+  gap: 6px;
+}
+
+#transferWorkSection .transfer-work-item {
+  gap: 6px;
+  padding: 8px;
+}
+
+#transferWorkSection .transfer-work-item-head strong {
+  font-size: 0.9rem;
+}
+
+#transferWorkSection .transfer-work-item-head span {
+  padding: 3px 7px;
+  font-size: 0.68rem;
+}
+
+#transferWorkSection .transfer-work-item p {
+  font-size: 0.82rem;
+  line-height: 1.18;
+}
+
+#transferWorkSection .transfer-work-item .transfer-qty-row {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  gap: 5px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -2650,10 +2759,33 @@ td {
     padding: 12px;
   }
 
+  #transferWorkSection .current-item-card {
+    padding: 8px;
+  }
+
+  .current-item-compact-grid {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  #transferWorkSection .current-item-head strong {
+    font-size: 1.08rem;
+  }
+
+  #transferWorkSection .current-item-head span {
+    max-width: none;
+    white-space: nowrap;
+  }
+
   .current-item-card p {
     font-size: 1.02rem;
     font-weight: 800;
     line-height: 1.25;
+  }
+
+  #transferWorkSection .current-item-card p {
+    font-size: 0.86rem;
+    font-weight: 700;
   }
 
   .current-qty-highlight {
@@ -2666,12 +2798,24 @@ td {
     line-height: 1.05;
   }
 
+  #transferWorkSection .current-qty-highlight {
+    padding: 8px;
+  }
+
+  #transferWorkSection .current-qty-highlight strong {
+    font-size: 1.08rem;
+  }
+
   .current-location-line {
     padding: 9px;
   }
 
   .current-location-line strong {
     font-size: 1.15rem;
+  }
+
+  #transferWorkSection .current-location-line strong {
+    font-size: 0.92rem;
   }
 
   .transfer-qty-row {

@@ -5625,10 +5625,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
     $("transferCurrentItem").innerHTML = [
       "<span class=\"current-item-kicker\">" + (mode === "MONTAGEM" ? "ITEM PARA CAIXA" : "PRÓXIMO ITEM") + "</span>",
+      "<div class=\"current-item-compact-grid\">",
+      "<div class=\"current-item-main-info\">",
       "<div class=\"current-item-head\"><strong>SKU " + escapeHtml(item.sku) + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
       productName ? "<p>" + escapeHtml(productName) + "</p>" : "",
-      highlight,
       mode === "MONTAGEM" ? "" : "<div class=\"current-location-line\"><span>Endereço</span><strong>" + escapeHtml(locationLine.replace(/^EndereÃ§o: |^Endereço: /, "")) + "</strong></div>",
+      "</div>",
+      highlight,
+      "</div>",
       "<div class=\"transfer-qty-row current-item-meta\">",
       meta,
       "</div>"
