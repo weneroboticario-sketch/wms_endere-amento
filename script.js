@@ -3042,7 +3042,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("metricLocations").textContent = uniqueLocations.length;
     $("metricBindings").textContent = state.bindings.length;
     $("metricUpdated").textContent = state.bindings.length ? formatDateTime(latestDate(state.bindings)) : "-";
-    setTextIfExists("metricTransfersOpen", transferState.transfers.filter(function (transfer) {
+    setTextIfExists("metricTransfersOpen", getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA" && !isFinalTransferStatus(transfer.status);
     }).length);
     setTextIfExists("metricConferencesPending", conferenceState.conferences.filter(function (conference) {
@@ -3089,7 +3089,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getActiveUserTasks() {
     if (!authState.currentUser) return [];
-    var transfers = transferState.transfers.filter(function (transfer) {
+    var transfers = getVisibleTransfers().filter(function (transfer) {
       if (transfer.status === "CANCELADA") return false;
       if (isFinalTransferStatus(transfer.status)) return false;
       if (authState.currentUser.role === "OPERADOR") {
@@ -5641,9 +5641,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getVisibleTransfers() {
     if (!authState.currentUser) return [];
-    if (isAdminOrSupervisor()) return transferState.transfers.slice();
-    return transferState.transfers.filter(function (transfer) {
+    var activeTransfers = transferState.transfers.filter(transferBelongsToActiveWarehouse);
+    if (isAdminOrSupervisor()) return activeTransfers;
+    return activeTransfers.filter(function (transfer) {
       return transfer.responsibleId === authState.currentUser.id;
+    });
+  }
+
+  function transferBelongsToActiveWarehouse(transfer) {
+    var activeCode = activeWarehouseCode();
+    if (!transfer || !activeCode) return false;
+    var transferWarehouse = normalizeWarehouseCode(transfer.warehouseCode);
+    if (transferWarehouse && transferWarehouse !== activeCode) return false;
+    var originTokens = [
+      transfer.originName,
+      transfer.originStoreCode,
+      transfer.originInternalCode,
+      transfer.originCnpj
+    ].filter(Boolean);
+    if (!originTokens.length) return true;
+    return originTokens.some(function (token) {
+      return transferStoreTokenMatchesWarehouse(token, activeCode);
     });
   }
 
@@ -6925,13 +6943,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transferState.previewSource = mode;
       transferState.previewRawText = mode === "MESSAGE" ? $("transferMessageInput").value : "";
       transferState.previewFileName = parsed.fileName || "";
+      parsed = filterTransferPreviewByActiveWarehouse(parsed);
       transferState.previewGroups = parsed.groups;
       transferState.previewItems = parsed.items;
       transferState.previewErrors = parsed.errors;
       applyDefaultResponsibleToTransferGroups();
       renderTransferPreview();
       var activeGroups = transferState.previewGroups.filter(function (group) { return !group.skipped; });
-      setStatus("transferImportStatus", parsed.errors.length ? "Previa carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Previa carregada: " + activeGroups.length + " transferencia(s), " + parsed.items.length + " item(ns).", parsed.errors.length ? "error" : "success");
+      var filterMessage = parsed.filteredOutGroups ? " " + parsed.filteredOutGroups + " transferencia(s) de outro estoque foram ocultadas." : "";
+      setStatus("transferImportStatus", parsed.errors.length ? "Previa carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Previa carregada: " + activeGroups.length + " transferencia(s), " + parsed.items.length + " item(ns)." + filterMessage, parsed.errors.length ? "error" : "success");
     } catch (error) {
       setStatus("transferImportStatus", "Falha ao ler importacao: " + formatSupabaseError(error), "error");
     }
@@ -7113,6 +7133,61 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       group.errors.forEach(function (error) { errors.push(error); });
     });
     return { groups: groups, items: items, errors: unique(errors), fileName: fileName || "" };
+  }
+
+  function filterTransferPreviewByActiveWarehouse(parsed) {
+    var activeCode = activeWarehouseCode();
+    var groups = parsed.groups || [];
+    if (!activeCode || !groups.length) return parsed;
+    var visibleGroups = groups.filter(function (group) {
+      return transferGroupBelongsToActiveWarehouse(group, activeCode);
+    });
+    var visibleItems = [];
+    visibleGroups.forEach(function (group) {
+      group.items.forEach(function (item) { visibleItems.push(item); });
+    });
+    var visibleErrors = [];
+    if (!groups.length && parsed.errors && parsed.errors.length) visibleErrors = parsed.errors.slice();
+    visibleGroups.forEach(function (group) {
+      group.errors.forEach(function (error) { visibleErrors.push(error); });
+      group.items.forEach(function (item) {
+        (item.errors || []).forEach(function (error) { visibleErrors.push("Linha " + item.sourceLine + ": " + error); });
+      });
+    });
+    if (!visibleGroups.length && groups.length) {
+      visibleErrors.push("Nenhuma transferência do estoque " + activeCode + " encontrada na importação.");
+    }
+    return {
+      groups: visibleGroups,
+      items: visibleItems,
+      errors: unique(visibleErrors),
+      fileName: parsed.fileName || "",
+      filteredOutGroups: Math.max(0, groups.length - visibleGroups.length)
+    };
+  }
+
+  function transferGroupBelongsToActiveWarehouse(group, activeCode) {
+    var origin = group && group.origin;
+    var tokens = [
+      group && group.sourceCode,
+      origin && origin.code,
+      origin && origin.name,
+      origin && origin.storeCode,
+      origin && origin.internalCode,
+      origin && origin.cnpj
+    ];
+    return tokens.some(function (token) {
+      return transferStoreTokenMatchesWarehouse(token, activeCode);
+    });
+  }
+
+  function transferStoreTokenMatchesWarehouse(token, activeCode) {
+    var wanted = normalizeWarehouseCode(activeCode);
+    var normalized = normalizeStoreToken(token);
+    if (!wanted || !normalized) return false;
+    if (normalized === wanted) return true;
+    var reference = findStoreReference(normalized);
+    return !!reference && normalizeWarehouseCode(reference.code) === wanted;
   }
 
   function normalizeStoreToken(value) {
