@@ -1633,6 +1633,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       last_login_at: null
     };
     var response = await supabaseDb.from("wms_users").upsert(admin, { onConflict: "username" });
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb.from("wms_users").upsert(stripOptionalUserWarehouseColumns(admin), { onConflict: "username" });
+    }
     if (response.error) {
       updateSupabaseStatus("Nao foi possivel criar admin inicial: " + formatSupabaseError(response.error), "error");
     }
@@ -2033,6 +2036,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
+  function stripOptionalUserWarehouseColumns(row) {
+    var copy = Object.assign({}, row);
+    delete copy.default_warehouse_id;
+    delete copy.default_warehouse_code;
+    delete copy.allowed_warehouse_codes;
+    delete copy.is_global_admin;
+    return copy;
+  }
+
   function fromDbAccessRequest(row) {
     return {
       id: row.id,
@@ -2114,6 +2126,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!id) row.created_at = now;
     if (password) row.password_hash = await hashPassword(username, password);
     var response = await supabaseDb.from("wms_users").upsert(row, { onConflict: "id" });
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb.from("wms_users").upsert(stripOptionalUserWarehouseColumns(row), { onConflict: "id" });
+    }
     if (response.error) {
       setStatus("userFormStatus", "Erro ao salvar usuario: " + formatSupabaseError(response.error), "error");
       return;
@@ -2334,6 +2349,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       last_login_at: null
     };
     var userResponse = await supabaseDb.from("wms_users").insert(userRow);
+    if (userResponse.error && isMissingColumnError(userResponse.error)) {
+      userResponse = await supabaseDb.from("wms_users").insert(stripOptionalUserWarehouseColumns(userRow));
+    }
     if (userResponse.error) {
       showToast("Erro ao aprovar: " + formatSupabaseError(userResponse.error), "error");
       return;
@@ -8880,6 +8898,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfer_items") >= 0 ||
       message.indexOf("wms_transfer_events") >= 0 ||
       message.indexOf("wms_transfer_divergences") >= 0 ||
+      message.indexOf("wms_users") >= 0 ||
+      message.indexOf("wms_sessions") >= 0 ||
       message.indexOf("wms_conferences") >= 0 ||
       message.indexOf("wms_conference_items") >= 0 ||
       message.indexOf("wms_conference_events") >= 0 ||
