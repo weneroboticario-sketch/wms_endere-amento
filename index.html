@@ -103,6 +103,7 @@
           <p class="menu-label">Administracao</p>
           <button class="menu-item admin-only" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
           <button class="menu-item" data-icon="HIS" data-screen="historico" type="button">Historico</button>
+          <button class="menu-item admin-only" data-icon="MAN" data-screen="manutencao" type="button">Manutencao</button>
           <button class="menu-item" data-icon="CFG" data-screen="configuracoes" type="button">Configuracoes</button>
         </div>
       </nav>
@@ -438,7 +439,6 @@
           <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
-          <button class="secondary-button transfer-tab" data-transfer-tab="transferConferenceSection" type="button" hidden>Conferência XML</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="finalizedTransfersSection" type="button">Finalizadas</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
         </div>
@@ -609,34 +609,6 @@
                 <tbody id="finalizedTransferRows"></tbody>
               </table>
             </div>
-          </section>
-        </section>
-
-        <section class="transfer-section" id="transferConferenceSection" hidden>
-          <section class="panel">
-            <div class="panel-header">
-              <h3>Conferência XML</h3>
-            </div>
-            <div class="transfer-conference-admin-grid">
-              <label>Transferência
-                <select id="conferenceTransferSelect"></select>
-              </label>
-              <label>Pessoa que vai conferir
-                <select id="conferenceUserSelect"></select>
-              </label>
-              <label>Arquivo XML
-                <input id="conferenceXmlCreateInput" type="file" accept=".xml,text/xml,application/xml">
-              </label>
-            </div>
-            <div id="conferenceAdminSummary" class="xml-summary"></div>
-            <div class="button-row">
-              <button class="primary-button" id="createConferenceFromXmlButton" type="button">Criar conferência pelo XML</button>
-              <button class="primary-button" id="assignConferenceSelectedButton" type="button">Atribuir conferência</button>
-              <button class="secondary-button" id="exportConferenceSelectedButton" type="button">Exportar XML</button>
-              <button class="secondary-button" id="openConferenceSelectedButton" type="button">Abrir transferência</button>
-              <button class="remove-small" id="deleteConferenceSelectedButton" type="button">Excluir conferência</button>
-            </div>
-            <div id="conferenceAdminStatus" class="inline-status"></div>
           </section>
         </section>
 
@@ -1032,6 +1004,65 @@
                   </tr>
                 </thead>
                 <tbody id="accessRequestsRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="manutencao">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Administração</p>
+            <h2>Manutenção do Sistema</h2>
+          </div>
+        </div>
+        <div class="dashboard-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Resumo do banco</h3>
+            </div>
+            <p class="muted">Área restrita ao administrador. Nenhuma limpeza remove usuários, lojas ou endereçamentos.</p>
+            <div id="maintenanceSummary" class="transfer-summary-grid"></div>
+            <div class="button-row">
+              <button class="primary-button" id="verifyMaintenanceButton" type="button">Verificar resíduos</button>
+              <button class="danger-button" id="cleanResiduesButton" type="button">Limpar resíduos de teste</button>
+            </div>
+            <div id="maintenanceStatus" class="inline-status"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Transferências de teste</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Transferência</th>
+                    <th>Status</th>
+                    <th>Responsável</th>
+                    <th>Criada em</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="maintenanceTestRows"></tbody>
+              </table>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Registros órfãos encontrados</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tabela</th>
+                    <th>Registros órfãos</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="maintenanceResidueRows"></tbody>
               </table>
             </div>
           </section>

@@ -21,6 +21,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR"],
+    manutencao: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
   var TRANSFER_STATUSES = [
@@ -165,6 +166,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     scanInputStartedAt: 0,
     lastScanInputAt: 0,
     tablesAvailable: true
+  };
+  var maintenanceState = {
+    lastReport: null,
+    checking: false,
+    cleaning: false
   };
   var CONFERENCE_STATUSES = [
     "PENDENTE",
@@ -453,13 +459,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var from = 0;
     var pageSize = 1000;
     var uiEventTypes = [
-      "XML_CONFERENCE_ASSIGNED",
-      "XML_CONFERENCE",
+      "TRANSFER_CREATED",
+      "TRANSFER_ASSIGNED",
       "SEPARATION_STARTED",
       "SEPARATION_FINISHED",
       "PACKING_STARTED",
       "PACKING_FINISHED",
-      "TRANSFER_FINALIZED"
+      "TRANSFER_FINALIZED",
+      "TRANSFER_FINALIZED_WITH_DIVERGENCE",
+      "TRANSFER_DELETED_TEST"
     ];
     while (true) {
       var response = await supabaseDb
@@ -1044,6 +1052,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function recordTransferEvent(transferId, itemId, eventType, sku, quantity, details, payload, meta) {
     if (!isSupabaseReady()) return;
+    var allowedTransferEvents = [
+      "TRANSFER_CREATED",
+      "TRANSFER_ASSIGNED",
+      "SEPARATION_STARTED",
+      "SEPARATION_FINISHED",
+      "PACKING_STARTED",
+      "PACKING_FINISHED",
+      "TRANSFER_FINALIZED",
+      "TRANSFER_FINALIZED_WITH_DIVERGENCE",
+      "TRANSFER_CANCELLED",
+      "TRANSFER_DELETED_TEST"
+    ];
+    if (allowedTransferEvents.indexOf(eventType) < 0) return;
     var user = authState.currentUser || {};
     meta = meta || {};
     var row = {
@@ -1976,6 +1997,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     updateModuleSubtitle(screenId);
     renderAll();
     if (screenId === "usuarios") renderUsers();
+    if (screenId === "manutencao") renderMaintenance();
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
@@ -1983,7 +2005,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
@@ -2090,14 +2112,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $(id).addEventListener("input", renderTransferPanel);
       $(id).addEventListener("change", renderTransferPanel);
     });
-    $("conferenceTransferSelect").addEventListener("change", renderTransferConferenceAdminPanel);
-    $("conferenceUserSelect").addEventListener("change", renderTransferConferenceAdminPanel);
-    $("conferenceXmlCreateInput").addEventListener("change", renderTransferConferenceAdminPanel);
-    $("createConferenceFromXmlButton").addEventListener("click", createConferenceFromXmlFile);
-    $("assignConferenceSelectedButton").addEventListener("click", assignSelectedTransferConference);
-    $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
-    $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
-    $("deleteConferenceSelectedButton").addEventListener("click", deleteSelectedTransferConference);
+    if ($("conferenceTransferSelect")) $("conferenceTransferSelect").addEventListener("change", renderTransferConferenceAdminPanel);
+    if ($("conferenceUserSelect")) $("conferenceUserSelect").addEventListener("change", renderTransferConferenceAdminPanel);
+    if ($("conferenceXmlCreateInput")) $("conferenceXmlCreateInput").addEventListener("change", renderTransferConferenceAdminPanel);
+    if ($("createConferenceFromXmlButton")) $("createConferenceFromXmlButton").addEventListener("click", createConferenceFromXmlFile);
+    if ($("assignConferenceSelectedButton")) $("assignConferenceSelectedButton").addEventListener("click", assignSelectedTransferConference);
+    if ($("exportConferenceSelectedButton")) $("exportConferenceSelectedButton").addEventListener("click", exportSelectedTransferConferenceXml);
+    if ($("openConferenceSelectedButton")) $("openConferenceSelectedButton").addEventListener("click", openSelectedTransferConference);
+    if ($("deleteConferenceSelectedButton")) $("deleteConferenceSelectedButton").addEventListener("click", deleteSelectedTransferConference);
     $("transferImportModeInput").addEventListener("change", handleTransferImportModeChange);
     $("transferResponsibleInput").addEventListener("change", function () {
       applyDefaultResponsibleToTransferGroups(true);
@@ -2184,6 +2206,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferProductList").addEventListener("click", handleTransferWorkListClick);
     if ($("conferenceXmlButton")) $("conferenceXmlButton").addEventListener("click", conferenceTransferXml);
     $("clearHistoryButton").addEventListener("click", clearHistory);
+    $("verifyMaintenanceButton").addEventListener("click", verifyMaintenanceResidues);
+    $("cleanResiduesButton").addEventListener("click", cleanMaintenanceResidues);
+    $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
     $("saveSupabaseButton").addEventListener("click", saveSupabaseSettings);
@@ -2464,6 +2489,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderHistory();
     renderTransfers();
     renderConferences();
+    renderMaintenance();
     renderOperatorTasksAlert();
   }
 
@@ -3404,7 +3430,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderTransferPanel();
     renderMyTransfers();
     renderFinalizedTransfers();
-    renderTransferConferenceAdminPanel();
     renderEstablishments();
     renderTransferPreview();
     renderTransferWork();
@@ -3807,6 +3832,188 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "") + "</div></td>",
       "</tr>"
     ].join("");
+  }
+
+  function renderMaintenance() {
+    if (!$("maintenanceSummary")) return;
+    if (!isAdmin()) {
+      $("maintenanceSummary").innerHTML = "";
+      $("maintenanceTestRows").innerHTML = "";
+      $("maintenanceResidueRows").innerHTML = "";
+      return;
+    }
+    var report = maintenanceState.lastReport || buildLocalMaintenanceReport();
+    $("maintenanceSummary").innerHTML = [
+      summaryChip("Transferências", report.transferCount),
+      summaryChip("Testes encontrados", report.testTransfers.length, report.testTransfers.length ? "result-changed" : "result-ok"),
+      summaryChip("Resíduos órfãos", report.orphanTotal, report.orphanTotal ? "result-missing" : "result-ok"),
+      summaryChip("Tabelas avaliadas", report.tables.length)
+    ].join("");
+    $("maintenanceTestRows").innerHTML = report.testTransfers.length ? report.testTransfers.map(function (transfer) {
+      return [
+        "<tr>",
+        "<td><strong>" + escapeHtml(transfer.name || transfer.code || "-") + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || transfer.id) + "</span></td>",
+        "<td><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
+        "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
+        "<td>" + formatDateTime(transfer.createdAt) + "</td>",
+        "<td><button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir transferência de teste</button></td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"5\">Nenhuma transferência marcada como teste.</td></tr>";
+    $("maintenanceResidueRows").innerHTML = report.tables.length ? report.tables.map(function (table) {
+      return [
+        "<tr>",
+        "<td>" + escapeHtml(table.name) + "</td>",
+        "<td>" + table.orphanCount + "</td>",
+        "<td>" + escapeHtml(table.missing ? "Tabela ausente" : table.orphanCount ? "Pode limpar" : "OK") + "</td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"3\">Clique em Verificar resíduos para avaliar o banco.</td></tr>";
+  }
+
+  function buildLocalMaintenanceReport() {
+    var testTransfers = transferState.transfers.filter(isLikelyTestTransfer);
+    return {
+      transferCount: transferState.transfers.length,
+      testTransfers: testTransfers,
+      orphanTotal: 0,
+      tables: []
+    };
+  }
+
+  function isLikelyTestTransfer(transfer) {
+    var haystack = normalizeText([
+      transfer.id,
+      transfer.code,
+      transfer.name,
+      transfer.observation,
+      transfer.createdByName
+    ].join(" ")).toLowerCase();
+    return haystack.indexOf("teste") >= 0 || haystack.indexOf("test") >= 0;
+  }
+
+  function maintenanceTransferTables() {
+    return [
+      { name: "wms_task_notifications", column: "transfer_id" },
+      { name: "wms_notifications", column: "transfer_id" },
+      { name: "wms_transfer_boxes", column: "transfer_id" },
+      { name: "wms_transfer_packages", column: "transfer_id" },
+      { name: "wms_transfer_divergences", column: "transfer_id" },
+      { name: "wms_transfer_events", column: "transfer_id" },
+      { name: "wms_transfer_items", column: "transfer_id" }
+    ];
+  }
+
+  async function verifyMaintenanceResidues() {
+    if (!isAdmin()) return;
+    if (!isSupabaseReady()) {
+      setStatus("maintenanceStatus", "Supabase não conectado.", "error");
+      return;
+    }
+    if (maintenanceState.checking) return;
+    maintenanceState.checking = true;
+    $("verifyMaintenanceButton").disabled = true;
+    $("verifyMaintenanceButton").textContent = "Verificando...";
+    try {
+      setStatus("maintenanceStatus", "Avaliando tabelas de transferência...", "warning");
+      var transferIds = new Set(transferState.transfers.map(function (transfer) { return transfer.id; }));
+      var tables = [];
+      var orphanTotal = 0;
+      for (var i = 0; i < maintenanceTransferTables().length; i += 1) {
+        var table = maintenanceTransferTables()[i];
+        var result = await readMaintenanceTable(table);
+        if (result.missing) {
+          tables.push({ name: table.name, orphanCount: 0, orphanRows: [], missing: true });
+          continue;
+        }
+        var orphanRows = result.rows.filter(function (row) {
+          var transferId = row[table.column];
+          return transferId && !transferIds.has(transferId);
+        });
+        orphanTotal += orphanRows.length;
+        tables.push({ name: table.name, column: table.column, orphanCount: orphanRows.length, orphanRows: orphanRows, missing: false });
+      }
+      maintenanceState.lastReport = {
+        transferCount: transferState.transfers.length,
+        testTransfers: transferState.transfers.filter(isLikelyTestTransfer),
+        orphanTotal: orphanTotal,
+        tables: tables
+      };
+      renderMaintenance();
+      setStatus("maintenanceStatus", "Relatório pronto. Nada foi apagado.", orphanTotal ? "warning" : "success");
+    } catch (error) {
+      console.error("Erro na manutenção:", error);
+      setStatus("maintenanceStatus", "Erro ao verificar resíduos: " + formatSupabaseError(error), "error");
+    } finally {
+      maintenanceState.checking = false;
+      $("verifyMaintenanceButton").disabled = false;
+      $("verifyMaintenanceButton").textContent = "Verificar resíduos";
+    }
+  }
+
+  async function readMaintenanceTable(table) {
+    var allRows = [];
+    var from = 0;
+    var pageSize = 1000;
+    while (true) {
+      var response = await supabaseDb
+        .from(table.name)
+        .select("id," + table.column)
+        .range(from, from + pageSize - 1);
+      if (response.error) {
+        if (isMissingTransferTableError(response.error)) return { rows: [], missing: true };
+        throw response.error;
+      }
+      var rows = response.data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return { rows: allRows, missing: false };
+  }
+
+  async function cleanMaintenanceResidues() {
+    if (!isAdmin()) return;
+    if (!maintenanceState.lastReport) {
+      setStatus("maintenanceStatus", "Clique em Verificar resíduos antes de limpar.", "warning");
+      return;
+    }
+    var report = maintenanceState.lastReport;
+    if (!report.orphanTotal) {
+      setStatus("maintenanceStatus", "Nenhum resíduo órfão encontrado para limpar.", "success");
+      return;
+    }
+    if (!window.confirm("Esta ação remove apenas dados de teste e registros órfãos. Deseja continuar?")) return;
+    if (maintenanceState.cleaning) return;
+    maintenanceState.cleaning = true;
+    $("cleanResiduesButton").disabled = true;
+    $("cleanResiduesButton").textContent = "Limpando...";
+    try {
+      var removed = 0;
+      for (var i = 0; i < report.tables.length; i += 1) {
+        var table = report.tables[i];
+        if (table.missing || !table.orphanRows || !table.orphanRows.length) continue;
+        for (var j = 0; j < table.orphanRows.length; j += 1) {
+          var row = table.orphanRows[j];
+          if (!row.id) continue;
+          var response = await supabaseDb.from(table.name).delete().eq("id", row.id);
+          if (response.error && !isMissingTransferTableError(response.error)) throw response.error;
+          removed += 1;
+        }
+      }
+      maintenanceState.lastReport = null;
+      await loadTransferData();
+      renderTransfers();
+      await verifyMaintenanceResidues();
+      setStatus("maintenanceStatus", removed + " registro(s) órfão(s) removido(s).", "success");
+    } catch (error) {
+      console.error("Erro ao limpar resíduos:", error);
+      setStatus("maintenanceStatus", "Erro ao limpar resíduos: " + formatSupabaseError(error), "error");
+    } finally {
+      maintenanceState.cleaning = false;
+      $("cleanResiduesButton").disabled = false;
+      $("cleanResiduesButton").textContent = "Limpar resíduos de teste";
+    }
   }
 
   function renderEstablishments() {
@@ -4476,19 +4683,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var expectedTotal = report.stats.requested;
     var packedTotal = report.stats.packed;
     var totalDifference = packedTotal - expectedTotal;
-    var correctItems = report.items.filter(function (item) { return Math.abs(getTransferCheckedQty(item, transfer) - Number(item.requestedQty || 0)) < 0.0001 && !item.divergenceType; }).length;
-    var divergentItems = report.items.length - correctItems + report.extraItems.length;
+    var origin = transfer.originName || transfer.originStoreCode || "-";
+    var destination = transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "-";
+    var correctItems = report.items.filter(function (item) {
+      return Math.abs(getTransferCheckedQty(item, transfer) - Number(item.requestedQty || 0)) < 0.0001 && !item.divergenceType;
+    }).length;
+    var missingItems = report.items.filter(function (item) {
+      return getTransferCheckedQty(item, transfer) < Number(item.requestedQty || 0);
+    }).length;
+    var divergentItems = report.items.length - correctItems;
+    var totalResult = transferQtyResult(expectedTotal, packedTotal, { divergenceType: totalDifference ? "DIFERENCA_TOTAL" : "" });
     $("transferFinalReportSummary").innerHTML = [
-      "<div><span>Resultado</span><strong>" + escapeHtml(transferStatusDisplayLabel(transfer.finalResult || transfer.status)) + "</strong></div>",
-      "<div><span>Tempo total</span><strong>" + formatDuration(report.totalDurationSeconds) + "</strong></div>",
+      summaryChip("Origem", origin),
+      summaryChip("Destino", destination),
+      summaryChip("Responsavel", transfer.responsibleName || "-"),
+      summaryChip("Status", transferStatusDisplayLabel(transfer.status)),
+      summaryChip("Resultado", transferStatusDisplayLabel(transfer.finalResult || transfer.status), totalDifference || report.extraItems.length ? "result-changed" : "result-ok"),
       "<div><span>Tempo separacao</span><strong>" + formatDuration(report.separationDurationSeconds) + "</strong></div>",
       "<div><span>Tempo montagem</span><strong>" + formatDuration(report.packingDurationSeconds) + "</strong></div>",
-      "<div><span>Total previsto</span><strong>" + formatQty(expectedTotal) + "</strong></div>",
+      "<div><span>Tempo total</span><strong>" + formatDuration(report.totalDurationSeconds) + "</strong></div>",
+      "<div><span>Qtd prevista</span><strong>" + formatQty(expectedTotal) + "</strong></div>",
       summaryChip("Lacrado/enviado", formatQty(packedTotal), totalDifference ? "result-changed" : "result-ok"),
-      summaryChip("Diferenca total", formatQty(totalDifference), "result-" + transferQtyResult(expectedTotal, packedTotal, { divergenceType: totalDifference ? "DIFERENCA_TOTAL" : "" }).key),
-      "<div><span>SKUs</span><strong>" + report.stats.totalSkus + "</strong></div>",
+      summaryChip("Diferenca", formatQty(totalDifference), "result-" + totalResult.key),
       summaryChip("Produtos corretos", correctItems, "result-ok"),
-      summaryChip("Com diferenca", divergentItems, divergentItems ? "result-changed" : "result-ok"),
+      summaryChip("Produtos com diferenca", divergentItems, divergentItems ? "result-changed" : "result-ok"),
+      summaryChip("Produtos faltantes", missingItems, missingItems ? "result-missing" : "result-ok"),
       summaryChip("Extras", report.extraItems.length, report.extraItems.length ? "result-extra" : "result-ok")
     ].join("");
     var isConference = isXmlConferenceTransfer(transfer);
@@ -7004,7 +7223,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
-    if (!window.confirm("Esta acao excluira definitivamente esta transferencia e todos os dados relacionados. Use somente para testes. Deseja continuar?")) return false;
+    var transferLabel = transfer.name || transfer.code || id;
+    if (!window.confirm("Esta ação remove apenas dados de teste e registros vinculados a esta transferência. Deseja continuar?")) return false;
+    var typed = window.prompt("Para confirmar, digite EXCLUIR TESTE:\n" + transferLabel);
+    if (normalizeText(typed).toUpperCase() !== "EXCLUIR TESTE") {
+      showToast("Exclusão cancelada.", "warning");
+      return false;
+    }
     var actionButton = document.querySelector("[data-transfer-delete-permanent=\"" + id + "\"]");
     if (!beginTransferAction("delete-test:" + id, actionButton, "Excluindo...")) return false;
     try {
@@ -7023,8 +7248,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         if (deleteResponse.error && !isMissingTransferTableError(deleteResponse.error)) throw deleteResponse.error;
       }
       if (transferState.activeTransferId === id) transferState.activeTransferId = "";
+      maintenanceState.lastReport = null;
       await loadTransferData();
       renderTransfers();
+      renderMaintenance();
       showToast("Transferencia de teste excluida.", "success");
       return true;
     } finally {
