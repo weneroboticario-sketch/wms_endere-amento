@@ -215,7 +215,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     accessRequests: [],
     usersTableAvailable: true,
     sessionsTableAvailable: true,
-    accessRequestsTableAvailable: true
+    accessRequestsTableAvailable: true,
+    loginInProgress: false
   };
 
   document.addEventListener("DOMContentLoaded", async function () {
@@ -1347,6 +1348,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function handleLogin() {
+    if (authState.loginInProgress) return;
+    authState.loginInProgress = true;
+    var loginButton = $("loginButton");
+    if (loginButton) {
+      loginButton.disabled = true;
+      loginButton.textContent = "Entrando...";
+    }
+    try {
+      setStatus("loginStatus", "Entrando...", "warning");
     var login = normalizeText($("loginUserInput").value).toLowerCase();
     var password = $("loginPasswordInput").value || "";
     if (!login || !password) {
@@ -1389,6 +1399,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authState.currentSession));
     $("loginPasswordInput").value = "";
     await enterAuthenticatedApp(true);
+    } catch (error) {
+      console.error("Erro ao entrar:", error);
+      showLogin("Erro ao entrar: " + formatSupabaseError(error), "error");
+    } finally {
+      authState.loginInProgress = false;
+      if (loginButton) {
+        loginButton.disabled = false;
+        loginButton.textContent = "Entrar";
+      }
+    }
   }
 
   async function enterAuthenticatedApp(showWelcome) {
@@ -2012,6 +2032,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function bindEvents() {
     $("loginForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      handleLogin();
+    });
+    $("loginButton").addEventListener("click", function (event) {
       event.preventDefault();
       handleLogin();
     });
