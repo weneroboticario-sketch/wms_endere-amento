@@ -720,7 +720,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         try {
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "id");
         } catch (bindingError) {
-          if (!isMissingColumnError(bindingError) || activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw bindingError;
+          if (!isMissingColumnError(bindingError)) throw bindingError;
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding).map(stripWarehouseColumns), "id");
         }
       }
@@ -728,7 +728,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         try {
           await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
         } catch (historyError) {
-          if (isMissingColumnError(historyError) && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+          if (isMissingColumnError(historyError)) {
             await upsertInChunks("wms_history", state.history.map(toDbHistory).map(stripWarehouseColumns), "id");
             historyError = null;
           }
@@ -1412,7 +1412,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
         .upsert(toDbBinding(binding), { onConflict: "warehouse_code,sku,location_code" });
-      if (bindingResponse.error && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+      if (bindingResponse.error && isMissingColumnError(bindingResponse.error)) {
         bindingResponse = await supabaseDb
           .from("wms_bindings")
           .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "sku,location_code" });
@@ -1422,7 +1422,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var historyResponse = await supabaseDb
         .from("wms_history")
         .upsert(toDbHistory(historyItem), { onConflict: "id" });
-      if (historyResponse.error && isMissingColumnError(historyResponse.error) && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+      if (historyResponse.error && isMissingColumnError(historyResponse.error)) {
         historyResponse = await supabaseDb
           .from("wms_history")
           .upsert(stripWarehouseColumns(toDbHistory(historyItem)), { onConflict: "id" });
@@ -2902,7 +2902,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
         .upsert(toDbBinding(binding), { onConflict: "id" });
-      if (bindingResponse.error && isMissingColumnError(bindingResponse.error) && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+      if (bindingResponse.error && isMissingColumnError(bindingResponse.error)) {
         bindingResponse = await supabaseDb
           .from("wms_bindings")
           .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "id" });
@@ -2918,7 +2918,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var historyResponse = await supabaseDb
           .from("wms_history")
           .upsert(historyItems.map(toDbHistory), { onConflict: "id" });
-        if (historyResponse.error && isMissingColumnError(historyResponse.error) && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+        if (historyResponse.error && isMissingColumnError(historyResponse.error)) {
           historyResponse = await supabaseDb
             .from("wms_history")
             .upsert(historyItems.map(toDbHistory).map(stripWarehouseColumns), { onConflict: "id" });
@@ -8717,7 +8717,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       };
 
       var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "warehouse_code,sku,location_code" });
-      if (insertResponse.error && activeWarehouseCode() === DEFAULT_WAREHOUSE_CODE) {
+      if (insertResponse.error && isMissingColumnError(insertResponse.error)) {
         insertResponse = await supabaseDb.from("wms_bindings").upsert(stripWarehouseColumns(probe), { onConflict: "sku,location_code" });
       }
       if (insertResponse.error) throw insertResponse.error;
@@ -8898,6 +8898,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfer_items") >= 0 ||
       message.indexOf("wms_transfer_events") >= 0 ||
       message.indexOf("wms_transfer_divergences") >= 0 ||
+      message.indexOf("wms_bindings") >= 0 ||
+      message.indexOf("wms_history") >= 0 ||
       message.indexOf("wms_users") >= 0 ||
       message.indexOf("wms_sessions") >= 0 ||
       message.indexOf("wms_conferences") >= 0 ||
