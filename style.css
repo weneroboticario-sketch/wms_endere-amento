@@ -1815,6 +1815,21 @@ td {
   background: #fbfdff;
 }
 
+.box-quantity-fields {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #c8eadc;
+  border-radius: var(--radius);
+  background: #f4fbf8;
+}
+
+.compact-checkbox {
+  min-height: 34px;
+  margin: 0;
+  padding: 6px 0;
+}
+
 .transfer-live-panel {
   align-content: start;
   display: grid;

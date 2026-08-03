@@ -160,6 +160,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     previewFileName: "",
     activeTransferId: "",
     activeWorkMode: "SEPARACAO",
+    productPackaging: {},
+    packagingPromptedSkus: {},
     selectedItemId: "",
     manualSeparationQty: false,
     savingActionKey: "",
@@ -585,16 +587,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.transfers = [];
     transferState.items = [];
     transferState.events = [];
+    transferState.productPackaging = {};
     if (!isSupabaseReady()) return false;
     try {
       var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
       var transferRows = await fetchAllRows("wms_transfers", "created_at", false);
       var itemRows = await fetchAllRows("wms_transfer_items", "created_at", true);
       var eventRows = await fetchTransferUiEvents();
+      var packagingRows = await fetchProductPackagingRows();
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
       transferState.transfers = transferRows.map(fromDbTransfer);
       transferState.items = itemRows.map(fromDbTransferItem);
       transferState.events = eventRows;
+      packagingRows.forEach(function (row) {
+        var pattern = fromDbProductPackaging(row);
+        if (pattern.sku) transferState.productPackaging[normalizeSkuKey(pattern.sku)] = pattern;
+      });
       transferState.tablesAvailable = true;
       return true;
     } catch (error) {
@@ -727,8 +735,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
-  function fromDbTransferItem(row) {
+  async function fetchProductPackagingRows() {
+    try {
+      return await fetchAllRows("wms_product_packaging", "sku", true);
+    } catch (error) {
+      if (!isMissingTransferTableError(error) && !isMissingColumnError(error)) console.warn("Padroes de embalagem nao carregados:", error);
+      return [];
+    }
+  }
+
+  function fromDbProductPackaging(row) {
     return {
+      id: row.id || "",
+      sku: row.sku || "",
+      description: row.descricao || "",
+      unitsPerBox: Number(row.unidades_por_caixa || 0),
+      updatedAt: row.updated_at || "",
+      updatedBy: row.updated_by || ""
+    };
+  }
+
+  function fromDbTransferItem(row) {
+    return applyTransferQuantityType({
       id: row.id,
       transferId: row.transfer_id || "",
       sku: row.sku || "",
@@ -751,9 +779,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       quantityType: row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
       unitsPerBox: Number(row.unidades_por_caixa || 0),
-      totalUnits: Number(row.quantidade_total_unidades || row.quantidade_solicitada || 0),
+      totalUnits: Number(row.quantidade_total_unidades || 0),
       separatedQty: Number(row.quantidade_separada || 0),
       packedQty: Number(row.quantidade_lacrada || 0),
+      packedUnits: Number(row.quantidade_lacrada_unidades || 0),
+      packagingObservation: row.embalagem_observacao || row.observation || "",
       extraQty: Number(row.quantidade_extra || 0),
       missingQty: Number(row.quantidade_faltante || 0),
       excessQty: Number(row.quantidade_excedente || 0),
@@ -766,7 +796,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       status: row.status || "PENDENTE",
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString()
-    };
+    });
   }
 
   function toDbEstablishment(item) {
@@ -848,9 +878,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       tipo_quantidade: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
       unidades_por_caixa: Number(item.unitsPerBox || 0),
-      quantidade_total_unidades: Number(item.totalUnits || item.requestedQty || 0),
+      quantidade_total_unidades: isBoxQuantityItem(item) ? Number(item.totalUnits || 0) : Number(item.totalUnits || item.requestedQty || 0),
       quantidade_separada: Number(item.separatedQty || 0),
       quantidade_lacrada: Number(item.packedQty || 0),
+      quantidade_lacrada_unidades: Number(item.packedUnits || 0),
+      embalagem_observacao: item.packagingObservation || "",
       status: item.status || "PENDENTE",
       created_at: item.createdAt || new Date().toISOString(),
       updated_at: item.updatedAt || new Date().toISOString()
@@ -2219,6 +2251,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         event.preventDefault();
         confirmTransferItem();
       }
+    });
+    $("transferQuantityInput").addEventListener("input", updateTransferBoxTotalPreview);
+    $("transferUnitsPerBoxInput").addEventListener("input", updateTransferBoxTotalPreview);
+    $("transferTotalUnitsInput").addEventListener("input", updateTransferBoxTotalPreview);
+    $("transferMixedBoxInput").addEventListener("change", function () {
+      renderTransferBoxFields();
+      updateTransferBoxTotalPreview();
     });
     $("confirmTransferItemButton").addEventListener("click", confirmTransferItem);
     $("finishSeparationButton").addEventListener("click", finishSeparation);
@@ -4169,6 +4208,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("transferFinalSummary")) $("transferFinalSummary").hidden = true;
       if ($("adminTransferProgressPanel")) $("adminTransferProgressPanel").hidden = true;
       if ($("transferFinalReportPanel")) $("transferFinalReportPanel").hidden = true;
+      if ($("transferBoxFields")) $("transferBoxFields").hidden = true;
       clearXmlConferencePanel();
       return;
     }
@@ -4205,6 +4245,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
+    $("transferQuantityInput").placeholder = mode === "MONTAGEM" && isBoxQuantityItem(selectedForQty) ? "Quantidade de caixas" : "Quantidade";
     $("startPackingButton").hidden = true;
     $("finishSeparationButton").hidden = true;
     $("finishPackingButton").hidden = finalized || mode !== "MONTAGEM";
@@ -4213,6 +4254,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("confirmTransferItemButton").textContent = mode === "SEPARACAO" ? "Confirmar quantidade diferente" : mode === "MONTAGEM" ? "Confirmar item na caixa" : "Atualizar item";
     $("transferScanInput").disabled = finalized || !requiresScan;
     $("transferQuantityInput").disabled = finalized;
+    renderTransferBoxFields();
     $("confirmCurrentCollectButton").hidden = finalized || mode !== "SEPARACAO" || allSeparated;
     $("differentSeparationQtyButton").hidden = finalized || mode !== "SEPARACAO" || allSeparated;
     $("finishSeparationReadyButton").hidden = finalized || mode !== "SEPARACAO" || !allSeparated;
@@ -4351,16 +4393,54 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
   }
 
+  function isBoxQuantityItem(item) {
+    return item && (normalizeText(item.quantityType || "").toUpperCase() === "CAIXA" || isBoxUnit(item.unit));
+  }
+
+  function getTransferExpectedUnits(item) {
+    if (!isBoxQuantityItem(item)) return Number(item.requestedQty || 0);
+    var stored = Number(item.totalUnits || 0);
+    if (stored > 0 && Number(item.unitsPerBox || 0) > 0) return stored;
+    if (Number(item.boxQty || 0) > 0 && Number(item.unitsPerBox || 0) > 0) return Number(item.boxQty || 0) * Number(item.unitsPerBox || 0);
+    return stored || 0;
+  }
+
+  function getTransferPackedUnits(item) {
+    if (!isBoxQuantityItem(item)) return Number(item.packedQty || 0);
+    var stored = Number(item.packedUnits || 0);
+    if (stored > 0) return stored;
+    if (Number(item.packedQty || 0) > 0 && Number(item.unitsPerBox || 0) > 0) return Number(item.packedQty || 0) * Number(item.unitsPerBox || 0);
+    return 0;
+  }
+
+  function formatTransferExpectedLabel(item) {
+    if (!isBoxQuantityItem(item)) return formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN");
+    return formatQty(item.boxQty || item.requestedQty) + " " + escapeHtml(item.unit || "CX");
+  }
+
+  function formatTransferPackedLabel(item) {
+    if (!isBoxQuantityItem(item)) return formatQty(item.packedQty) + " " + escapeHtml(item.unit || "UN");
+    var parts = [formatQty(item.packedQty) + " CX"];
+    var packedUnits = getTransferPackedUnits(item);
+    if (packedUnits) parts.push(formatQty(packedUnits) + " UN");
+    return parts.join(" / ");
+  }
+
   function itemQtyNumbers(item) {
     var requested = Number(item.requestedQty || 0);
     var separated = Number(item.separatedQty || 0);
     var packed = Number(item.packedQty || 0);
+    var expectedUnits = getTransferExpectedUnits(item);
+    var packedUnits = getTransferPackedUnits(item);
     return {
       requested: requested,
       separated: separated,
       pendingSeparation: Math.max(0, requested - separated),
       packed: packed,
-      pendingPacking: Math.max(0, separated - packed)
+      pendingPacking: Math.max(0, separated - packed),
+      expectedUnits: expectedUnits,
+      packedUnits: packedUnits,
+      pendingUnits: Math.max(0, expectedUnits - packedUnits)
     };
   }
 
@@ -4395,11 +4475,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var statusLabel = displayTransferStatusLabel(statusKey);
     var itemClass = "transfer-work-item status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
     var productName = shortProductName(item.description || "");
+    var boxInfo = isBoxQuantityItem(item) ? "<span>Un/CX <b>" + (Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</b></span><span>Total UN <b>" + (Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-") + "</b></span>" : "";
     var qtyRows = mode === "MONTAGEM" ? [
       "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
       "<span>Na caixa <b>" + formatQty(qty.packed) + "</b></span>",
-      "<span>Restante <b>" + formatQty(qty.pendingPacking) + "</b></span>"
+      "<span>Restante <b>" + formatQty(qty.pendingPacking) + "</b></span>",
+      boxInfo
     ].join("") : [
       "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
@@ -4552,19 +4634,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var update = { updated_at: now };
       if (mode === "MONTAGEM") {
         item.packedQty = qty;
+        if (isBoxQuantityItem(item)) {
+          item.packedUnits = qty > 0 && Number(item.unitsPerBox || 0) > 0 ? qty * Number(item.unitsPerBox || 0) : 0;
+          item.totalUnits = Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0);
+          if (qty <= 0) item.packagingObservation = "";
+        }
         item.excessQty = Math.max(0, qty - Number(item.separatedQty || 0));
         item.divergenceType = item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
         item.status = qty <= 0 ? (Number(item.separatedQty || 0) > 0 ? "SEPARADO" : "PENDENTE") : qty >= Number(item.separatedQty || 0) ? "ENVIADO" : "EM_CAIXA";
         update.quantidade_lacrada = item.packedQty;
+        update.quantidade_lacrada_unidades = item.packedUnits || 0;
+        update.quantidade_total_unidades = item.totalUnits || 0;
+        update.embalagem_observacao = item.packagingObservation || "";
       } else {
         item.separatedQty = qty;
         if (Number(item.packedQty || 0) > qty) item.packedQty = qty;
+        if (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0) item.packedUnits = Number(item.packedQty || 0) * Number(item.unitsPerBox || 0);
         item.missingQty = Math.max(0, Number(item.requestedQty || 0) - qty);
         item.excessQty = Math.max(0, qty - Number(item.requestedQty || 0));
         item.divergenceType = item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
         item.status = qty <= 0 ? "PENDENTE" : qty >= Number(item.requestedQty || 0) ? "SEPARADO" : "PARCIAL";
         update.quantidade_separada = item.separatedQty;
         update.quantidade_lacrada = item.packedQty;
+        update.quantidade_lacrada_unidades = item.packedUnits || 0;
       }
       Object.assign(update, {
         quantidade_faltante: item.missingQty || 0,
@@ -4638,6 +4730,63 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return { key: "ok", label: "OK - pego", diff: diff };
   }
 
+  function readTransferBoxPackingInput(item, boxQty) {
+    if (!isBoxQuantityItem(item)) {
+      return { valid: true, packedUnitsDelta: boxQty, unitsPerBox: 0, totalUnits: boxQty, observation: "" };
+    }
+    var mixed = $("transferMixedBoxInput").checked;
+    var unitsPerBox = parseQuantity($("transferUnitsPerBoxInput").value);
+    var totalUnits = mixed ? parseQuantity($("transferTotalUnitsInput").value) : boxQty * unitsPerBox;
+    if (!mixed && (!unitsPerBox || unitsPerBox <= 0)) {
+      return { valid: false, message: "Informe quantas unidades vêm em cada caixa para continuar.", focusId: "transferUnitsPerBoxInput" };
+    }
+    if (mixed && (!totalUnits || totalUnits <= 0)) {
+      return { valid: false, message: "Informe o total em unidades para continuar.", focusId: "transferTotalUnitsInput" };
+    }
+    var referenceUnitsPerBox = Number(item.unitsPerBox || 0);
+    var expectedByPattern = referenceUnitsPerBox > 0 ? boxQty * referenceUnitsPerBox : (!mixed ? totalUnits : 0);
+    return {
+      valid: true,
+      mixed: mixed,
+      unitsPerBox: mixed ? 0 : unitsPerBox,
+      totalUnits: totalUnits,
+      packedUnitsDelta: totalUnits,
+      expectedByPattern: expectedByPattern,
+      observation: mixed ? "Caixas com quantidades diferentes" : ""
+    };
+  }
+
+  async function saveProductPackagingPattern(item) {
+    if (!isSupabaseReady() || !isBoxQuantityItem(item) || !Number(item.unitsPerBox || 0)) return;
+    var now = new Date().toISOString();
+    var row = {
+      id: "pkg-" + normalizeSku(item.sku),
+      sku: item.sku || "",
+      descricao: item.description || "",
+      unidades_por_caixa: Number(item.unitsPerBox || 0),
+      updated_at: now,
+      updated_by: authState.currentUser ? authState.currentUser.name : ""
+    };
+    var response = await supabaseDb.from("wms_product_packaging").upsert(row, { onConflict: "id" });
+    if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) {
+      console.warn("Nao foi possivel salvar padrao de embalagem:", response.error);
+    }
+    transferState.productPackaging[normalizeSkuKey(item.sku)] = fromDbProductPackaging(row);
+  }
+
+  function getProductPackagingPattern(sku) {
+    return transferState.productPackaging[normalizeSkuKey(sku)] || null;
+  }
+
+  function applyKnownPackagingPattern(item) {
+    if (!isBoxQuantityItem(item) || Number(item.unitsPerBox || 0) > 0) return false;
+    var pattern = getProductPackagingPattern(item.sku);
+    if (!pattern || Number(pattern.unitsPerBox || 0) <= 0) return false;
+    item.unitsPerBox = Number(pattern.unitsPerBox || 0);
+    item.totalUnits = Number(item.boxQty || item.requestedQty || 0) * item.unitsPerBox;
+    return true;
+  }
+
   function resultBadgeHtml(result) {
     return "<span class=\"result-badge result-" + escapeHtml(result.key) + "\">" + escapeHtml(result.label) + "</span>";
   }
@@ -4650,8 +4799,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var items = getTransferItems(transfer.id);
     var isConference = isXmlConferenceTransfer(transfer);
     var rows = items.map(function (item) {
-      var checkedQty = isConference ? getTransferCheckedQty(item, transfer) : Number(item.packedQty || 0);
-      var expectedQty = Number(item.requestedQty || 0);
+      var checkedQty = getTransferCheckedQty(item, transfer);
+      var expectedQty = isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
       var remainingQty = Math.max(0, expectedQty - checkedQty);
       var differenceQty = checkedQty - expectedQty;
       var result = transferQtyResult(expectedQty, checkedQty, item);
@@ -4704,16 +4853,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferFinalReportPanel").hidden = !visible;
     if (!visible) return;
     var report = getTransferFinalReport(transfer);
-    var expectedTotal = report.stats.requested;
-    var packedTotal = report.stats.packed;
+    var isConference = isXmlConferenceTransfer(transfer);
+    var expectedTotal = report.items.reduce(function (sum, item) { return sum + (isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item)); }, 0);
+    var packedTotal = report.items.reduce(function (sum, item) { return sum + getTransferCheckedQty(item, transfer); }, 0);
     var totalDifference = packedTotal - expectedTotal;
     var origin = transfer.originName || transfer.originStoreCode || "-";
     var destination = transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "-";
     var correctItems = report.items.filter(function (item) {
-      return Math.abs(getTransferCheckedQty(item, transfer) - Number(item.requestedQty || 0)) < 0.0001 && !item.divergenceType;
+      var expectedQty = isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
+      return Math.abs(getTransferCheckedQty(item, transfer) - expectedQty) < 0.0001 && !item.divergenceType;
     }).length;
     var missingItems = report.items.filter(function (item) {
-      return getTransferCheckedQty(item, transfer) < Number(item.requestedQty || 0);
+      var expectedQty = isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
+      return getTransferCheckedQty(item, transfer) < expectedQty;
     }).length;
     var divergentItems = report.items.length - correctItems;
     var totalResult = transferQtyResult(expectedTotal, packedTotal, { divergenceType: totalDifference ? "DIFERENCA_TOTAL" : "" });
@@ -4734,10 +4886,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Produtos faltantes", missingItems, missingItems ? "result-missing" : "result-ok"),
       summaryChip("Extras", report.extraItems.length, report.extraItems.length ? "result-extra" : "result-ok")
     ].join("");
-    var isConference = isXmlConferenceTransfer(transfer);
     var itemRows = report.items.map(function (item) {
       var checkedQty = getTransferCheckedQty(item, transfer);
-      var expectedQty = Number(item.requestedQty || 0);
+      var expectedQty = isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
       var diff = checkedQty - expectedQty;
       var missingQty = Math.max(0, expectedQty - checkedQty);
       var excessQty = Math.max(0, checkedQty - expectedQty);
@@ -4745,7 +4896,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isConference) {
         return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Situação\">" + resultBadgeHtml(result) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Lacrada/Enviada\">" + formatQty(item.packedQty) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
+      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatTransferExpectedLabel(item) + "</td><td data-label=\"Unidade\">" + escapeHtml(item.unit || "UN") + "</td><td data-label=\"Un/CX\">" + (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</td><td data-label=\"Total previsto\">" + formatQty(expectedQty) + " UN</td><td data-label=\"Lacrada/Enviada\">" + formatTransferPackedLabel(item) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
@@ -4756,6 +4907,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var locationHeaders = ["Localizacao"];
     var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Situação", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
     var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Situação", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
+    if (!isConference) itemHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Unidade", "Un/CX", "Total previsto", "Lacrada/Enviada", "Dif.", "Status"]);
     $("transferFinalReportDetails").innerHTML = [
       reportTableHtml(isConference ? "Itens do XML" : "Resultado por SKU", itemHeaders, itemRows, itemHeaders.length),
       reportTableHtml("Itens extras", extraHeaders, extraRows, extraHeaders.length)
@@ -4805,6 +4957,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var statusLabel = displayTransferStatusLabel(transferItemStatusLabel(item));
     var locationLine = transferCompactLocationLabel(item);
     var productName = normalizeText(item.description || "");
+    var isBox = isBoxQuantityItem(item);
     var highlight = mode === "MONTAGEM"
       ? "<div class=\"current-qty-highlight packing\"><span>Restante para caixa</span><strong>" + formatQty(qty.pendingPacking) + " " + escapeHtml(item.unit || "UN") + "</strong></div>"
       : "<div class=\"current-qty-highlight\"><span>Quantidade para coletar</span><strong>" + formatQty(qty.pendingSeparation || qty.requested) + " " + escapeHtml(item.unit || "UN") + "</strong></div>";
@@ -4812,7 +4965,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span>Solicitado <b>" + formatQty(qty.requested) + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
       "<span>Na caixa <b>" + formatQty(qty.packed) + "</b></span>",
-      "<span>Restante <b>" + formatQty(qty.pendingPacking) + "</b></span>"
+      "<span>Restante <b>" + formatQty(qty.pendingPacking) + "</b></span>",
+      isBox ? "<span>Unidades por caixa <b>" + (Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</b></span>" : "",
+      isBox ? "<span>Total em unidades <b>" + (Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-") + "</b></span>" : ""
     ].join("") : [
       "<span>Solicitado <b>" + formatQty(qty.requested) + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
@@ -4908,6 +5063,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function getTransferCheckedQty(item, transfer) {
+    if (!isXmlConferenceTransfer(transfer) && isBoxQuantityItem(item)) return getTransferPackedUnits(item);
     return isXmlConferenceTransfer(transfer) ? Number(item.separatedQty || 0) : Number(item.packedQty || 0);
   }
 
@@ -4954,7 +5110,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var divergences = [];
     originalItems.forEach(function (item) {
       var checkedQty = getTransferCheckedQty(item, transfer);
-      var expectedQty = Number(item.requestedQty || 0);
+      var expectedQty = isXmlConferenceTransfer(transfer) ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item);
       var diff = checkedQty - expectedQty;
       if (diff < 0) divergences.push({ sku: item.sku, description: item.description, type: "FALTA_DE_ITEM", expected: expectedQty, informed: checkedQty, difference: diff });
       if (diff > 0 || Number(item.excessQty || 0) > 0) divergences.push({ sku: item.sku, description: item.description, type: "QUANTIDADE_EXCEDENTE", expected: expectedQty, informed: checkedQty, difference: diff });
@@ -6171,18 +6327,42 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function parseTransferMessageItem(line, lineNumber) {
     var normalized = normalizeText(line).replace(/\u2013|\u2014/g, "-");
-    var match = normalized.match(/^(\S+)\s+(.+?)\s+-\s*([\d.,]+)\s*(un|und|unidade|unidades|cx|caixa|caixas)?$/i)
-      || normalized.match(/^(\S+)\s+(.+?)\s+([\d.,]+)\s*(un|und|unidade|unidades|cx|caixa|caixas)$/i);
+    var match = normalized.match(/^(\S+)\s+(.+?)\s+-\s*([\d.,]+)\s*(un|und|unidade|unidades|cx|cxs|caixa|caixas)?$/i)
+      || normalized.match(/^(\S+)\s+(.+?)\s+([\d.,]+)\s*(un|und|unidade|unidades|cx|cxs|caixa|caixas)$/i);
     var errors = [];
     if (!match) return { sku: "", description: line, requestedQty: 0, unit: "UN", quantityType: "UNIDADE", boxQty: 0, unitsPerBox: 0, totalUnits: 0, sourceLine: lineNumber, errors: ["Linha nao interpretada"] };
     var sku = normalizeSku(match[1]) || normalizeText(match[1]);
     var description = normalizeText(match[2]);
     var qty = parseXmlQuantity(match[3]);
-    var unit = /^cx|caixa/i.test(match[4] || "") ? "CX" : "UN";
+    var unit = normalizeTransferUnit(match[4]);
     if (!sku) errors.push("Codigo vazio");
     if (!description) errors.push("Descricao vazia");
     if (!qty || qty <= 0) errors.push("Quantidade invalida");
-    return { sku: sku, description: description, requestedQty: qty, unit: unit, quantityType: unit === "CX" ? "CAIXA" : "UNIDADE", boxQty: unit === "CX" ? qty : 0, unitsPerBox: 0, totalUnits: qty, sourceLine: lineNumber, errors: errors };
+    return applyTransferQuantityType({ sku: sku, description: description, requestedQty: qty, unit: unit, sourceLine: lineNumber, errors: errors });
+  }
+
+  function normalizeTransferUnit(value) {
+    var text = normalizeText(value || "UN").toUpperCase();
+    if (/^(CX|CXS|CAIXA|CAIXAS)$/.test(text)) return "CX";
+    if (/^(UN|UND|UNIDADE|UNIDADES)$/.test(text)) return "UN";
+    return text || "UN";
+  }
+
+  function isBoxUnit(value) {
+    return /^(CX|CXS|CAIXA|CAIXAS)$/.test(normalizeText(value || "").toUpperCase());
+  }
+
+  function applyTransferQuantityType(item) {
+    var unit = normalizeTransferUnit(item.unit);
+    var isBox = isBoxUnit(unit) || normalizeText(item.quantityType || "").toUpperCase() === "CAIXA";
+    item.unit = isBox ? "CX" : unit;
+    item.quantityType = isBox ? "CAIXA" : "UNIDADE";
+    item.boxQty = isBox ? Number(item.requestedQty || 0) : 0;
+    item.unitsPerBox = Number(item.unitsPerBox || 0);
+    item.totalUnits = isBox ? (item.unitsPerBox > 0 ? Number(item.boxQty || 0) * item.unitsPerBox : Number(item.totalUnits || 0)) : Number(item.totalUnits || item.requestedQty || 0);
+    item.packedUnits = Number(item.packedUnits || 0);
+    item.packagingObservation = item.packagingObservation || "";
+    return item;
   }
 
   function detectTransferHeader(matrix) {
@@ -6230,6 +6410,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var groupsByKey = {};
     items.forEach(function (item) {
       applyTransferItemLocation(item);
+      applyKnownPackagingPattern(item);
       var key = (item.sourceCode || "") + ">" + (item.destinationCode || "");
       if (!groupsByKey[key]) groupsByKey[key] = {
         id: "grp-" + Object.keys(groupsByKey).length,
@@ -6348,7 +6529,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!qty || qty <= 0) itemErrors.push("Quantidade invalida");
       if (!origin) itemErrors.push("Origem vazia");
       if (!destination) itemErrors.push("Destino vazio");
-      var item = {
+      var item = applyTransferQuantityType({
         sku: sku,
         description: description,
         requestedQty: qty,
@@ -6356,7 +6537,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         quantityType: "UNIDADE",
         boxQty: 0,
         unitsPerBox: 0,
-        totalUnits: qty,
+        totalUnits: 0,
         sourceCode: origin,
         destinationCode: destination,
         sourceRaw: origin,
@@ -6368,7 +6549,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         importSource: "EXCEL",
         sourceLine: rowIndex + 1,
         errors: itemErrors
-      };
+      });
       if (itemErrors.length) errors.push("Linha " + (rowIndex + 1) + ": " + itemErrors.join(", "));
       items.push(item);
     }
@@ -6506,9 +6687,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       quantityType: item.quantityType || "UNIDADE",
       boxQty: item.boxQty || 0,
       unitsPerBox: item.unitsPerBox || 0,
-      totalUnits: item.totalUnits || item.requestedQty || 0,
+      totalUnits: isBoxQuantityItem(item) ? Number(item.totalUnits || 0) : Number(item.totalUnits || item.requestedQty || 0),
       separatedQty: 0,
       packedQty: 0,
+      packedUnits: 0,
+      packagingObservation: "",
       status: "PENDENTE",
       createdAt: now,
       updatedAt: now
@@ -6743,6 +6926,48 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.lastScanInputAt = 0;
     $("transferScanInput").value = "";
     $("transferQuantityInput").value = "";
+    if ($("transferUnitsPerBoxInput")) $("transferUnitsPerBoxInput").value = "";
+    if ($("transferTotalUnitsInput")) $("transferTotalUnitsInput").value = "";
+    if ($("transferMixedBoxInput")) $("transferMixedBoxInput").checked = false;
+    renderTransferBoxFields();
+  }
+
+  function getSelectedTransferWorkItem() {
+    return transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; }) || null;
+  }
+
+  function renderTransferBoxFields() {
+    if (!$("transferBoxFields")) return;
+    var item = getSelectedTransferWorkItem();
+    var show = transferState.activeWorkMode === "MONTAGEM" && isBoxQuantityItem(item) && !isFinalTransferStatus((getTransferById(transferState.activeTransferId) || {}).status);
+    $("transferBoxFields").hidden = !show;
+    if (!show) return;
+    if (!$("transferUnitsPerBoxInput").value && Number(item.unitsPerBox || 0) > 0) {
+      $("transferUnitsPerBoxInput").value = formatInputQty(item.unitsPerBox);
+    } else if (!$("transferUnitsPerBoxInput").value) {
+      var pattern = getProductPackagingPattern(item.sku);
+      var promptedKey = normalizeSkuKey(item.sku);
+      if (pattern && Number(pattern.unitsPerBox || 0) > 0 && !transferState.packagingPromptedSkus[promptedKey]) {
+        transferState.packagingPromptedSkus[promptedKey] = true;
+        if (window.confirm("Padrao encontrado: " + formatQty(pattern.unitsPerBox) + " unidades por caixa. Deseja usar?")) {
+          item.unitsPerBox = Number(pattern.unitsPerBox || 0);
+          item.totalUnits = Number(item.boxQty || item.requestedQty || 0) * item.unitsPerBox;
+          $("transferUnitsPerBoxInput").value = formatInputQty(item.unitsPerBox);
+        }
+      }
+    }
+    $("transferTotalUnitsInput").disabled = !$("transferMixedBoxInput").checked;
+    updateTransferBoxTotalPreview();
+  }
+
+  function updateTransferBoxTotalPreview() {
+    if (!$("transferBoxFields") || $("transferBoxFields").hidden) return;
+    var mixed = $("transferMixedBoxInput").checked;
+    $("transferTotalUnitsInput").disabled = !mixed;
+    if (mixed) return;
+    var boxes = parseQuantity($("transferQuantityInput").value);
+    var unitsPerBox = parseQuantity($("transferUnitsPerBoxInput").value);
+    $("transferTotalUnitsInput").value = boxes > 0 && unitsPerBox > 0 ? formatInputQty(boxes * unitsPerBox) : "";
   }
 
   async function locateTransferItem() {
@@ -6962,6 +7187,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferWorkStatus", mode === "MONTAGEM" ? "Bipe um SKU valido antes de confirmar." : "Selecione um item para separar.", "error");
       return;
     }
+    if (mode === "MONTAGEM") renderTransferBoxFields();
     var qty = parseQuantity($("transferQuantityInput").value);
     if ((!qty || qty <= 0) && mode === "SEPARACAO") {
       qty = Math.max(0, Number(item.requestedQty || 0) - Number(item.separatedQty || 0)) || Number(item.requestedQty || 0);
@@ -6981,6 +7207,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var now = new Date().toISOString();
     var inputType = mode === "SEPARACAO" ? (transferState.manualSeparationQty ? "AJUSTE_QUANTIDADE" : "CONFIRMACAO_COLETA") : detectTransferInputType();
     if (mode === "MONTAGEM") {
+      var boxPacking = readTransferBoxPackingInput(item, qty);
+      if (!boxPacking.valid) {
+        setStatus("transferWorkStatus", boxPacking.message, "error");
+        if ($(boxPacking.focusId)) $(boxPacking.focusId).focus();
+        return;
+      }
       var packExpected = item.isExtra ? Number(item.packedQty || 0) + qty : Number(item.separatedQty || 0);
       var packCurrent = Number(item.packedQty || 0);
       var packExcess = Math.max(0, packCurrent + qty - packExpected);
@@ -6989,14 +7221,40 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         $("transferQuantityInput").focus();
         return;
       }
+      var referenceUnits = Number(boxPacking.expectedByPattern || 0);
+      if (isBoxQuantityItem(item) && referenceUnits > 0 && Math.abs(Number(boxPacking.packedUnitsDelta || 0) - referenceUnits) > 0.0001 && !window.confirm("A quantidade total em unidades está diferente do esperado. Deseja confirmar?")) {
+        setStatus("transferWorkStatus", "Corrija a quantidade antes de confirmar.", "warning");
+        $("transferTotalUnitsInput").focus();
+        return;
+      }
+      var boxPatternDiff = isBoxQuantityItem(item) && referenceUnits > 0 ? Number(boxPacking.packedUnitsDelta || 0) - referenceUnits : 0;
       item.packedQty = packCurrent + qty;
+      if (isBoxQuantityItem(item)) {
+        item.packedUnits = getTransferPackedUnits(item) + Number(boxPacking.packedUnitsDelta || 0);
+        if (boxPacking.unitsPerBox > 0) item.unitsPerBox = boxPacking.unitsPerBox;
+        item.totalUnits = boxPacking.mixed ? item.packedUnits : Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0);
+        item.packagingObservation = boxPacking.observation || item.packagingObservation || "";
+      }
       if (packExcess > 0) {
         item.excessQty = Number(item.excessQty || 0) + packExcess;
         item.divergenceType = "QUANTIDADE_EXCEDENTE";
       }
+      if (boxPatternDiff !== 0 && item.packedQty >= item.separatedQty) {
+        item.divergenceType = "EMBALAGEM_DIFERENTE";
+      }
+      var unitDiff = isBoxQuantityItem(item) && getTransferExpectedUnits(item) > 0 ? item.packedUnits - getTransferExpectedUnits(item) : 0;
+      if (unitDiff !== 0 && item.packedQty >= item.separatedQty) {
+        item.divergenceType = unitDiff > 0 ? "QUANTIDADE_EXCEDENTE" : "FALTA_DE_ITEM";
+        if (unitDiff > 0) item.excessQty = Math.max(Number(item.excessQty || 0), unitDiff);
+        if (unitDiff < 0) item.missingQty = Math.max(Number(item.missingQty || 0), Math.abs(unitDiff));
+      }
       item.status = item.packedQty >= item.separatedQty ? "ENVIADO" : "EM_CAIXA";
       var packUpdate = Object.assign({
         quantidade_lacrada: item.packedQty,
+        quantidade_lacrada_unidades: item.packedUnits || 0,
+        unidades_por_caixa: item.unitsPerBox || 0,
+        quantidade_total_unidades: item.totalUnits || 0,
+        embalagem_observacao: item.packagingObservation || "",
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));
@@ -7009,7 +7267,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         }).eq("id", item.id);
       }
       if (packResponse.error) throw packResponse.error;
+      if (isBoxQuantityItem(item) && !boxPacking.mixed) await saveProductPackagingPattern(item);
       if (packExcess > 0) await registerTransferDivergence(transfer, item, "QUANTIDADE_EXCEDENTE", packExpected, item.packedQty, packExcess, inputType, "Excesso registrado na montagem da caixa.");
+      if (isBoxQuantityItem(item) && (unitDiff !== 0 || boxPatternDiff !== 0) && item.packedQty >= item.separatedQty) {
+        await registerTransferDivergence(transfer, item, unitDiff > 0 ? "QUANTIDADE_EXCEDENTE" : unitDiff < 0 ? "FALTA_DE_ITEM" : "EMBALAGEM_DIFERENTE", boxPatternDiff ? referenceUnits : getTransferExpectedUnits(item), boxPatternDiff ? Number(boxPacking.packedUnitsDelta || 0) : item.packedUnits, boxPatternDiff || unitDiff, inputType, "Divergencia registrada no total em unidades das caixas.");
+      }
     } else {
       var sepExpected = item.isExtra ? Number(item.separatedQty || 0) + qty : Number(item.requestedQty || 0);
       var sepCurrent = Number(item.separatedQty || 0);
@@ -7119,6 +7381,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
     var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && item.packedQty < item.separatedQty; });
+    var boxWithoutUnits = getTransferItems(transfer.id).filter(function (item) {
+      return !item.isExtra && isBoxQuantityItem(item) && Number(item.packedQty || 0) > 0 && getTransferPackedUnits(item) <= 0;
+    });
+    if (boxWithoutUnits.length) {
+      transferState.selectedItemId = boxWithoutUnits[0].id;
+      renderTransferWork();
+      setStatus("transferWorkStatus", "Informe quantas unidades vêm em cada caixa para continuar.", "error");
+      return;
+    }
     if (pending.length) {
       setStatus("transferWorkStatus", "Finalize todos os itens antes de concluir a transferência.", "error");
       return;
@@ -7725,6 +7996,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfer_divergences") >= 0 ||
       message.indexOf("wms_transfer_boxes") >= 0 ||
       message.indexOf("wms_transfer_packages") >= 0 ||
+      message.indexOf("wms_product_packaging") >= 0 ||
       message.indexOf("wms_task_notifications") >= 0 ||
       message.indexOf("wms_notifications") >= 0
     ) && (

@@ -288,6 +288,8 @@ create table if not exists public.wms_transfer_items (
   quantidade_caixas numeric default 0,
   unidades_por_caixa numeric default 0,
   quantidade_total_unidades numeric default 0,
+  quantidade_lacrada_unidades numeric default 0,
+  embalagem_observacao text default '',
   quantidade_separada numeric default 0,
   quantidade_lacrada numeric default 0,
   status text default 'PENDENTE'
@@ -317,6 +319,8 @@ alter table public.wms_transfer_items add column if not exists tipo_quantidade t
 alter table public.wms_transfer_items add column if not exists quantidade_caixas numeric default 0;
 alter table public.wms_transfer_items add column if not exists unidades_por_caixa numeric default 0;
 alter table public.wms_transfer_items add column if not exists quantidade_total_unidades numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_lacrada_unidades numeric default 0;
+alter table public.wms_transfer_items add column if not exists embalagem_observacao text default '';
 alter table public.wms_transfer_items add column if not exists quantidade_separada numeric default 0;
 alter table public.wms_transfer_items add column if not exists quantidade_lacrada numeric default 0;
 alter table public.wms_transfer_items add column if not exists quantidade_extra numeric default 0;
@@ -329,6 +333,15 @@ alter table public.wms_transfer_items add column if not exists added_by_name tex
 alter table public.wms_transfer_items add column if not exists input_type text default '';
 alter table public.wms_transfer_items add column if not exists observation text default '';
 alter table public.wms_transfer_items add column if not exists status text default 'PENDENTE';
+
+create table if not exists public.wms_product_packaging (
+  id text primary key,
+  sku text default '',
+  descricao text default '',
+  unidades_por_caixa numeric default 0,
+  updated_at timestamptz default now(),
+  updated_by text default ''
+);
 
 create table if not exists public.wms_transfer_events (
   id text primary key,
@@ -404,11 +417,15 @@ on public.wms_transfers (responsavel_id, status);
 create index if not exists wms_transfer_items_transfer_sku_idx
 on public.wms_transfer_items (transfer_id, sku);
 
+create index if not exists wms_product_packaging_sku_idx
+on public.wms_product_packaging (sku);
+
 alter table public.wms_establishments enable row level security;
 alter table public.wms_transfers enable row level security;
 alter table public.wms_transfer_items enable row level security;
 alter table public.wms_transfer_events enable row level security;
 alter table public.wms_transfer_divergences enable row level security;
+alter table public.wms_product_packaging enable row level security;
 
 drop policy if exists "wms_establishments_public_all" on public.wms_establishments;
 create policy "wms_establishments_public_all"
@@ -429,6 +446,14 @@ with check (true);
 drop policy if exists "wms_transfer_items_public_all" on public.wms_transfer_items;
 create policy "wms_transfer_items_public_all"
 on public.wms_transfer_items
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_product_packaging_public_all" on public.wms_product_packaging;
+create policy "wms_product_packaging_public_all"
+on public.wms_product_packaging
 for all
 to anon
 using (true)
