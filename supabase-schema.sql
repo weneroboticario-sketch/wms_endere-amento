@@ -25,11 +25,43 @@ alter table public.wms_bindings add column if not exists product_name text defau
 alter table public.wms_bindings add column if not exists created_at timestamptz not null default now();
 alter table public.wms_bindings add column if not exists updated_at timestamptz not null default now();
 
-create unique index if not exists wms_bindings_sku_location_idx
-on public.wms_bindings (sku, location_code);
-
 create index if not exists wms_bindings_location_code_idx
 on public.wms_bindings (location_code);
+
+create table if not exists public.wms_warehouses (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  code text unique,
+  name text,
+  active boolean default true,
+  notes text default ''
+);
+
+insert into public.wms_warehouses (id, code, name, active, notes)
+values
+  ('warehouse-vdcg', 'VDCG', 'Estoque VDCG', true, 'Estoque principal existente'),
+  ('warehouse-vdr', 'VDR', 'Estoque VDR', true, 'Segundo estoque operacional')
+on conflict (code) do update set
+  name = excluded.name,
+  active = excluded.active,
+  updated_at = now();
+
+alter table public.wms_bindings add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_bindings add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_bindings
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
+
+drop index if exists wms_bindings_sku_location_idx;
+
+create unique index if not exists wms_bindings_warehouse_sku_location_idx
+on public.wms_bindings (warehouse_code, sku, location_code);
+
+create index if not exists wms_bindings_warehouse_idx
+on public.wms_bindings (warehouse_code);
 
 create table if not exists public.wms_products (
   sku text primary key,
@@ -52,6 +84,13 @@ alter table public.wms_history add column if not exists action text not null def
 alter table public.wms_history add column if not exists sku text default '';
 alter table public.wms_history add column if not exists location text default '';
 alter table public.wms_history add column if not exists details text default '';
+alter table public.wms_history add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_history add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_history
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_users (
   id text primary key,
@@ -77,6 +116,24 @@ alter table public.wms_users add column if not exists role text not null default
 alter table public.wms_users add column if not exists active boolean not null default true;
 alter table public.wms_users add column if not exists available_for_tasks boolean not null default true;
 alter table public.wms_users add column if not exists last_login_at timestamptz;
+alter table public.wms_users add column if not exists default_warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_users add column if not exists default_warehouse_code text default 'VDCG';
+alter table public.wms_users add column if not exists allowed_warehouse_codes text default 'VDCG';
+alter table public.wms_users add column if not exists is_global_admin boolean not null default false;
+
+update public.wms_users
+set default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
+    default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    allowed_warehouse_codes = case
+      when role = 'ADMINISTRADOR' then 'VDCG,VDR'
+      else coalesce(nullif(allowed_warehouse_codes, ''), 'VDCG')
+    end,
+    is_global_admin = case when role = 'ADMINISTRADOR' then true else is_global_admin end
+where default_warehouse_code is null
+   or default_warehouse_code = ''
+   or allowed_warehouse_codes is null
+   or allowed_warehouse_codes = ''
+   or role = 'ADMINISTRADOR';
 
 create unique index if not exists wms_users_username_idx
 on public.wms_users (username);
@@ -135,13 +192,24 @@ alter table public.wms_sessions add column if not exists user_name text default 
 alter table public.wms_sessions add column if not exists started_at timestamptz not null default now();
 alter table public.wms_sessions add column if not exists ended_at timestamptz;
 alter table public.wms_sessions add column if not exists active boolean not null default true;
+alter table public.wms_sessions add column if not exists active_warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_sessions add column if not exists active_warehouse_code text default 'VDCG';
 
+alter table public.wms_warehouses enable row level security;
 alter table public.wms_bindings enable row level security;
 alter table public.wms_products enable row level security;
 alter table public.wms_history enable row level security;
 alter table public.wms_users enable row level security;
 alter table public.wms_sessions enable row level security;
 alter table public.wms_access_requests enable row level security;
+
+drop policy if exists "wms_warehouses_public_all" on public.wms_warehouses;
+create policy "wms_warehouses_public_all"
+on public.wms_warehouses
+for all
+to anon
+using (true)
+with check (true);
 
 drop policy if exists "wms_bindings_public_all" on public.wms_bindings;
 create policy "wms_bindings_public_all"
@@ -277,6 +345,13 @@ alter table public.wms_transfers add column if not exists total_packed_quantity 
 alter table public.wms_transfers add column if not exists has_divergence boolean default false;
 alter table public.wms_transfers add column if not exists divergence_count numeric default 0;
 alter table public.wms_transfers add column if not exists final_result text default '';
+alter table public.wms_transfers add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_transfers add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_transfers
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_transfer_items (
   id text primary key,
@@ -336,6 +411,13 @@ alter table public.wms_transfer_items add column if not exists added_by_name tex
 alter table public.wms_transfer_items add column if not exists input_type text default '';
 alter table public.wms_transfer_items add column if not exists observation text default '';
 alter table public.wms_transfer_items add column if not exists status text default 'PENDENTE';
+alter table public.wms_transfer_items add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_transfer_items add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_transfer_items
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_product_packaging (
   id text primary key,
@@ -376,6 +458,13 @@ alter table public.wms_transfer_events add column if not exists quantity_informe
 alter table public.wms_transfer_events add column if not exists quantity_difference numeric default 0;
 alter table public.wms_transfer_events add column if not exists observation text default '';
 alter table public.wms_transfer_events add column if not exists payload jsonb default '{}'::jsonb;
+alter table public.wms_transfer_events add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_transfer_events add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_transfer_events
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_transfer_divergences (
   id text primary key,
@@ -413,12 +502,38 @@ alter table public.wms_transfer_divergences add column if not exists observation
 alter table public.wms_transfer_divergences add column if not exists resolved boolean default false;
 alter table public.wms_transfer_divergences add column if not exists resolved_by text default '';
 alter table public.wms_transfer_divergences add column if not exists resolved_at timestamptz;
+alter table public.wms_transfer_divergences add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_transfer_divergences add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_transfer_divergences
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
+
+alter table if exists public.wms_transfer_boxes add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table if exists public.wms_transfer_boxes add column if not exists warehouse_code text default 'VDCG';
+alter table if exists public.wms_task_notifications add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table if exists public.wms_task_notifications add column if not exists warehouse_code text default 'VDCG';
+alter table if exists public.wms_notifications add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table if exists public.wms_notifications add column if not exists warehouse_code text default 'VDCG';
 
 create index if not exists wms_transfers_responsavel_status_idx
 on public.wms_transfers (responsavel_id, status);
 
+create index if not exists wms_transfers_warehouse_idx
+on public.wms_transfers (warehouse_code);
+
 create index if not exists wms_transfer_items_transfer_sku_idx
 on public.wms_transfer_items (transfer_id, sku);
+
+create index if not exists wms_transfer_items_warehouse_idx
+on public.wms_transfer_items (warehouse_code);
+
+create index if not exists wms_transfer_events_warehouse_idx
+on public.wms_transfer_events (warehouse_code);
+
+create index if not exists wms_transfer_divergences_warehouse_idx
+on public.wms_transfer_divergences (warehouse_code);
 
 create index if not exists wms_product_packaging_sku_idx
 on public.wms_product_packaging (sku);
@@ -538,6 +653,13 @@ alter table public.wms_conferences add column if not exists accuracy_percent num
 alter table public.wms_conferences add column if not exists final_result text default '';
 alter table public.wms_conferences add column if not exists notes text default '';
 alter table public.wms_conferences add column if not exists payload jsonb default '{}'::jsonb;
+alter table public.wms_conferences add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_conferences add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_conferences
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_conference_items (
   id text primary key,
@@ -575,6 +697,13 @@ alter table public.wms_conference_items add column if not exists divergence_type
 alter table public.wms_conference_items add column if not exists is_extra boolean default false;
 alter table public.wms_conference_items add column if not exists observation text default '';
 alter table public.wms_conference_items add column if not exists payload jsonb default '{}'::jsonb;
+alter table public.wms_conference_items add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_conference_items add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_conference_items
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_conference_events (
   id text primary key,
@@ -608,6 +737,13 @@ alter table public.wms_conference_events add column if not exists input_type tex
 alter table public.wms_conference_events add column if not exists divergence_type text default '';
 alter table public.wms_conference_events add column if not exists observation text default '';
 alter table public.wms_conference_events add column if not exists payload jsonb default '{}'::jsonb;
+alter table public.wms_conference_events add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_conference_events add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_conference_events
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create table if not exists public.wms_conference_divergences (
   id text primary key,
@@ -647,12 +783,31 @@ alter table public.wms_conference_divergences add column if not exists resolved_
 alter table public.wms_conference_divergences add column if not exists resolved_at timestamptz;
 alter table public.wms_conference_divergences add column if not exists observation text default '';
 alter table public.wms_conference_divergences add column if not exists payload jsonb default '{}'::jsonb;
+alter table public.wms_conference_divergences add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_conference_divergences add column if not exists warehouse_code text default 'VDCG';
+
+update public.wms_conference_divergences
+set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
 create index if not exists wms_conferences_assigned_status_idx
 on public.wms_conferences (assigned_to_id, status);
 
+create index if not exists wms_conferences_warehouse_idx
+on public.wms_conferences (warehouse_code);
+
 create index if not exists wms_conference_items_conference_sku_idx
 on public.wms_conference_items (conference_id, sku);
+
+create index if not exists wms_conference_items_warehouse_idx
+on public.wms_conference_items (warehouse_code);
+
+create index if not exists wms_conference_events_warehouse_idx
+on public.wms_conference_events (warehouse_code);
+
+create index if not exists wms_conference_divergences_warehouse_idx
+on public.wms_conference_divergences (warehouse_code);
 
 alter table public.wms_conferences enable row level security;
 alter table public.wms_conference_items enable row level security;

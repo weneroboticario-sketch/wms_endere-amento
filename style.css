@@ -356,6 +356,14 @@ button {
   margin-top: 2px;
 }
 
+.warehouse-pill select {
+  width: 100%;
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+}
+
 .task-pill.has-tasks,
 .connection-pill.is-online {
   border-color: #c8eadc;
@@ -1077,6 +1085,15 @@ td {
 .checkbox-label input {
   width: auto;
   min-height: auto;
+}
+
+.warehouse-check-list {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f7fafc;
 }
 
 .role-badge,

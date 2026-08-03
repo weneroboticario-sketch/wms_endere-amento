@@ -101,6 +101,7 @@
         </div>
         <div class="menu-section">
           <p class="menu-label">Administracao</p>
+          <button class="menu-item admin-only global-admin-only" data-icon="EST" data-screen="estoques" type="button">Estoques</button>
           <button class="menu-item admin-only" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
           <button class="menu-item" data-icon="HIS" data-screen="historico" type="button">Historico</button>
           <button class="menu-item admin-only" data-icon="MAN" data-screen="manutencao" type="button">Manutencao</button>
@@ -111,6 +112,7 @@
       <div class="user-card">
         <strong id="sidebarUserName">-</strong>
         <span id="sidebarUserRole">-</span>
+        <span id="sidebarWarehouseCode">Estoque: VDCG</span>
         <label class="sidebar-sound-toggle">
           <input id="sidebarTaskSoundInput" type="checkbox" checked>
           Som de tarefas
@@ -138,6 +140,11 @@
         <div class="header-pill">
           <span>Perfil</span>
           <strong id="topUserRole">-</strong>
+        </div>
+        <div class="header-pill warehouse-pill">
+          <span>Estoque atual</span>
+          <strong id="topWarehouseCode">VDCG</strong>
+          <select id="activeWarehouseSelect" hidden></select>
         </div>
         <div class="header-pill task-pill">
           <span>Tarefas</span>
@@ -961,6 +968,14 @@
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="ADMINISTRADOR">ADMINISTRADOR</option>
               </select>
+              <label for="userDefaultWarehouseInput">Estoque padrao</label>
+              <select id="userDefaultWarehouseInput"></select>
+              <label>Estoques permitidos</label>
+              <div id="userAllowedWarehousesInput" class="warehouse-check-list"></div>
+              <label class="checkbox-label">
+                <input id="userGlobalAdminInput" type="checkbox">
+                Administrador geral
+              </label>
               <label class="checkbox-label">
                 <input id="userActiveInput" type="checkbox" checked>
                 Usuário ativo
@@ -1016,6 +1031,39 @@
                 <tbody id="accessRequestsRows"></tbody>
               </table>
             </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="estoques">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Administracao</p>
+            <h2>Estoques</h2>
+          </div>
+        </div>
+        <div class="dashboard-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Ambientes operacionais</h3>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Estoque</th>
+                    <th>Nome</th>
+                    <th>Status</th>
+                    <th>Usuarios</th>
+                    <th>Enderecos</th>
+                    <th>Transferencias</th>
+                    <th>Conferencias</th>
+                  </tr>
+                </thead>
+                <tbody id="warehouseRows"></tbody>
+              </table>
+            </div>
+            <div id="warehouseStatus" class="inline-status"></div>
           </section>
         </div>
       </section>
