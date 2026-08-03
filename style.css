@@ -2425,13 +2425,13 @@ td {
   #transferencias .transfer-final-summary,
   #transferencias #transferFinalReportSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 6px;
   }
 
   #transferencias .transfer-work-summary div,
   #transferencias .summary-chip {
     min-width: 0;
-    padding: 9px;
+    padding: 8px;
   }
 
   #transferencias .transfer-work-summary span,
@@ -2441,9 +2441,10 @@ td {
 
   #transferencias .transfer-work-summary strong,
   #transferencias .summary-chip strong {
-    font-size: 1.05rem;
+    font-size: 0.98rem;
     line-height: 1.15;
     overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .transfer-work-grid,
@@ -2544,6 +2545,7 @@ td {
 
   #transferencias .table-wrap {
     overflow-x: visible;
+    max-width: 100%;
   }
 
   .panel {
@@ -2562,6 +2564,8 @@ td {
   #transferencias .admin-progress-table,
   #transferencias .leader-report-table {
     min-width: 0;
+    width: 100%;
+    table-layout: auto;
   }
 
   #transferencias .transfer-panel-table,
@@ -2590,34 +2594,78 @@ td {
   #transferencias .admin-progress-table tr,
   #transferencias .leader-report-table tr {
     margin-bottom: 10px;
-    padding: 10px;
+    padding: 9px;
     border: 1px solid var(--line);
     border-left-width: 5px;
     border-radius: var(--radius);
     background: #ffffff;
     overflow: hidden;
+    max-width: 100%;
   }
 
   #transferencias .transfer-panel-table td,
   #transferencias .admin-progress-table td,
   #transferencias .leader-report-table td {
-    display: grid;
-    grid-template-columns: 112px minmax(0, 1fr);
-    gap: 8px;
+    display: block;
     padding: 7px 0;
     border-bottom: 0;
     min-width: 0;
+    max-width: 100%;
     overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.2;
   }
 
   #transferencias .transfer-panel-table td::before,
   #transferencias .admin-progress-table td::before,
   #transferencias .leader-report-table td::before {
     content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
     color: var(--muted);
     font-size: 0.74rem;
     font-weight: 900;
     text-transform: uppercase;
+  }
+
+  #transferencias .transfer-panel-table td[data-label="Ações"],
+  #transferencias .admin-progress-table td[data-label="Situação"],
+  #transferencias .leader-report-table td[data-label="Status"],
+  #transferencias .leader-report-table td[data-label="Situação"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  #transferencias .transfer-panel-table td[data-label="Ações"]::before,
+  #transferencias .admin-progress-table td[data-label="Situação"]::before,
+  #transferencias .leader-report-table td[data-label="Status"]::before,
+  #transferencias .leader-report-table td[data-label="Situação"]::before {
+    margin-bottom: 0;
+  }
+
+  #transferencias .transfer-name-cell strong,
+  #transferencias .transfer-route-cell strong,
+  #transferencias .transfer-location-cell strong,
+  #transferencias .leader-report-table td,
+  #transferencias .admin-progress-table td {
+    white-space: normal;
+  }
+
+  #transferencias .status-badge,
+  #transferencias .result-badge {
+    max-width: 100%;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.15;
+    padding: 5px 9px;
+  }
+
+  #transferencias .transfer-action-stack {
+    min-width: 0;
+    width: 100%;
   }
 
   #transferencias .leader-report-table td[colspan] {

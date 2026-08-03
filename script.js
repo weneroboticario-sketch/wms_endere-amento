@@ -3521,7 +3521,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td data-label=\"Transferência\" class=\"transfer-name-cell\"><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
       "<td data-label=\"Rota\" class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
       "<td data-label=\"Responsável\">" + escapeHtml(transfer.responsibleName || "-") + "</td>",
-      "<td data-label=\"Status\"><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
+      "<td data-label=\"Status\"><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
       "<td data-label=\"Itens\">" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
       "<td data-label=\"Progresso\"><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
       "<td data-label=\"Datas\"><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
@@ -3569,7 +3569,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("conferenceAdminSummary").innerHTML = [
       summaryChip("Transferência", transfer.name || transfer.code || "-"),
       summaryChip("Destino", transfer.establishmentName || "-"),
-      summaryChip("Status", transfer.status || "-"),
+      summaryChip("Status", transferStatusDisplayLabel(transfer.status)),
       summaryChip("Conferente", assignment && assignment.assignedUserName ? assignment.assignedUserName : "Não atribuído"),
       summaryChip("Itens", stats.totalItems),
       summaryChip("Solicitada", formatQty(stats.requested)),
@@ -3774,7 +3774,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<h3>" + escapeHtml(transfer.name || transfer.code) + "</h3>",
       "<span>Origem: " + escapeHtml(transfer.originName || transfer.originStoreCode || "-") + "</span>",
       "<span>Destino: " + escapeHtml(transfer.destinationName || transfer.establishmentName || "-") + "</span>",
-      "<span>Status: " + escapeHtml(transfer.status) + "</span>",
+      "<span>Status: " + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span>",
       "<span>Itens: " + stats.totalItems + "</span>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
       "<button class=\"primary-button\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">" + action + "</button>",
@@ -3799,7 +3799,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || "-") + "</span></td>",
       "<td>" + escapeHtml(transfer.establishmentName || "-") + "</td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
-      "<td><span class=\"status-badge " + (transfer.status === "CONCLUIDA_SEM_DIVERGENCIA" ? "active" : "pending") + "\">" + escapeHtml(transfer.status) + "</span></td>",
+      "<td><span class=\"status-badge " + (transfer.status === "CONCLUIDA_SEM_DIVERGENCIA" ? "active" : "pending") + "\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
       "<td>" + formatDuration(report.totalDurationSeconds) + "</td>",
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
@@ -3960,7 +3960,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferWorkTitle").textContent = transferStageLabel(mode) + " - " + (transfer.name || transfer.code);
     $("transferWorkSummary").innerHTML = [
       "<div><span>Rota</span><strong>" + escapeHtml(transferRouteLabel(transfer)) + "</strong></div>",
-      "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
+      "<div><span>Status</span><strong>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</strong></div>",
       "<div><span>Progresso</span><strong>" + transferProgressText(stats, mode) + "</strong></div>",
       "<div><span>Tempo</span><strong>" + formatDuration(secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, new Date().toISOString())) + "</strong></div>"
     ].join("");
@@ -4053,6 +4053,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (mode === "MONTAGEM") return stats.packedItems + " de " + stats.totalItems + " itens na caixa";
     if (mode === "FINALIZACAO") return stats.packedItems + " de " + stats.totalItems + " itens enviados";
     return stats.separatedItems + " de " + stats.totalItems + " itens separados";
+  }
+
+  function transferStatusDisplayLabel(status) {
+    var labels = {
+      ATRIBUIDA: "Atribuída",
+      PENDENTE: "Pendente",
+      EM_SEPARACAO: "Em separação",
+      SEPARACAO_CONCLUIDA: "Separação concluída",
+      EM_LACRE: "Em montagem",
+      EM_MONTAGEM_CAIXA: "Em montagem",
+      LACRE_CONCLUIDO: "Montagem concluída",
+      MONTAGEM_CAIXA_CONCLUIDA: "Montagem concluída",
+      PRONTA_PARA_NOTA: "Pronta para nota",
+      PRONTA_PARA_NOTA_COM_DIVERGENCIA: "Com divergência",
+      FINALIZADA_PARA_ANALISE: "Para análise",
+      CONCLUIDA_SEM_DIVERGENCIA: "Concluída OK",
+      CONCLUIDA_COM_DIVERGENCIA: "Com divergência",
+      CANCELADA: "Cancelada",
+      CORRETA: "Correta",
+      PARA_ANALISE: "Para análise"
+    };
+    return labels[status] || String(status || "-").replace(/_/g, " ");
   }
 
   function sortTransferItemsForWork(items) {
@@ -4455,7 +4477,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var correctItems = report.items.filter(function (item) { return Math.abs(getTransferCheckedQty(item, transfer) - Number(item.requestedQty || 0)) < 0.0001 && !item.divergenceType; }).length;
     var divergentItems = report.items.length - correctItems + report.extraItems.length;
     $("transferFinalReportSummary").innerHTML = [
-      "<div><span>Resultado</span><strong>" + escapeHtml(transfer.finalResult || transfer.status) + "</strong></div>",
+      "<div><span>Resultado</span><strong>" + escapeHtml(transferStatusDisplayLabel(transfer.finalResult || transfer.status)) + "</strong></div>",
       "<div><span>Tempo total</span><strong>" + formatDuration(report.totalDurationSeconds) + "</strong></div>",
       "<div><span>Tempo separacao</span><strong>" + formatDuration(report.separationDurationSeconds) + "</strong></div>",
       "<div><span>Tempo montagem</span><strong>" + formatDuration(report.packingDurationSeconds) + "</strong></div>",
