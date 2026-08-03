@@ -4075,7 +4075,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA" || item.status === "LACRE_CONCLUIDO" || item.status === "MONTAGEM_CAIXA_CONCLUIDA"; }).length;
-    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<tr><td colspan=\"8\">Nenhuma transferência encontrada.</td></tr>";
+    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<div class=\"empty-state compact\">Nenhuma transferência encontrada.</div>";
   }
 
   function transferPanelRowHtml(transfer) {
@@ -4084,23 +4084,37 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var origin = transferRouteOriginLabel(transfer);
     var destination = transferRouteDestinationLabel(transfer);
     var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
+    var stage = transferPanelStageInfo(transfer.status);
     return [
-      "<tr>",
-      "<td data-label=\"Transferência\" class=\"transfer-name-cell\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
-      "<td data-label=\"Rota\" class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
-      "<td data-label=\"Responsável\">" + escapeHtml(transfer.responsibleName || "-") + "</td>",
-      "<td data-label=\"Status\"><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
-      "<td data-label=\"Itens\">" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
-      "<td data-label=\"Progresso\"><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
-      "<td data-label=\"Datas\"><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
-      "<td data-label=\"Ações\"><div class=\"row-actions transfer-action-stack\">",
+      "<article class=\"transfer-board-card " + stage.className + "\">",
+      "<div class=\"transfer-board-main\">",
+      "<div class=\"transfer-board-title\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
+      "<div class=\"transfer-route-flow\"><div><span>Sai de</span><strong>" + escapeHtml(origin) + "</strong></div><span class=\"route-arrow\">&rarr;</span><div><span>Vai para</span><strong>" + escapeHtml(destination) + "</strong></div></div>",
+      "</div>",
+      "<div class=\"transfer-board-status\">",
+      "<div class=\"transfer-stage-line\"><span class=\"stage-dot\"></span><strong>" + escapeHtml(stage.label) + "</strong><span>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></div>",
+      "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
+      "<div class=\"transfer-board-meta\"><span><strong>" + stats.totalItems + "</strong> SKUs</span><span><strong>" + formatQty(stats.requested) + "</strong> un.</span><span><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong> resp.</span><span>" + formatDateTime(transfer.createdAt) + "</span></div>",
+      conferenceAssignment ? "<div class=\"transfer-board-note\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</div>" : "",
+      "</div>",
+      "<div class=\"row-actions transfer-action-stack transfer-board-actions\">",
       "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
-      conferenceAssignment ? "<span class=\"muted\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</span>" : "",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "",
-      "</div></td>",
-      "</tr>"
+      "</div>",
+      "</article>"
     ].join("");
+  }
+
+  function transferPanelStageInfo(status) {
+    if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(status) >= 0) {
+      return { label: "Caixa", className: "stage-box" };
+    }
+    if (status === "PRONTA_PARA_NOTA" || status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA") {
+      return { label: "Nota", className: "stage-note" };
+    }
+    if (status === "CANCELADA") return { label: "Cancelada", className: "stage-cancelled" };
+    return { label: "Separação", className: "stage-separation" };
   }
 
   function transferConferenceOptionsHtml(selectedUserId) {
