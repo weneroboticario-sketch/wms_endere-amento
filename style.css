@@ -1513,6 +1513,13 @@ td {
   gap: 8px;
 }
 
+.transfer-completion-actions {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
 .transfer-qty-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1539,6 +1546,36 @@ td {
   gap: 8px;
 }
 
+.transfer-work-list-section {
+  display: grid;
+  gap: 8px;
+}
+
+.transfer-work-list-section + .transfer-work-list-section {
+  margin-top: 10px;
+}
+
+.transfer-list-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: #eef4f8;
+}
+
+.transfer-list-heading strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.transfer-list-heading span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .transfer-work-item {
   display: grid;
   gap: 8px;
@@ -1547,6 +1584,59 @@ td {
   border-radius: var(--radius);
   background: #ffffff;
   cursor: pointer;
+}
+
+.transfer-work-item.status-separado,
+.transfer-work-item.status-enviado {
+  border-color: #9bd2bb;
+  background: #f0fbf5;
+}
+
+.transfer-work-item.status-parcial,
+.transfer-work-item.status-em-caixa {
+  border-color: #f2d18b;
+  background: #fff8e6;
+}
+
+.transfer-work-item.status-divergente,
+.transfer-work-item.status-extra {
+  border-color: #f1b27a;
+  background: #fff3e8;
+}
+
+.transfer-work-item-head span {
+  color: #233044;
+}
+
+.transfer-work-item.status-separado .transfer-work-item-head span,
+.transfer-work-item.status-enviado .transfer-work-item-head span {
+  background: #d9f5e9;
+  color: #0b6b4e;
+}
+
+.transfer-work-item.status-parcial .transfer-work-item-head span,
+.transfer-work-item.status-em-caixa .transfer-work-item-head span {
+  background: #fff0c2;
+  color: #8a5b00;
+}
+
+.transfer-work-item.status-divergente .transfer-work-item-head span,
+.transfer-work-item.status-extra .transfer-work-item-head span {
+  background: #ffe1c7;
+  color: #9b4c00;
+}
+
+.transfer-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.transfer-card-actions button {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 0.82rem;
 }
 
 .transfer-work-item.selected {
@@ -2293,7 +2383,7 @@ td {
   }
 
   #transferencias .table-wrap {
-    overflow-x: auto;
+    overflow-x: visible;
   }
 
   .panel {
@@ -2305,7 +2395,73 @@ td {
   }
 
   #transferencias table {
-    min-width: 720px;
+    min-width: 0;
+  }
+
+  #transferencias .transfer-panel-table,
+  #transferencias .admin-progress-table,
+  #transferencias .leader-report-table {
+    min-width: 0;
+  }
+
+  #transferencias .transfer-panel-table,
+  #transferencias .transfer-panel-table tbody,
+  #transferencias .transfer-panel-table tr,
+  #transferencias .transfer-panel-table td,
+  #transferencias .admin-progress-table,
+  #transferencias .admin-progress-table tbody,
+  #transferencias .admin-progress-table tr,
+  #transferencias .admin-progress-table td,
+  #transferencias .leader-report-table,
+  #transferencias .leader-report-table tbody,
+  #transferencias .leader-report-table tr,
+  #transferencias .leader-report-table td {
+    display: block;
+    width: 100%;
+  }
+
+  #transferencias .transfer-panel-table thead,
+  #transferencias .admin-progress-table thead,
+  #transferencias .leader-report-table thead {
+    display: none;
+  }
+
+  #transferencias .transfer-panel-table tr,
+  #transferencias .admin-progress-table tr,
+  #transferencias .leader-report-table tr {
+    margin-bottom: 10px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: #ffffff;
+  }
+
+  #transferencias .transfer-panel-table td,
+  #transferencias .admin-progress-table td,
+  #transferencias .leader-report-table td {
+    display: grid;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 0;
+  }
+
+  #transferencias .transfer-panel-table td::before,
+  #transferencias .admin-progress-table td::before,
+  #transferencias .leader-report-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.74rem;
+    font-weight: 900;
+    text-transform: uppercase;
+  }
+
+  #transferencias .leader-report-table td[colspan] {
+    display: block;
+  }
+
+  #transferencias .leader-report-table td[colspan]::before {
+    content: none;
   }
 
   .transfer-scan-panel,

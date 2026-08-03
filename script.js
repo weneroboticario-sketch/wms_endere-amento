@@ -3518,14 +3518,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
     return [
       "<tr>",
-      "<td class=\"transfer-name-cell\"><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
-      "<td class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
-      "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
-      "<td><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
-      "<td>" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
-      "<td><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
-      "<td><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
-      "<td><div class=\"row-actions transfer-action-stack\">",
+      "<td data-label=\"Transferência\" class=\"transfer-name-cell\"><strong>" + escapeHtml(transfer.name || transfer.code) + "</strong><span class=\"transfer-code\">" + escapeHtml(transfer.code || "-") + "</span><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span></td>",
+      "<td data-label=\"Rota\" class=\"transfer-route-cell\"><strong>" + escapeHtml(origin) + "</strong><span>para</span><strong>" + escapeHtml(destination) + "</strong></td>",
+      "<td data-label=\"Responsável\">" + escapeHtml(transfer.responsibleName || "-") + "</td>",
+      "<td data-label=\"Status\"><span class=\"status-badge pending\">" + escapeHtml(transfer.status) + "</span></td>",
+      "<td data-label=\"Itens\">" + stats.totalItems + "<br><span class=\"muted\">" + formatQty(stats.requested) + " un.</span></td>",
+      "<td data-label=\"Progresso\"><div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div></td>",
+      "<td data-label=\"Datas\"><span>" + formatDateTime(transfer.createdAt) + "</span></td>",
+      "<td data-label=\"Ações\"><div class=\"row-actions transfer-action-stack\">",
       "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       conferenceAssignment ? "<span class=\"muted\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</span>" : "",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
@@ -3962,18 +3962,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Rota</span><strong>" + escapeHtml(transferRouteLabel(transfer)) + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transfer.status) + "</strong></div>",
       "<div><span>Progresso</span><strong>" + transferProgressText(stats, mode) + "</strong></div>",
-      "<div><span>Responsável</span><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong></div>"
+      "<div><span>Tempo</span><strong>" + formatDuration(secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, new Date().toISOString())) + "</strong></div>"
     ].join("");
     renderTransferStepSummary(transfer, stats, mode, items);
     renderTransferFinalSummary(transfer, stats, items, mode);
     var requiresScan = mode === "MONTAGEM";
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
+    var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
     $("startPackingButton").hidden = true;
     $("finishSeparationButton").hidden = true;
     $("finishPackingButton").hidden = finalized || mode !== "MONTAGEM";
+    $("finishPackingButton").disabled = waitingPacking;
     $("confirmTransferItemButton").hidden = finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty);
     $("confirmTransferItemButton").textContent = mode === "SEPARACAO" ? "Confirmar quantidade diferente" : mode === "MONTAGEM" ? "Confirmar item na caixa" : "Atualizar item";
     $("transferScanInput").disabled = finalized || !requiresScan;
@@ -3984,6 +3986,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("separationPendingHint").hidden = finalized || mode !== "SEPARACAO" || allSeparated;
     $("separationPendingHint").textContent = !allSeparated && mode === "SEPARACAO" ? "Finalize todos os itens para concluir a separação." : "";
     $("separationPendingHint").className = "inline-status warning";
+    $("transferCompletionActions").hidden = finalized || mode === "FINALIZACAO";
+    if ($("transferCompletionHint")) {
+      $("transferCompletionHint").hidden = finalized || (mode === "SEPARACAO" ? allSeparated : !waitingPacking);
+      $("transferCompletionHint").textContent = mode === "SEPARACAO" && !allSeparated ? "Finalize todos os itens para concluir a separacao." : mode === "MONTAGEM" && waitingPacking ? "Finalize todos os itens antes de concluir a transferencia." : "";
+      $("transferCompletionHint").className = "inline-status warning";
+    }
     $("transferStepHelp").parentElement.hidden = mode === "SEPARACAO" && !transferState.manualSeparationQty;
     setTransferFieldHidden("sealNumberInput", true);
     setTransferFieldHidden("boxIdInput", true);
@@ -3996,12 +4004,32 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferProductList(items) {
     if (!$("transferProductList")) return;
-    $("transferProductList").innerHTML = items.length ? [
-      "<span class=\"eyebrow\">Lista operacional</span>",
-      items.map(function (item) {
-        return transferWorkItemCardHtml(item);
-      }).join("")
-    ].join("") : "";
+    if (!items.length) {
+      $("transferProductList").innerHTML = "";
+      return;
+    }
+    var mode = transferState.activeWorkMode;
+    var pending = items.filter(function (item) { return isTransferItemPendingForMode(item, mode); });
+    var done = items.filter(function (item) { return !isTransferItemPendingForMode(item, mode); });
+    $("transferProductList").innerHTML = [
+      transferWorkSectionHtml(mode === "MONTAGEM" ? "Itens faltando colocar na caixa" : "Itens pendentes", pending, mode, false),
+      transferWorkSectionHtml(mode === "MONTAGEM" ? "Itens já colocados na caixa" : "Itens separados", done, mode, true)
+    ].join("");
+  }
+
+  function isTransferItemPendingForMode(item, mode) {
+    if (mode === "MONTAGEM") return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0);
+    if (mode === "FINALIZACAO") return false;
+    return !item.isExtra && Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
+  }
+
+  function transferWorkSectionHtml(title, items, mode, done) {
+    return [
+      "<section class=\"transfer-work-list-section" + (done ? " done" : " pending") + "\">",
+      "<div class=\"transfer-list-heading\"><strong>" + escapeHtml(title) + "</strong><span>" + items.length + " item(ns)</span></div>",
+      items.length ? items.map(function (item) { return transferWorkItemCardHtml(item); }).join("") : "<div class=\"empty-state compact\">Nenhum item nesta etapa.</div>",
+      "</section>"
+    ].join("");
   }
 
   function getTransferWorkMode(transfer) {
@@ -4108,6 +4136,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var qty = itemQtyNumbers(item);
     var selected = item.id === transferState.selectedItemId;
     var mode = transferState.activeWorkMode;
+    var statusKey = transferItemStatusLabel(item);
+    var statusLabel = displayTransferStatusLabel(statusKey);
+    var itemClass = "transfer-work-item status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
+    var productName = shortProductName(item.description || "");
     var qtyRows = mode === "MONTAGEM" ? [
       "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
@@ -4120,15 +4152,38 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span>Status <b>" + escapeHtml(displayTransferStatusLabel(transferItemStatusLabel(item))) + "</b></span>"
     ].join("");
     return [
-      "<article class=\"transfer-work-item" + (selected ? " selected" : "") + "\" data-transfer-work-item=\"" + item.id + "\">",
-      "<div class=\"transfer-work-item-head\"><strong>SKU " + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(displayTransferStatusLabel(transferItemStatusLabel(item))) + "</span></div>",
-      "<p>" + escapeHtml(shortProductName(item.description || "-")) + "</p>",
+      "<article class=\"" + itemClass + "\" data-transfer-work-item=\"" + item.id + "\">",
+      "<div class=\"transfer-work-item-head\"><strong>SKU " + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
+      productName ? "<p>" + escapeHtml(productName) + "</p>" : "",
       "<div class=\"transfer-qty-row\">",
       qtyRows,
       "</div>",
       mode === "MONTAGEM" ? "" : "<small>" + escapeHtml(transferCompactLocationLabel(item)) + "</small>",
+      transferWorkItemActionsHtml(item, mode),
       "</article>"
     ].join("");
+  }
+
+  function transferWorkItemActionsHtml(item, mode) {
+    var transfer = getTransferById(item.transferId);
+    if (!transfer || isFinalTransferStatus(transfer.status) || item.isExtra) return "";
+    if (mode === "SEPARACAO" && Number(item.separatedQty || 0) > 0) {
+      return [
+        "<div class=\"transfer-card-actions\">",
+        "<button class=\"secondary-button\" data-transfer-edit-collection=\"" + item.id + "\" type=\"button\">Editar coleta</button>",
+        "<button class=\"remove-small\" data-transfer-undo-collection=\"" + item.id + "\" type=\"button\">Desfazer coleta</button>",
+        "</div>"
+      ].join("");
+    }
+    if (mode === "MONTAGEM" && Number(item.packedQty || 0) > 0) {
+      return [
+        "<div class=\"transfer-card-actions\">",
+        "<button class=\"secondary-button\" data-transfer-edit-pack=\"" + item.id + "\" type=\"button\">Editar quantidade</button>",
+        "<button class=\"remove-small\" data-transfer-remove-pack=\"" + item.id + "\" type=\"button\">Remover da caixa</button>",
+        "</div>"
+      ].join("");
+    }
+    return "";
   }
 
   function shortProductName(value) {
@@ -4179,6 +4234,25 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function handleTransferWorkListClick(event) {
+    var actionButton = event.target.closest("button");
+    if (actionButton) {
+      if (actionButton.dataset.transferEditCollection) {
+        editTransferItemQuantity(actionButton.dataset.transferEditCollection, "SEPARACAO", actionButton);
+        return;
+      }
+      if (actionButton.dataset.transferUndoCollection) {
+        resetTransferItemQuantity(actionButton.dataset.transferUndoCollection, "SEPARACAO", actionButton);
+        return;
+      }
+      if (actionButton.dataset.transferEditPack) {
+        editTransferItemQuantity(actionButton.dataset.transferEditPack, "MONTAGEM", actionButton);
+        return;
+      }
+      if (actionButton.dataset.transferRemovePack) {
+        resetTransferItemQuantity(actionButton.dataset.transferRemovePack, "MONTAGEM", actionButton);
+        return;
+      }
+    }
     var card = event.target.closest("[data-transfer-work-item]");
     if (!card) return;
     transferState.selectedItemId = card.dataset.transferWorkItem;
@@ -4188,6 +4262,83 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("transferQuantityInput").value = "";
     }
     renderTransferWork();
+  }
+
+  async function editTransferItemQuantity(itemId, mode, button) {
+    var item = transferState.items.find(function (entry) { return entry.id === itemId; });
+    var transfer = item ? getTransferById(item.transferId) : null;
+    if (!item || !transfer || isFinalTransferStatus(transfer.status)) return;
+    var current = mode === "MONTAGEM" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
+    var label = mode === "MONTAGEM" ? "Quantidade na caixa" : "Quantidade separada";
+    var value = window.prompt(label + " para o SKU " + item.sku + ":", formatInputQty(current));
+    if (value === null) return;
+    var qty = parseQuantity(value);
+    if (qty < 0 || !Number.isFinite(qty)) {
+      setStatus("transferWorkStatus", "Informe uma quantidade valida.", "error");
+      return;
+    }
+    await saveTransferItemOperationalQty(item, transfer, mode, qty, button);
+  }
+
+  async function resetTransferItemQuantity(itemId, mode, button) {
+    var item = transferState.items.find(function (entry) { return entry.id === itemId; });
+    var transfer = item ? getTransferById(item.transferId) : null;
+    if (!item || !transfer || isFinalTransferStatus(transfer.status)) return;
+    var message = mode === "MONTAGEM" ? "Remover este SKU da caixa?" : "Desfazer a coleta deste SKU?";
+    if (!window.confirm(message)) return;
+    await saveTransferItemOperationalQty(item, transfer, mode, 0, button);
+  }
+
+  async function saveTransferItemOperationalQty(item, transfer, mode, qty, button) {
+    var actionKey = "edit-transfer-item:" + item.id + ":" + mode;
+    if (!beginTransferAction(actionKey, button, "Salvando...")) return;
+    try {
+      var now = new Date().toISOString();
+      var update = { updated_at: now };
+      if (mode === "MONTAGEM") {
+        item.packedQty = qty;
+        item.excessQty = Math.max(0, qty - Number(item.separatedQty || 0));
+        item.divergenceType = item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
+        item.status = qty <= 0 ? (Number(item.separatedQty || 0) > 0 ? "SEPARADO" : "PENDENTE") : qty >= Number(item.separatedQty || 0) ? "ENVIADO" : "EM_CAIXA";
+        update.quantidade_lacrada = item.packedQty;
+      } else {
+        item.separatedQty = qty;
+        if (Number(item.packedQty || 0) > qty) item.packedQty = qty;
+        item.missingQty = Math.max(0, Number(item.requestedQty || 0) - qty);
+        item.excessQty = Math.max(0, qty - Number(item.requestedQty || 0));
+        item.divergenceType = item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
+        item.status = qty <= 0 ? "PENDENTE" : qty >= Number(item.requestedQty || 0) ? "SEPARADO" : "PARCIAL";
+        update.quantidade_separada = item.separatedQty;
+        update.quantidade_lacrada = item.packedQty;
+      }
+      Object.assign(update, {
+        quantidade_faltante: item.missingQty || 0,
+        quantidade_excedente: item.excessQty || 0,
+        divergence_type: item.divergenceType || "",
+        status: item.status
+      }, transferItemAuditDbFields(item));
+      var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
+      if (response.error && isMissingColumnError(response.error)) {
+        response = await supabaseDb.from("wms_transfer_items").update({
+          quantidade_separada: item.separatedQty,
+          quantidade_lacrada: item.packedQty,
+          status: item.status,
+          updated_at: now
+        }).eq("id", item.id);
+      }
+      if (response.error) throw response.error;
+      await loadTransferData();
+      transferState.activeTransferId = transfer.id;
+      transferState.activeWorkMode = mode;
+      transferState.manualSeparationQty = false;
+      clearTransferInputs();
+      renderTransfers();
+      setStatus("transferWorkStatus", "Ajuste salvo.", "success");
+    } catch (error) {
+      setStatus("transferWorkStatus", "Erro ao salvar ajuste: " + formatSupabaseError(error), "error");
+    } finally {
+      endTransferAction(button);
+    }
   }
 
   async function confirmCurrentCollect() {
@@ -4260,13 +4411,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("adminTransferProgressRows").innerHTML = rows.length ? rows.map(function (row) {
       return [
         "<tr class=\"" + (row.remainingQty > 0 ? "admin-progress-pending" : "admin-progress-ok") + "\">",
-        "<td><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
-        "<td>" + escapeHtml(row.description || "-") + "</td>",
+        "<td data-label=\"SKU\"><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
+        "<td data-label=\"Produto\">" + escapeHtml(row.description || "-") + "</td>",
         transferLocationSummaryCell(row.item),
-        "<td>" + formatQty(row.expectedQty) + "</td>",
-        "<td>" + formatQty(row.checkedQty) + "</td>",
-        "<td>" + formatQty(row.remainingQty) + "</td>",
-        "<td>" + formatQty(row.differenceQty) + "</td>",
+        "<td data-label=\"Prevista\">" + formatQty(row.expectedQty) + "</td>",
+        "<td data-label=\"Lacrada/Enviada\">" + formatQty(row.checkedQty) + "</td>",
+        "<td data-label=\"Falta\">" + formatQty(row.remainingQty) + "</td>",
+        "<td data-label=\"Diferença\">" + formatQty(row.differenceQty) + "</td>",
         "</tr>"
       ].join("");
     }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
@@ -4304,14 +4455,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var missingQty = Math.max(0, expectedQty - checkedQty);
       var excessQty = Math.max(0, checkedQty - expectedQty);
       if (isConference) {
-        return "<tr><td><strong>" + escapeHtml(item.sku) + "</strong></td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(checkedQty) + "</td><td>" + formatQty(missingQty) + "</td><td>" + formatQty(excessQty) + "</td><td>" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
+        return "<tr><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(expectedQty) + "</td><td>" + formatQty(item.packedQty) + "</td><td>" + formatQty(diff) + "</td><td>" + escapeHtml(Math.abs(diff) < 0.0001 ? "Correto" : "Com diferenca") + "</td></tr>";
+      return "<tr><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Lacrada/Enviada\">" + formatQty(item.packedQty) + "</td><td data-label=\"Dif.\">" + formatQty(diff) + "</td><td data-label=\"Status\">" + escapeHtml(Math.abs(diff) < 0.0001 ? "Correto" : "Com diferenca") + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
       var actions = isConference ? conferenceAdjustHtml(item.id, extraQty) + "<button class=\"remove-small\" data-transfer-delete-extra=\"" + item.id + "\" type=\"button\">Remover</button>" : escapeHtml(item.observation || "-");
-      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td>" + formatQty(extraQty) + "</td><td>" + escapeHtml(item.addedByName || "-") + "</td><td>" + escapeHtml(item.inputType || "-") + "</td><td>" + actions + "</td></tr>";
+      return "<tr><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Qtd bipada\">" + formatQty(extraQty) + "</td><td data-label=\"Quem\">" + escapeHtml(item.addedByName || "-") + "</td><td data-label=\"Entrada\">" + escapeHtml(item.inputType || "-") + "</td><td data-label=\"" + (isConference ? "Ajustar" : "Obs.") + "\">" + actions + "</td></tr>";
     }).join("");
     var locationHeaders = ["Localizacao"];
     var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
@@ -4364,6 +4515,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var mode = transferState.activeWorkMode;
     var statusLabel = displayTransferStatusLabel(transferItemStatusLabel(item));
     var locationLine = transferCompactLocationLabel(item);
+    var productName = normalizeText(item.description || "");
     var highlight = mode === "MONTAGEM"
       ? "<div class=\"current-qty-highlight packing\"><span>Restante para caixa</span><strong>" + formatQty(qty.pendingPacking) + " " + escapeHtml(item.unit || "UN") + "</strong></div>"
       : "<div class=\"current-qty-highlight\"><span>Quantidade para coletar</span><strong>" + formatQty(qty.pendingSeparation || qty.requested) + " " + escapeHtml(item.unit || "UN") + "</strong></div>";
@@ -4381,7 +4533,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferCurrentItem").innerHTML = [
       "<span class=\"current-item-kicker\">" + (mode === "MONTAGEM" ? "ITEM PARA CAIXA" : "PRÓXIMO ITEM") + "</span>",
       "<div class=\"current-item-head\"><strong>SKU " + escapeHtml(item.sku) + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
-      "<p>" + escapeHtml(item.description || "-") + "</p>",
+      productName ? "<p>" + escapeHtml(productName) + "</p>" : "",
       highlight,
       mode === "MONTAGEM" ? "" : "<div class=\"current-location-line\"><span>Endereço</span><strong>" + escapeHtml(locationLine.replace(/^EndereÃ§o: |^Endereço: /, "")) + "</strong></div>",
       "<div class=\"transfer-qty-row current-item-meta\">",
@@ -6148,10 +6300,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferLocationSummaryCell(item) {
     var status = transferLocationStatus(item);
     if (!status.hasLocation) {
-      return "<td class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span></td>";
+      return "<td data-label=\"Localização\" class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span></td>";
     }
     return [
-      "<td class=\"transfer-location-cell\">",
+      "<td data-label=\"Localização\" class=\"transfer-location-cell\">",
       "<strong>" + escapeHtml(status.code) + "</strong>",
       "<span>" + escapeHtml(status.rua) + " | " + escapeHtml(status.rack) + " | " + escapeHtml(status.linha) + " | " + escapeHtml(status.letra) + "</span>",
       "<em>Localizado</em>",
@@ -6679,15 +6831,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!transfer) return;
     var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && item.packedQty < item.separatedQty; });
     if (pending.length) {
-      if (!window.confirm("Existem itens pendentes na montagem da caixa. Deseja finalizar com divergência?")) {
-        setStatus("transferWorkStatus", "Volte para concluir as pendências.", "warning");
-        return;
-      }
-      await registerMissingTransferItems(transfer, "LACRE");
-      pending = [];
-    }
-    if (pending.length) {
-      setStatus("transferWorkStatus", "Só é possível finalizar sem divergência quando todos os itens estiverem na caixa.", "error");
+      setStatus("transferWorkStatus", "Finalize todos os itens antes de concluir a transferência.", "error");
       return;
     }
     var report = getTransferFinalReport(transfer);
@@ -6703,8 +6847,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var packingFinishedAt = new Date().toISOString();
     await updateTransferStatus(transfer, hasDivergence ? "PRONTA_PARA_NOTA_COM_DIVERGENCIA" : "PRONTA_PARA_NOTA", {
       lacre_concluido_em: packingFinishedAt,
-      duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt, packingFinishedAt),
-      finalizado_em: packingFinishedAt
+      duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
+      finalizado_em: packingFinishedAt,
+      duracao_segundos: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
     }, "PACKING_FINISHED");
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
