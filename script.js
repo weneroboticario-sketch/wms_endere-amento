@@ -720,7 +720,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         try {
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "id");
         } catch (bindingError) {
-          if (!isMissingColumnError(bindingError)) throw bindingError;
+          if (!isMissingWarehouseColumnError(bindingError)) throw bindingError;
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding).map(stripWarehouseColumns), "id");
         }
       }
@@ -728,7 +728,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         try {
           await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
         } catch (historyError) {
-          if (isMissingColumnError(historyError)) {
+          if (isMissingWarehouseColumnError(historyError)) {
             await upsertInChunks("wms_history", state.history.map(toDbHistory).map(stripWarehouseColumns), "id");
             historyError = null;
           }
@@ -1412,7 +1412,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
         .upsert(toDbBinding(binding), { onConflict: "warehouse_code,sku,location_code" });
-      if (bindingResponse.error && isMissingColumnError(bindingResponse.error)) {
+      if (bindingResponse.error && isMissingWarehouseColumnError(bindingResponse.error)) {
         bindingResponse = await supabaseDb
           .from("wms_bindings")
           .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "sku,location_code" });
@@ -1422,7 +1422,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var historyResponse = await supabaseDb
         .from("wms_history")
         .upsert(toDbHistory(historyItem), { onConflict: "id" });
-      if (historyResponse.error && isMissingColumnError(historyResponse.error)) {
+      if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
         historyResponse = await supabaseDb
           .from("wms_history")
           .upsert(stripWarehouseColumns(toDbHistory(historyItem)), { onConflict: "id" });
@@ -2902,7 +2902,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
         .upsert(toDbBinding(binding), { onConflict: "id" });
-      if (bindingResponse.error && isMissingColumnError(bindingResponse.error)) {
+      if (bindingResponse.error && isMissingWarehouseColumnError(bindingResponse.error)) {
         bindingResponse = await supabaseDb
           .from("wms_bindings")
           .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "id" });
@@ -2918,7 +2918,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var historyResponse = await supabaseDb
           .from("wms_history")
           .upsert(historyItems.map(toDbHistory), { onConflict: "id" });
-        if (historyResponse.error && isMissingColumnError(historyResponse.error)) {
+        if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
           historyResponse = await supabaseDb
             .from("wms_history")
             .upsert(historyItems.map(toDbHistory).map(stripWarehouseColumns), { onConflict: "id" });
@@ -8717,7 +8717,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       };
 
       var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "warehouse_code,sku,location_code" });
-      if (insertResponse.error && isMissingColumnError(insertResponse.error)) {
+      if (insertResponse.error && isMissingWarehouseColumnError(insertResponse.error)) {
         insertResponse = await supabaseDb.from("wms_bindings").upsert(stripWarehouseColumns(probe), { onConflict: "sku,location_code" });
       }
       if (insertResponse.error) throw insertResponse.error;
@@ -8909,6 +8909,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     );
   }
 
+  function isMissingWarehouseColumnError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return isMissingColumnError(error) && (
+      message.indexOf("warehouse_code") >= 0 ||
+      message.indexOf("warehouse_id") >= 0
+    );
+  }
+
   function isHistorySchemaError(error) {
     var message = formatSupabaseError(error).toLowerCase();
     return message.indexOf("wms_history") >= 0 && (
@@ -8943,10 +8951,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function clearRemoteWarehouseRows(tableName, columnName) {
     if (!isSupabaseReady()) return;
     var response = await supabaseDb.from(tableName).delete().eq("warehouse_code", activeWarehouseCode());
-    if (response.error && isMissingColumnError(response.error)) {
-      if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) {
-        throw new Error("Estrutura multiestoque ausente em " + tableName + ". Execute supabase-schema.sql antes de limpar/importar o estoque " + activeWarehouseCode() + ".");
-      }
+    if (response.error && isMissingWarehouseColumnError(response.error)) {
       await clearRemoteTable(tableName, columnName);
       return;
     }
