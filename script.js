@@ -4225,9 +4225,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Total solicitado", formatQty(stats.requested)),
       summaryChip("Total separado", formatQty(stats.separated)),
       summaryChip("Total na caixa", formatQty(stats.packed)),
-      summaryChip("Itens corretos", correct),
-      summaryChip("Divergências", divergent),
-      summaryChip("Sem localização", noLocation),
+      summaryChip("Itens corretos", correct, "result-ok"),
+      summaryChip("Divergências", divergent, divergent ? "result-changed" : "result-ok"),
+      summaryChip("Sem localização", noLocation, noLocation ? "result-missing" : "result-ok"),
       summaryChip("Tempo total", formatDuration(secondsBetween(transfer.startedAt || transfer.createdAt, new Date().toISOString()))),
       summaryChip("Responsável", transfer.responsibleName || "-")
     ].join("");
@@ -4371,6 +4371,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return number ? String(number).replace(".", ",") : "";
   }
 
+  function transferQtyResult(expectedQty, checkedQty, item) {
+    expectedQty = Number(expectedQty || 0);
+    checkedQty = Number(checkedQty || 0);
+    var diff = checkedQty - expectedQty;
+    if (item && item.isExtra) return { key: "extra", label: "Extra", diff: diff };
+    if (expectedQty > 0 && checkedQty <= 0) return { key: "not-picked", label: "Não pego", diff: diff };
+    if (diff < 0) return { key: "missing", label: "Faltando", diff: diff };
+    if (diff > 0) return { key: "excess", label: "Sobrando", diff: diff };
+    if (item && item.divergenceType) return { key: "changed", label: "Alterado", diff: diff };
+    return { key: "ok", label: "OK - pego", diff: diff };
+  }
+
+  function resultBadgeHtml(result) {
+    return "<span class=\"result-badge result-" + escapeHtml(result.key) + "\">" + escapeHtml(result.label) + "</span>";
+  }
+
   function renderAdminTransferProgress(transfer, mode) {
     if (!$("adminTransferProgressPanel")) return;
     var visible = isAdminOrSupervisor();
@@ -4383,6 +4399,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var expectedQty = Number(item.requestedQty || 0);
       var remainingQty = Math.max(0, expectedQty - checkedQty);
       var differenceQty = checkedQty - expectedQty;
+      var result = transferQtyResult(expectedQty, checkedQty, item);
       return {
         item: item,
         sku: item.sku,
@@ -4390,7 +4407,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         expectedQty: expectedQty,
         checkedQty: checkedQty,
         remainingQty: remainingQty,
-        differenceQty: differenceQty
+        differenceQty: differenceQty,
+        result: result
       };
     });
     var checkedProducts = rows.filter(function (row) { return row.checkedQty > 0; }).length;
@@ -4399,28 +4417,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var remainingQtyTotal = rows.reduce(function (sum, row) { return sum + row.remainingQty; }, 0);
     var expectedQtyTotal = rows.reduce(function (sum, row) { return sum + row.expectedQty; }, 0);
     var differenceQtyTotal = checkedQtyTotal - expectedQtyTotal;
+    var totalResult = transferQtyResult(expectedQtyTotal, checkedQtyTotal, { divergenceType: differenceQtyTotal ? "DIFERENCA_TOTAL" : "" });
     $("adminTransferProgressSummary").innerHTML = [
       "<div><span>Produtos</span><strong>" + rows.length + "</strong></div>",
-      "<div><span>Produtos lacrados</span><strong>" + checkedProducts + "</strong></div>",
-      "<div><span>Produtos faltando</span><strong>" + remainingProducts + "</strong></div>",
+      summaryChip("Produtos lacrados", checkedProducts, checkedProducts ? "result-ok" : "result-not-picked"),
+      summaryChip("Produtos faltando", remainingProducts, remainingProducts ? "result-missing" : "result-ok"),
       "<div><span>Qtd prevista</span><strong>" + formatQty(expectedQtyTotal) + "</strong></div>",
-      "<div><span>Qtd lacrada</span><strong>" + formatQty(checkedQtyTotal) + "</strong></div>",
-      "<div><span>Qtd faltando</span><strong>" + formatQty(remainingQtyTotal) + "</strong></div>",
-      "<div><span>Diferença</span><strong>" + formatQty(differenceQtyTotal) + "</strong></div>"
+      summaryChip("Qtd lacrada", formatQty(checkedQtyTotal), totalResult.key === "ok" ? "result-ok" : "result-changed"),
+      summaryChip("Qtd faltando", formatQty(remainingQtyTotal), remainingQtyTotal ? "result-missing" : "result-ok"),
+      summaryChip("Diferença", formatQty(differenceQtyTotal), "result-" + totalResult.key)
     ].join("");
     $("adminTransferProgressRows").innerHTML = rows.length ? rows.map(function (row) {
       return [
-        "<tr class=\"" + (row.remainingQty > 0 ? "admin-progress-pending" : "admin-progress-ok") + "\">",
+        "<tr class=\"admin-progress-row result-row result-" + escapeHtml(row.result.key) + "\">",
         "<td data-label=\"SKU\"><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
         "<td data-label=\"Produto\">" + escapeHtml(row.description || "-") + "</td>",
         transferLocationSummaryCell(row.item),
         "<td data-label=\"Prevista\">" + formatQty(row.expectedQty) + "</td>",
         "<td data-label=\"Lacrada/Enviada\">" + formatQty(row.checkedQty) + "</td>",
         "<td data-label=\"Falta\">" + formatQty(row.remainingQty) + "</td>",
-        "<td data-label=\"Diferença\">" + formatQty(row.differenceQty) + "</td>",
+        "<td data-label=\"Diferença\"><strong class=\"result-diff result-" + escapeHtml(row.result.key) + "\">" + formatQty(row.differenceQty) + "</strong></td>",
+        "<td data-label=\"Situação\">" + resultBadgeHtml(row.result) + "</td>",
         "</tr>"
       ].join("");
-    }).join("") : "<tr><td colspan=\"7\">Nenhum item nesta transferência.</td></tr>";
+    }).join("") : "<tr><td colspan=\"8\">Nenhum item nesta transferência.</td></tr>";
   }
 
   function renderTransferFinalReport(transfer) {
@@ -4440,12 +4460,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Tempo separacao</span><strong>" + formatDuration(report.separationDurationSeconds) + "</strong></div>",
       "<div><span>Tempo montagem</span><strong>" + formatDuration(report.packingDurationSeconds) + "</strong></div>",
       "<div><span>Total previsto</span><strong>" + formatQty(expectedTotal) + "</strong></div>",
-      "<div><span>Lacrado/enviado</span><strong>" + formatQty(packedTotal) + "</strong></div>",
-      "<div><span>Diferenca total</span><strong>" + formatQty(totalDifference) + "</strong></div>",
+      summaryChip("Lacrado/enviado", formatQty(packedTotal), totalDifference ? "result-changed" : "result-ok"),
+      summaryChip("Diferenca total", formatQty(totalDifference), "result-" + transferQtyResult(expectedTotal, packedTotal, { divergenceType: totalDifference ? "DIFERENCA_TOTAL" : "" }).key),
       "<div><span>SKUs</span><strong>" + report.stats.totalSkus + "</strong></div>",
-      "<div><span>Produtos corretos</span><strong>" + correctItems + "</strong></div>",
-      "<div><span>Com diferenca</span><strong>" + divergentItems + "</strong></div>",
-      "<div><span>Extras</span><strong>" + report.extraItems.length + "</strong></div>"
+      summaryChip("Produtos corretos", correctItems, "result-ok"),
+      summaryChip("Com diferenca", divergentItems, divergentItems ? "result-changed" : "result-ok"),
+      summaryChip("Extras", report.extraItems.length, report.extraItems.length ? "result-extra" : "result-ok")
     ].join("");
     var isConference = isXmlConferenceTransfer(transfer);
     var itemRows = report.items.map(function (item) {
@@ -4454,19 +4474,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var diff = checkedQty - expectedQty;
       var missingQty = Math.max(0, expectedQty - checkedQty);
       var excessQty = Math.max(0, checkedQty - expectedQty);
+      var result = transferQtyResult(expectedQty, checkedQty, item);
       if (isConference) {
-        return "<tr><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
+        return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Situação\">" + resultBadgeHtml(result) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Lacrada/Enviada\">" + formatQty(item.packedQty) + "</td><td data-label=\"Dif.\">" + formatQty(diff) + "</td><td data-label=\"Status\">" + escapeHtml(Math.abs(diff) < 0.0001 ? "Correto" : "Com diferenca") + "</td></tr>";
+      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Lacrada/Enviada\">" + formatQty(item.packedQty) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
+      var result = transferQtyResult(0, extraQty, item);
       var actions = isConference ? conferenceAdjustHtml(item.id, extraQty) + "<button class=\"remove-small\" data-transfer-delete-extra=\"" + item.id + "\" type=\"button\">Remover</button>" : escapeHtml(item.observation || "-");
-      return "<tr><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Qtd bipada\">" + formatQty(extraQty) + "</td><td data-label=\"Quem\">" + escapeHtml(item.addedByName || "-") + "</td><td data-label=\"Entrada\">" + escapeHtml(item.inputType || "-") + "</td><td data-label=\"" + (isConference ? "Ajustar" : "Obs.") + "\">" + actions + "</td></tr>";
+      return "<tr class=\"leader-result-row result-row result-extra\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Qtd bipada\">" + formatQty(extraQty) + "</td><td data-label=\"Situação\">" + resultBadgeHtml(result) + "</td><td data-label=\"Quem\">" + escapeHtml(item.addedByName || "-") + "</td><td data-label=\"Entrada\">" + escapeHtml(item.inputType || "-") + "</td><td data-label=\"" + (isConference ? "Ajustar" : "Obs.") + "\">" + actions + "</td></tr>";
     }).join("");
     var locationHeaders = ["Localizacao"];
-    var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
-    var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
+    var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Situação", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
+    var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Situação", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
     $("transferFinalReportDetails").innerHTML = [
       reportTableHtml(isConference ? "Itens do XML" : "Resultado por SKU", itemHeaders, itemRows, itemHeaders.length),
       reportTableHtml("Itens extras", extraHeaders, extraRows, extraHeaders.length)
@@ -5432,8 +5454,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
   }
 
-  function summaryChip(label, value) {
-    return "<div class=\"summary-chip\"><span>" + label + "</span><strong>" + escapeHtml(String(value)) + "</strong></div>";
+  function summaryChip(label, value, className) {
+    return "<div class=\"summary-chip" + (className ? " " + escapeHtml(className) : "") + "\"><span>" + label + "</span><strong>" + escapeHtml(String(value)) + "</strong></div>";
   }
 
   function bindActionButtons(root) {

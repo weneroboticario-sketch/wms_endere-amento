@@ -853,6 +853,7 @@ td {
   padding: 12px;
   background: var(--surface-alt);
   border-radius: var(--radius);
+  border: 1px solid transparent;
 }
 
 .summary-chip span {
@@ -864,6 +865,108 @@ td {
 .summary-chip strong {
   display: block;
   margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.summary-chip.result-ok,
+.result-row.result-ok td {
+  background: #ecfdf3;
+}
+
+.summary-chip.result-ok {
+  border-color: #a7e0bd;
+}
+
+.summary-chip.result-missing,
+.summary-chip.result-not-picked,
+.result-row.result-missing td,
+.result-row.result-not-picked td {
+  background: #fff1f0;
+}
+
+.summary-chip.result-missing,
+.summary-chip.result-not-picked {
+  border-color: #ffb4ad;
+}
+
+.summary-chip.result-changed,
+.result-row.result-changed td {
+  background: #fff8e6;
+}
+
+.summary-chip.result-changed {
+  border-color: #f4cf7a;
+}
+
+.summary-chip.result-excess,
+.summary-chip.result-extra,
+.result-row.result-excess td,
+.result-row.result-extra td {
+  background: #fff3e8;
+}
+
+.summary-chip.result-excess,
+.summary-chip.result-extra {
+  border-color: #f1b27a;
+}
+
+.result-badge {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 0.76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.result-badge.result-ok,
+.result-diff.result-ok {
+  color: #087443;
+}
+
+.result-badge.result-ok {
+  background: #ccefdc;
+}
+
+.result-badge.result-missing,
+.result-badge.result-not-picked,
+.result-diff.result-missing,
+.result-diff.result-not-picked {
+  color: #b42318;
+}
+
+.result-badge.result-missing,
+.result-badge.result-not-picked {
+  background: #ffe0dc;
+}
+
+.result-badge.result-changed,
+.result-diff.result-changed {
+  color: #986f00;
+}
+
+.result-badge.result-changed {
+  background: #ffedb8;
+}
+
+.result-badge.result-excess,
+.result-badge.result-extra,
+.result-diff.result-excess,
+.result-diff.result-extra {
+  color: #b54708;
+}
+
+.result-badge.result-excess,
+.result-badge.result-extra {
+  background: #ffd9bd;
+}
+
+.result-diff {
+  font-weight: 900;
 }
 
 .label-form-grid {
@@ -1657,6 +1760,39 @@ td {
   background: #fffdf5;
 }
 
+.admin-progress-row,
+.leader-result-row {
+  border-left: 4px solid transparent;
+}
+
+.admin-progress-row.result-ok,
+.leader-result-row.result-ok {
+  border-left-color: #12b76a;
+}
+
+.admin-progress-row.result-missing,
+.admin-progress-row.result-not-picked,
+.leader-result-row.result-missing,
+.leader-result-row.result-not-picked {
+  border-left-color: #d92d20;
+}
+
+.admin-progress-row.result-changed,
+.leader-result-row.result-changed {
+  border-left-color: #f79009;
+}
+
+.admin-progress-row.result-excess,
+.admin-progress-row.result-extra,
+.leader-result-row.result-excess,
+.leader-result-row.result-extra {
+  border-left-color: #fb6514;
+}
+
+.result-row td {
+  transition: background 0.15s ease;
+}
+
 .leader-report-grid {
   display: grid;
   gap: 12px;
@@ -2284,9 +2420,33 @@ td {
     font-size: 1.35rem;
   }
 
+  #transferencias .transfer-work-summary,
+  #transferencias .admin-transfer-progress .transfer-work-summary,
+  #transferencias .transfer-final-summary,
+  #transferencias #transferFinalReportSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  #transferencias .transfer-work-summary div,
+  #transferencias .summary-chip {
+    min-width: 0;
+    padding: 9px;
+  }
+
+  #transferencias .transfer-work-summary span,
+  #transferencias .summary-chip span {
+    font-size: 0.7rem;
+  }
+
+  #transferencias .transfer-work-summary strong,
+  #transferencias .summary-chip strong {
+    font-size: 1.05rem;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
   .transfer-work-grid,
-  .admin-transfer-progress .transfer-work-summary,
-  .transfer-final-summary,
   .xml-summary,
   .conference-result-item {
     grid-template-columns: 1fr;
@@ -2432,8 +2592,10 @@ td {
     margin-bottom: 10px;
     padding: 10px;
     border: 1px solid var(--line);
+    border-left-width: 5px;
     border-radius: var(--radius);
     background: #ffffff;
+    overflow: hidden;
   }
 
   #transferencias .transfer-panel-table td,
@@ -2444,6 +2606,8 @@ td {
     gap: 8px;
     padding: 7px 0;
     border-bottom: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   #transferencias .transfer-panel-table td::before,
