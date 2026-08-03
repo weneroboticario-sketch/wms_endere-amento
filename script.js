@@ -452,7 +452,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var allRows = [];
     var from = 0;
     var pageSize = 1000;
-    var uiEventTypes = ["XML_CONFERENCE_ASSIGNED", "XML_CONFERENCE"];
+    var uiEventTypes = [
+      "XML_CONFERENCE_ASSIGNED",
+      "XML_CONFERENCE",
+      "SEPARATION_STARTED",
+      "SEPARATION_FINISHED",
+      "PACKING_STARTED",
+      "PACKING_FINISHED",
+      "TRANSFER_FINALIZED"
+    ];
     while (true) {
       var response = await supabaseDb
         .from("wms_transfer_events")
@@ -794,8 +802,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       criado_por_id: item.createdById,
       criado_por_nome: item.createdByName,
       iniciado_em: item.startedAt || null,
+      finalizado_em: item.finishedAt || null,
+      duracao_segundos: Number(item.durationSeconds || 0),
+      separacao_iniciada_em: item.separationStartedAt || null,
       separacao_concluida_em: item.separationFinishedAt || null,
+      duracao_separacao_segundos: Number(item.separationDurationSeconds || 0),
+      lacre_iniciado_em: item.packingStartedAt || null,
       lacre_concluido_em: item.packingFinishedAt || null,
+      duracao_lacre_segundos: Number(item.packingDurationSeconds || 0),
       created_at: item.createdAt || new Date().toISOString(),
       updated_at: item.updatedAt || new Date().toISOString()
     };
@@ -4486,8 +4500,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var originalItems = items.filter(function (item) { return !item.isExtra; });
     var extraItems = items.filter(function (item) { return item.isExtra; });
     var stats = getTransferStats(transfer.id);
-    var start = transfer.startedAt || transfer.separationStartedAt || transfer.createdAt;
-    var finish = transfer.finishedAt || transfer.packingFinishedAt || transfer.updatedAt;
+    var milestones = getTransferMilestoneTimes(transfer.id);
+    var start = transfer.startedAt || transfer.separationStartedAt || milestones.separationStarted || transfer.createdAt;
+    var separationStarted = transfer.separationStartedAt || transfer.startedAt || milestones.separationStarted || start;
+    var separationFinished = transfer.separationFinishedAt || milestones.separationFinished || milestones.packingStarted || "";
+    var packingStarted = transfer.packingStartedAt || milestones.packingStarted || separationFinished || "";
+    var packingFinished = transfer.packingFinishedAt || milestones.packingFinished || transfer.finishedAt || "";
+    var finish = transfer.finishedAt || packingFinished || milestones.transferFinalized || transfer.updatedAt;
+    var totalDurationSeconds = Number(transfer.durationSeconds || 0) || secondsBetween(start, finish);
+    var separationDurationSeconds = Number(transfer.separationDurationSeconds || 0) || secondsBetween(separationStarted, separationFinished);
+    var packingDurationSeconds = Number(transfer.packingDurationSeconds || 0) || secondsBetween(packingStarted, packingFinished);
     var divergences = [];
     originalItems.forEach(function (item) {
       var checkedQty = getTransferCheckedQty(item, transfer);
@@ -4510,12 +4532,39 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       stats: stats,
       startedAt: start,
       finishedAt: finish,
-      totalDurationSeconds: Number(transfer.durationSeconds || 0) || secondsBetween(start, finish),
-      separationDurationSeconds: Number(transfer.separationDurationSeconds || 0) || secondsBetween(transfer.separationStartedAt || transfer.startedAt, transfer.separationFinishedAt),
-      packingDurationSeconds: Number(transfer.packingDurationSeconds || 0) || secondsBetween(transfer.packingStartedAt, transfer.packingFinishedAt),
+      totalDurationSeconds: totalDurationSeconds,
+      separationDurationSeconds: separationDurationSeconds,
+      packingDurationSeconds: packingDurationSeconds,
       scannedEvents: 0,
       manualEvents: 0
     };
+  }
+
+  function getTransferMilestoneTimes(transferId) {
+    var events = transferState.events.filter(function (event) {
+      return event.transfer_id === transferId;
+    }).sort(function (a, b) {
+      return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+    });
+    return {
+      separationStarted: firstEventTime(events, ["SEPARATION_STARTED"]),
+      separationFinished: firstEventTime(events, ["SEPARATION_FINISHED"]),
+      packingStarted: firstEventTime(events, ["PACKING_STARTED", "SEPARATION_FINISHED"]),
+      packingFinished: firstEventTime(events, ["PACKING_FINISHED"]),
+      transferFinalized: lastEventTime(events, ["TRANSFER_FINALIZED", "PACKING_FINISHED"])
+    };
+  }
+
+  function firstEventTime(events, types) {
+    var match = events.find(function (event) { return types.indexOf(event.event_type) >= 0; });
+    return match ? match.created_at : "";
+  }
+
+  function lastEventTime(events, types) {
+    for (var i = events.length - 1; i >= 0; i -= 1) {
+      if (types.indexOf(events[i].event_type) >= 0) return events[i].created_at;
+    }
+    return "";
   }
 
   function canCancelTransfer(transfer) {
@@ -6187,6 +6236,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (update.lacre_iniciado_em) transfer.packingStartedAt = update.lacre_iniciado_em;
     if (update.lacre_concluido_em) transfer.packingFinishedAt = update.lacre_concluido_em;
     if (update.finalizado_em) transfer.finishedAt = update.finalizado_em;
+    if (update.duracao_segundos !== undefined) transfer.durationSeconds = Number(update.duracao_segundos || 0);
+    if (update.duracao_separacao_segundos !== undefined) transfer.separationDurationSeconds = Number(update.duracao_separacao_segundos || 0);
+    if (update.duracao_lacre_segundos !== undefined) transfer.packingDurationSeconds = Number(update.duracao_lacre_segundos || 0);
     if (eventType) await recordTransferEvent(transfer.id, "", eventType, "", 0, status, {});
   }
 
