@@ -1901,6 +1901,25 @@ td {
   border-top: 1px solid var(--line);
 }
 
+.final-box-count-box {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fbfd;
+}
+
+.final-box-count-box label {
+  color: var(--text);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.final-box-count-box input {
+  min-height: 42px;
+}
+
 .transfer-qty-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

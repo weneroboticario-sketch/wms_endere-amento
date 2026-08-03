@@ -4834,6 +4834,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("adminTransferProgressPanel")) $("adminTransferProgressPanel").hidden = true;
       if ($("transferFinalReportPanel")) $("transferFinalReportPanel").hidden = true;
       if ($("transferBoxFields")) $("transferBoxFields").hidden = true;
+      if ($("transferFinalBoxesBox")) $("transferFinalBoxesBox").hidden = true;
       clearXmlConferencePanel();
       return;
     }
@@ -4867,6 +4868,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var requiresScan = mode === "MONTAGEM";
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
     var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
+    var showFinalBoxes = !finalized && mode === "MONTAGEM";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
@@ -4874,7 +4876,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("startPackingButton").hidden = true;
     $("finishSeparationButton").hidden = true;
     $("finishPackingButton").hidden = finalized || mode !== "MONTAGEM";
-    $("finishPackingButton").disabled = waitingPacking;
+    $("finishPackingButton").disabled = false;
+    if ($("transferFinalBoxesBox")) $("transferFinalBoxesBox").hidden = !showFinalBoxes;
+    if (!showFinalBoxes && $("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
     $("confirmTransferItemButton").hidden = finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty);
     $("confirmTransferItemButton").textContent = mode === "SEPARACAO" ? "Confirmar quantidade diferente" : mode === "MONTAGEM" ? "Confirmar item na caixa" : "Atualizar item";
     $("transferScanInput").disabled = finalized || !requiresScan;
@@ -4889,7 +4893,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferCompletionActions").hidden = finalized || mode === "FINALIZACAO";
     if ($("transferCompletionHint")) {
       $("transferCompletionHint").hidden = finalized || (mode === "SEPARACAO" ? allSeparated : !waitingPacking);
-      $("transferCompletionHint").textContent = mode === "SEPARACAO" && !allSeparated ? "Finalize todos os itens para concluir a separacao." : mode === "MONTAGEM" && waitingPacking ? "Finalize todos os itens antes de concluir a transferencia." : "";
+      $("transferCompletionHint").textContent = mode === "SEPARACAO" && !allSeparated ? "Finalize todos os itens para concluir a separacao." : mode === "MONTAGEM" && waitingPacking ? "Existem itens faltando na caixa. Voce pode finalizar com divergencia." : "";
       $("transferCompletionHint").className = "inline-status warning";
     }
     $("transferStepHelp").parentElement.hidden = mode === "SEPARACAO" && !transferState.manualSeparationQty;
@@ -5529,6 +5533,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Tempo total</span><strong>" + formatDuration(report.totalDurationSeconds) + "</strong></div>",
       "<div><span>Qtd prevista</span><strong>" + formatQty(expectedTotal) + "</strong></div>",
       summaryChip("Lacrado/enviado", formatQty(packedTotal), totalDifference ? "result-changed" : "result-ok"),
+      summaryChip("Caixas finais", formatQty(report.finalBoxCount), report.finalBoxCount ? "result-ok" : "result-changed"),
       summaryChip("Diferenca", formatQty(totalDifference), "result-" + totalResult.key),
       summaryChip("Produtos corretos", correctItems, "result-ok"),
       summaryChip("Produtos com diferenca", divergentItems, divergentItems ? "result-changed" : "result-ok"),
@@ -5803,9 +5808,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       totalDurationSeconds: totalDurationSeconds,
       separationDurationSeconds: separationDurationSeconds,
       packingDurationSeconds: packingDurationSeconds,
+      finalBoxCount: getTransferFinalBoxCount(transfer.id),
       scannedEvents: 0,
       manualEvents: 0
     };
+  }
+
+  function getTransferFinalBoxCount(transferId) {
+    var events = transferState.events.filter(function (event) {
+      return event.transfer_id === transferId && event.event_type === "PACKING_FINISHED";
+    }).sort(function (a, b) {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+    for (var i = 0; i < events.length; i += 1) {
+      var payload = events[i].payload || {};
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch (error) {
+          payload = {};
+        }
+      }
+      var qty = Number(payload.finalBoxCount || events[i].quantity || 0);
+      if (qty > 0) return qty;
+    }
+    return 0;
   }
 
   function getTransferMilestoneTimes(transferId) {
@@ -7578,6 +7605,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.activeTransferId = transferId;
     transferState.selectedItemId = "";
     transferState.manualSeparationQty = false;
+    if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
     markTaskAlertRead("TRANSFERENCIA", transfer.id, transfer.status);
     transferState.activeWorkMode = getTransferWorkMode(transfer);
     if (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE") {
@@ -7596,7 +7624,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
-  async function updateTransferStatus(transfer, status, extra, eventType) {
+  async function updateTransferStatus(transfer, status, extra, eventType, eventPayload, eventMeta) {
     var now = new Date().toISOString();
     var update = Object.assign({ status: status, updated_at: now }, extra || {});
     var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
@@ -7615,7 +7643,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (update.duracao_segundos !== undefined) transfer.durationSeconds = Number(update.duracao_segundos || 0);
     if (update.duracao_separacao_segundos !== undefined) transfer.separationDurationSeconds = Number(update.duracao_separacao_segundos || 0);
     if (update.duracao_lacre_segundos !== undefined) transfer.packingDurationSeconds = Number(update.duracao_lacre_segundos || 0);
-    if (eventType) await recordTransferEvent(transfer.id, "", eventType, "", 0, status, {});
+    if (eventType) {
+      var eventQuantity = eventMeta && eventMeta.quantity !== undefined ? Number(eventMeta.quantity || 0) : 0;
+      await recordTransferEvent(transfer.id, "", eventType, "", eventQuantity, status, eventPayload || {}, eventMeta || {});
+    }
   }
 
   async function markTransferHasDivergence(transfer) {
@@ -7732,6 +7763,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var boxes = parseQuantity($("transferQuantityInput").value);
     var unitsPerBox = parseQuantity($("transferUnitsPerBoxInput").value);
     $("transferTotalUnitsInput").value = boxes > 0 && unitsPerBox > 0 ? formatInputQty(boxes * unitsPerBox) : "";
+  }
+
+  function readFinalBoxCountInput() {
+    var input = $("transferFinalBoxesInput");
+    var qty = input ? parseQuantity(input.value) : 0;
+    return Number.isFinite(qty) && qty > 0 && Math.floor(qty) === qty ? qty : 0;
   }
 
   async function locateTransferItem() {
@@ -8108,7 +8145,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferWorkStatus", "Só é possível concluir quando todos os itens estiverem separados.", "error");
       return;
     }
-    var actionButton = $("finishSeparationReadyButton");
+    var actionButton = !$("finishSeparationReadyButton").hidden ? $("finishSeparationReadyButton") : $("finishSeparationButton");
     if (!beginTransferAction("finish-separation:" + transfer.id, actionButton, "Salvando...")) return;
     try {
     var separationFinishedAt = new Date().toISOString();
@@ -8144,6 +8181,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function finishPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
+    var finalBoxCount = readFinalBoxCountInput();
+    if (!finalBoxCount) {
+      setStatus("transferWorkStatus", "Informe a quantidade final de caixas para finalizar.", "error");
+      if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").focus();
+      return;
+    }
     var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && item.packedQty < item.separatedQty; });
     var boxWithoutUnits = getTransferItems(transfer.id).filter(function (item) {
       return !item.isExtra && isBoxQuantityItem(item) && Number(item.packedQty || 0) > 0 && getTransferPackedUnits(item) <= 0;
@@ -8154,27 +8197,50 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferWorkStatus", "Informe quantas unidades vêm em cada caixa para continuar.", "error");
       return;
     }
+    var shouldRegisterPackingMissing = pending.length > 0;
+    if (shouldRegisterPackingMissing && !window.confirm("Existem itens faltando colocar na caixa. Finalizar com divergencia?")) {
+      setStatus("transferWorkStatus", "Revise os itens antes de finalizar.", "warning");
+      return;
+    }
+    if (shouldRegisterPackingMissing) pending = [];
     if (pending.length) {
       setStatus("transferWorkStatus", "Finalize todos os itens antes de concluir a transferência.", "error");
       return;
     }
     var report = getTransferFinalReport(transfer);
-    var hasDivergence = report.divergences.length > 0 || countTransferDivergences(transfer.id) > 0;
+    var hasDivergence = shouldRegisterPackingMissing || report.divergences.length > 0 || countTransferDivergences(transfer.id) > 0;
     var message = hasDivergence ? "Existem divergências nesta transferência. Finalizar mesmo assim?" : "Transferência pronta para nota. Finalizar?";
-    if (!window.confirm(message)) {
+    if (!shouldRegisterPackingMissing && !window.confirm(message)) {
       setStatus("transferWorkStatus", "Revise os itens antes de finalizar.", "warning");
       return;
     }
     var actionButton = $("finishPackingButton");
     if (!beginTransferAction("finish-packing:" + transfer.id, actionButton, "Salvando...")) return;
     try {
+    if (shouldRegisterPackingMissing) {
+      await registerMissingTransferItems(transfer, "LACRE");
+      await loadTransferData();
+      transfer = getTransferById(transfer.id) || transfer;
+      report = getTransferFinalReport(transfer);
+      hasDivergence = true;
+    }
     var packingFinishedAt = new Date().toISOString();
     await updateTransferStatus(transfer, hasDivergence ? "PRONTA_PARA_NOTA_COM_DIVERGENCIA" : "PRONTA_PARA_NOTA", {
       lacre_concluido_em: packingFinishedAt,
       duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
       finalizado_em: packingFinishedAt,
       duracao_segundos: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
-    }, "PACKING_FINISHED");
+    }, "PACKING_FINISHED", {
+      finalBoxCount: finalBoxCount,
+      finalizedById: (authState.currentUser || {}).id || "",
+      finalizedByName: (authState.currentUser || {}).name || "",
+      finalizedAt: packingFinishedAt,
+      hasDivergence: hasDivergence
+    }, {
+      quantity: finalBoxCount,
+      quantityInformed: finalBoxCount,
+      observation: "Quantidade final de caixas: " + finalBoxCount
+    });
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
     transferState.activeWorkMode = "FINALIZACAO";
