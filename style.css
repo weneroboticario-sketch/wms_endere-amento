@@ -776,6 +776,27 @@ textarea {
   font-size: 1.1rem;
 }
 
+.sku-card-neighbors {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #cfe8dc;
+  border-radius: var(--radius);
+  background: #f4fbf7;
+  color: #176148;
+  font-size: 0.82rem;
+}
+
+.sku-card-neighbors strong {
+  color: #0f5c43;
+}
+
+.sku-card-neighbors span,
+.sku-card-neighbors small {
+  color: #176148;
+  overflow-wrap: anywhere;
+}
+
 .role-operador #consultaSku .sku-card-area {
   display: none;
 }

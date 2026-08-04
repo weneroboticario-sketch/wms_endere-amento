@@ -2887,7 +2887,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return !sourceBindingId || binding.id !== sourceBindingId;
     });
     var sameLocation = locationOccupants.find(function (binding) { return isSameSku(binding.sku, sku); });
-    if (sameLocation && locationOccupants.length === 1) {
+    if (sameLocation) {
       renderScanResults([sameLocation]);
       clearScanFieldsForNext();
       return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
@@ -2896,7 +2896,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (locationOccupants.length) {
       renderScanResults(locationOccupants);
       var decision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
-      if (decision !== "replace") {
+      if (decision !== "include") {
         clearScanFieldsForNext();
         return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
       }
@@ -2916,7 +2916,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
 
     var target = sourceBindingId ? state.bindings.find(function (binding) { return binding.id === sourceBindingId; }) : null;
-    if (!target) target = locationOccupants.slice().sort(sortByDateDesc)[0] || null;
     var binding = target ? Object.assign({}, target) : createBinding(sku, parsed, areaCode);
     var now = new Date().toISOString();
     binding.sku = String(sku);
@@ -2931,20 +2930,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     binding.createdAt = binding.createdAt || now;
     binding.updatedAt = now;
 
-    var idsToRemoveMap = {};
-    locationOccupants.forEach(function (item) {
-      if (item.id && item.id !== binding.id) idsToRemoveMap[item.id] = true;
-    });
-    var idsToRemove = Object.keys(idsToRemoveMap);
+    var idsToRemove = [];
     var historyItems = [
-      createHistoryItem(target ? "Endereco alterado" : "SKU enderecado", sku, parsed.code, target ? "Localizacao atualizada sem criar duplicidade." : "SKU enderecado com sucesso.")
+      createHistoryItem(target ? "Endereco alterado" : "SKU incluido em localizacao", sku, parsed.code, target ? "Vinculo SKU + localizacao atualizado." : "SKU incluido na localizacao sem remover outros produtos.")
     ];
     if (keepSkuInMultipleLocations) {
       historyItems.push(createHistoryItem("SKU duplicado detectado", sku, parsed.code, "SKU mantido tambem em: " + skuLocations.map(function (item) { return item.locationCode; }).join(", ") + ". Lider deve revisar."));
     }
-    locationOccupants.forEach(function (oldBinding) {
-      if (oldBinding.id !== binding.id) historyItems.push(createHistoryItem("Endereco substituido", oldBinding.sku, oldBinding.locationCode, "SKU substituido por " + sku + " na mesma localizacao."));
-    });
 
     setScanMessage("Salvando no Supabase...", "warning");
     var saved = await persistAllocationChange(binding, idsToRemove, historyItems);
@@ -3016,10 +3008,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function askLocationConflictDecision(locationCode, sku, occupants) {
     var modal = $("locationConflictModal");
     if (!modal) {
-      return Promise.resolve(window.confirm("Esta localizacao ja possui o SKU " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja substituir pelo SKU " + sku + "?") ? "replace" : "cancel");
+      return Promise.resolve(window.confirm("Esta localizacao ja possui outros produtos cadastrados: " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja incluir o SKU " + sku + " nesta localizacao?") ? "include" : "cancel");
     }
-    $("locationConflictTitle").textContent = "Localizacao ja possui SKU";
-    $("locationConflictMessage").textContent = "Esta localizacao ja possui o SKU " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja substituir pelo SKU " + sku + "?";
+    $("locationConflictTitle").textContent = "Localizacao com outros produtos";
+    $("locationConflictMessage").textContent = "Esta localizacao ja possui outros produtos cadastrados. Deseja incluir o SKU " + sku + " nesta mesma localizacao?";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
@@ -3043,7 +3035,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         };
       });
       document.addEventListener("keydown", handleEscape);
-      var firstButton = modal.querySelector("[data-location-decision='replace']");
+      var firstButton = modal.querySelector("[data-location-decision='include']");
       if (firstButton) firstButton.focus();
     });
   }
@@ -3173,7 +3165,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         $("transferDashboardAlert").hidden = false;
         $("transferDashboardAlert").innerHTML = [
           "<strong>Enderecamento com pendencias para revisar</strong>",
-          "<span>" + report.skuConflicts.length + " conflito(s) de SKU, " + report.locationDuplicates.length + " localizacao(oes) duplicada(s).</span>",
+          "<span>" + report.skuConflicts.length + " conflito(s) de SKU, " + report.locationDuplicates.length + " duplicidade(s) exata(s).</span>",
           "<span>Resolva antes de exportar para o Videmais.</span>",
           "<button class=\"primary-button\" data-address-conflicts-open type=\"button\">Abrir manutencao</button>"
         ].join("");
@@ -4508,7 +4500,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderMaintenance() {
     if (!$("maintenanceSummary")) return;
-    if (!isAdmin()) {
+    if (!isAdminOrSupervisor()) {
       $("maintenanceSummary").innerHTML = "";
       $("maintenanceTestRows").innerHTML = "";
       $("maintenanceResidueRows").innerHTML = "";
@@ -4550,14 +4542,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function renderAddressMaintenance(report) {
     if (!$("addressMaintenanceSummary") || !$("maintenanceAddressRows")) return;
     $("addressMaintenanceSummary").innerHTML = [
-      summaryChip("Localizacoes duplicadas", report.locationDuplicates.length, report.locationDuplicates.length ? "result-missing" : "result-ok"),
+      summaryChip("Duplicidades exatas", report.locationDuplicates.length, report.locationDuplicates.length ? "result-missing" : "result-ok"),
       summaryChip("Conflitos de SKU", report.skuConflicts.length, report.skuConflicts.length ? "result-changed" : "result-ok"),
       summaryChip("Registros invalidos", report.invalidRows.length, report.invalidRows.length ? "result-missing" : "result-ok"),
       summaryChip("Registros a corrigir", report.deleteIds.length, report.deleteIds.length ? "result-changed" : "result-ok")
     ].join("");
     var rows = [];
     report.locationDuplicates.forEach(function (entry) {
-      rows.push(maintenanceAddressRowHtml("Localizacao duplicada", entry.key, entry.items, "<button class=\"danger-button\" data-address-remove-duplicates=\"" + escapeHtml(entry.key) + "\" type=\"button\">Remover duplicadas</button>"));
+      rows.push(maintenanceAddressRowHtml("SKU duplicado na mesma BP", entry.label || entry.key, entry.items, "<button class=\"danger-button\" data-address-remove-duplicates=\"" + escapeHtml(entry.key) + "\" type=\"button\">Remover duplicadas</button>"));
     });
     report.skuConflicts.forEach(function (entry) {
       rows.push(maintenanceAddressRowHtml("SKU em mais de uma BP", entry.key, entry.items, "<button class=\"primary-button\" data-address-resolve-sku=\"" + escapeHtml(entry.key) + "\" type=\"button\">Resolver conflito</button><button class=\"secondary-button\" data-address-ignore-sku=\"" + escapeHtml(entry.key) + "\" type=\"button\">Manter temporariamente</button>"));
@@ -4583,7 +4575,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function buildAddressMaintenanceReport() {
-    var byLocation = {};
+    var byExactPair = {};
     var bySku = {};
     var invalidRows = [];
     state.bindings.forEach(function (binding) {
@@ -4593,19 +4585,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
       var locationKey = locationKeyFromBinding(binding);
-      if (!byLocation[locationKey]) byLocation[locationKey] = [];
-      byLocation[locationKey].push(binding);
       var skuKey = normalizeSkuKey(binding.sku);
+      var exactKey = skuKey + "|" + locationKey;
+      if (!byExactPair[exactKey]) byExactPair[exactKey] = [];
+      byExactPair[exactKey].push(binding);
       if (!bySku[skuKey]) bySku[skuKey] = [];
       bySku[skuKey].push(binding);
     });
     var deleteIds = {};
-    var locationDuplicates = Object.keys(byLocation).filter(function (key) { return byLocation[key].length > 1; }).map(function (key) {
-      var items = byLocation[key].slice().sort(sortByDateDesc);
+    var locationDuplicates = Object.keys(byExactPair).filter(function (key) { return byExactPair[key].length > 1; }).map(function (key) {
+      var items = byExactPair[key].slice().sort(sortByDateDesc);
       items.slice(1).forEach(function (binding) { if (binding.id) deleteIds[binding.id] = true; });
-      return { key: key, items: items };
+      return { key: key, label: items[0].sku + " em " + items[0].locationCode, items: items };
     });
-    var skuConflicts = Object.keys(bySku).filter(function (key) { return key && bySku[key].length > 1; }).map(function (key) {
+    var skuConflicts = Object.keys(bySku).filter(function (key) {
+      if (!key) return false;
+      var locations = unique(bySku[key].map(locationKeyFromBinding));
+      return locations.length > 1;
+    }).map(function (key) {
       var items = bySku[key].slice().sort(sortByDateDesc);
       return { key: key, items: items };
     });
@@ -4623,7 +4620,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var report = buildAddressMaintenanceReport();
     renderAddressMaintenance(report);
     var total = report.locationDuplicates.length + report.skuConflicts.length + report.invalidRows.length;
-    setStatus("maintenanceStatus", total ? "Relatorio de enderecamento pronto. Nada foi apagado." : "Enderecamento sem duplicidades.", total ? "warning" : "success");
+    setStatus("maintenanceStatus", total ? "Relatorio de enderecamento pronto. Nada foi apagado." : "Enderecamento sem pendencias.", total ? "warning" : "success");
   }
 
   async function cleanAddressDuplicates() {
@@ -4634,7 +4631,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       renderAddressMaintenance(report);
       return;
     }
-    if (!window.confirm("Esta acao remove apenas localizacoes duplicadas, mantendo o registro mais recente por BP. Conflitos de SKU continuam para decisao do lider. Deseja continuar?")) return;
+    if (!window.confirm("Esta acao remove apenas duplicidades exatas do mesmo SKU na mesma BP, mantendo o registro mais recente. Conflitos de SKU em localizacoes diferentes continuam para decisao do lider. Deseja continuar?")) return;
     if (isSupabaseReady()) {
       try {
         var response = await supabaseDb.from("wms_bindings").delete().in("id", report.deleteIds);
@@ -4669,7 +4666,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     if (button.dataset.addressRemoveDuplicates) {
-      await removeLocationDuplicateRows(button.dataset.addressRemoveDuplicates);
+      await removeExactDuplicateRows(button.dataset.addressRemoveDuplicates);
     }
   }
 
@@ -4700,22 +4697,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     setStatus("maintenanceStatus", "Conflito resolvido para SKU " + skuKey + ".", "success");
   }
 
-  async function removeLocationDuplicateRows(locationKey) {
-    var items = state.bindings.filter(function (binding) { return locationKeyFromBinding(binding) === locationKey; }).sort(sortByDateDesc);
+  async function removeExactDuplicateRows(exactKey) {
+    var items = state.bindings.filter(function (binding) {
+      return normalizeSkuKey(binding.sku) + "|" + locationKeyFromBinding(binding) === exactKey;
+    }).sort(sortByDateDesc);
     if (items.length < 2) {
-      setStatus("maintenanceStatus", "Duplicidade de localizacao nao encontrada.", "warning");
+      setStatus("maintenanceStatus", "Duplicidade exata nao encontrada.", "warning");
       renderMaintenance();
       return;
     }
     var keep = items[0];
     var removeIds = items.slice(1).map(function (binding) { return binding.id; });
-    if (!window.confirm("Manter o registro mais recente da localizacao " + locationKey + " e remover " + removeIds.length + " duplicado(s)?")) return;
+    if (!window.confirm("Manter o registro mais recente de " + keep.sku + " em " + keep.locationCode + " e remover " + removeIds.length + " duplicado(s)?")) return;
     await removeBindingIds(removeIds);
-    addHistory("Duplicidade de localizacao corrigida", keep.sku, keep.locationCode, removeIds.length + " registro(s) duplicado(s) removido(s).");
+    addHistory("Duplicidade exata corrigida", keep.sku, keep.locationCode, removeIds.length + " registro(s) duplicado(s) removido(s).");
     await saveData();
     await loadData();
     renderAll();
-    setStatus("maintenanceStatus", "Duplicidade corrigida para " + locationKey + ".", "success");
+    setStatus("maintenanceStatus", "Duplicidade corrigida para " + keep.sku + " em " + keep.locationCode + ".", "success");
   }
 
   async function removeBindingIds(ids) {
@@ -6702,6 +6701,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function skuLocationCardHtml(binding, latest) {
     var productName = binding.productName || findProductName(binding.sku) || "-";
     var hasConflict = findBySku(binding.sku).length > 1;
+    var locationPeers = findByLocation(binding.locationCode).filter(function (item) {
+      return item.id !== binding.id && !isSameSku(item.sku, binding.sku);
+    }).slice().sort(sortByDateDesc);
+    var peerHtml = locationPeers.length ? [
+      "<div class=\"sku-card-neighbors\">",
+      "<strong>Esta localizacao possui outros SKUs cadastrados.</strong>",
+      locationPeers.slice(0, 6).map(function (item) {
+        var peerName = item.productName || findProductName(item.sku) || "-";
+        return "<span>" + escapeHtml(item.sku) + " - " + escapeHtml(peerName) + "</span>";
+      }).join(""),
+      locationPeers.length > 6 ? "<small>+" + (locationPeers.length - 6) + " outro(s) SKU(s)</small>" : "",
+      "</div>"
+    ].join("") : "";
     return [
       "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
       "<div class=\"sku-card-head\">",
@@ -6720,6 +6732,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span class=\"sku-card-area\">Area Linha Separacao<strong>" + escapeHtml(binding.areaName || "-") + "</strong></span>",
       "<span class=\"sku-card-date\">Data de cadastro<strong>" + formatDateTime(binding.createdAt) + "</strong></span>",
       "</div>",
+      peerHtml,
       "<div class=\"result-actions\">",
       "<button class=\"edit-small\" data-edit=\"" + binding.id + "\" type=\"button\">Editar</button>",
       "<button class=\"remove-small\" data-remove=\"" + binding.id + "\" type=\"button\">Remover</button>",
@@ -6995,7 +7008,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function validateAddressExportState() {
     var report = buildAddressMaintenanceReport();
     if (report.locationDuplicates.length) {
-      return { valid: false, message: "Existem localizacoes duplicadas. Corrija antes de exportar." };
+      return { valid: false, message: "Existem duplicidades exatas do mesmo SKU na mesma localizacao. Corrija antes de exportar." };
     }
     if (report.skuConflicts.length) {
       return { valid: false, type: "sku-conflict", message: "Existem SKUs em mais de uma localizacao. Revise antes de exportar." };
@@ -8787,8 +8800,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function importRows(rows) {
     var result = { created: 0, updated: 0, skipped: 0, invalid: 0, changedIds: [] };
-    var usedLocations = {};
-    var usedSkus = {};
+    var usedPairs = {};
     rows.forEach(function (row) {
       var parsed = buildLocationFromParts(row.station, row.rack, row.line, row.column);
       var areaCode = getAreaByCode(row.areaCode) ? row.areaCode : 1;
@@ -8799,14 +8811,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       var locationKey = locationKeyFromCode(parsed.code);
       var skuKey = normalizeSkuKey(row.sku);
-      if (usedLocations[locationKey] || usedSkus[skuKey]) {
+      var pairKey = skuKey + "\u0001" + locationKey;
+      if (usedPairs[pairKey]) {
         result.skipped += 1;
         return;
       }
-      usedLocations[locationKey] = true;
-      usedSkus[skuKey] = true;
+      usedPairs[pairKey] = true;
       var existing = state.bindings.find(function (binding) {
-        return locationKeyFromBinding(binding) === locationKey;
+        return locationKeyFromBinding(binding) === locationKey && normalizeSkuKey(binding.sku) === skuKey;
       });
       if (existing) {
         var newName = row.productName || findProductName(row.sku) || "";
