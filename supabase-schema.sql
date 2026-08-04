@@ -41,11 +41,24 @@ create table if not exists public.wms_warehouses (
 insert into public.wms_warehouses (id, code, name, active, notes)
 values
   ('warehouse-vdcg', 'VDCG', 'Estoque VDCG', true, 'Estoque principal existente'),
-  ('warehouse-vdr', 'VDR', 'Estoque VDR', true, 'Segundo estoque operacional')
+  ('warehouse-vdar', 'VDAR', 'Estoque VDAR', true, 'Segundo estoque operacional'),
+  ('warehouse-vdsi', 'VDSI', 'Estoque VDSI', true, 'Terceiro estoque operacional')
 on conflict (code) do update set
   name = excluded.name,
   active = excluded.active,
   updated_at = now();
+
+update public.wms_warehouses
+set id = 'warehouse-vdar',
+    code = 'VDAR',
+    name = 'Estoque VDAR',
+    active = true,
+    updated_at = now()
+where code = 'VDR'
+  and not exists (select 1 from public.wms_warehouses where code = 'VDAR');
+
+delete from public.wms_warehouses
+where code = 'VDR';
 
 alter table public.wms_bindings add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_bindings add column if not exists warehouse_code text default 'VDCG';
@@ -125,7 +138,7 @@ update public.wms_users
 set default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
     allowed_warehouse_codes = case
-      when role = 'ADMINISTRADOR' then 'VDCG,VDR'
+      when role = 'ADMINISTRADOR' then 'VDCG,VDAR,VDSI'
       else coalesce(nullif(allowed_warehouse_codes, ''), 'VDCG')
     end,
     is_global_admin = case when role = 'ADMINISTRADOR' then true else is_global_admin end
@@ -134,6 +147,15 @@ where default_warehouse_code is null
    or allowed_warehouse_codes is null
    or allowed_warehouse_codes = ''
    or role = 'ADMINISTRADOR';
+
+update public.wms_users
+set default_warehouse_id = case when default_warehouse_code = 'VDR' or default_warehouse_id = 'warehouse-vdr' then 'warehouse-vdar' else default_warehouse_id end,
+    default_warehouse_code = case when default_warehouse_code = 'VDR' then 'VDAR' else default_warehouse_code end,
+    allowed_warehouse_codes = replace(coalesce(allowed_warehouse_codes, 'VDCG'), 'VDR', 'VDAR'),
+    updated_at = now()
+where default_warehouse_code = 'VDR'
+   or default_warehouse_id = 'warehouse-vdr'
+   or allowed_warehouse_codes like '%VDR%';
 
 create unique index if not exists wms_users_username_idx
 on public.wms_users (username);
@@ -845,5 +867,50 @@ for all
 to anon
 using (true)
 with check (true);
+
+do $$
+declare
+  tbl_name text;
+  tables text[] := array[
+    'wms_bindings',
+    'wms_history',
+    'wms_transfers',
+    'wms_transfer_items',
+    'wms_transfer_events',
+    'wms_transfer_divergences',
+    'wms_transfer_boxes',
+    'wms_notifications',
+    'wms_task_notifications',
+    'wms_conferences',
+    'wms_conference_items',
+    'wms_conference_events',
+    'wms_conference_divergences'
+  ];
+begin
+  foreach tbl_name in array tables loop
+    if to_regclass('public.' || tbl_name) is not null then
+      if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = tbl_name
+          and column_name = 'warehouse_code'
+      ) then
+        execute format('update public.%I set warehouse_code = $1 where warehouse_code = $2', tbl_name)
+        using 'VDAR', 'VDR';
+      end if;
+      if exists (
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = tbl_name
+          and column_name = 'warehouse_id'
+      ) then
+        execute format('update public.%I set warehouse_id = $1 where warehouse_id = $2', tbl_name)
+        using 'warehouse-vdar', 'warehouse-vdr';
+      end if;
+    end if;
+  end loop;
+end $$;
 
 notify pgrst, 'reload schema';

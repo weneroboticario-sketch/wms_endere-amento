@@ -12,7 +12,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var DEFAULT_WAREHOUSE_ID = "warehouse-vdcg";
   var WAREHOUSE_SEED = [
     { id: "warehouse-vdcg", code: "VDCG", name: "Estoque VDCG", active: true, notes: "Estoque principal existente" },
-    { id: "warehouse-vdr", code: "VDR", name: "Estoque VDR", active: true, notes: "Segundo estoque operacional" }
+    { id: "warehouse-vdar", code: "VDAR", name: "Estoque VDAR", active: true, notes: "Segundo estoque operacional" },
+    { id: "warehouse-vdsi", code: "VDSI", name: "Estoque VDSI", active: true, notes: "Terceiro estoque operacional" }
   ];
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {
@@ -26,7 +27,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
-    usuarios: ["ADMINISTRADOR"],
+    usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     manutencao: ["ADMINISTRADOR", "SUPERVISOR"],
     estoques: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
@@ -253,6 +254,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function normalizeWarehouseCode(value) {
     var code = normalizeText(value).toUpperCase().replace(/[^A-Z0-9_-]/g, "");
+    if (code === "VDR") return "VDAR";
     return code || DEFAULT_WAREHOUSE_CODE;
   }
 
@@ -606,6 +608,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     warehouseState.tableAvailable = true;
     if (!isSupabaseReady()) return false;
     try {
+      await migrateLegacyWarehouseCode();
       var now = new Date().toISOString();
       var rows = WAREHOUSE_SEED.map(function (warehouse) {
         return {
@@ -624,11 +627,49 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       warehouseState.tableAvailable = !isMissingWarehouseTableError(error);
       warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
       if (!warehouseState.tableAvailable) {
-        console.warn("Tabela wms_warehouses ausente; usando VDCG/VDR locais ate executar o schema.", error);
+        console.warn("Tabela wms_warehouses ausente; usando estoques locais ate executar o schema.", error);
       } else {
         console.warn("Nao foi possivel preparar estoques:", error);
       }
       return false;
+    }
+  }
+
+  async function migrateLegacyWarehouseCode() {
+    if (!isSupabaseReady()) return;
+    var tables = [
+      { name: "wms_users", code: "default_warehouse_code", id: "default_warehouse_id" },
+      { name: "wms_bindings", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_history", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_transfers", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_transfer_items", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_transfer_events", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_transfer_divergences", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_notifications", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_task_notifications", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_conferences", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_conference_items", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_conference_events", code: "warehouse_code", id: "warehouse_id" },
+      { name: "wms_conference_divergences", code: "warehouse_code", id: "warehouse_id" }
+    ];
+    for (var i = 0; i < tables.length; i += 1) {
+      var table = tables[i];
+      try {
+        var update = {};
+        update[table.code] = "VDAR";
+        if (table.id) update[table.id] = "warehouse-vdar";
+        var response = await supabaseDb.from(table.name).update(update).eq(table.code, "VDR");
+        if (response.error && !isMissingColumnError(response.error) && !isMissingAuthTableError(response.error) && !isMissingTransferTableError(response.error)) {
+          console.warn("Nao foi possivel migrar " + table.name + " de VDR para VDAR:", response.error);
+        }
+      } catch (error) {
+        console.warn("Migracao VDR/VDAR ignorada em " + table.name + ":", error);
+      }
+    }
+    try {
+      await supabaseDb.from("wms_warehouses").delete().eq("code", "VDR");
+    } catch (error) {
+      console.warn("Nao foi possivel remover estoque legado VDR:", error);
     }
   }
 
@@ -1567,8 +1608,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (user) {
         authState.currentUser = user;
         authState.currentSession = savedSession;
-        setActiveWarehouse(savedSession.activeWarehouseCode || user.defaultWarehouseCode || DEFAULT_WAREHOUSE_CODE);
-        if (!userCanAccessWarehouse(user, activeWarehouseCode())) setActiveWarehouse((allowedWarehouseCodesForUser(user)[0] || DEFAULT_WAREHOUSE_CODE));
+        setActiveWarehouse(resolveLoginWarehouseForUser(user, savedSession.activeWarehouseCode));
         await enterAuthenticatedApp(false);
         return;
       }
@@ -1626,7 +1666,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       available_for_tasks: false,
       default_warehouse_id: DEFAULT_WAREHOUSE_ID,
       default_warehouse_code: DEFAULT_WAREHOUSE_CODE,
-      allowed_warehouse_codes: "VDCG,VDR",
+      allowed_warehouse_codes: WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }).join(","),
       is_global_admin: true,
       created_at: now,
       updated_at: now,
@@ -1688,9 +1728,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var now = new Date().toISOString();
     await supabaseDb.from("wms_users").update({ last_login_at: now, updated_at: now }).eq("id", user.id);
     user.lastLoginAt = now;
-    var selectedWarehouse = chooseWarehouseForUser(user);
+    var selectedWarehouse = resolveLoginWarehouseForUser(user, "");
     if (!selectedWarehouse) {
-      setStatus("loginStatus", "Selecione um estoque valido para entrar.", "error");
+      setStatus("loginStatus", "Usuario sem estoque vinculado. Procure o administrador.", "error");
       return;
     }
     authState.currentUser = user;
@@ -1717,7 +1757,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
-    if (isAdmin()) await loadAccessRequests();
+    if (isAdminOrSupervisor()) await loadAccessRequests();
     await loadData();
     await loadTransferData();
     await loadConferenceData();
@@ -1885,15 +1925,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return session;
   }
 
-  function chooseWarehouseForUser(user) {
+  function resolveLoginWarehouseForUser(user, sessionWarehouseCode) {
     var allowed = allowedWarehouseCodesForUser(user);
     if (!allowed.length) return "";
     var preferred = normalizeWarehouseCode(user.defaultWarehouseCode || allowed[0]);
-    if (allowed.length === 1) return allowed[0];
-    if (allowed.indexOf(preferred) < 0) preferred = allowed[0];
-    var answer = window.prompt("Selecione o estoque para entrar: " + allowed.join(" / "), preferred);
-    var selected = normalizeWarehouseCode(answer || preferred);
-    return allowed.indexOf(selected) >= 0 ? selected : "";
+    if (isGlobalAdminUser(user) && sessionWarehouseCode) {
+      var sessionCode = normalizeWarehouseCode(sessionWarehouseCode);
+      if (allowed.indexOf(sessionCode) >= 0) return sessionCode;
+    }
+    if (allowed.indexOf(preferred) >= 0) return preferred;
+    return allowed[0] || "";
   }
 
   async function switchActiveWarehouse(code) {
@@ -1925,7 +1966,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return "<option value=\"" + escapeHtml(warehouseCode) + "\">" + escapeHtml(warehouseCode + " - " + warehouseNameForCode(warehouseCode)) + "</option>";
     }).join("");
     select.value = code;
-    select.hidden = allowed.length <= 1;
+    select.hidden = !isGlobalAdmin() || allowed.length <= 1;
   }
 
   function readStoredSession() {
@@ -2002,7 +2043,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function isGlobalAdmin() {
-    return isAdmin() && (authState.currentUser.isGlobalAdmin === true || authState.currentUser.role === "ADMINISTRADOR");
+    return isGlobalAdminUser(authState.currentUser);
+  }
+
+  function isGlobalAdminUser(user) {
+    return !!(user && user.role === "ADMINISTRADOR" && (user.isGlobalAdmin === true || user.role === "ADMINISTRADOR"));
   }
 
   function canAccessScreen(screenId) {
@@ -2016,7 +2061,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var role = ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR";
     var defaultWarehouse = normalizeWarehouseCode(row.default_warehouse_code || DEFAULT_WAREHOUSE_CODE);
     var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes);
-    if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? ["VDCG", "VDR"] : [defaultWarehouse];
+    if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }) : [defaultWarehouse];
     return {
       id: row.id,
       name: row.name || "",
@@ -2078,8 +2123,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function saveUserFromForm() {
-    if (!isAdmin()) {
-      setStatus("userFormStatus", "Acesso restrito ao administrador.", "error");
+    if (!isAdminOrSupervisor()) {
+      setStatus("userFormStatus", "Acesso restrito ao administrador ou supervisor.", "error");
       return;
     }
     var id = $("userEditId").value;
@@ -2091,7 +2136,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var availableForTasks = $("userAvailableInput").checked;
     var defaultWarehouseCode = normalizeWarehouseCode($("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode());
     var allowedWarehouses = selectedUserWarehouseCodes();
-    var isGlobal = $("userGlobalAdminInput") && $("userGlobalAdminInput").checked;
+    if (!isAdmin() && role === "ADMINISTRADOR") {
+      setStatus("userFormStatus", "Somente administrador pode criar ou alterar perfil ADMINISTRADOR.", "error");
+      return;
+    }
+    var isGlobal = isAdmin() && $("userGlobalAdminInput") && $("userGlobalAdminInput").checked;
     if (isGlobal || role === "ADMINISTRADOR") {
       allowedWarehouses = warehouseState.warehouses.filter(function (warehouse) { return warehouse.active !== false; }).map(function (warehouse) { return warehouse.code; });
       isGlobal = true;
@@ -2105,6 +2154,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("userFormStatus", "Informe a senha inicial.", "error");
       return;
     }
+    var previousUser = id ? authState.users.find(function (item) { return item.id === id; }) : null;
+    var previousWarehouseCode = previousUser ? normalizeWarehouseCode(previousUser.defaultWarehouseCode) : "";
     var actionButton = $("saveUserButton");
     if (!beginTransferAction("save-user:" + (id || username), actionButton, "Salvando...")) return;
     try {
@@ -2134,7 +2185,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     await loadUsers();
-    await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role);
+    await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role + " - Estoque " + defaultWarehouseCode);
+    if (previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode) {
+      await recordAuthHistory("Estoque do usuario alterado", username, "", "De " + previousWarehouseCode + " para " + defaultWarehouseCode + " por " + authState.currentUser.username);
+    }
     resetUserForm();
     renderUsers();
     setStatus("userFormStatus", "Usuario salvo com sucesso.", "success");
@@ -2185,7 +2239,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function renderUsers() {
-    if (!$("usersRows") || !isAdmin()) return;
+    if (!$("usersRows") || !isAdminOrSupervisor()) return;
     $("usersRows").innerHTML = authState.users.length ? authState.users.map(userRowHtml).join("") : "<tr><td colspan=\"6\">Nenhum usuario cadastrado.</td></tr>";
     renderAccessRequests();
     renderWarehouses();
@@ -2231,7 +2285,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function renderAccessRequests() {
-    if (!$("accessRequestsRows") || !isAdmin()) return;
+    if (!$("accessRequestsRows") || !isAdminOrSupervisor()) return;
     var pending = authState.accessRequests.filter(function (item) {
       return item.status === "PENDENTE";
     });
@@ -2320,7 +2374,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function approveAccessRequest(id) {
-    if (!isAdmin()) return;
+    if (!isAdminOrSupervisor()) return;
     var request = authState.accessRequests.find(function (item) { return item.id === id; });
     if (!request || request.status !== "PENDENTE") return;
     var duplicate = authState.users.find(function (item) {
@@ -2376,7 +2430,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function rejectAccessRequest(id) {
-    if (!isAdmin()) return;
+    if (!isAdminOrSupervisor()) return;
     var request = authState.accessRequests.find(function (item) { return item.id === id; });
     if (!request || request.status !== "PENDENTE") return;
     var reason = window.prompt("Motivo da recusa (opcional):") || "";

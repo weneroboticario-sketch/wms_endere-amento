@@ -102,9 +102,9 @@
         <div class="menu-section">
           <p class="menu-label">Administracao</p>
           <button class="menu-item admin-only global-admin-only" data-icon="EST" data-screen="estoques" type="button">Estoques</button>
-          <button class="menu-item admin-only" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
+          <button class="menu-item" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
           <button class="menu-item" data-icon="HIS" data-screen="historico" type="button">Historico</button>
-          <button class="menu-item admin-only" data-icon="MAN" data-screen="manutencao" type="button">Manutenção</button>
+          <button class="menu-item" data-icon="MAN" data-screen="manutencao" type="button">Manutenção</button>
           <button class="menu-item" data-icon="CFG" data-screen="configuracoes" type="button">Configuracoes</button>
         </div>
       </nav>
@@ -961,7 +961,7 @@
               <select id="userDefaultWarehouseInput"></select>
               <label>Estoques permitidos</label>
               <div id="userAllowedWarehousesInput" class="warehouse-check-list"></div>
-              <label class="checkbox-label">
+              <label class="checkbox-label admin-only">
                 <input id="userGlobalAdminInput" type="checkbox">
                 Administrador geral
               </label>
