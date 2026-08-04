@@ -28,6 +28,9 @@ alter table public.wms_bindings add column if not exists updated_at timestamptz 
 create index if not exists wms_bindings_location_code_idx
 on public.wms_bindings (location_code);
 
+create index if not exists wms_bindings_sku_idx
+on public.wms_bindings (sku);
+
 create table if not exists public.wms_warehouses (
   id text primary key,
   created_at timestamptz default now(),
@@ -75,6 +78,34 @@ on public.wms_bindings (warehouse_code, sku, location_code);
 
 create index if not exists wms_bindings_warehouse_idx
 on public.wms_bindings (warehouse_code);
+
+create index if not exists wms_bindings_warehouse_sku_idx
+on public.wms_bindings (warehouse_code, sku);
+
+create index if not exists wms_bindings_warehouse_location_idx
+on public.wms_bindings (warehouse_code, location_code);
+
+create index if not exists wms_bindings_location_parts_idx
+on public.wms_bindings (rua, rack, linha, letra);
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'codigo_material') then
+    execute 'create index if not exists wms_bindings_codigo_material_idx on public.wms_bindings (codigo_material)';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'codigo_endereco') then
+    execute 'create index if not exists wms_bindings_codigo_endereco_idx on public.wms_bindings (codigo_endereco)';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'nome_estacao') then
+    execute 'create index if not exists wms_bindings_nome_estacao_idx on public.wms_bindings (nome_estacao)';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'nr_rack') then
+    execute 'create index if not exists wms_bindings_nr_rack_idx on public.wms_bindings (nr_rack)';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'coluna') then
+    execute 'create index if not exists wms_bindings_coluna_idx on public.wms_bindings (coluna)';
+  end if;
+end $$;
 
 create table if not exists public.wms_products (
   sku text primary key,
@@ -159,6 +190,12 @@ where default_warehouse_code = 'VDR'
 
 create unique index if not exists wms_users_username_idx
 on public.wms_users (username);
+
+create index if not exists wms_users_active_idx
+on public.wms_users (active);
+
+create index if not exists wms_users_default_warehouse_idx
+on public.wms_users (default_warehouse_code);
 
 create table if not exists public.wms_access_requests (
   id text primary key,
@@ -542,11 +579,26 @@ alter table if exists public.wms_notifications add column if not exists warehous
 create index if not exists wms_transfers_responsavel_status_idx
 on public.wms_transfers (responsavel_id, status);
 
+create index if not exists wms_transfers_status_idx
+on public.wms_transfers (status);
+
 create index if not exists wms_transfers_warehouse_idx
 on public.wms_transfers (warehouse_code);
 
+create index if not exists wms_transfers_created_at_idx
+on public.wms_transfers (created_at);
+
+create index if not exists wms_transfers_warehouse_status_created_idx
+on public.wms_transfers (warehouse_code, status, created_at);
+
 create index if not exists wms_transfer_items_transfer_sku_idx
 on public.wms_transfer_items (transfer_id, sku);
+
+create index if not exists wms_transfer_items_transfer_idx
+on public.wms_transfer_items (transfer_id);
+
+create index if not exists wms_transfer_items_sku_idx
+on public.wms_transfer_items (sku);
 
 create index if not exists wms_transfer_items_warehouse_idx
 on public.wms_transfer_items (warehouse_code);
@@ -911,6 +963,20 @@ begin
       end if;
     end if;
   end loop;
+end $$;
+
+do $$
+begin
+  if to_regclass('public.wms_locations') is not null then
+    execute 'create index if not exists wms_locations_codigo_endereco_idx on public.wms_locations (codigo_endereco)';
+    execute 'create index if not exists wms_locations_parts_idx on public.wms_locations (nome_estacao, nr_rack, linha, coluna)';
+  end if;
+
+  if to_regclass('public.wms_location_skus') is not null then
+    execute 'create index if not exists wms_location_skus_sku_idx on public.wms_location_skus (sku)';
+    execute 'create index if not exists wms_location_skus_codigo_material_idx on public.wms_location_skus (codigo_material)';
+    execute 'create index if not exists wms_location_skus_location_id_idx on public.wms_location_skus (location_id)';
+  end if;
 end $$;
 
 notify pgrst, 'reload schema';

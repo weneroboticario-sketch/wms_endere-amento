@@ -90,6 +90,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var productsTableAvailable = true;
   var historySchemaAvailable = true;
   var skuSearchTimer = null;
+  var HISTORY_RENDER_LIMIT = 200;
+  var TRANSFER_PANEL_RENDER_LIMIT = 80;
+  var TRANSFER_FINALIZED_RENDER_LIMIT = 50;
+  var TRANSFER_TASK_RENDER_LIMIT = 80;
   var AREAS = [
     { code: 1, name: "Alto Giro" },
     { code: 2, name: "Médio Giro" },
@@ -182,6 +186,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     scanInputStartedAt: 0,
     lastScanInputAt: 0,
     tablesAvailable: true
+  };
+  var transferStatsCache = {
+    sourceItems: null,
+    itemsByTransferId: null,
+    statsByTransferId: {}
   };
   var maintenanceState = {
     lastReport: null,
@@ -838,6 +847,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transferState.transfers = transferRows.map(fromDbTransfer);
       transferState.items = itemRows.map(fromDbTransferItem);
       transferState.events = eventRows;
+      invalidateTransferStatsCache();
       packagingRows.forEach(function (row) {
         var pattern = fromDbProductPackaging(row);
         if (pattern.sku) transferState.productPackaging[normalizeSkuKey(pattern.sku)] = pattern;
@@ -3116,13 +3126,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function renderAll() {
-    renderDashboard();
-    renderHistory();
-    renderTransfers();
-    renderConferences();
-    renderMaintenance();
-    renderWarehouses();
+    var activeScreen = getActiveScreenId();
+    if (activeScreen === "dashboard") renderDashboard();
+    if (activeScreen === "historico") renderHistory();
+    if (activeScreen === "transferencias") renderTransfers();
+    if (activeScreen === "conferencias") renderConferences();
+    if (activeScreen === "manutencao") renderMaintenance();
+    if (activeScreen === "estoques") renderWarehouses();
     renderOperatorTasksAlert();
+  }
+
+  function getActiveScreenId() {
+    var activeScreen = document.querySelector(".screen.active");
+    return activeScreen ? activeScreen.id : "dashboard";
   }
 
   function renderDashboard() {
@@ -4072,14 +4088,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransfers() {
     if (!$("transferencias")) return;
+    invalidateTransferStatsCache();
     renderTransferTabVisibility();
+    var activeSection = getActiveTransferSectionId();
     renderTransferSelects();
-    renderTransferPanel();
-    renderMyTransfers();
-    renderFinalizedTransfers();
-    renderEstablishments();
-    renderTransferPreview();
-    renderTransferWork();
+    if (activeSection === "transferPanelSection") renderTransferPanel();
+    if (activeSection === "myTransfersSection") renderMyTransfers();
+    if (activeSection === "finalizedTransfersSection") renderFinalizedTransfers();
+    if (activeSection === "establishmentsSection") renderEstablishments();
+    if (activeSection === "newTransferSection") renderTransferPreview();
+    if (activeSection === "transferWorkSection") renderTransferWork();
+  }
+
+  function getActiveTransferSectionId() {
+    var activeSection = document.querySelector(".transfer-section:not([hidden])");
+    return activeSection ? activeSection.id : "transferPanelSection";
   }
 
   function renderTransferTabVisibility() {
@@ -4179,7 +4202,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA" || item.status === "LACRE_CONCLUIDO" || item.status === "MONTAGEM_CAIXA_CONCLUIDA"; }).length;
-    $("transferPanelRows").innerHTML = transfers.length ? transfers.map(transferPanelRowHtml).join("") : "<div class=\"empty-state compact\">Nenhuma transferência encontrada.</div>";
+    var visibleTransfers = transfers.slice(0, TRANSFER_PANEL_RENDER_LIMIT);
+    $("transferPanelRows").innerHTML = visibleTransfers.length
+      ? visibleTransfers.map(transferPanelRowHtml).join("") + renderListLimitNotice(transfers.length, visibleTransfers.length, "transferências")
+      : "<div class=\"empty-state compact\">Nenhuma transferência encontrada.</div>";
   }
 
   function transferPanelRowHtml(transfer) {
@@ -4448,9 +4474,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var transfers = visible.filter(function (transfer) { return !isFinalTransferStatus(transfer.status); });
     var completed = visible.filter(function (transfer) { return isFinalTransferStatus(transfer.status); });
-    $("myTransfersList").innerHTML = transfers.length ? transfers.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma tarefa atribuida.</div>";
+    var visibleTasks = transfers.slice(0, TRANSFER_TASK_RENDER_LIMIT);
+    var visibleCompleted = completed.slice(0, TRANSFER_TASK_RENDER_LIMIT);
+    $("myTransfersList").innerHTML = visibleTasks.length
+      ? visibleTasks.map(myTransferCardHtml).join("") + renderListLimitNotice(transfers.length, visibleTasks.length, "tarefas")
+      : "<div class=\"empty-state\">Nenhuma tarefa atribuida.</div>";
     if ($("completedTransfersList")) {
-      $("completedTransfersList").innerHTML = completed.length ? completed.map(myTransferCardHtml).join("") : "<div class=\"empty-state\">Nenhuma tarefa concluida.</div>";
+      $("completedTransfersList").innerHTML = visibleCompleted.length
+        ? visibleCompleted.map(myTransferCardHtml).join("") + renderListLimitNotice(completed.length, visibleCompleted.length, "tarefas concluídas")
+        : "<div class=\"empty-state\">Nenhuma tarefa concluida.</div>";
     }
   }
 
@@ -4478,7 +4510,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     var transfers = getVisibleTransfers().filter(function (transfer) { return isFinalTransferStatus(transfer.status); });
-    $("finalizedTransferRows").innerHTML = transfers.length ? transfers.map(finalizedTransferRowHtml).join("") : "<tr><td colspan=\"9\">Nenhuma transferência finalizada.</td></tr>";
+    var visibleTransfers = transfers.slice(0, TRANSFER_FINALIZED_RENDER_LIMIT);
+    $("finalizedTransferRows").innerHTML = visibleTransfers.length
+      ? visibleTransfers.map(finalizedTransferRowHtml).join("") + renderTableLimitNotice(transfers.length, visibleTransfers.length, 9, "transferências finalizadas")
+      : "<tr><td colspan=\"9\">Nenhuma transferência finalizada.</td></tr>";
+  }
+
+  function renderListLimitNotice(total, shown, label) {
+    if (total <= shown) return "";
+    return "<div class=\"empty-state compact\">Mostrando " + shown + " de " + total + " " + escapeHtml(label) + ". Use os filtros para refinar.</div>";
+  }
+
+  function renderTableLimitNotice(total, shown, colspan, label) {
+    if (total <= shown) return "";
+    return "<tr><td colspan=\"" + colspan + "\" class=\"muted\">Mostrando " + shown + " de " + total + " " + escapeHtml(label) + ". Use os filtros para refinar.</td></tr>";
   }
 
   function finalizedTransferRowHtml(transfer) {
@@ -5869,11 +5914,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return transferState.transfers.find(function (transfer) { return transfer.id === id; });
   }
 
+  function invalidateTransferStatsCache() {
+    transferStatsCache = {
+      sourceItems: null,
+      itemsByTransferId: null,
+      statsByTransferId: {}
+    };
+  }
+
+  function getTransferItemsByTransferId() {
+    if (transferStatsCache.sourceItems === transferState.items && transferStatsCache.itemsByTransferId) {
+      return transferStatsCache.itemsByTransferId;
+    }
+    var grouped = {};
+    transferState.items.forEach(function (item) {
+      var transferId = item.transferId || "";
+      if (!grouped[transferId]) grouped[transferId] = [];
+      grouped[transferId].push(item);
+    });
+    transferStatsCache.sourceItems = transferState.items;
+    transferStatsCache.itemsByTransferId = grouped;
+    transferStatsCache.statsByTransferId = {};
+    return grouped;
+  }
+
   function getTransferItems(transferId) {
-    return transferState.items.filter(function (item) { return item.transferId === transferId; });
+    return getTransferItemsByTransferId()[transferId] || [];
   }
 
   function getTransferStats(transferId) {
+    if (transferStatsCache.statsByTransferId[transferId]) return transferStatsCache.statsByTransferId[transferId];
     var items = getTransferItems(transferId);
     var originalItems = items.filter(function (item) { return !item.isExtra; });
     var extraItems = items.filter(function (item) { return item.isExtra; });
@@ -5890,7 +5960,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var missingQty = originalItems.reduce(function (sum, item) { return sum + Math.max(0, Number(item.requestedQty || 0) - Math.max(Number(item.separatedQty || 0), Number(item.packedQty || 0))); }, 0);
     var excessQty = items.reduce(function (sum, item) { return sum + Number(item.excessQty || 0); }, 0);
     var progress = requested ? Math.round(((packed || separated) / requested) * 100) : 0;
-    return {
+    var stats = {
       totalItems: totalItems,
       totalSkus: originalItems.length,
       pendingSeparation: pendingSeparation,
@@ -5908,6 +5978,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       divergenceCount: countTransferDivergences(transferId),
       progress: Math.max(0, Math.min(100, progress))
     };
+    transferStatsCache.statsByTransferId[transferId] = stats;
+    return stats;
   }
 
   function isFinalTransferStatus(status) {
@@ -8868,9 +8940,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return [item.datetime, item.action, item.sku, item.location, item.details].join(" ").toLowerCase().indexOf(filter) >= 0;
       });
     }
-    $("historyRows").innerHTML = items.length ? items.map(function (item) {
+    var visibleItems = items.slice(0, HISTORY_RENDER_LIMIT);
+    $("historyRows").innerHTML = visibleItems.length ? visibleItems.map(function (item) {
       return "<tr><td>" + formatDateTime(item.datetime) + "</td><td>" + escapeHtml(item.action) + "</td><td>" + escapeHtml(item.sku || "-") + "</td><td>" + escapeHtml(item.location || "-") + "</td><td>" + escapeHtml(item.details || "-") + "</td></tr>";
-    }).join("") : "<tr><td colspan=\"5\">Nenhum historico registrado.</td></tr>";
+    }).join("") + renderTableLimitNotice(items.length, visibleItems.length, 5, "registros de histórico") : "<tr><td colspan=\"5\">Nenhum historico registrado.</td></tr>";
   }
 
   async function saveSupabaseSettings() {
