@@ -35,6 +35,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var TRANSFER_STATUSES = [
     "PENDENTE",
     "ATRIBUIDA",
+    "AGUARDANDO_SEPARACAO",
     "EM_SEPARACAO",
     "SEPARACAO_CONCLUIDA",
     "EM_LACRE",
@@ -46,9 +47,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     "FINALIZADA_PARA_ANALISE",
     "CONCLUIDA_SEM_DIVERGENCIA",
     "CONCLUIDA_COM_DIVERGENCIA",
+    "UNIFICADA",
+    "ARQUIVADA_POR_UNIFICACAO",
     "CANCELADA"
   ];
-  var FINAL_TRANSFER_STATUSES = ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE"];
+  var FINAL_TRANSFER_STATUSES = ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "UNIFICADA", "ARQUIVADA_POR_UNIFICACAO"];
+  var MERGEABLE_TRANSFER_STATUSES = ["PENDENTE", "ATRIBUIDA", "AGUARDANDO_SEPARACAO"];
   var STORE_REFERENCE_ROWS = [
     { cnpj: "00.138.798/0001-32", loja: "14A1", cod: "5508", canal: "VAREJO", codVf: "743" },
     { cnpj: "00.138.798/0014-57", loja: "14D2", cod: "20004", canal: "VAREJO", codVf: "744" },
@@ -178,6 +182,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     previewFileName: "",
     activeTransferId: "",
     activeWorkMode: "SEPARACAO",
+    mergeSelection: {},
+    mergePreview: null,
+    mergeResolutions: {},
     productPackaging: {},
     packagingPromptedSkus: {},
     selectedItemId: "",
@@ -995,11 +1002,32 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       hasDivergence: row.has_divergence === true,
       divergenceCount: Number(row.divergence_count || 0),
       finalResult: row.final_result || "",
+      isMerged: row.is_merged === true,
+      mergedFromIds: normalizeJsonArray(row.merged_from_ids),
+      mergedIntoId: row.merged_into_id || "",
+      mergeStatus: row.merge_status || "",
+      mergedById: row.merged_by_id || "",
+      mergedByName: row.merged_by_name || "",
+      mergedAt: row.merged_at || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
       warehouseCode: rowWarehouseCode(row),
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString()
     };
+  }
+
+  function normalizeJsonArray(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    if (typeof value === "string") {
+      try {
+        var parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (error) {
+        return [];
+      }
+    }
+    return [];
   }
 
   async function fetchProductPackagingRows() {
@@ -1118,6 +1146,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       lacre_iniciado_em: item.packingStartedAt || null,
       lacre_concluido_em: item.packingFinishedAt || null,
       duracao_lacre_segundos: Number(item.packingDurationSeconds || 0),
+      is_merged: item.isMerged === true,
+      merged_from_ids: item.mergedFromIds || [],
+      merged_into_id: item.mergedIntoId || "",
+      merge_status: item.mergeStatus || "",
+      merged_by_id: item.mergedById || "",
+      merged_by_name: item.mergedByName || "",
+      merged_at: item.mergedAt || null,
       warehouse_id: item.warehouseId || activeWarehouseId(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
       created_at: item.createdAt || new Date().toISOString(),
@@ -2691,6 +2726,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferPreviewGroups").addEventListener("change", handleTransferPreviewGroupChange);
     $("transferPreviewGroups").addEventListener("click", handleTransferPreviewGroupClick);
     $("transferPanelRows").addEventListener("click", handleTransferActionClick);
+    $("transferPanelRows").addEventListener("change", handleTransferMergeSelectionChange);
+    if ($("clearTransferMergeButton")) $("clearTransferMergeButton").addEventListener("click", clearTransferMergeSelection);
+    if ($("previewTransferMergeButton")) $("previewTransferMergeButton").addEventListener("click", function () {
+      renderTransferMergePreview(true);
+    });
+    if ($("confirmTransferMergeButton")) $("confirmTransferMergeButton").addEventListener("click", confirmTransferMerge);
+    if ($("transferMergePreview")) $("transferMergePreview").addEventListener("change", handleTransferMergeResolutionChange);
+    if ($("transferMergePreview")) $("transferMergePreview").addEventListener("input", handleTransferMergeResolutionChange);
     $("finalizedTransferRows").addEventListener("click", handleTransferActionClick);
     $("transferFinalReportDetails").addEventListener("click", handleTransferActionClick);
     $("myTransfersList").addEventListener("click", handleTransferActionClick);
@@ -4180,6 +4223,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferPanel() {
     if (!$("transferPanelRows")) return;
+    renderTransferMergePanel();
     var transfers = getVisibleTransfers();
     if (isAdminOrSupervisor()) {
       var status = $("transferStatusFilter").value;
@@ -4215,6 +4259,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var destination = transferRouteDestinationLabel(transfer);
     var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
     var stage = transferPanelStageInfo(transfer.status);
+    var mergeSelect = isAdminOrSupervisor() && canSelectTransferForMerge(transfer)
+      ? "<label class=\"transfer-merge-select\"><input type=\"checkbox\" data-transfer-merge-select=\"" + transfer.id + "\"" + (transferState.mergeSelection[transfer.id] ? " checked" : "") + "> Unificar</label>"
+      : "";
+    var mergedInfo = transfer.isMerged ? "<div class=\"transfer-board-note\">Unificada de " + transfer.mergedFromIds.length + " transferencia(s)</div>" : transfer.mergedIntoId ? "<div class=\"transfer-board-note\">Arquivada por unificacao</div>" : "";
     return [
       "<article class=\"transfer-board-card " + stage.className + "\">",
       "<div class=\"transfer-board-main\">",
@@ -4226,8 +4274,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
       "<div class=\"transfer-board-meta\"><span><strong>" + stats.totalItems + "</strong> SKUs</span><span><strong>" + formatQty(stats.requested) + "</strong> un.</span><span><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong> resp.</span><span>" + formatDateTime(transfer.createdAt) + "</span></div>",
       conferenceAssignment ? "<div class=\"transfer-board-note\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</div>" : "",
+      mergedInfo,
       "</div>",
       "<div class=\"row-actions transfer-action-stack transfer-board-actions\">",
+      mergeSelect,
       "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "",
@@ -4243,8 +4293,364 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (status === "PRONTA_PARA_NOTA" || status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA") {
       return { label: "Nota", className: "stage-note" };
     }
+    if (status === "UNIFICADA" || status === "ARQUIVADA_POR_UNIFICACAO") return { label: "Unificada", className: "stage-merged" };
     if (status === "CANCELADA") return { label: "Cancelada", className: "stage-cancelled" };
     return { label: "Separação", className: "stage-separation" };
+  }
+
+  function renderTransferMergePanel() {
+    if (!$("transferMergePanel")) return;
+    $("transferMergePanel").hidden = !isAdminOrSupervisor();
+    if (!isAdminOrSupervisor()) {
+      transferState.mergeSelection = {};
+      transferState.mergePreview = null;
+      return;
+    }
+    renderTransferMergePreview(false);
+  }
+
+  function handleTransferMergeSelectionChange(event) {
+    var input = event.target.closest("[data-transfer-merge-select]");
+    if (!input) return;
+    var transfer = getTransferById(input.dataset.transferMergeSelect);
+    if (!transfer) return;
+    if (input.checked && !canSelectTransferForMerge(transfer)) {
+      input.checked = false;
+      setStatus("transferMergeStatus", mergeBlockedMessage(transfer), "error");
+      return;
+    }
+    if (input.checked) transferState.mergeSelection[transfer.id] = true;
+    else delete transferState.mergeSelection[transfer.id];
+    transferState.mergePreview = null;
+    renderTransferMergePreview(false);
+  }
+
+  function clearTransferMergeSelection() {
+    transferState.mergeSelection = {};
+    transferState.mergePreview = null;
+    transferState.mergeResolutions = {};
+    renderTransferPanel();
+    setStatus("transferMergeStatus", "Selecao limpa.", "success");
+  }
+
+  function selectedMergeTransfers() {
+    return Object.keys(transferState.mergeSelection || {}).map(getTransferById).filter(Boolean);
+  }
+
+  function canSelectTransferForMerge(transfer) {
+    return !!transfer && MERGEABLE_TRANSFER_STATUSES.indexOf(transfer.status) >= 0 && !transfer.mergedIntoId && transfer.status !== "UNIFICADA" && transfer.status !== "ARQUIVADA_POR_UNIFICACAO";
+  }
+
+  function mergeBlockedMessage(transfer) {
+    if (!transfer) return "Transferencia invalida para unificacao.";
+    if (transfer.status === "UNIFICADA" || transfer.status === "ARQUIVADA_POR_UNIFICACAO" || transfer.mergedIntoId) return "Esta transferencia ja foi unificada em outra transferencia.";
+    return "Esta transferencia ja foi iniciada e nao pode ser unificada.";
+  }
+
+  function transferMergeRouteKey(transfer) {
+    return [
+      normalizeWarehouseCode(transfer.warehouseCode || activeWarehouseCode()),
+      normalizeText(transfer.originStoreCode || transfer.originName || transfer.originCnpj).toUpperCase(),
+      normalizeText(transfer.destinationStoreCode || transfer.destinationName || transfer.establishmentCode || transfer.establishmentName || transfer.destinationCnpj).toUpperCase()
+    ].join("|");
+  }
+
+  function buildTransferMergePreview() {
+    var transfers = selectedMergeTransfers();
+    var errors = [];
+    if (transfers.length < 2) errors.push("Selecione duas ou mais transferencias.");
+    transfers.forEach(function (transfer) {
+      if (!canSelectTransferForMerge(transfer)) errors.push(mergeBlockedMessage(transfer) + " " + transferDisplayName(transfer));
+    });
+    var firstKey = transfers[0] ? transferMergeRouteKey(transfers[0]) : "";
+    if (transfers.some(function (transfer) { return transferMergeRouteKey(transfer) !== firstKey; })) {
+      errors.push("Selecione somente transferencias da mesma origem, destino e estoque.");
+    }
+    var transferIds = {};
+    transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
+    var grouped = {};
+    transferState.items.forEach(function (item) {
+      if (!transferIds[item.transferId] || item.isExtra) return;
+      var key = normalizeSkuKey(item.sku);
+      if (!grouped[key]) grouped[key] = { sku: item.sku, description: item.description, entries: [] };
+      grouped[key].entries.push({ transfer: getTransferById(item.transferId), item: item, qty: Number(item.requestedQty || 0), unit: item.unit || "UN" });
+      if (!grouped[key].description && item.description) grouped[key].description = item.description;
+    });
+    var items = Object.keys(grouped).map(function (key) {
+      var row = grouped[key];
+      var units = unique(row.entries.map(function (entry) { return normalizeText(entry.unit || "UN").toUpperCase(); }));
+      var repeated = row.entries.length > 1;
+      var unitConflict = units.length > 1;
+      var conflictType = unitConflict ? "UNIDADE_DIFERENTE" : repeated ? "SKU_REPETIDO" : "";
+      var resolution = transferState.mergeResolutions[key] || { type: unitConflict ? "MANUAL" : "SUM", manualQty: "" };
+      var finalQty = resolveMergeFinalQty(row.entries, resolution);
+      return Object.assign(row, {
+        key: key,
+        unit: units[0] || "UN",
+        repeated: repeated,
+        unitConflict: unitConflict,
+        conflictType: conflictType,
+        resolutionType: resolution.type || "SUM",
+        manualQty: resolution.manualQty || "",
+        finalQty: finalQty
+      });
+    }).sort(function (a, b) { return String(a.sku).localeCompare(String(b.sku)); });
+    if (items.some(function (item) { return item.unitConflict && !(Number(item.finalQty) > 0); })) {
+      errors.push("Existe SKU com unidade diferente. Informe a quantidade final manualmente antes de confirmar.");
+    }
+    var repeatedCount = items.filter(function (item) { return item.repeated; }).length;
+    var totalQty = items.reduce(function (sum, item) { return sum + Number(item.finalQty || 0); }, 0);
+    return { transfers: transfers, items: items, errors: unique(errors), repeatedCount: repeatedCount, totalQty: totalQty };
+  }
+
+  function resolveMergeFinalQty(entries, resolution) {
+    var type = resolution && resolution.type ? resolution.type : "SUM";
+    if (type === "MANUAL") return Number(resolution.manualQty || 0);
+    if (type.indexOf("USE:") === 0) {
+      var transferId = type.slice(4);
+      var match = entries.find(function (entry) { return entry.transfer && entry.transfer.id === transferId; });
+      return match ? Number(match.qty || 0) : 0;
+    }
+    return entries.reduce(function (sum, entry) { return sum + Number(entry.qty || 0); }, 0);
+  }
+
+  function renderTransferMergePreview(forceOpen) {
+    if (!$("transferMergePreview")) return;
+    var transfers = selectedMergeTransfers();
+    if (!transfers.length) {
+      $("transferMergePreview").innerHTML = "";
+      setStatus("transferMergeStatus", "Selecione transferencias no painel para unificar.", "warning");
+      return;
+    }
+    var preview = buildTransferMergePreview();
+    transferState.mergePreview = preview;
+    setStatus("transferMergeStatus", preview.errors.length ? preview.errors[0] : "Previa pronta para confirmar.", preview.errors.length ? "error" : "success");
+    if (!forceOpen && transfers.length < 2) {
+      $("transferMergePreview").innerHTML = "<div class=\"empty-state compact\">" + transfers.length + " transferencia selecionada. Selecione pelo menos duas.</div>";
+      return;
+    }
+    $("transferMergePreview").innerHTML = transferMergePreviewHtml(preview);
+  }
+
+  function transferMergePreviewHtml(preview) {
+    var first = preview.transfers[0] || {};
+    var responsible = preview.transfers.map(function (transfer) { return transfer.responsibleName || "-"; }).filter(Boolean)[0] || "-";
+    return [
+      "<div class=\"transfer-merge-summary\">",
+      summaryChip("Origem", transferRouteOriginLabel(first)),
+      summaryChip("Destino", transferRouteDestinationLabel(first)),
+      summaryChip("Transferencias", preview.transfers.length),
+      summaryChip("SKUs", preview.items.length),
+      summaryChip("SKUs repetidos", preview.repeatedCount, preview.repeatedCount ? "result-changed" : "result-ok"),
+      summaryChip("Qtd prevista", formatQty(preview.totalQty)),
+      summaryChip("Responsavel", responsible),
+      "</div>",
+      preview.errors.length ? "<div class=\"inline-status error\">" + escapeHtml(preview.errors.join(" ")) + "</div>" : "",
+      "<div class=\"table-wrap\"><table><thead><tr><th>SKU</th><th>Produto</th><th>Quantidades originais</th><th>Qtd final</th><th>Unidade</th><th>Status</th><th>Tratamento</th></tr></thead><tbody>",
+      preview.items.map(transferMergeItemRowHtml).join(""),
+      "</tbody></table></div>"
+    ].join("");
+  }
+
+  function transferMergeItemRowHtml(row) {
+    var entries = row.entries.map(function (entry) {
+      return "<span><strong>" + escapeHtml(transferDisplayName(entry.transfer)) + "</strong>: " + formatQty(entry.qty) + " " + escapeHtml(entry.unit || "UN") + "</span>";
+    }).join("");
+    var status = row.unitConflict ? "Unidades diferentes" : row.repeated ? "SKU repetido" : "OK";
+    var options = ["<option value=\"SUM\"" + (row.resolutionType === "SUM" ? " selected" : "") + ">Somar quantidades</option>"].concat(row.entries.map(function (entry) {
+      var value = "USE:" + (entry.transfer ? entry.transfer.id : "");
+      return "<option value=\"" + value + "\"" + (row.resolutionType === value ? " selected" : "") + ">Usar " + escapeHtml(transferDisplayName(entry.transfer)) + "</option>";
+    })).concat(["<option value=\"MANUAL\"" + (row.resolutionType === "MANUAL" ? " selected" : "") + ">Informar manual</option>"]).join("");
+    return [
+      "<tr class=\"" + (row.conflictType ? "merge-conflict-row" : "") + "\">",
+      "<td>" + escapeHtml(row.sku) + "</td>",
+      "<td>" + escapeHtml(row.description || "-") + "</td>",
+      "<td><div class=\"merge-entry-list\">" + entries + "</div></td>",
+      "<td><strong>" + formatQty(row.finalQty) + "</strong></td>",
+      "<td>" + escapeHtml(row.unit || "UN") + "</td>",
+      "<td><span class=\"status-badge " + (row.conflictType ? "pending" : "active") + "\">" + escapeHtml(status) + "</span></td>",
+      "<td><select data-merge-resolution=\"" + escapeHtml(row.key) + "\">" + options + "</select><input data-merge-manual=\"" + escapeHtml(row.key) + "\" type=\"number\" min=\"0\" step=\"0.01\" placeholder=\"Qtd manual\" value=\"" + escapeHtml(row.manualQty || "") + "\"" + (row.resolutionType === "MANUAL" ? "" : " hidden") + "></td>",
+      "</tr>"
+    ].join("");
+  }
+
+  function handleTransferMergeResolutionChange(event) {
+    var select = event.target.closest("[data-merge-resolution]");
+    var input = event.target.closest("[data-merge-manual]");
+    if (!select && !input) return;
+    var key = select ? select.dataset.mergeResolution : input.dataset.mergeManual;
+    var current = transferState.mergeResolutions[key] || {};
+    if (select) current.type = select.value;
+    if (input) current.manualQty = input.value;
+    transferState.mergeResolutions[key] = current;
+    renderTransferMergePreview(true);
+  }
+
+  async function confirmTransferMerge() {
+    if (!isAdminOrSupervisor()) return;
+    if (!ensureActiveWarehouse()) return;
+    if (!isSupabaseReady()) {
+      setStatus("transferMergeStatus", "Supabase nao conectado.", "error");
+      return;
+    }
+    var preview = buildTransferMergePreview();
+    transferState.mergePreview = preview;
+    if (preview.errors.length) {
+      renderTransferMergePreview(true);
+      setStatus("transferMergeStatus", preview.errors[0], "error");
+      return;
+    }
+    if (!window.confirm("Unificar " + preview.transfers.length + " transferencias em uma unica tarefa?")) return;
+    var actionButton = $("confirmTransferMergeButton");
+    if (!beginTransferAction("merge-transfer", actionButton, "Unificando...")) return;
+    try {
+      var created = await createMergedTransfer(preview);
+      await loadTransferData();
+      transferState.mergeSelection = {};
+      transferState.mergePreview = null;
+      transferState.mergeResolutions = {};
+      renderTransfers();
+      setStatus("transferMergeStatus", "Transferencia unificada criada: " + created.name, "success");
+      showToast("Transferencias unificadas.", "success");
+    } catch (error) {
+      console.error("Erro ao unificar transferencias:", error);
+      setStatus("transferMergeStatus", "Erro ao unificar transferencias: " + formatSupabaseError(error), "error");
+    } finally {
+      endTransferAction(actionButton);
+    }
+  }
+
+  async function createMergedTransfer(preview) {
+    var now = new Date().toISOString();
+    var first = preview.transfers[0];
+    var responsibleId = first.responsibleId || "";
+    var responsibleName = first.responsibleName || "";
+    var transferId = "trf-unif-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    var code = "TRF-UNIF-" + compactDateTimeForCode(new Date()) + "-" + sanitizeCodePart(first.originStoreCode || first.originName) + "-" + sanitizeCodePart(first.destinationStoreCode || first.destinationName || first.establishmentCode);
+    var transfer = Object.assign({}, first, {
+      id: transferId,
+      code: code,
+      name: "UNIFICADA - " + transferRouteLabel(first) + " - " + new Date().toLocaleDateString("pt-BR"),
+      status: responsibleId ? "ATRIBUIDA" : "PENDENTE",
+      responsibleId: responsibleId,
+      responsibleName: responsibleName,
+      importSource: "UNIFICADA",
+      rawSourceText: preview.transfers.map(function (item) { return item.code || item.id; }).join("; "),
+      observation: "Transferencia unificada de: " + preview.transfers.map(function (item) { return item.code || item.name || item.id; }).join(", "),
+      createdById: authState.currentUser.id,
+      createdByName: authState.currentUser.name,
+      startedAt: "",
+      finishedAt: "",
+      durationSeconds: 0,
+      separationStartedAt: "",
+      separationFinishedAt: "",
+      separationDurationSeconds: 0,
+      packingStartedAt: "",
+      packingFinishedAt: "",
+      packingDurationSeconds: 0,
+      isMerged: true,
+      mergedFromIds: preview.transfers.map(function (item) { return item.id; }),
+      mergedIntoId: "",
+      mergeStatus: "TRANSFERENCIA_UNIFICADA",
+      mergedById: authState.currentUser.id,
+      mergedByName: authState.currentUser.name,
+      mergedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    var items = preview.items.map(function (row) {
+      var base = row.entries[0].item;
+      var item = Object.assign({}, base, {
+        id: "trfi-merge-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+        transferId: transferId,
+        sku: row.sku,
+        description: row.description,
+        requestedQty: Number(row.finalQty || 0),
+        unit: row.unit || base.unit || "UN",
+        separatedQty: 0,
+        packedQty: 0,
+        packedUnits: 0,
+        extraQty: 0,
+        missingQty: 0,
+        excessQty: 0,
+        isExtra: false,
+        divergenceType: "",
+        observation: row.conflictType ? "Unificado com tratamento: " + row.resolutionType : "",
+        status: "PENDENTE",
+        createdAt: now,
+        updatedAt: now,
+        warehouseId: activeWarehouseId(),
+        warehouseCode: activeWarehouseCode()
+      });
+      return applyTransferItemLocation(item);
+    });
+    await insertTransferRows([toDbTransfer(transfer)]);
+    await upsertTransferItemRows(items.map(function (item) {
+      return Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item));
+    }));
+    await insertTransferMergeItemRows(preview, transferId);
+    await archiveMergedSourceTransfers(preview.transfers, transferId, now);
+    await recordTransferEvent(transferId, "", "TRANSFER_MERGED", "", preview.items.length, "Transferencias unificadas.", {
+      sourceTransferIds: transfer.mergedFromIds,
+      repeatedSkus: preview.repeatedCount,
+      totalQuantity: preview.totalQty
+    });
+    if (responsibleId) {
+      await recordTransferEvent(transferId, "", "TRANSFER_ASSIGNED", "", 0, "Voce recebeu uma transferencia unificada para separar.", {
+        responsibleId: responsibleId,
+        merged: true
+      });
+    }
+    return transfer;
+  }
+
+  async function insertTransferMergeItemRows(preview, mergedTransferId) {
+    var rows = [];
+    preview.items.forEach(function (row) {
+      row.entries.forEach(function (entry) {
+        rows.push({
+          id: "trfmi-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+          created_at: new Date().toISOString(),
+          merged_transfer_id: mergedTransferId,
+          original_transfer_id: entry.transfer ? entry.transfer.id : "",
+          sku: row.sku,
+          descricao: row.description || "",
+          original_quantity: Number(entry.qty || 0),
+          final_quantity: Number(row.finalQty || 0),
+          unidade_medida: row.unit || entry.unit || "UN",
+          conflict_type: row.conflictType || "",
+          resolution_type: row.resolutionType || "SUM",
+          resolved_by_id: authState.currentUser.id,
+          resolved_by_name: authState.currentUser.name
+        });
+      });
+    });
+    if (!rows.length) return;
+    var response = await supabaseDb.from("wms_transfer_merge_items").insert(rows);
+    if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+  }
+
+  async function archiveMergedSourceTransfers(transfers, mergedTransferId, now) {
+    for (var i = 0; i < transfers.length; i += 1) {
+      var transfer = transfers[i];
+      var row = {
+        status: "ARQUIVADA_POR_UNIFICACAO",
+        merged_into_id: mergedTransferId,
+        merge_status: "ARQUIVADA_POR_UNIFICACAO",
+        merged_by_id: authState.currentUser.id,
+        merged_by_name: authState.currentUser.name,
+        merged_at: now,
+        updated_at: now
+      };
+      var response = await supabaseDb.from("wms_transfers").update(row).eq("id", transfer.id);
+      if (response.error && isMissingColumnError(response.error)) {
+        response = await supabaseDb.from("wms_transfers").update({ status: "ARQUIVADA_POR_UNIFICACAO", updated_at: now }).eq("id", transfer.id);
+      }
+      if (response.error) throw response.error;
+      await recordTransferEvent(transfer.id, "", "TRANSFER_ARCHIVED_BY_MERGE", "", 0, "Transferencia arquivada por unificacao.", {
+        mergedIntoId: mergedTransferId
+      });
+    }
   }
 
   function transferConferenceOptionsHtml(selectedUserId) {
@@ -5219,6 +5625,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var labels = {
       ATRIBUIDA: "Atribuída",
       PENDENTE: "Pendente",
+      AGUARDANDO_SEPARACAO: "Aguardando separacao",
       EM_SEPARACAO: "Em separação",
       SEPARACAO_CONCLUIDA: "Separação concluída",
       EM_LACRE: "Em montagem",
@@ -5230,6 +5637,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       FINALIZADA_PARA_ANALISE: "Para análise",
       CONCLUIDA_SEM_DIVERGENCIA: "Concluída OK",
       CONCLUIDA_COM_DIVERGENCIA: "Com divergência",
+      UNIFICADA: "Unificada",
+      ARQUIVADA_POR_UNIFICACAO: "Arquivada por unificacao",
       CANCELADA: "Cancelada",
       CORRETA: "Correta",
       PARA_ANALISE: "Para análise"
@@ -5421,12 +5830,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function renderTransferStepSummary(transfer, stats, mode, items) {
     if (!$("transferStepSummary")) return;
     var nextItem = getTransferActiveItem(items, mode);
+    var mergedSource = transfer.isMerged && transfer.mergedFromIds.length ? "<div class=\"step-next merge-source\"><span>Origem da unificacao</span><strong>" + escapeHtml(transfer.mergedFromIds.map(function (id) {
+      var source = getTransferById(id);
+      return source ? (source.code || source.name || id) : id;
+    }).join(" | ")) + "</strong></div>" : "";
     $("transferStepSummary").innerHTML = [
       "<div class=\"step-pill active\"><span>1</span><strong>Separação</strong></div>",
       "<div class=\"step-pill" + (mode === "MONTAGEM" || mode === "FINALIZACAO" ? " active" : "") + "\"><span>2</span><strong>Montagem</strong></div>",
       "<div class=\"step-pill" + (mode === "FINALIZACAO" ? " active" : "") + "\"><span>3</span><strong>Finalização</strong></div>",
       nextItem ? "<div class=\"step-next\"><span>Próximo</span><strong>" + escapeHtml(nextItem.sku || "-") + "</strong></div>" : ""
     ].join("");
+    if (mergedSource) $("transferStepSummary").insertAdjacentHTML("beforeend", mergedSource);
   }
 
   function transferStepHelpHtml(mode) {
@@ -8659,6 +9073,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         { name: "wms_transfer_boxes", column: "transfer_id" },
         { name: "wms_transfer_packages", column: "transfer_id" },
         { name: "wms_transfer_divergences", column: "transfer_id" },
+        { name: "wms_transfer_merge_items", column: "merged_transfer_id" },
+        { name: "wms_transfer_merge_items", column: "original_transfer_id" },
         { name: "wms_transfer_events", column: "transfer_id" },
         { name: "wms_transfer_items", column: "transfer_id" },
         { name: "wms_transfers", column: "id" }
@@ -9134,6 +9550,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfer_items") >= 0 ||
       message.indexOf("wms_transfer_events") >= 0 ||
       message.indexOf("wms_transfer_divergences") >= 0 ||
+      message.indexOf("wms_transfer_merge_items") >= 0 ||
       message.indexOf("wms_transfer_boxes") >= 0 ||
       message.indexOf("wms_transfer_packages") >= 0 ||
       message.indexOf("wms_product_packaging") >= 0 ||

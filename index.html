@@ -463,6 +463,7 @@
                     <option value="">Todos</option>
                     <option value="PENDENTE">PENDENTE</option>
                     <option value="ATRIBUIDA">ATRIBUIDA</option>
+                    <option value="AGUARDANDO_SEPARACAO">AGUARDANDO_SEPARACAO</option>
                     <option value="EM_SEPARACAO">EM_SEPARACAO</option>
                     <option value="SEPARACAO_CONCLUIDA">SEPARACAO_CONCLUIDA</option>
                     <option value="EM_LACRE">EM_LACRE</option>
@@ -471,6 +472,8 @@
                     <option value="FINALIZADA_PARA_ANALISE">FINALIZADA_PARA_ANALISE</option>
                     <option value="CONCLUIDA_SEM_DIVERGENCIA">CONCLUIDA_SEM_DIVERGENCIA</option>
                     <option value="CONCLUIDA_COM_DIVERGENCIA">CONCLUIDA_COM_DIVERGENCIA</option>
+                    <option value="UNIFICADA">UNIFICADA</option>
+                    <option value="ARQUIVADA_POR_UNIFICACAO">ARQUIVADA_POR_UNIFICACAO</option>
                     <option value="CANCELADA">CANCELADA</option>
                   </select>
                 </label>
@@ -501,6 +504,19 @@
           <section class="panel">
             <div class="panel-header">
               <h3>Painel de Transferências</h3>
+            </div>
+            <div class="transfer-merge-panel" id="transferMergePanel" hidden>
+              <div class="panel-header">
+                <h3>Unificar transferencias</h3>
+              </div>
+              <p class="muted">Selecione duas ou mais transferencias pendentes da mesma origem e destino para gerar uma unica tarefa operacional.</p>
+              <div class="button-row">
+                <button class="secondary-button" id="clearTransferMergeButton" type="button">Limpar selecao</button>
+                <button class="secondary-button" id="previewTransferMergeButton" type="button">Gerar previa</button>
+                <button class="primary-button" id="confirmTransferMergeButton" type="button">Confirmar unificacao</button>
+              </div>
+              <div id="transferMergeStatus" class="inline-status"></div>
+              <div id="transferMergePreview" class="transfer-merge-preview"></div>
             </div>
             <div id="transferPanelRows" class="transfer-board-list"></div>
           </section>

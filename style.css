@@ -1602,6 +1602,11 @@ td {
   border-left-color: var(--danger);
 }
 
+.transfer-board-card.stage-merged {
+  border-left-color: var(--muted);
+  background: #f8fafc;
+}
+
 .transfer-board-main,
 .transfer-board-status,
 .transfer-board-actions {
@@ -1635,6 +1640,68 @@ td {
   color: var(--muted);
   font-size: 0.78rem;
   overflow-wrap: anywhere;
+}
+
+.transfer-merge-panel {
+  border-left: 5px solid var(--accent);
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  padding: 12px;
+  background: #fbfdff;
+}
+
+.transfer-merge-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: #f6fafc;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.transfer-merge-select input {
+  width: 18px;
+  height: 18px;
+}
+
+.transfer-merge-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.transfer-merge-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.merge-entry-list {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.merge-entry-list span {
+  overflow-wrap: anywhere;
+}
+
+.merge-conflict-row {
+  background: #fff8e6;
+}
+
+.transfer-merge-preview select,
+.transfer-merge-preview input {
+  min-height: 36px;
+}
+
+.transfer-merge-preview td:last-child {
+  display: grid;
+  gap: 6px;
+  min-width: 190px;
 }
 
 .transfer-route-flow {

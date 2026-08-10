@@ -404,6 +404,13 @@ alter table public.wms_transfers add column if not exists total_packed_quantity 
 alter table public.wms_transfers add column if not exists has_divergence boolean default false;
 alter table public.wms_transfers add column if not exists divergence_count numeric default 0;
 alter table public.wms_transfers add column if not exists final_result text default '';
+alter table public.wms_transfers add column if not exists is_merged boolean default false;
+alter table public.wms_transfers add column if not exists merged_from_ids jsonb default '[]'::jsonb;
+alter table public.wms_transfers add column if not exists merged_into_id text default '';
+alter table public.wms_transfers add column if not exists merge_status text default '';
+alter table public.wms_transfers add column if not exists merged_by_id text default '';
+alter table public.wms_transfers add column if not exists merged_by_name text default '';
+alter table public.wms_transfers add column if not exists merged_at timestamptz;
 alter table public.wms_transfers add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_transfers add column if not exists warehouse_code text default 'VDCG';
 
@@ -576,6 +583,35 @@ alter table if exists public.wms_task_notifications add column if not exists war
 alter table if exists public.wms_notifications add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table if exists public.wms_notifications add column if not exists warehouse_code text default 'VDCG';
 
+create table if not exists public.wms_transfer_merge_items (
+  id text primary key,
+  created_at timestamptz default now(),
+  merged_transfer_id text default '',
+  original_transfer_id text default '',
+  sku text default '',
+  descricao text default '',
+  original_quantity numeric default 0,
+  final_quantity numeric default 0,
+  unidade_medida text default '',
+  conflict_type text default '',
+  resolution_type text default '',
+  resolved_by_id text default '',
+  resolved_by_name text default ''
+);
+
+alter table public.wms_transfer_merge_items add column if not exists created_at timestamptz default now();
+alter table public.wms_transfer_merge_items add column if not exists merged_transfer_id text default '';
+alter table public.wms_transfer_merge_items add column if not exists original_transfer_id text default '';
+alter table public.wms_transfer_merge_items add column if not exists sku text default '';
+alter table public.wms_transfer_merge_items add column if not exists descricao text default '';
+alter table public.wms_transfer_merge_items add column if not exists original_quantity numeric default 0;
+alter table public.wms_transfer_merge_items add column if not exists final_quantity numeric default 0;
+alter table public.wms_transfer_merge_items add column if not exists unidade_medida text default '';
+alter table public.wms_transfer_merge_items add column if not exists conflict_type text default '';
+alter table public.wms_transfer_merge_items add column if not exists resolution_type text default '';
+alter table public.wms_transfer_merge_items add column if not exists resolved_by_id text default '';
+alter table public.wms_transfer_merge_items add column if not exists resolved_by_name text default '';
+
 create index if not exists wms_transfers_responsavel_status_idx
 on public.wms_transfers (responsavel_id, status);
 
@@ -609,6 +645,12 @@ on public.wms_transfer_events (warehouse_code);
 create index if not exists wms_transfer_divergences_warehouse_idx
 on public.wms_transfer_divergences (warehouse_code);
 
+create index if not exists wms_transfer_merge_items_merged_idx
+on public.wms_transfer_merge_items (merged_transfer_id);
+
+create index if not exists wms_transfer_merge_items_original_idx
+on public.wms_transfer_merge_items (original_transfer_id);
+
 create index if not exists wms_product_packaging_sku_idx
 on public.wms_product_packaging (sku);
 
@@ -617,6 +659,7 @@ alter table public.wms_transfers enable row level security;
 alter table public.wms_transfer_items enable row level security;
 alter table public.wms_transfer_events enable row level security;
 alter table public.wms_transfer_divergences enable row level security;
+alter table public.wms_transfer_merge_items enable row level security;
 alter table public.wms_product_packaging enable row level security;
 
 drop policy if exists "wms_establishments_public_all" on public.wms_establishments;
@@ -638,6 +681,14 @@ with check (true);
 drop policy if exists "wms_transfer_items_public_all" on public.wms_transfer_items;
 create policy "wms_transfer_items_public_all"
 on public.wms_transfer_items
+for all
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "wms_transfer_merge_items_public_all" on public.wms_transfer_merge_items;
+create policy "wms_transfer_merge_items_public_all"
+on public.wms_transfer_merge_items
 for all
 to anon
 using (true)
@@ -930,6 +981,7 @@ declare
     'wms_transfer_items',
     'wms_transfer_events',
     'wms_transfer_divergences',
+    'wms_transfer_merge_items',
     'wms_transfer_boxes',
     'wms_notifications',
     'wms_task_notifications',
