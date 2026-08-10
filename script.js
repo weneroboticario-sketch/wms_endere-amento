@@ -4278,7 +4278,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "</div>",
       "<div class=\"row-actions transfer-action-stack transfer-board-actions\">",
       mergeSelect,
-      "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
+      "<button class=\"edit-small\" data-transfer-view=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "",
       "</div>",
@@ -8304,7 +8304,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.savingActionKey = "";
   }
 
-  async function openTransferWork(transferId) {
+  async function openTransferWork(transferId, options) {
+    options = options || {};
     var transfer = getTransferById(transferId);
     if (!transfer) return;
     if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id) {
@@ -8317,13 +8318,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
     markTaskAlertRead("TRANSFERENCIA", transfer.id, transfer.status);
     transferState.activeWorkMode = getTransferWorkMode(transfer);
-    if (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE") {
+    if (!options.viewOnly && (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE")) {
       var startedAt = new Date().toISOString();
       await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt }, "SEPARATION_STARTED");
     }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
-    setStatus("transferWorkStatus", "Tarefa aberta. Siga a etapa atual.", "warning");
+    setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");
     window.setTimeout(function () {
       if (transferState.activeWorkMode === "MONTAGEM") $("transferScanInput").focus();
       else if ($("transferCurrentItem")) $("transferCurrentItem").scrollIntoView({ block: "start", behavior: "smooth" });
@@ -9108,6 +9109,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferView) await openTransferWork(button.dataset.transferView, { viewOnly: true });
     if (button.dataset.transferOpen) await openTransferWork(button.dataset.transferOpen);
     if (button.dataset.transferExportXml) await exportTransferConferenceXml(button.dataset.transferExportXml);
     if (button.dataset.transferAssignConference) await assignTransferConference(button.dataset.transferAssignConference);
