@@ -3,14 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#102634">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="description" content="Sistema WMS de endereçamento de estoque em HTML, CSS e JavaScript puro.">
   <title>WMS Endereçamento de Estoque</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
   <script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script type="module" src="/script.js"></script>
 </head>
 <body class="auth-locked">
+  <div class="offline-banner" id="offlineBanner" hidden>Voce esta offline. Os dados podem estar desatualizados e acoes criticas precisam de conexao.</div>
   <section class="login-shell" id="loginShell">
     <form class="login-card" id="loginForm" autocomplete="off" data-form-type="other">
       <div class="brand login-brand">

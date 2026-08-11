@@ -107,6 +107,24 @@ button {
   display: block;
 }
 
+.offline-banner {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 80;
+  padding: 10px 16px;
+  background: #8a5b00;
+  color: #ffffff;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(16, 38, 52, 0.14);
+}
+
+.offline-banner:not([hidden]) + .login-shell,
+.offline-banner:not([hidden]) + .login-shell + .app-shell {
+  padding-top: 42px;
+}
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -2563,6 +2581,10 @@ td {
 
 .toast.success {
   background: var(--success);
+}
+
+.toast.warning {
+  background: #8a5b00;
 }
 
 .decision-modal {

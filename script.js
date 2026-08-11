@@ -7,6 +7,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var AUTH_SESSION_KEY = "wms_auth_session_v1";
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
+  var LOCAL_CACHE_DB_NAME = "wms_operational_cache_v1";
+  var LOCAL_CACHE_STORE = "records";
+  var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var DEFAULT_WAREHOUSE_CODE = "VDCG";
   var DEFAULT_WAREHOUSE_ID = "warehouse-vdcg";
@@ -227,6 +230,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastScanInputAt: 0,
     tablesAvailable: true
   };
+  var localCacheState = {
+    db: null,
+    available: false,
+    warned: false
+  };
 
   var currentSku = "";
   var lastSkuSearch = "";
@@ -252,6 +260,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   };
 
   document.addEventListener("DOMContentLoaded", async function () {
+    await initLocalCache();
+    registerServiceWorker();
+    bindConnectivityEvents();
     await loadSupabaseConfig();
     fillSupabaseForm();
     fillTaskSoundSetting();
@@ -260,12 +271,109 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     bindNavigation();
     bindEvents();
     bindTaskAudioUnlock();
+    updateConnectivityUi();
     updateSupabaseStatus();
     await initAuth();
   });
 
   function $(id) {
     return document.getElementById(id);
+  }
+
+  function initLocalCache() {
+    if (!("indexedDB" in window)) {
+      localCacheState.available = false;
+      return Promise.resolve(false);
+    }
+    return new Promise(function (resolve) {
+      var request = indexedDB.open(LOCAL_CACHE_DB_NAME, 1);
+      request.onupgradeneeded = function () {
+        var db = request.result;
+        if (!db.objectStoreNames.contains(LOCAL_CACHE_STORE)) {
+          db.createObjectStore(LOCAL_CACHE_STORE, { keyPath: "key" });
+        }
+      };
+      request.onsuccess = function () {
+        localCacheState.db = request.result;
+        localCacheState.available = true;
+        resolve(true);
+      };
+      request.onerror = function () {
+        localCacheState.available = false;
+        console.warn("Cache local IndexedDB indisponivel:", request.error);
+        resolve(false);
+      };
+    });
+  }
+
+  function cacheKey(moduleName) {
+    return moduleName + ":" + activeWarehouseCode();
+  }
+
+  function cacheGet(key) {
+    if (!localCacheState.available || !localCacheState.db) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readonly");
+      var request = tx.objectStore(LOCAL_CACHE_STORE).get(key);
+      request.onsuccess = function () { resolve(request.result || null); };
+      request.onerror = function () {
+        console.warn("Falha ao ler cache local:", request.error);
+        resolve(null);
+      };
+    });
+  }
+
+  function cacheSet(key, value) {
+    if (!localCacheState.available || !localCacheState.db) return Promise.resolve(false);
+    return new Promise(function (resolve) {
+      var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readwrite");
+      tx.objectStore(LOCAL_CACHE_STORE).put({ key: key, value: value, updatedAt: new Date().toISOString() });
+      tx.oncomplete = function () { resolve(true); };
+      tx.onerror = function () {
+        console.warn("Falha ao gravar cache local:", tx.error);
+        resolve(false);
+      };
+    });
+  }
+
+  async function readModuleCache(moduleName) {
+    var record = await cacheGet(cacheKey(moduleName));
+    return record && record.value ? record.value : null;
+  }
+
+  async function writeModuleCache(moduleName, value) {
+    var scopedKey = cacheKey(moduleName);
+    localStorage.setItem(LOCAL_SYNC_PREFIX + scopedKey, new Date().toISOString());
+    return cacheSet(scopedKey, value);
+  }
+
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator) || window.location.protocol === "file:") return;
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js").catch(function (error) {
+        console.warn("Service worker nao registrado:", error);
+      });
+    });
+  }
+
+  function bindConnectivityEvents() {
+    window.addEventListener("online", updateConnectivityUi);
+    window.addEventListener("offline", updateConnectivityUi);
+  }
+
+  function updateConnectivityUi() {
+    var banner = $("offlineBanner");
+    var offline = "onLine" in navigator && !navigator.onLine;
+    if (banner) banner.hidden = !offline;
+    if (offline && !localCacheState.warned) {
+      localCacheState.warned = true;
+      showToast("Voce esta offline. Os dados podem estar desatualizados.", "warning");
+    }
+    if (!offline) localCacheState.warned = false;
+  }
+
+  function canUseNetwork() {
+    return !("onLine" in navigator) || navigator.onLine;
   }
 
   function normalizeWarehouseCode(value) {
@@ -690,7 +798,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function loadWarehouses() {
-    if (!isSupabaseReady()) return false;
+    var cachedWarehouses = await cacheGet("warehouses:global");
+    var loadedFromCache = false;
+    if (cachedWarehouses && Array.isArray(cachedWarehouses.value)) {
+      warehouseState.warehouses = cachedWarehouses.value.map(fromDbWarehouse);
+      warehouseState.tableAvailable = true;
+      loadedFromCache = true;
+    }
+    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
     try {
       var rows = await fetchAllRows("wms_warehouses", "code", true);
       warehouseState.warehouses = (rows.length ? rows : WAREHOUSE_SEED).map(fromDbWarehouse);
@@ -700,11 +815,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         setActiveWarehouse(allowed[0] || DEFAULT_WAREHOUSE_CODE);
       }
       renderActiveWarehouseUi();
+      await cacheSet("warehouses:global", warehouseState.warehouses);
       return true;
     } catch (error) {
       warehouseState.tableAvailable = !isMissingWarehouseTableError(error);
-      warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
-      return false;
+      if (!loadedFromCache) warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
+      return loadedFromCache;
     }
   }
 
@@ -721,7 +837,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function loadData() {
     state = { bindings: [], history: [], products: {} };
-    if (!isSupabaseReady()) return;
+    var cachedCore = await readModuleCache("coreData");
+    var loadedFromCache = false;
+    if (cachedCore && Array.isArray(cachedCore.bindings)) {
+      state.bindings = cachedCore.bindings || [];
+      state.history = cachedCore.history || [];
+      state.products = cachedCore.products || {};
+      loadedFromCache = true;
+    }
+    if (!isSupabaseReady() || !canUseNetwork()) {
+      if (loadedFromCache) updateSupabaseStatus("Dados carregados do cache local. Conecte para sincronizar com o Supabase.", "warning");
+      return;
+    }
     try {
       var bindingRows = await fetchAllRows("wms_bindings", "created_at", false);
       bindingRows = bindingRows.filter(rowMatchesActiveWarehouse);
@@ -757,19 +884,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         statusType = "warning";
       }
       productsDirty = false;
+      await writeModuleCache("coreData", {
+        bindings: state.bindings,
+        history: state.history,
+        products: state.products
+      });
       updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + historyMessage + productsMessage, statusType);
     } catch (error) {
       var message = formatSupabaseError(error);
       console.error("Erro no SELECT do Supabase:", error);
-      state = { bindings: [], history: [], products: {} };
+      if (!loadedFromCache) state = { bindings: [], history: [], products: {} };
       updateSupabaseStatus("Falha no SELECT do Supabase: " + message, "error");
-      showToast("Nao foi possivel carregar o banco Supabase.", "error");
+      showToast(loadedFromCache ? "Supabase indisponivel. Usando cache local." : "Nao foi possivel carregar o banco Supabase.", loadedFromCache ? "warning" : "error");
     }
   }
 
   async function saveData() {
     if (!isSupabaseReady()) {
       updateSupabaseStatus("Supabase nao conectado. " + describeSupabaseConfigProblem(), "warning");
+      return false;
+    }
+    if (!canUseNetwork()) {
+      updateSupabaseStatus("Sem conexao. Acoes criticas de escrita foram bloqueadas para evitar conflito.", "warning");
+      showToast("Conecte a internet para salvar alteracoes.", "warning");
       return false;
     }
     try {
@@ -818,6 +955,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         }
         productsDirty = false;
       }
+      await writeModuleCache("coreData", {
+        bindings: state.bindings,
+        history: state.history,
+        products: state.products
+      });
       return true;
     } catch (error) {
       var message = formatSupabaseError(error);
@@ -834,7 +976,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.items = [];
     transferState.events = [];
     transferState.productPackaging = {};
-    if (!isSupabaseReady()) return false;
+    var cachedTransfers = await readModuleCache("transferData");
+    var loadedFromCache = false;
+    if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
+      transferState.establishments = cachedTransfers.establishments || [];
+      transferState.transfers = cachedTransfers.transfers || [];
+      transferState.items = cachedTransfers.items || [];
+      transferState.events = cachedTransfers.events || [];
+      transferState.productPackaging = cachedTransfers.productPackaging || {};
+      transferState.tablesAvailable = true;
+      invalidateTransferStatsCache();
+      loadedFromCache = true;
+    }
+    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
     try {
       var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
       var transferRows = await fetchAllRows("wms_transfers", "created_at", false);
@@ -860,16 +1014,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         if (pattern.sku) transferState.productPackaging[normalizeSkuKey(pattern.sku)] = pattern;
       });
       transferState.tablesAvailable = true;
+      await writeModuleCache("transferData", {
+        establishments: transferState.establishments,
+        transfers: transferState.transfers,
+        items: transferState.items,
+        events: transferState.events,
+        productPackaging: transferState.productPackaging
+      });
       return true;
     } catch (error) {
       transferState.tablesAvailable = !isMissingTransferTableError(error);
       if (!transferState.tablesAvailable) {
         showToast("Tabelas de transferencias ausentes. Execute supabase-schema.sql.", "warning");
       } else {
-        showToast("Nao foi possivel carregar transferencias.", "error");
+        showToast(loadedFromCache ? "Transferencias carregadas do cache local." : "Nao foi possivel carregar transferencias.", loadedFromCache ? "warning" : "error");
         console.error("Erro ao carregar transferencias:", error);
       }
-      return false;
+      return loadedFromCache;
     }
   }
 
@@ -877,7 +1038,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     conferenceState.conferences = [];
     conferenceState.items = [];
     conferenceState.events = [];
-    if (!isSupabaseReady()) return false;
+    var cachedConferences = await readModuleCache("conferenceData");
+    var loadedFromCache = false;
+    if (cachedConferences && Array.isArray(cachedConferences.conferences)) {
+      conferenceState.conferences = cachedConferences.conferences || [];
+      conferenceState.items = cachedConferences.items || [];
+      conferenceState.events = cachedConferences.events || [];
+      conferenceState.tablesAvailable = true;
+      loadedFromCache = true;
+    }
+    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
     try {
       var conferenceRows = await fetchAllRows("wms_conferences", "created_at", false);
       var itemRows = await fetchAllRows("wms_conference_items", "created_at", true);
@@ -895,6 +1065,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       conferenceState.items = itemRows.map(fromDbConferenceItem);
       conferenceState.events = eventRows;
       conferenceState.tablesAvailable = true;
+      await writeModuleCache("conferenceData", {
+        conferences: conferenceState.conferences,
+        items: conferenceState.items,
+        events: conferenceState.events
+      });
       return true;
     } catch (error) {
       conferenceState.tablesAvailable = !isMissingConferenceTableError(error);
@@ -904,7 +1079,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         showToast("Não foi possível carregar conferências.", "error");
         console.error("Erro ao carregar conferências:", error);
       }
-      return false;
+      return loadedFromCache;
     }
   }
 

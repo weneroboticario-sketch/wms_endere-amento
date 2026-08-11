@@ -1,0 +1,19 @@
+{
+  "name": "WMS Estoque",
+  "short_name": "WMS",
+  "description": "Sistema WMS de enderecamento, transferencias e conferencias.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#102634",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
