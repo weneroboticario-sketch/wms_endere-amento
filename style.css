@@ -342,9 +342,9 @@ button {
 }
 
 .user-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(150px, 1.25fr) repeat(6, minmax(96px, auto)) auto;
   align-items: center;
-  justify-content: flex-end;
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -360,19 +360,20 @@ button {
 
 .app-header-title {
   margin-right: auto;
+  min-width: 0;
 }
 
 .user-strip .app-header-title,
 .user-strip .header-pill {
-  min-width: 118px;
+  min-width: 0;
   padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+  overflow: hidden;
 }
 
 .user-strip .app-header-title {
-  min-width: 180px;
   background: transparent;
   border-color: transparent;
 }
@@ -386,6 +387,10 @@ button {
 .user-strip strong {
   display: block;
   margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .warehouse-pill select {
@@ -475,6 +480,8 @@ button {
 .metric-card strong {
   font-size: 2.05rem;
   line-height: 1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .compact-metric {
@@ -491,6 +498,11 @@ button {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
   gap: 16px;
   margin-bottom: 16px;
+}
+
+table {
+  width: 100%;
+  table-layout: auto;
 }
 
 .panel {
@@ -3548,6 +3560,189 @@ td {
 .diagnostics-list code {
   color: var(--primary-dark);
   font-weight: 700;
+}
+
+@media (max-width: 1280px) and (min-width: 761px) {
+  :root {
+    --sidebar-width: 236px;
+  }
+
+  .content {
+    padding: 16px;
+  }
+
+  .user-strip {
+    grid-template-columns: minmax(150px, 1.2fr) repeat(3, minmax(104px, 1fr)) auto;
+    gap: 8px;
+  }
+
+  .app-header {
+    min-height: 0;
+    padding: 8px;
+  }
+
+  .user-strip .app-header-title,
+  .user-strip .header-pill {
+    padding: 8px 10px;
+  }
+
+  .user-strip span {
+    font-size: 0.68rem;
+  }
+
+  .user-strip strong {
+    font-size: 0.9rem;
+  }
+
+  .warehouse-pill select {
+    min-height: 28px;
+    font-size: 0.76rem;
+  }
+
+  #topLogoutButton {
+    min-height: 40px;
+    padding: 0 14px;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .metric-card {
+    min-height: 88px;
+    padding: 14px;
+  }
+
+  .metric-card span {
+    font-size: 0.86rem;
+  }
+
+  .metric-card strong {
+    font-size: clamp(1.45rem, 2.3vw, 1.9rem);
+  }
+
+  #metricUpdated {
+    font-size: clamp(1.1rem, 2vw, 1.55rem);
+    line-height: 1.05;
+  }
+
+  .panel {
+    padding: 14px;
+  }
+
+  th,
+  td {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 1120px) and (min-width: 761px) {
+  .user-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  }
+
+  .app-header-title {
+    grid-column: 1 / -1;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body,
+  .app-shell,
+  .screen.active,
+  .panel,
+  .metric-card,
+  .task-alert,
+  .transfer-board-card,
+  .transfer-work-item,
+  .sku-location-card {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .content {
+    width: 100%;
+    max-width: 100%;
+    padding: 8px 10px 16px;
+    overflow-x: hidden;
+  }
+
+  .page-title h2 {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .metric-card {
+    min-height: 76px;
+    padding: 10px;
+  }
+
+  .metric-card span {
+    font-size: 0.74rem;
+    line-height: 1.2;
+  }
+
+  .metric-card strong {
+    font-size: clamp(1.25rem, 8vw, 1.65rem);
+    line-height: 1.05;
+  }
+
+  #metricUpdated {
+    font-size: clamp(0.98rem, 6.2vw, 1.3rem);
+  }
+
+  .panel {
+    padding: 10px;
+  }
+
+  .table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  #transferencias .leader-report-table,
+  #transferencias .table-wrap table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  #transferencias td,
+  #transferencias th {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .transfer-board-title strong,
+  .transfer-route-node strong,
+  .transfer-work-item-head strong,
+  .current-item-head strong,
+  .status-badge {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .button-row button,
+  .quick-actions button,
+  .transfer-board-actions button {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
 }
 
 @media print {
