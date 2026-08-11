@@ -1685,6 +1685,25 @@ td {
   height: 18px;
 }
 
+.transfer-reassign-control {
+  display: grid;
+  gap: 4px;
+  min-width: 190px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.transfer-reassign-control select {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
 .transfer-merge-preview {
   display: grid;
   gap: 12px;

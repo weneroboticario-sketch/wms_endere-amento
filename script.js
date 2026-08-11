@@ -4448,6 +4448,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var mergeSelect = isAdminOrSupervisor() && canSelectTransferForMerge(transfer)
       ? "<label class=\"transfer-merge-select\"><input type=\"checkbox\" data-transfer-merge-select=\"" + transfer.id + "\"" + (transferState.mergeSelection[transfer.id] ? " checked" : "") + "> Unificar</label>"
       : "";
+    var reassignControl = canReassignTransfer(transfer)
+      ? "<label class=\"transfer-reassign-control\"><span>Responsavel</span><select data-transfer-reassign=\"" + transfer.id + "\">" + transferResponsibleOptionsHtml(transfer.responsibleId) + "</select></label>"
+      : "";
     var mergedInfo = transfer.isMerged ? "<div class=\"transfer-board-note\">Unificada de " + transfer.mergedFromIds.length + " transferencia(s)</div>" : transfer.mergedIntoId ? "<div class=\"transfer-board-note\">Arquivada por unificacao</div>" : "";
     return [
       "<article class=\"transfer-board-card " + stage.className + "\">",
@@ -4464,6 +4467,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "</div>",
       "<div class=\"row-actions transfer-action-stack transfer-board-actions\">",
       mergeSelect,
+      reassignControl,
       "<button class=\"edit-small\" data-transfer-view=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "",
@@ -4496,6 +4500,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function handleTransferMergeSelectionChange(event) {
+    var reassignSelect = event.target.closest("[data-transfer-reassign]");
+    if (reassignSelect) {
+      reassignTransferResponsible(reassignSelect.dataset.transferReassign, reassignSelect.value);
+      return;
+    }
     var input = event.target.closest("[data-transfer-merge-select]");
     if (!input) return;
     var transfer = getTransferById(input.dataset.transferMergeSelect);
@@ -4509,6 +4518,57 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     else delete transferState.mergeSelection[transfer.id];
     transferState.mergePreview = null;
     renderTransferMergePreview(false);
+  }
+
+  async function reassignTransferResponsible(transferId, userId) {
+    var transfer = getTransferById(transferId);
+    var user = authState.users.find(function (entry) { return entry.id === userId; });
+    if (!transfer || !canReassignTransfer(transfer)) {
+      showToast("Esta transferencia nao permite troca de responsavel.", "warning");
+      renderTransfers();
+      return;
+    }
+    if (!user || !user.active || !user.availableForTasks) {
+      showToast("Selecione um usuario ativo e disponivel.", "error");
+      renderTransfers();
+      return;
+    }
+    if (!isSupabaseReady()) {
+      showToast("Supabase nao conectado.", "error");
+      renderTransfers();
+      return;
+    }
+    var previousName = transfer.responsibleName || "-";
+    var update = {
+      responsavel_id: user.id,
+      responsavel_nome: user.name,
+      updated_at: new Date().toISOString()
+    };
+    if (transfer.status === "PENDENTE") update.status = "ATRIBUIDA";
+    var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb.from("wms_transfers").update({
+        responsavel_id: user.id,
+        responsavel_nome: user.name,
+        updated_at: update.updated_at
+      }).eq("id", transfer.id);
+    }
+    if (response.error) {
+      showToast("Erro ao trocar responsavel: " + formatSupabaseError(response.error), "error");
+      renderTransfers();
+      return;
+    }
+    transfer.responsibleId = user.id;
+    transfer.responsibleName = user.name;
+    if (update.status) transfer.status = update.status;
+    await recordTransferEvent(transfer.id, "", "TRANSFER_REASSIGNED", "", 0, "Responsavel alterado de " + previousName + " para " + user.name + ".", {
+      previousResponsibleName: previousName,
+      responsibleId: user.id,
+      responsibleName: user.name
+    });
+    await loadTransferData();
+    renderTransfers();
+    showToast("Responsavel alterado para " + user.name + ".", "success");
   }
 
   function clearTransferMergeSelection() {
@@ -4525,6 +4585,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function canSelectTransferForMerge(transfer) {
     return !!transfer && MERGEABLE_TRANSFER_STATUSES.indexOf(transfer.status) >= 0 && !transfer.mergedIntoId && transfer.status !== "UNIFICADA" && transfer.status !== "ARQUIVADA_POR_UNIFICACAO";
+  }
+
+  function canReassignTransfer(transfer) {
+    return isAdminOrSupervisor()
+      && transfer
+      && transfer.status !== "CANCELADA"
+      && transfer.status !== "UNIFICADA"
+      && transfer.status !== "ARQUIVADA_POR_UNIFICACAO"
+      && !isFinalTransferStatus(transfer.status);
   }
 
   function mergeBlockedMessage(transfer) {
@@ -4583,6 +4652,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).sort(function (a, b) { return String(a.sku).localeCompare(String(b.sku)); });
     if (items.some(function (item) { return item.unitConflict && !(Number(item.finalQty) > 0); })) {
       errors.push("Existe SKU com unidade diferente. Informe a quantidade final manualmente antes de confirmar.");
+    }
+    if (items.some(function (item) { return Number(item.finalQty || 0) <= 0; })) {
+      errors.push("Existe SKU com quantidade final zero. Corrija a quantidade antes de unificar.");
     }
     var repeatedCount = items.filter(function (item) { return item.repeated; }).length;
     var totalQty = items.reduce(function (sum, item) { return sum + Number(item.finalQty || 0); }, 0);
@@ -6236,6 +6308,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var diff = checkedQty - expectedQty;
     if (item && item.isExtra) return { key: "extra", label: "Extra", diff: diff };
     if (expectedQty > 0 && checkedQty <= 0) return { key: "not-picked", label: "Não pego", diff: diff };
+    if (expectedQty <= 0 && checkedQty <= 0) return { key: "not-picked", label: "Sem quantidade", diff: diff };
     if (diff < 0) return { key: "missing", label: "Faltando", diff: diff };
     if (diff > 0) return { key: "excess", label: "Sobrando", diff: diff };
     if (item && item.divergenceType) return { key: "changed", label: "Alterado", diff: diff };
