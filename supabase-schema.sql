@@ -71,6 +71,8 @@ set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
     warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
 where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
 
+alter table public.wms_bindings drop constraint if exists wms_bindings_sku_location_idx;
+alter table public.wms_bindings drop constraint if exists wms_bindings_sku_location_key;
 drop index if exists wms_bindings_sku_location_idx;
 
 create unique index if not exists wms_bindings_warehouse_sku_location_idx

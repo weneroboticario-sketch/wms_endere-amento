@@ -1061,7 +1061,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     try {
       if (state.bindings.length) {
         try {
-          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "id");
+          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "warehouse_code,sku,location_code");
         } catch (bindingError) {
           if (!isMissingWarehouseColumnError(bindingError)) throw bindingError;
           assertWarehouseFallbackAllowed("wms_bindings", bindingError);
@@ -10542,7 +10542,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         setStatus("importStatus", "Produtos importados no Supabase. Enderecamentos atuais mantidos.", "success");
       }
     } catch (error) {
-      var message = formatSupabaseError(error);
+      var message = explainImportError(error);
       console.error("Falha na importacao:", error);
       setStatus("importStatus", "Falha na importacao: " + message, "error");
       updateSupabaseStatus("Falha na importacao: " + message, "error");
@@ -10700,12 +10700,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var response = await supabaseDb
       .from("wms_bindings")
       .select("id")
+      .eq("warehouse_code", activeWarehouseCode())
       .in("id", sampleIds);
     if (response.error) throw response.error;
     var found = (response.data || []).length;
     if (found !== sampleIds.length) {
       throw new Error("Supabase gravou " + found + " de " + sampleIds.length + " registros verificados em wms_bindings.");
     }
+  }
+
+  function explainImportError(error) {
+    var message = formatSupabaseError(error);
+    var lower = message.toLowerCase();
+    if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("wms_bindings_sku_location_key") >= 0) {
+      return "O Supabase ainda esta com a regra antiga de enderecamento sem estoque. Execute supabase-schema.sql para remover o indice antigo e permitir VDCG, VDAR e VDSI separados. Erro original: " + message;
+    }
+    if (lower.indexOf("duplicate key value") >= 0 && lower.indexOf("wms_bindings") >= 0) {
+      return "A importacao encontrou uma duplicidade no banco. Execute supabase-schema.sql para garantir o indice por estoque (warehouse_code, sku, location_code). Erro original: " + message;
+    }
+    if (isMissingWarehouseColumnError(error)) return multiWarehouseSchemaMessage("wms_bindings") + " Erro original: " + message;
+    return message;
   }
 
   function renderHistory() {
