@@ -2082,7 +2082,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         Boolean(user.isGlobalAdmin) !== Boolean(patch.is_global_admin)
       ) {
         patch.updated_at = new Date().toISOString();
-        var response = await supabaseDb.from("wms_users").update(patch).eq("id", user.id);
+        var response = await updateUserRowById(user.id, patch);
         if (response.error) {
           console.warn("Nao foi possivel corrigir vinculo de estoque do usuario " + user.username + ":", response.error);
           continue;
@@ -2129,10 +2129,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       updated_at: now,
       last_login_at: null
     };
-    var response = await supabaseDb.from("wms_users").upsert(admin, { onConflict: "username" });
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb.from("wms_users").upsert(stripOptionalUserWarehouseColumns(admin), { onConflict: "username" });
-    }
+    var response = await upsertUserRowWithConflict(admin, "username");
     if (response.error) {
       updateSupabaseStatus("Nao foi possivel criar admin inicial: " + formatSupabaseError(response.error), "error");
     }
@@ -2517,8 +2514,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function fromDbUser(row) {
     var role = ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR";
-    var defaultWarehouse = normalizeWarehouseCode(row.default_warehouse_code || DEFAULT_WAREHOUSE_CODE);
-    var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes);
+    var defaultWarehouse = normalizeWarehouseCode(row.default_warehouse_code || row.warehouse_code || DEFAULT_WAREHOUSE_CODE);
+    var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes || row.warehouse_code);
     if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }) : [defaultWarehouse];
     return {
       id: row.id,
@@ -2529,7 +2526,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       role: role,
       active: row.active !== false,
       availableForTasks: row.available_for_tasks !== false,
-      defaultWarehouseId: row.default_warehouse_id || warehouseIdForCode(defaultWarehouse),
+      defaultWarehouseId: row.default_warehouse_id || row.warehouse_id || warehouseIdForCode(defaultWarehouse),
       defaultWarehouseCode: defaultWarehouse,
       allowedWarehouseCodes: allowedWarehouses,
       isGlobalAdmin: role === "ADMINISTRADOR" && row.is_global_admin !== false,
@@ -2548,25 +2545,52 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return copy;
   }
 
-  async function upsertUserRow(row) {
-    var payload = Object.assign({}, row);
-    var optionalColumns = ["default_warehouse_id", "allowed_warehouse_codes", "is_global_admin"];
-    for (var attempt = 0; attempt <= optionalColumns.length; attempt += 1) {
-      var response = await supabaseDb.from("wms_users").upsert(payload, { onConflict: "id" });
-      if (!response.error) return response;
-      var message = formatSupabaseError(response.error).toLowerCase();
-      var removed = false;
-      for (var i = 0; i < optionalColumns.length; i += 1) {
-        var column = optionalColumns[i];
-        if (Object.prototype.hasOwnProperty.call(payload, column) && message.indexOf(column.toLowerCase()) >= 0) {
-          delete payload[column];
-          removed = true;
-          break;
-        }
-      }
-      if (!removed) return response;
+  function applyUserSchemaFallback(payload, sourceRow, error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    if (message.indexOf("default_warehouse_code") >= 0) {
+      delete payload.default_warehouse_code;
+      if (sourceRow.default_warehouse_code) payload.warehouse_code = sourceRow.default_warehouse_code;
+      if (sourceRow.default_warehouse_id) payload.warehouse_id = sourceRow.default_warehouse_id;
+      return true;
     }
-    return supabaseDb.from("wms_users").upsert(payload, { onConflict: "id" });
+    if (message.indexOf("default_warehouse_id") >= 0) {
+      delete payload.default_warehouse_id;
+      if (sourceRow.default_warehouse_id) payload.warehouse_id = sourceRow.default_warehouse_id;
+      return true;
+    }
+    var optionalColumns = ["allowed_warehouse_codes", "is_global_admin", "warehouse_id", "warehouse_code"];
+    for (var i = 0; i < optionalColumns.length; i += 1) {
+      var column = optionalColumns[i];
+      if (Object.prototype.hasOwnProperty.call(payload, column) && message.indexOf(column.toLowerCase()) >= 0) {
+        delete payload[column];
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function upsertUserRow(row) {
+    return upsertUserRowWithConflict(row, "id");
+  }
+
+  async function upsertUserRowWithConflict(row, onConflict) {
+    var payload = Object.assign({}, row);
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      var response = await supabaseDb.from("wms_users").upsert(payload, { onConflict: onConflict });
+      if (!response.error) return response;
+      if (!applyUserSchemaFallback(payload, row, response.error)) return response;
+    }
+    return supabaseDb.from("wms_users").upsert(payload, { onConflict: onConflict });
+  }
+
+  async function updateUserRowById(id, row) {
+    var payload = Object.assign({}, row);
+    for (var attempt = 0; attempt < 8; attempt += 1) {
+      var response = await supabaseDb.from("wms_users").update(payload).eq("id", id);
+      if (!response.error) return response;
+      if (!applyUserSchemaFallback(payload, row, response.error)) return response;
+    }
+    return supabaseDb.from("wms_users").update(payload).eq("id", id);
   }
 
   function fromDbAccessRequest(row) {
