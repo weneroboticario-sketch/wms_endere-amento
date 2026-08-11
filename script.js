@@ -3144,6 +3144,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
     if ($("maintenanceAddressRows")) $("maintenanceAddressRows").addEventListener("click", handleAddressMaintenanceAction);
     if ($("refreshDiagnosticsButton")) $("refreshDiagnosticsButton").addEventListener("click", renderSystemDiagnostics);
+    if ($("runAiDiagnosticsButton")) $("runAiDiagnosticsButton").addEventListener("click", runAiSystemDiagnostics);
     $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -5760,6 +5761,129 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
       "<p><strong>Erros recentes:</strong></p>",
       performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
+    ].join("");
+  }
+
+  async function runAiSystemDiagnostics() {
+    if (!isAdmin()) {
+      setStatus("systemAiDiagnosticsStatus", "Diagnostico IA disponivel somente para administrador.", "warning");
+      return;
+    }
+    var button = $("runAiDiagnosticsButton");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Analisando...";
+    }
+    try {
+      await renderSystemDiagnostics();
+      var context = await buildSystemDiagnosticsContext();
+      $("systemAiDiagnostics").hidden = false;
+      $("systemAiDiagnostics").innerHTML = diagnosticsAnswerHtml(buildLocalSystemDiagnosis(context));
+      setStatus("systemAiDiagnosticsStatus", "Diagnostico local gerado. Nenhuma acao foi executada.", "success");
+      if (!canUseNetwork()) return;
+      var response = await fetch("/api/ai/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          warehouseCode: activeWarehouseCode(),
+          role: (authState.currentUser || {}).role || "",
+          context: context
+        })
+      });
+      if (!response.ok) return;
+      var body = await response.json();
+      if (body && body.answer) {
+        $("systemAiDiagnostics").innerHTML = diagnosticsAnswerHtml({
+          title: "Diagnostico IA do WMS",
+          summary: body.answer,
+          items: context.items
+        });
+        setStatus("systemAiDiagnosticsStatus", "Diagnostico IA atualizado com contexto enxuto.", "success");
+      }
+    } catch (error) {
+      recordPerformanceError("diagnostico-ia", error);
+      setStatus("systemAiDiagnosticsStatus", "Nao foi possivel gerar o diagnostico IA: " + error.message, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Diagnostico IA";
+      }
+    }
+  }
+
+  async function buildSystemDiagnosticsContext() {
+    var cacheBytes = await estimateLocalCacheBytes();
+    var openTransfers = transferState.transfers.filter(function (transfer) { return !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; }).length;
+    var divergentTransfers = transferState.transfers.filter(function (transfer) { return transfer.hasDivergence || Number(transfer.divergenceCount || 0) > 0; }).length;
+    var noLocationItems = transferState.items.filter(function (item) { return !item.isExtra && item.hasLocation !== true; }).length;
+    var recentErrors = performanceState.recentErrors.slice(0, 5).map(function (entry) {
+      return formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message;
+    });
+    return {
+      title: "Diagnostico do WMS",
+      module: "Manutencao e Performance",
+      summary: [
+        "Estoque ativo " + activeWarehouseCode(),
+        isSupabaseReady() ? "Supabase conectado" : "Supabase nao configurado",
+        "Cache " + (localCacheState.available ? "IndexedDB OK" : "indisponivel"),
+        "Transferencias abertas " + openTransfers,
+        "Transferencias com divergencia " + divergentTransfers,
+        "Itens sem localizacao " + noLocationItems
+      ].join("; ") + ".",
+      items: [
+        "Enderecamentos carregados: " + state.bindings.length,
+        "Transferencias carregadas: " + transferState.transfers.length,
+        "Itens de transferencia carregados: " + transferState.items.length,
+        "Usuarios carregados: " + authState.users.length,
+        "Cache aproximado: " + formatBytes(cacheBytes),
+        "Tempo core: " + performanceState.lastCoreLoadMs + " ms",
+        "Tempo transferencias: " + performanceState.lastTransferLoadMs + " ms",
+        "Tempo conferencias: " + performanceState.lastConferenceLoadMs + " ms",
+        "Tempo consulta SKU: " + performanceState.lastSkuQueryMs + " ms",
+        "Tempo real lider: " + (realtimeState.active ? "ativo" : "parado"),
+        recentErrors.length ? "Erros recentes: " + recentErrors.join(" | ") : "Erros recentes: nenhum"
+      ],
+      metrics: {
+        bindings: state.bindings.length,
+        transfers: transferState.transfers.length,
+        transferItems: transferState.items.length,
+        users: authState.users.length,
+        openTransfers: openTransfers,
+        divergentTransfers: divergentTransfers,
+        noLocationItems: noLocationItems,
+        cacheBytes: cacheBytes,
+        lastCoreLoadMs: performanceState.lastCoreLoadMs,
+        lastTransferLoadMs: performanceState.lastTransferLoadMs,
+        lastConferenceLoadMs: performanceState.lastConferenceLoadMs,
+        lastSkuQueryMs: performanceState.lastSkuQueryMs,
+        realtimeActive: realtimeState.active,
+        supabaseReady: isSupabaseReady()
+      }
+    };
+  }
+
+  function buildLocalSystemDiagnosis(context) {
+    var metrics = context.metrics || {};
+    var items = [];
+    if (!metrics.supabaseReady) items.push("Configurar Supabase antes de testar sincronizacao entre aparelhos.");
+    if (metrics.cacheBytes > 20 * 1024 * 1024) items.push("Cache local acima de 20 MB; considerar limpeza controlada no dispositivo.");
+    if (metrics.lastTransferLoadMs > 2500) items.push("Carregamento de transferencias acima de 2,5s; revisar indices e filtros por estoque.");
+    if (metrics.noLocationItems > 0) items.push("Existem itens de transferencia sem localizacao; manter como aviso operacional, sem travar processo.");
+    if (metrics.divergentTransfers > 0) items.push("Ha transferencias com divergencia; priorizar revisao no painel do lider.");
+    if (!items.length) items.push("Sistema sem alerta critico nesta sessao. Manter monitoramento de build, Supabase e cache.");
+    return {
+      title: "Diagnostico local do WMS",
+      summary: context.summary,
+      items: items
+    };
+  }
+
+  function diagnosticsAnswerHtml(answer) {
+    return [
+      "<h4>" + escapeHtml(answer.title || "Diagnostico") + "</h4>",
+      "<p>" + escapeHtml(answer.summary || "") + "</p>",
+      answer.items && answer.items.length ? "<ul>" + answer.items.map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>" : "",
+      "<p class=\"muted\">A IA usa apenas resumo operacional e nao executa exclusao, finalizacao, alocacao ou troca de responsavel.</p>"
     ].join("");
   }
 

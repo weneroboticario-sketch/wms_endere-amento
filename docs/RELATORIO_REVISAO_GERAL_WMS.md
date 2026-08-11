@@ -98,3 +98,14 @@ Esses dados nao devem ser apagados por SQL amplo. A limpeza segura deve usar fil
 - Criar testes automatizados pequenos para normalizacao de SKU, calculo de caixa, unificacao e isolamento por estoque.
 - Manter SQL de manutencao sempre com `where` especifico e revisao previa.
 - Evoluir `/api/ai/diagnose` para buscar contexto minimo no backend quando houver autenticacao server-side confiavel.
+
+## Rodada complementar de revisao profissional
+
+Nesta rodada foram aplicados ajustes seguros de estabilidade, IA e acabamento visual:
+
+- A tela Manutencao recebeu botao `Diagnostico IA`, que envia apenas um resumo enxuto para `/api/ai/diagnose`.
+- O diagnostico IA considera Supabase, cache, PWA, tempo real, tempos de consulta, volume carregado, divergencias e itens sem localizacao.
+- As rotas serverless de IA receberam headers `no-store`, suporte a `OPTIONS` e regra comum de CORS.
+- O visual recebeu acabamento profissional em cabecalho, cards, paineis, tabelas e diagnostico IA.
+- Nenhuma acao destrutiva foi adicionada a IA; ela segue consultiva.
+- Nenhuma regra aprovada de Enderecamento, Transferencias, Login, Usuarios, Supabase ou Videmais foi alterada.

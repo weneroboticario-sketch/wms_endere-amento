@@ -354,7 +354,7 @@ button {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow);
 }
 
@@ -465,11 +465,22 @@ button {
 }
 
 .metric-card {
+  position: relative;
   padding: 16px;
   min-height: 104px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--primary);
+  opacity: 0.28;
 }
 
 .metric-card span {
@@ -507,6 +518,17 @@ table {
 
 .panel {
   padding: 16px;
+}
+
+.panel,
+.metric-card {
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.panel:hover,
+.metric-card:hover {
+  border-color: #c5d4e3;
+  box-shadow: 0 16px 34px rgba(16, 38, 52, 0.08);
 }
 
 .panel-header {
@@ -909,10 +931,16 @@ th {
   color: #344054;
   background: #f5f8fb;
   font-size: 0.86rem;
+  font-weight: 800;
 }
 
 td {
   color: #253449;
+  line-height: 1.28;
+}
+
+tbody tr:hover td {
+  background: #fbfdff;
 }
 
 .shelf-summary {
@@ -3529,6 +3557,16 @@ td {
   border-radius: var(--radius);
   background: #f8fbfd;
   padding: 14px;
+}
+
+.ai-diagnostics-card {
+  border-color: #b7d8e4;
+  background: #f4fbfd;
+}
+
+.ai-diagnostics-card h4 {
+  margin: 0 0 8px;
+  font-size: 1rem;
 }
 
 .assistant-answer-card h3 {

@@ -3,6 +3,18 @@ export function parseJsonBody(request) {
   return request.body || {};
 }
 
+export function prepareAiResponse(request, response) {
+  response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Cache-Control", "no-store");
+  if (request.method === "OPTIONS") {
+    response.status(204).end();
+    return false;
+  }
+  return true;
+}
+
 export function canUseAiRole(role) {
   return ["ADMINISTRADOR", "SUPERVISOR"].includes(String(role || ""));
 }
