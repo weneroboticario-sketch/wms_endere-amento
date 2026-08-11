@@ -1779,6 +1779,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return output;
   }
 
+  function getMissingColumnName(error) {
+    var message = formatSupabaseError(error);
+    var quotedColumn = message.match(/'([^']+)'\s+column/i);
+    if (quotedColumn && quotedColumn[1]) return quotedColumn[1];
+    var columnMatch = message.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
+    if (columnMatch && columnMatch[1] && columnMatch[1] !== "column") return columnMatch[1];
+    return "";
+  }
+
+  async function updateTransferWithSchemaFallback(transferId, update) {
+    var payload = Object.assign({}, update);
+    var attemptedMissingColumns = {};
+    var response = await supabaseDb.from("wms_transfers").update(payload).eq("id", transferId);
+    while (response.error && isMissingColumnError(response.error)) {
+      var missingColumn = getMissingColumnName(response.error);
+      if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
+      attemptedMissingColumns[missingColumn] = true;
+      delete payload[missingColumn];
+      response = await supabaseDb.from("wms_transfers").update(payload).eq("id", transferId);
+    }
+    return response;
+  }
+
   async function insertTransferRows(rows) {
     var response = await supabaseDb.from("wms_transfers").insert(rows);
     if (response.error && isMissingColumnError(response.error)) {
@@ -7798,7 +7821,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!transfer || !isSupabaseReady()) return;
     try {
       var update = Object.assign({ updated_at: nowIso() }, buildTransferLightSummary(transfer, transfer.status, eventType, payload));
-      var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
+      var response = await updateTransferWithSchemaFallback(transfer.id, update);
       if (response.error && !isMissingColumnError(response.error)) throw response.error;
     } catch (error) {
       recordPerformanceError("transfer-summary", error);
@@ -9773,41 +9796,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function updateTransferStatus(transfer, status, extra, eventType, eventPayload, eventMeta) {
     var now = new Date().toISOString();
     var update = Object.assign({ status: status, updated_at: now }, buildTransferLightSummary(transfer, status, eventType, eventPayload), extra || {});
-    var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb.from("wms_transfers").update(pickColumns(update, [
-        "status",
-        "updated_at",
-        "iniciado_em",
-        "finalizado_em",
-        "duracao_segundos",
-        "separacao_iniciada_em",
-        "separacao_concluida_em",
-        "duracao_separacao_segundos",
-        "lacre_iniciado_em",
-        "lacre_concluido_em",
-        "duracao_lacre_segundos",
-        "has_divergence",
-        "divergence_count",
-        "total_items",
-        "total_skus",
-        "total_expected_quantity",
-        "total_separated_quantity",
-        "total_packed_quantity",
-        "total_previsto",
-        "total_enviado",
-        "diferenca_total",
-        "itens_total",
-        "itens_separados",
-        "itens_pendentes",
-        "itens_divergentes",
-        "total_caixas",
-        "current_step",
-        "last_action_at",
-        "last_action_label",
-        "final_result"
-      ])).eq("id", transfer.id);
-    }
+    var response = await updateTransferWithSchemaFallback(transfer.id, update);
     if (response.error) throw response.error;
     transfer.status = status;
     transfer.updatedAt = now;
