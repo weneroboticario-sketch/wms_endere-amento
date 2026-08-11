@@ -2031,7 +2031,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var defaultCode = normalizeWarehouseCode(user.defaultWarehouseCode || DEFAULT_WAREHOUSE_CODE);
     if (activeCodes.indexOf(defaultCode) < 0) defaultCode = DEFAULT_WAREHOUSE_CODE;
     var role = ROLES.indexOf(user.role) >= 0 ? user.role : "OPERADOR";
-    var isGlobal = user.isGlobalAdmin === true || role === "ADMINISTRADOR";
+    var isGlobal = role === "ADMINISTRADOR";
     var allowed = isGlobal ? activeCodes : [defaultCode];
 
     if (isNamedUser(user, "gustavo")) {
@@ -2532,7 +2532,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       defaultWarehouseId: row.default_warehouse_id || warehouseIdForCode(defaultWarehouse),
       defaultWarehouseCode: defaultWarehouse,
       allowedWarehouseCodes: allowedWarehouses,
-      isGlobalAdmin: row.is_global_admin === true || role === "ADMINISTRADOR",
+      isGlobalAdmin: role === "ADMINISTRADOR" && row.is_global_admin !== false,
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
       lastLoginAt: row.last_login_at || ""
@@ -2546,6 +2546,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     delete copy.allowed_warehouse_codes;
     delete copy.is_global_admin;
     return copy;
+  }
+
+  async function upsertUserRow(row) {
+    var payload = Object.assign({}, row);
+    var optionalColumns = ["default_warehouse_id", "allowed_warehouse_codes", "is_global_admin"];
+    for (var attempt = 0; attempt <= optionalColumns.length; attempt += 1) {
+      var response = await supabaseDb.from("wms_users").upsert(payload, { onConflict: "id" });
+      if (!response.error) return response;
+      var message = formatSupabaseError(response.error).toLowerCase();
+      var removed = false;
+      for (var i = 0; i < optionalColumns.length; i += 1) {
+        var column = optionalColumns[i];
+        if (Object.prototype.hasOwnProperty.call(payload, column) && message.indexOf(column.toLowerCase()) >= 0) {
+          delete payload[column];
+          removed = true;
+          break;
+        }
+      }
+      if (!removed) return response;
+    }
+    return supabaseDb.from("wms_users").upsert(payload, { onConflict: "id" });
   }
 
   function fromDbAccessRequest(row) {
@@ -2611,8 +2632,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("userFormStatus", "Somente administrador pode criar ou alterar perfil ADMINISTRADOR.", "error");
       return;
     }
-    var isGlobal = isAdmin() && $("userGlobalAdminInput") && $("userGlobalAdminInput").checked;
-    if (isGlobal || role === "ADMINISTRADOR") {
+    var isGlobal = role === "ADMINISTRADOR" && isAdmin() && $("userGlobalAdminInput") && $("userGlobalAdminInput").checked;
+    if (role === "ADMINISTRADOR") {
       allowedWarehouses = activeWarehouseCodes();
       isGlobal = true;
     }
@@ -2654,7 +2675,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
     if (!id) row.created_at = now;
     if (password) row.password_hash = await hashPassword(username, password);
-    var response = await supabaseDb.from("wms_users").upsert(row, { onConflict: "id" });
+    var response = await upsertUserRow(row);
     if (response.error) {
       setStatus("userFormStatus", "Erro ao salvar usuario: " + formatSupabaseError(response.error), "error");
       return;
@@ -2913,7 +2934,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       is_global_admin: false,
       last_login_at: null
     };
-    var userResponse = await supabaseDb.from("wms_users").insert(userRow);
+    var userResponse = await upsertUserRow(userRow);
     if (userResponse.error) {
       showToast("Erro ao aprovar: " + formatSupabaseError(userResponse.error), "error");
       return;

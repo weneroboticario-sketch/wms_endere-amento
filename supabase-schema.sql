@@ -225,6 +225,13 @@ set role = 'ADMINISTRADOR',
 where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%wener%'
    or lower(coalesce(username, '')) = 'admin';
 
+update public.wms_users
+set is_global_admin = false,
+    allowed_warehouse_codes = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    updated_at = now()
+where role <> 'ADMINISTRADOR'
+  and is_global_admin = true;
+
 create unique index if not exists wms_users_username_idx
 on public.wms_users (username);
 
