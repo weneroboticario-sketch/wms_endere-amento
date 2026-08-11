@@ -1361,13 +1361,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       tipo_quantidade: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
       unidades_por_caixa: Number(item.unitsPerBox || 0),
-      quantidade_total_unidades: isBoxQuantityItem(item) ? Number(item.totalUnits || 0) : Number(item.totalUnits || item.requestedQty || 0),
+      quantidade_total_unidades: isBoxQuantityItem(item) ? getTransferExpectedUnits(item) : Number(item.totalUnits || item.requestedQty || 0),
       quantidade_separada: Number(item.separatedQty || 0),
       quantidade_lacrada: Number(item.packedQty || 0),
       quantidade_lacrada_unidades: Number(item.packedUnits || 0),
       embalagem_observacao: item.packagingObservation || "",
-      quantidade_enviada: isBoxQuantityItem(item) ? Number(item.packedUnits || 0) : Number(item.packedQty || 0),
-      total_unidades_caixa: isBoxQuantityItem(item) ? Number(item.packedUnits || item.totalUnits || 0) : 0,
+      quantidade_enviada: isBoxQuantityItem(item) ? getTransferPackedUnits(item) : Number(item.packedQty || 0),
+      total_unidades_caixa: isBoxQuantityItem(item) ? Number(item.packedUnits || getTransferExpectedUnits(item) || 0) : 0,
       diferenca: getTransferItemDifferenceForDb(item),
       motivo_pendencia: item.pendingReason || "",
       observacao_pendencia: item.pendingObservation || "",
@@ -4818,13 +4818,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var items = preview.items.map(function (row) {
       var base = row.entries[0].item;
+      var finalQty = Number(row.finalQty || 0);
+      var unit = row.unit || base.unit || "UN";
+      var isBox = isBoxUnit(unit) || isBoxQuantityItem(base);
+      var unitsPerBox = Number(base.unitsPerBox || 0);
       var item = Object.assign({}, base, {
         id: "trfi-merge-" + Date.now() + "-" + Math.random().toString(16).slice(2),
         transferId: transferId,
         sku: row.sku,
         description: row.description,
-        requestedQty: Number(row.finalQty || 0),
-        unit: row.unit || base.unit || "UN",
+        requestedQty: finalQty,
+        unit: isBox ? "CX" : unit,
+        quantityType: isBox ? "CAIXA" : "UNIDADE",
+        boxQty: isBox ? finalQty : 0,
+        unitsPerBox: unitsPerBox,
+        totalUnits: isBox ? (unitsPerBox > 0 ? finalQty * unitsPerBox : finalQty) : finalQty,
         separatedQty: 0,
         packedQty: 0,
         packedUnits: 0,
@@ -5964,10 +5972,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getTransferExpectedUnits(item) {
     if (!isBoxQuantityItem(item)) return Number(item.requestedQty || 0);
+    var boxQty = Number(item.requestedQty || item.boxQty || 0);
     var stored = Number(item.totalUnits || 0);
     if (stored > 0 && Number(item.unitsPerBox || 0) > 0) return stored;
-    if (Number(item.boxQty || 0) > 0 && Number(item.unitsPerBox || 0) > 0) return Number(item.boxQty || 0) * Number(item.unitsPerBox || 0);
-    return stored || 0;
+    if (boxQty > 0 && Number(item.unitsPerBox || 0) > 0) return boxQty * Number(item.unitsPerBox || 0);
+    return boxQty || stored || 0;
   }
 
   function getTransferPackedUnits(item) {
@@ -5975,7 +5984,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var stored = Number(item.packedUnits || 0);
     if (stored > 0) return stored;
     if (Number(item.packedQty || 0) > 0 && Number(item.unitsPerBox || 0) > 0) return Number(item.packedQty || 0) * Number(item.unitsPerBox || 0);
-    return 0;
+    return Number(item.packedQty || 0);
+  }
+
+  function hasTransferBoxConversion(item) {
+    return isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0;
+  }
+
+  function formatTransferComparableQty(item, qty) {
+    var unit = isBoxQuantityItem(item) && !hasTransferBoxConversion(item) ? "CX" : "UN";
+    return formatQty(qty) + " " + escapeHtml(unit);
   }
 
   function formatTransferExpectedLabel(item) {
@@ -5987,8 +6005,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!isBoxQuantityItem(item)) return formatQty(item.packedQty) + " " + escapeHtml(item.unit || "UN");
     var parts = [formatQty(item.packedQty) + " CX"];
     var packedUnits = getTransferPackedUnits(item);
-    if (packedUnits) parts.push(formatQty(packedUnits) + " UN");
+    if (packedUnits && hasTransferBoxConversion(item)) parts.push(formatQty(packedUnits) + " UN");
     return parts.join(" / ");
+  }
+
+  function formatTransferTotalExpectedLabel(item) {
+    if (!isBoxQuantityItem(item)) return formatQty(getTransferExpectedUnits(item)) + " UN";
+    return hasTransferBoxConversion(item) ? formatQty(getTransferExpectedUnits(item)) + " UN" : formatQty(getTransferExpectedUnits(item)) + " CX";
   }
 
   function itemQtyNumbers(item) {
@@ -6014,7 +6037,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function getTransferItemDifferenceForDb(item) {
-    return getTransferItemCheckedQty(item) - Number(item && item.requestedQty || 0);
+    return getTransferItemCheckedQty(item) - getTransferExpectedUnits(item);
   }
 
   function transferItemStatusLabel(item) {
@@ -6219,8 +6242,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (mode === "MONTAGEM") {
         item.packedQty = qty;
         if (isBoxQuantityItem(item)) {
-          item.packedUnits = qty > 0 && Number(item.unitsPerBox || 0) > 0 ? qty * Number(item.unitsPerBox || 0) : 0;
-          item.totalUnits = Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0);
+          item.packedUnits = qty > 0 && Number(item.unitsPerBox || 0) > 0 ? qty * Number(item.unitsPerBox || 0) : qty;
+          item.totalUnits = Number(item.unitsPerBox || 0) > 0 ? Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0) : Number(item.requestedQty || item.boxQty || 0);
           if (qty <= 0) item.packagingObservation = "";
         }
         item.excessQty = Math.max(0, qty - Number(item.separatedQty || 0));
@@ -6228,7 +6251,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         item.status = qty <= 0 ? (Number(item.separatedQty || 0) > 0 ? "SEPARADO" : "PENDENTE") : qty >= Number(item.separatedQty || 0) ? "ENVIADO" : "EM_CAIXA";
         update.quantidade_lacrada = item.packedQty;
         update.quantidade_lacrada_unidades = item.packedUnits || 0;
-        update.quantidade_total_unidades = item.totalUnits || 0;
+        update.quantidade_total_unidades = getTransferExpectedUnits(item);
         update.embalagem_observacao = item.packagingObservation || "";
       } else {
         item.separatedQty = qty;
@@ -6422,10 +6445,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "<td data-label=\"SKU\"><strong>" + escapeHtml(row.sku || "-") + "</strong></td>",
         "<td data-label=\"Produto\">" + escapeHtml(row.description || "-") + "</td>",
         transferLocationSummaryCell(row.item),
-        "<td data-label=\"Prevista\">" + formatQty(row.expectedQty) + "</td>",
-        "<td data-label=\"Lacrada/Enviada\">" + formatQty(row.checkedQty) + "</td>",
-        "<td data-label=\"Falta\">" + formatQty(row.remainingQty) + "</td>",
-        "<td data-label=\"Diferença\"><strong class=\"result-diff result-" + escapeHtml(row.result.key) + "\">" + formatQty(row.differenceQty) + "</strong></td>",
+        "<td data-label=\"Prevista\">" + formatTransferComparableQty(row.item, row.expectedQty) + "</td>",
+        "<td data-label=\"Lacrada/Enviada\">" + formatTransferComparableQty(row.item, row.checkedQty) + "</td>",
+        "<td data-label=\"Falta\">" + formatTransferComparableQty(row.item, row.remainingQty) + "</td>",
+        "<td data-label=\"Diferença\"><strong class=\"result-diff result-" + escapeHtml(row.result.key) + "\">" + formatTransferComparableQty(row.item, row.differenceQty) + "</strong></td>",
         "<td data-label=\"Situação\">" + resultBadgeHtml(row.result) + "</td>",
         "</tr>"
       ].join("");
@@ -6482,7 +6505,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isConference) {
         return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Situação\">" + resultBadgeHtml(result) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatTransferExpectedLabel(item) + "</td><td data-label=\"Unidade\">" + escapeHtml(item.unit || "UN") + "</td><td data-label=\"Un/CX\">" + (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</td><td data-label=\"Total previsto\">" + formatQty(expectedQty) + " UN</td><td data-label=\"Lacrada/Enviada\">" + formatTransferPackedLabel(item) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Motivo\">" + escapeHtml(item.pendingReason || item.pendingObservation || "-") + "</td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
+      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatTransferExpectedLabel(item) + "</td><td data-label=\"Unidade\">" + escapeHtml(item.unit || "UN") + "</td><td data-label=\"Un/CX\">" + (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</td><td data-label=\"Total previsto\">" + formatTransferTotalExpectedLabel(item) + "</td><td data-label=\"Lacrada/Enviada\">" + formatTransferPackedLabel(item) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatTransferComparableQty(item, diff) + "</strong></td><td data-label=\"Motivo\">" + escapeHtml(item.pendingReason || item.pendingObservation || "-") + "</td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
@@ -8081,7 +8104,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     item.quantityType = isBox ? "CAIXA" : "UNIDADE";
     item.boxQty = isBox ? Number(item.requestedQty || 0) : 0;
     item.unitsPerBox = Number(item.unitsPerBox || 0);
-    item.totalUnits = isBox ? (item.unitsPerBox > 0 ? Number(item.boxQty || 0) * item.unitsPerBox : Number(item.totalUnits || 0)) : Number(item.totalUnits || item.requestedQty || 0);
+    item.totalUnits = isBox ? (item.unitsPerBox > 0 ? Number(item.boxQty || 0) * item.unitsPerBox : Number(item.totalUnits || item.boxQty || item.requestedQty || 0)) : Number(item.totalUnits || item.requestedQty || 0);
     item.packedUnits = Number(item.packedUnits || 0);
     item.packagingObservation = item.packagingObservation || "";
     return item;
@@ -9070,7 +9093,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isBoxQuantityItem(item)) {
         item.packedUnits = getTransferPackedUnits(item) + Number(boxPacking.packedUnitsDelta || 0);
         if (boxPacking.unitsPerBox > 0) item.unitsPerBox = boxPacking.unitsPerBox;
-        item.totalUnits = boxPacking.mixed ? item.packedUnits : Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0);
+        item.totalUnits = boxPacking.mixed ? item.packedUnits : (Number(item.unitsPerBox || 0) > 0 ? Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0) : Number(item.requestedQty || item.boxQty || 0));
         item.packagingObservation = boxPacking.observation || item.packagingObservation || "";
       }
       if (packExcess > 0) {
@@ -9091,7 +9114,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         quantidade_lacrada: item.packedQty,
         quantidade_lacrada_unidades: item.packedUnits || 0,
         unidades_por_caixa: item.unitsPerBox || 0,
-        quantidade_total_unidades: item.totalUnits || 0,
+        quantidade_total_unidades: getTransferExpectedUnits(item),
         embalagem_observacao: item.packagingObservation || "",
         status: item.status,
         updated_at: now
