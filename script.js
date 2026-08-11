@@ -3998,7 +3998,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
     }
     var assigned = getVisibleTransfers().filter(function (transfer) {
-      return ["ATRIBUIDA", "PENDENTE", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA"].indexOf(transfer.status) >= 0;
+      return ["ATRIBUIDA", "PENDENTE", "AGUARDANDO_SEPARACAO", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA"].indexOf(transfer.status) >= 0;
     });
     if (!assigned.length || isAdminOrSupervisor()) {
       $("transferDashboardAlert").hidden = true;
@@ -6841,6 +6841,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "SEPARACAO";
   }
 
+  function canStartTransferSeparation(transfer) {
+    return transfer && ["PENDENTE", "ATRIBUIDA", "AGUARDANDO_SEPARACAO"].indexOf(transfer.status) >= 0;
+  }
+
   function transferStageLabel(mode) {
     if (mode === "MONTAGEM") return "Montagem da Caixa";
     if (mode === "FINALIZACAO") return "Finalização";
@@ -7543,6 +7547,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var transferId = transferState.activeTransferId;
     if (!transferId) return;
     await loadTransferData();
+    var transfer = getTransferById(transferId);
+    if (!transfer) {
+      transferState.activeTransferId = "";
+      renderTransfers();
+      showToast("Transferencia nao encontrada no estoque atual.", "error");
+      return;
+    }
+    if (!transferBelongsToActiveWarehouse(transfer)) {
+      transferState.activeTransferId = "";
+      renderTransfers();
+      showToast("Esta transferencia pertence a outro estoque.", "error");
+      return;
+    }
     transferState.activeTransferId = transferId;
     renderTransferWork();
     setStatus("transferWorkStatus", "Acompanhamento atualizado.", "success");
@@ -9709,9 +9726,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function openTransferWork(transferId, options) {
     options = options || {};
     var transfer = getTransferById(transferId);
-    if (!transfer) return;
+    if (!transfer) {
+      await ensureTransferDataLoaded();
+      transfer = getTransferById(transferId);
+    }
+    if (!transfer) {
+      showToast("Transferencia nao encontrada no estoque atual.", "error");
+      return;
+    }
     if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id) {
       showToast("Você não tem acesso a esta transferência.", "error");
+      return;
+    }
+    if (!transferBelongsToActiveWarehouse(transfer)) {
+      showToast("Esta transferencia pertence a outro estoque.", "error");
       return;
     }
     transferState.activeTransferId = transferId;
@@ -9720,9 +9748,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
     markTaskAlertRead("TRANSFERENCIA", transfer.id, transfer.status);
     transferState.activeWorkMode = getTransferWorkMode(transfer);
-    if (!options.viewOnly && (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE")) {
+    if (!options.viewOnly && canStartTransferSeparation(transfer)) {
       var startedAt = new Date().toISOString();
-      await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt, separation_started_at: startedAt, total_started_at: startedAt }, "SEPARATION_STARTED");
+      try {
+        await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt, separation_started_at: startedAt, total_started_at: startedAt }, "SEPARATION_STARTED");
+      } catch (error) {
+        console.error("Erro ao iniciar transferencia:", error);
+        showToast("Erro ao iniciar transferencia: " + formatSupabaseError(error), "error");
+        return;
+      }
     }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
