@@ -1259,6 +1259,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       excessQty: Number(row.quantidade_excedente || 0),
       isExtra: row.is_extra === true,
       divergenceType: row.divergence_type || "",
+      pendingReason: row.motivo_pendencia || "",
+      pendingObservation: row.observacao_pendencia || "",
       addedById: row.added_by_id || "",
       addedByName: row.added_by_name || "",
       inputType: row.input_type || "",
@@ -1364,6 +1366,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       quantidade_lacrada: Number(item.packedQty || 0),
       quantidade_lacrada_unidades: Number(item.packedUnits || 0),
       embalagem_observacao: item.packagingObservation || "",
+      quantidade_enviada: isBoxQuantityItem(item) ? Number(item.packedUnits || 0) : Number(item.packedQty || 0),
+      total_unidades_caixa: isBoxQuantityItem(item) ? Number(item.packedUnits || item.totalUnits || 0) : 0,
+      diferenca: getTransferItemDifferenceForDb(item),
+      motivo_pendencia: item.pendingReason || "",
+      observacao_pendencia: item.pendingObservation || "",
+      has_divergence: Boolean(item.divergenceType || Number(item.missingQty || 0) > 0 || Number(item.excessQty || 0) > 0),
       status: item.status || "PENDENTE",
       warehouse_id: item.warehouseId || activeWarehouseId(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
@@ -1379,6 +1387,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       quantidade_excedente: Number(item.excessQty || 0),
       is_extra: item.isExtra === true,
       divergence_type: item.divergenceType || "",
+      motivo_pendencia: item.pendingReason || "",
+      observacao_pendencia: item.pendingObservation || "",
+      has_divergence: Boolean(item.divergenceType || Number(item.missingQty || 0) > 0 || Number(item.excessQty || 0) > 0),
       added_by_id: item.addedById || "",
       added_by_name: item.addedByName || "",
       input_type: item.inputType || "",
@@ -5735,6 +5746,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function isTransferItemPendingForMode(item, mode) {
+    if (mode === "SEPARACAO" && isTransferItemSeparationClosed(item)) return false;
+    if (isTransferItemNotSent(item)) return false;
     if (mode === "MONTAGEM") return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0);
     if (mode === "FINALIZACAO") return false;
     return !item.isExtra && Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
@@ -5848,18 +5861,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isTransferItemActionable(selected, mode)) return selected;
     }
     if (mode === "MONTAGEM") {
-      return items.find(function (item) { return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0); })
+      return items.find(function (item) { return !item.isExtra && !isTransferItemNotSent(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); })
         || null;
     }
     if (mode === "FINALIZACAO") return items[0] || null;
-    return items.find(function (item) { return !item.isExtra && Number(item.separatedQty || 0) < Number(item.requestedQty || 0); }) || null;
+    return items.find(function (item) { return !item.isExtra && !isTransferItemSeparationClosed(item) && Number(item.separatedQty || 0) < Number(item.requestedQty || 0); }) || null;
   }
 
   function isTransferItemActionable(item, mode) {
     if (!item) return false;
     if (mode === "FINALIZACAO") return true;
+    if (isTransferItemNotSent(item)) return false;
     if (mode === "MONTAGEM") return Number(item.packedQty || 0) < Number(item.separatedQty || 0);
-    return Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
+    return !isTransferItemSeparationClosed(item) && Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
+  }
+
+  function isTransferItemNotSent(item) {
+    var status = normalizeText(item && item.status).toUpperCase();
+    return ["FALTA_TOTAL", "NAO_ATENDIDO", "PENDENTE_NAO_ATENDIDO"].indexOf(status) >= 0;
+  }
+
+  function isTransferItemSeparationClosed(item) {
+    if (isTransferItemNotSent(item)) return true;
+    return normalizeText(item && item.divergenceType).toUpperCase() === "FALTA_DE_ITEM" && Number(item && item.missingQty || 0) > 0;
   }
 
   function isBoxQuantityItem(item) {
@@ -5913,9 +5937,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
+  function getTransferItemCheckedQty(item) {
+    return isBoxQuantityItem(item) ? getTransferPackedUnits(item) : Number(item.packedQty || item.separatedQty || 0);
+  }
+
+  function getTransferItemDifferenceForDb(item) {
+    return getTransferItemCheckedQty(item) - Number(item && item.requestedQty || 0);
+  }
+
   function transferItemStatusLabel(item) {
     if (item.isExtra) return "EXTRA";
     var qty = itemQtyNumbers(item);
+    if (isTransferItemNotSent(item)) return "NAO_ATENDIDO";
     if (item.divergenceType || qty.separated > qty.requested || qty.packed > qty.separated) return "DIVERGENTE";
     if (qty.packed >= qty.separated && qty.separated > 0 && qty.separated >= qty.requested) return "ENVIADO";
     if (qty.separated >= qty.requested) return "SEPARADO";
@@ -5928,8 +5961,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       PENDENTE: "Pendente",
       SEPARADO: "Separado",
       PARCIAL: "Parcial",
+      SEPARADO_COM_DIVERGENCIA: "Separado com divergencia",
       EM_CAIXA: "Em caixa",
       ENVIADO: "Enviado",
+      ENVIADO_PARCIAL: "Enviado parcial",
+      ENVIADO_COM_DIVERGENCIA: "Enviado com divergencia",
+      NAO_ATENDIDO: "Nao atendido",
+      FALTA_TOTAL: "Falta total",
       DIVERGENTE: "Divergente",
       EXTRA: "Extra"
     };
@@ -6371,7 +6409,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isConference) {
         return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\"><strong>" + escapeHtml(item.sku) + "</strong></td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatQty(expectedQty) + "</td><td data-label=\"Bipada\">" + formatQty(checkedQty) + "</td><td data-label=\"Falta\">" + formatQty(missingQty) + "</td><td data-label=\"Sobra\">" + formatQty(excessQty) + "</td><td data-label=\"Situação\">" + resultBadgeHtml(result) + "</td><td data-label=\"Ajustar\">" + conferenceAdjustHtml(item.id, checkedQty) + "</td></tr>";
       }
-      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatTransferExpectedLabel(item) + "</td><td data-label=\"Unidade\">" + escapeHtml(item.unit || "UN") + "</td><td data-label=\"Un/CX\">" + (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</td><td data-label=\"Total previsto\">" + formatQty(expectedQty) + " UN</td><td data-label=\"Lacrada/Enviada\">" + formatTransferPackedLabel(item) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
+      return "<tr class=\"leader-result-row result-row result-" + escapeHtml(result.key) + "\"><td data-label=\"SKU\">" + escapeHtml(item.sku) + "</td><td data-label=\"Produto\">" + escapeHtml(item.description || "-") + "</td>" + transferLocationSummaryCell(item) + "<td data-label=\"Prevista\">" + formatTransferExpectedLabel(item) + "</td><td data-label=\"Unidade\">" + escapeHtml(item.unit || "UN") + "</td><td data-label=\"Un/CX\">" + (isBoxQuantityItem(item) && Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</td><td data-label=\"Total previsto\">" + formatQty(expectedQty) + " UN</td><td data-label=\"Lacrada/Enviada\">" + formatTransferPackedLabel(item) + "</td><td data-label=\"Dif.\"><strong class=\"result-diff result-" + escapeHtml(result.key) + "\">" + formatQty(diff) + "</strong></td><td data-label=\"Motivo\">" + escapeHtml(item.pendingReason || item.pendingObservation || "-") + "</td><td data-label=\"Status\">" + resultBadgeHtml(result) + "</td></tr>";
     }).join("");
     var extraRows = report.extraItems.map(function (item) {
       var extraQty = Number(item.extraQty || item.separatedQty || item.packedQty || 0);
@@ -6382,7 +6420,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var locationHeaders = ["Localizacao"];
     var itemHeaders = isConference ? ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Bipada", "Falta", "Sobra", "Situação", "Ajustar"]) : ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Lacrada/Enviada", "Dif.", "Status"]);
     var extraHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Qtd bipada", "Situação", "Quem", "Entrada", isConference ? "Ajustar" : "Obs."]);
-    if (!isConference) itemHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Unidade", "Un/CX", "Total previsto", "Lacrada/Enviada", "Dif.", "Status"]);
+    if (!isConference) itemHeaders = ["SKU", "Produto"].concat(locationHeaders, ["Prevista", "Unidade", "Un/CX", "Total previsto", "Lacrada/Enviada", "Dif.", "Motivo", "Status"]);
     $("transferFinalReportDetails").innerHTML = [
       reportTableHtml(isConference ? "Itens do XML" : "Resultado por SKU", itemHeaders, itemRows, itemHeaders.length),
       reportTableHtml("Itens extras", extraHeaders, extraRows, extraHeaders.length)
@@ -6537,10 +6575,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var originalItems = items.filter(function (item) { return !item.isExtra; });
     var extraItems = items.filter(function (item) { return item.isExtra; });
     var totalItems = originalItems.length;
-    var pendingSeparation = originalItems.filter(function (item) { return Number(item.separatedQty || 0) < Number(item.requestedQty || 0); }).length;
-    var pendingPacking = originalItems.filter(function (item) { return Number(item.packedQty || 0) < Number(item.separatedQty || 0); }).length;
-    var separatedItems = originalItems.filter(function (item) { return Number(item.separatedQty || 0) >= Number(item.requestedQty || 0); }).length;
-    var packedItems = originalItems.filter(function (item) { return Number(item.packedQty || 0) >= Number(item.separatedQty || 0) && Number(item.separatedQty || 0) > 0; }).length;
+    var pendingSeparation = originalItems.filter(function (item) { return !isTransferItemSeparationClosed(item) && Number(item.separatedQty || 0) < Number(item.requestedQty || 0); }).length;
+    var pendingPacking = originalItems.filter(function (item) { return !isTransferItemNotSent(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); }).length;
+    var separatedItems = originalItems.filter(function (item) { return isTransferItemSeparationClosed(item) || Number(item.separatedQty || 0) >= Number(item.requestedQty || 0); }).length;
+    var packedItems = originalItems.filter(function (item) { return isTransferItemNotSent(item) || (Number(item.packedQty || 0) >= Number(item.separatedQty || 0) && Number(item.separatedQty || 0) > 0); }).length;
     var noLocationItems = originalItems.filter(function (item) { return !transferLocationStatus(item).hasLocation; }).length;
     var requested = originalItems.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
     var packed = items.reduce(function (sum, item) { return sum + Math.min(Number(item.packedQty || 0), Number(item.requestedQty || item.packedQty || 0)); }, 0);
@@ -6548,7 +6586,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var extraQty = extraItems.reduce(function (sum, item) { return sum + Number(item.extraQty || item.separatedQty || item.packedQty || 0); }, 0);
     var missingQty = originalItems.reduce(function (sum, item) { return sum + Math.max(0, Number(item.requestedQty || 0) - Math.max(Number(item.separatedQty || 0), Number(item.packedQty || 0))); }, 0);
     var excessQty = items.reduce(function (sum, item) { return sum + Number(item.excessQty || 0); }, 0);
-    var progress = requested ? Math.round(((packed || separated) / requested) * 100) : 0;
+    var handledQty = packed || separated || (requested - missingQty);
+    var progress = requested ? Math.round((handledQty / requested) * 100) : 0;
     var stats = {
       totalItems: totalItems,
       totalSkus: originalItems.length,
@@ -7065,9 +7104,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!missing) continue;
       item.missingQty = Math.max(Number(item.missingQty || 0), missing);
       item.divergenceType = "FALTA_DE_ITEM";
+      item.status = mode === "LACRE" ? (informed > 0 ? "ENVIADO_PARCIAL" : "FALTA_TOTAL") : (informed > 0 ? "SEPARADO_COM_DIVERGENCIA" : "FALTA_TOTAL");
+      item.pendingReason = item.pendingReason || "Separacao parcial autorizada";
       var update = Object.assign({
         quantidade_faltante: item.missingQty,
         divergence_type: item.divergenceType,
+        status: item.status,
+        motivo_pendencia: item.pendingReason,
+        observacao_pendencia: item.pendingObservation || "",
         updated_at: new Date().toISOString()
       }, transferItemAuditDbFields(item));
       var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
@@ -8495,7 +8539,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferState.activeWorkMode = getTransferWorkMode(transfer);
     if (!options.viewOnly && (transfer.status === "ATRIBUIDA" || transfer.status === "PENDENTE")) {
       var startedAt = new Date().toISOString();
-      await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt }, "SEPARATION_STARTED");
+      await updateTransferStatus(transfer, "EM_SEPARACAO", { iniciado_em: startedAt, separacao_iniciada_em: startedAt, separation_started_at: startedAt, total_started_at: startedAt }, "SEPARATION_STARTED");
     }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
@@ -8514,7 +8558,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var update = Object.assign({ status: status, updated_at: now }, extra || {});
     var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
     if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb.from("wms_transfers").update({ status: status, updated_at: now }).eq("id", transfer.id);
+      response = await supabaseDb.from("wms_transfers").update(pickColumns(update, [
+        "status",
+        "updated_at",
+        "iniciado_em",
+        "finalizado_em",
+        "duracao_segundos",
+        "separacao_iniciada_em",
+        "separacao_concluida_em",
+        "duracao_separacao_segundos",
+        "lacre_iniciado_em",
+        "lacre_concluido_em",
+        "duracao_lacre_segundos",
+        "has_divergence",
+        "divergence_count",
+        "total_items",
+        "total_skus",
+        "total_expected_quantity",
+        "total_separated_quantity",
+        "total_packed_quantity",
+        "final_result"
+      ])).eq("id", transfer.id);
     }
     if (response.error) throw response.error;
     transfer.status = status;
@@ -8874,14 +8938,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     if (mode === "MONTAGEM") renderTransferBoxFields();
-    var qty = parseQuantity($("transferQuantityInput").value);
-    if ((!qty || qty <= 0) && mode === "SEPARACAO") {
+    var qtyRaw = normalizeText($("transferQuantityInput").value);
+    var hasQtyInput = qtyRaw !== "";
+    var qty = parseQuantity(qtyRaw);
+    if (!hasQtyInput && mode === "SEPARACAO") {
       qty = Math.max(0, Number(item.requestedQty || 0) - Number(item.separatedQty || 0)) || Number(item.requestedQty || 0);
     }
-    if (!qty || qty <= 0) {
+    if (qty < 0 || (!Number.isFinite(qty))) {
+      setStatus("transferWorkStatus", "Informe uma quantidade valida.", "error");
+      $("transferQuantityInput").focus();
+      return;
+    }
+    if (mode !== "SEPARACAO" && (!qty || qty <= 0)) {
       setStatus("transferWorkStatus", "Informe uma quantidade maior que zero.", "error");
       $("transferQuantityInput").focus();
       return;
+    }
+    var pendingInfo = null;
+    if (mode === "SEPARACAO" && qty === 0) {
+      pendingInfo = requestTransferPendingReason(item);
+      if (!pendingInfo) {
+        setStatus("transferWorkStatus", "Informe o motivo para registrar quantidade zero.", "warning");
+        return;
+      }
     }
     if (mode === "SEPARACAO" && !confirmSeparationCollection(item, qty)) {
       setStatus("transferWorkStatus", "Coleta cancelada.", "warning");
@@ -8962,19 +9041,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var sepExpected = item.isExtra ? Number(item.separatedQty || 0) + qty : Number(item.requestedQty || 0);
       var sepCurrent = Number(item.separatedQty || 0);
       var sepExcess = Math.max(0, sepCurrent + qty - sepExpected);
+      var sepNewQty = sepCurrent + qty;
+      var sepMissing = Math.max(0, sepExpected - sepNewQty);
+      if (sepMissing > 0 && !pendingInfo && !window.confirm("Este produto foi solicitado com " + formatQty(sepExpected) + ", mas voce esta separando " + formatQty(sepNewQty) + ". Confirmar divergencia?")) {
+        setStatus("transferWorkStatus", "Corrija a quantidade antes de confirmar.", "warning");
+        $("transferQuantityInput").focus();
+        return;
+      }
       if (sepExcess > 0 && !item.isExtra && !window.confirm("Quantidade maior que a solicitada. Confirmar divergencia?")) {
         setStatus("transferWorkStatus", "Corrija a quantidade antes de confirmar.", "warning");
         $("transferQuantityInput").focus();
         return;
       }
-      item.separatedQty = sepCurrent + qty;
+      item.separatedQty = sepNewQty;
       if (sepExcess > 0) {
         item.excessQty = Number(item.excessQty || 0) + sepExcess;
         item.divergenceType = "QUANTIDADE_EXCEDENTE";
       }
-      item.status = item.separatedQty >= item.requestedQty ? "SEPARADO" : "PARCIAL";
+      if (sepMissing > 0 && !item.isExtra) {
+        item.missingQty = Math.max(Number(item.missingQty || 0), sepMissing);
+        item.divergenceType = "FALTA_DE_ITEM";
+        item.pendingReason = pendingInfo ? pendingInfo.reason : item.pendingReason || "Separacao parcial autorizada";
+        item.pendingObservation = pendingInfo ? pendingInfo.observation : item.pendingObservation || "";
+      }
+      item.status = sepMissing > 0 && !item.isExtra ? (item.separatedQty > 0 ? "SEPARADO_COM_DIVERGENCIA" : "FALTA_TOTAL") : item.separatedQty >= item.requestedQty ? "SEPARADO" : "PARCIAL";
       var sepUpdate = Object.assign({
         quantidade_separada: item.separatedQty,
+        quantidade_faltante: item.missingQty || 0,
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));
@@ -8988,8 +9081,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       if (sepResponse.error) throw sepResponse.error;
       if (sepExcess > 0) await registerTransferDivergence(transfer, item, "QUANTIDADE_EXCEDENTE", sepExpected, item.separatedQty, sepExcess, inputType, "Excesso registrado na separacao.");
+      if (sepMissing > 0 && !item.isExtra) await registerTransferDivergence(transfer, item, "FALTA_DE_ITEM", sepExpected, item.separatedQty, -sepMissing, inputType, "Pendencia registrada: " + (item.pendingReason || "Sem motivo informado") + (item.pendingObservation ? " - " + item.pendingObservation : ""));
     }
-    if (Number(item.excessQty || 0) > 0 || item.divergenceType) await markTransferHasDivergence(transfer);
+    if (Number(item.excessQty || 0) > 0 || Number(item.missingQty || 0) > 0 || item.divergenceType) await markTransferHasDivergence(transfer);
     clearTransferInputs();
     if (mode === "SEPARACAO") transferState.manualSeparationQty = false;
     await loadTransferData();
@@ -9014,10 +9108,43 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("\n"));
   }
 
+  function requestTransferPendingReason(item) {
+    var reasons = [
+      "Sem estoque",
+      "Produto nao localizado",
+      "Produto avariado",
+      "Produto divergente",
+      "Separacao parcial autorizada",
+      "Outro"
+    ];
+    var message = [
+      "Este produto foi solicitado, mas sera enviado com quantidade zero. Informe o motivo.",
+      "",
+      "SKU: " + (item && item.sku || "-"),
+      "Produto: " + (item && item.description || "-"),
+      "",
+      reasons.map(function (reason, index) { return (index + 1) + " - " + reason; }).join("\n")
+    ].join("\n");
+    var answer = window.prompt(message, "1");
+    if (answer === null) return null;
+    answer = normalizeText(answer);
+    var selected = reasons[Number(answer) - 1] || reasons.find(function (reason) {
+      return normalizeHeader(reason) === normalizeHeader(answer);
+    }) || answer;
+    selected = normalizeText(selected);
+    if (!selected) return null;
+    var observation = "";
+    if (normalizeHeader(selected) === "outro") {
+      observation = normalizeText(window.prompt("Descreva o motivo da falta:", "") || "");
+      if (!observation) return null;
+    }
+    return { reason: selected, observation: observation };
+  }
+
   async function finishSeparation() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
-    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && item.separatedQty < item.requestedQty; });
+    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && !isTransferItemSeparationClosed(item) && item.separatedQty < item.requestedQty; });
     if (pending.length) {
       if (!window.confirm("Existem itens pendentes. Deseja finalizar com divergência?")) {
         setStatus("transferWorkStatus", "Volte para concluir as pendências.", "warning");
@@ -9037,7 +9164,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await updateTransferStatus(transfer, "EM_MONTAGEM_CAIXA", {
       separacao_concluida_em: separationFinishedAt,
       duracao_separacao_segundos: secondsBetween(transfer.separationStartedAt || transfer.startedAt, separationFinishedAt),
-      lacre_iniciado_em: separationFinishedAt
+      lacre_iniciado_em: separationFinishedAt,
+      separation_finished_at: separationFinishedAt,
+      separation_duration_seconds: secondsBetween(transfer.separationStartedAt || transfer.startedAt, separationFinishedAt),
+      packing_started_at: separationFinishedAt
     }, "SEPARATION_FINISHED");
     await recordTransferEvent(transfer.id, "", "PACKING_STARTED", "", 0, "Montagem da caixa iniciada.", {});
     await loadTransferData();
@@ -9054,7 +9184,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function startPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
-    await updateTransferStatus(transfer, "EM_MONTAGEM_CAIXA", { lacre_iniciado_em: new Date().toISOString() }, "PACKING_STARTED");
+    var packingStartedAt = new Date().toISOString();
+    await updateTransferStatus(transfer, "EM_MONTAGEM_CAIXA", { lacre_iniciado_em: packingStartedAt, packing_started_at: packingStartedAt }, "PACKING_STARTED");
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
     transferState.activeWorkMode = "MONTAGEM";
@@ -9072,7 +9203,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").focus();
       return;
     }
-    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && item.packedQty < item.separatedQty; });
+    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && !isTransferItemNotSent(item) && item.packedQty < item.separatedQty; });
     var boxWithoutUnits = getTransferItems(transfer.id).filter(function (item) {
       return !item.isExtra && isBoxQuantityItem(item) && Number(item.packedQty || 0) > 0 && getTransferPackedUnits(item) <= 0;
     });
@@ -9110,11 +9241,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       hasDivergence = true;
     }
     var packingFinishedAt = new Date().toISOString();
+    var finalStats = getTransferStats(transfer.id);
     await updateTransferStatus(transfer, hasDivergence ? "PRONTA_PARA_NOTA_COM_DIVERGENCIA" : "PRONTA_PARA_NOTA", {
       lacre_concluido_em: packingFinishedAt,
       duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
       finalizado_em: packingFinishedAt,
-      duracao_segundos: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
+      duracao_segundos: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt),
+      total_caixas: finalBoxCount,
+      total_enviado: finalStats.packed,
+      diferenca_total: finalStats.packed - finalStats.requested,
+      has_divergence: hasDivergence,
+      packing_finished_at: packingFinishedAt,
+      packing_duration_seconds: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
+      total_finished_at: packingFinishedAt,
+      total_duration_seconds: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
     }, "PACKING_FINISHED", {
       finalBoxCount: finalBoxCount,
       finalizedById: (authState.currentUser || {}).id || "",
