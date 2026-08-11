@@ -32,7 +32,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
-    manutencao: ["ADMINISTRADOR", "SUPERVISOR"],
+    manutencao: ["ADMINISTRADOR"],
     estoques: ["ADMINISTRADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
@@ -5735,13 +5735,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!$("systemDiagnosticsSummary") || !$("systemDiagnosticsDetails")) return;
     var cacheBytes = await estimateLocalCacheBytes();
     var warehouse = activeWarehouseCode();
+    var serviceWorkerStatus = "Indisponivel";
+    if ("serviceWorker" in navigator) serviceWorkerStatus = navigator.serviceWorker.controller ? "Ativo" : "Registrado/pendente";
     var syncKeys = ["coreData", "transferData", "conferenceData"].map(function (moduleName) {
       var key = LOCAL_SYNC_PREFIX + moduleName + ":" + warehouse;
       return { moduleName: moduleName, value: localStorage.getItem(key) || "" };
     });
     $("systemDiagnosticsSummary").innerHTML = [
       summaryChip("Estoque ativo", warehouse),
+      summaryChip("Supabase", isSupabaseReady() ? "Conectado" : "Nao configurado", isSupabaseReady() ? "result-ok" : "result-missing"),
       summaryChip("Cache local", localCacheState.available ? "IndexedDB OK" : "Indisponivel", localCacheState.available ? "result-ok" : "result-missing"),
+      summaryChip("PWA", serviceWorkerStatus, serviceWorkerStatus === "Ativo" ? "result-ok" : ""),
       summaryChip("Tamanho cache", formatBytes(cacheBytes)),
       summaryChip("Ultima sync", performanceState.lastSyncAt ? formatDateTime(performanceState.lastSyncAt) : "-"),
       summaryChip("Enderecamento", performanceState.lastCoreLoadMs + " ms"),
@@ -5751,6 +5755,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
       "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
+      "<p><strong>Tempo real do lider:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + (realtimeState.lastLiveUpdateAt ? " desde " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
       "<p><strong>Sincronizacao por modulo:</strong></p>",
       "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
       "<p><strong>Erros recentes:</strong></p>",
@@ -5805,6 +5810,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function buildLocalAssistantAnswer(question) {
     var text = normalizeText(question).toLowerCase();
     var sku = extractSkuFromText(question);
+    if (isCodexPromptQuestion(question)) return assistantCodexPromptAnswer(question);
     if (sku) return assistantSkuLocationAnswer(sku);
     if (text.indexOf("sem local") >= 0 || text.indexOf("sem endereco") >= 0 || text.indexOf("sem localização") >= 0) return assistantMissingLocationAnswer();
     if (text.indexOf("diverg") >= 0 || text.indexOf("diferen") >= 0) return assistantDivergenceAnswer();
@@ -5821,6 +5827,41 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var match = String(value || "").match(/\b\d{4,14}\b/);
     if (!match) return "";
     return normalizeSku(match[0]) || match[0];
+  }
+
+  function isCodexPromptQuestion(value) {
+    var text = normalizeText(value).toLowerCase();
+    return text.indexOf("codex") >= 0 || text.indexOf("prompt") >= 0 || text.indexOf("corrigir este problema") >= 0;
+  }
+
+  function assistantCodexPromptAnswer(question) {
+    var issue = normalizeText(question).replace(/gere um prompt para codex corrigir este problema:?/i, "").trim() || question;
+    return {
+      title: "Prompt tecnico para Codex",
+      summary: buildLocalCodexPrompt(issue),
+      items: ["Modulo sugerido: " + inferAssistantModule(issue), "Estoque ativo: " + activeWarehouseCode(), "Apenas sugestao consultiva. Nenhuma acao foi executada."]
+    };
+  }
+
+  function buildLocalCodexPrompt(issue) {
+    var moduleName = inferAssistantModule(issue);
+    return [
+      "Contexto: WMS Enderecamento de Estoque publicado na Vercel, usando Supabase e estoque ativo " + activeWarehouseCode() + ".",
+      "Problema observado: " + (issue || "Descrever o problema observado pelo usuario."),
+      "Modulo afetado: " + moduleName + ".",
+      "Regra que nao pode quebrar: nao misturar estoques; nao quebrar Login, Usuarios, Enderecamento, Transferencias, Supabase nem exportacao Videmais.",
+      "Correcao esperada: investigar causa, corrigir apenas o necessario e validar com build.",
+      "Criterios de aceite: erro corrigido, fluxo principal funcionando, dados isolados por estoque e nenhuma chave exposta no frontend."
+    ].join("\n\n");
+  }
+
+  function inferAssistantModule(issue) {
+    var text = normalizeText(issue).toLowerCase();
+    if (text.indexOf("transfer") >= 0 || text.indexOf("separ") >= 0 || text.indexOf("caixa") >= 0 || text.indexOf("lacre") >= 0) return "Transferencias";
+    if (text.indexOf("sku") >= 0 || text.indexOf("endere") >= 0 || text.indexOf("prateleira") >= 0 || text.indexOf("alocar") >= 0) return "Enderecamento";
+    if (text.indexOf("login") >= 0 || text.indexOf("senha") >= 0 || text.indexOf("usuario") >= 0) return "Login e Usuarios";
+    if (text.indexOf("supabase") >= 0 || text.indexOf("schema") >= 0 || text.indexOf("banco") >= 0) return "Supabase";
+    return "WMS";
   }
 
   function assistantSkuLocationAnswer(sku) {
@@ -5891,26 +5932,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function tryEnhanceAssistantAnswer(question, localAnswer) {
     if (!canUseNetwork()) return;
     try {
-      var response = await fetch("/api/ai/ask", {
+      var isPrompt = isCodexPromptQuestion(question);
+      var response = await fetch(isPrompt ? "/api/ai/generate-codex-prompt" : "/api/ai/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           question: question,
+          issue: question,
           warehouseCode: activeWarehouseCode(),
           role: (authState.currentUser || {}).role || "",
           context: {
             title: localAnswer.title,
             summary: localAnswer.summary,
-            items: (localAnswer.items || []).slice(0, 20)
+            items: (localAnswer.items || []).slice(0, 20),
+            module: isPrompt ? inferAssistantModule(question) : ""
           }
         })
       });
       if (!response.ok) return;
       var body = await response.json();
-      if (!body || !body.answer || !$("assistantAnswer")) return;
+      if (!body || !(body.answer || body.prompt) || !$("assistantAnswer")) return;
       $("assistantAnswer").innerHTML = assistantAnswerHtml({
         title: localAnswer.title,
-        summary: body.answer,
+        summary: body.prompt || body.answer,
         items: localAnswer.items || []
       });
     } catch (error) {

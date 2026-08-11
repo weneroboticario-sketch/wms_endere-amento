@@ -3531,6 +3531,10 @@ td {
   line-height: 1.45;
 }
 
+.assistant-answer-card p {
+  white-space: pre-line;
+}
+
 .assistant-answer-card ul,
 .diagnostics-list ul {
   margin: 8px 0 0;
