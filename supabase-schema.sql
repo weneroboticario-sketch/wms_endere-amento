@@ -1260,4 +1260,31 @@ end $$;
 create index if not exists wms_pending_sync_actions_status_created_idx
 on public.wms_pending_sync_actions (status, created_at);
 
+do $$
+declare
+  relation_name text;
+begin
+  foreach relation_name in array array[
+    'wms_transfers',
+    'wms_transfer_items',
+    'wms_transfer_events',
+    'wms_transfer_divergences'
+  ]
+  loop
+    if to_regclass('public.' || relation_name) is not null then
+      execute format('alter table public.%I replica identity full', relation_name);
+      if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+        and not exists (
+          select 1
+          from pg_publication_tables
+          where pubname = 'supabase_realtime'
+            and schemaname = 'public'
+            and tablename = relation_name
+        ) then
+        execute format('alter publication supabase_realtime add table public.%I', relation_name);
+      end if;
+    end if;
+  end loop;
+end $$;
+
 notify pgrst, 'reload schema';

@@ -250,6 +250,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var realtimeState = {
     channel: null,
     pollTimer: null,
+    refreshTimer: null,
+    refreshRunning: false,
+    refreshPending: false,
+    warehouseCode: "",
+    subscriptionStatus: "",
     lastLiveUpdateAt: "",
     active: false
   };
@@ -2449,6 +2454,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await ensureCoreDataLoaded();
     await applyDataMigrations();
     startTaskPolling();
+    startLeaderLiveSync();
     await showScreen(defaultScreenForUser());
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
   }
@@ -2642,6 +2648,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     resetLazyModuleState(true);
     await ensureCoreDataLoaded();
     await showScreen(defaultScreenForUser());
+    if (!realtimeState.active || realtimeState.warehouseCode !== activeWarehouseCode()) startLeaderLiveSync();
     showToast("Estoque ativo: " + code + ".", "success");
   }
 
@@ -3356,8 +3363,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
-    if (screenId === "transferencias" && isAdminOrSupervisor()) startLeaderLiveSync();
-    if (screenId !== "transferencias") stopLeaderLiveSync();
+    if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
   }
 
   function updateModuleSubtitle(screenId) {
@@ -4197,26 +4203,43 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function startLeaderLiveSync() {
     stopLeaderLiveSync();
-    if (!isSupabaseReady() || !isAdminOrSupervisor() || !canUseNetwork()) return;
+    if (!isSupabaseReady() || !authState.currentUser || !canUseNetwork()) return;
     realtimeState.active = true;
+    realtimeState.warehouseCode = activeWarehouseCode();
     realtimeState.lastLiveUpdateAt = realtimeState.lastLiveUpdateAt || nowIso();
     try {
       if (typeof supabaseDb.channel === "function") {
         realtimeState.channel = supabaseDb
-          .channel("wms-live-" + activeWarehouseCode())
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wms_transfer_events", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
-          .subscribe();
+          .channel("wms-live-" + realtimeState.warehouseCode)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wms_transfer_events", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_divergences", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
+          .subscribe(function (status) {
+            realtimeState.subscriptionStatus = status;
+            if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
+            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncStatus("Tempo real reconectando", "warning");
+          });
       }
     } catch (error) {
       recordPerformanceError("realtime", error);
     }
-    realtimeState.pollTimer = window.setInterval(refreshLeaderIncrementalData, 18000);
+    realtimeState.pollTimer = window.setInterval(function () {
+      scheduleTransferRealtimeRefresh("poll", 0);
+    }, 12000);
+    scheduleTransferRealtimeRefresh("start", 250);
   }
 
   function stopLeaderLiveSync() {
     realtimeState.active = false;
+    realtimeState.refreshPending = false;
+    realtimeState.refreshRunning = false;
+    realtimeState.warehouseCode = "";
+    realtimeState.subscriptionStatus = "";
+    if (realtimeState.refreshTimer) {
+      window.clearTimeout(realtimeState.refreshTimer);
+      realtimeState.refreshTimer = null;
+    }
     if (realtimeState.pollTimer) {
       window.clearInterval(realtimeState.pollTimer);
       realtimeState.pollTimer = null;
@@ -4232,11 +4255,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var row = payload && (payload.new || payload.old) ? (payload.new || payload.old) : {};
     if (row.warehouse_code && normalizeWarehouseCode(row.warehouse_code) !== activeWarehouseCode()) return;
     realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
-    await refreshLeaderIncrementalData();
+    scheduleTransferRealtimeRefresh("realtime", 350);
+  }
+
+  function scheduleTransferRealtimeRefresh(reason, delayMs) {
+    if (!realtimeState.active || !isSupabaseReady() || !canUseNetwork()) return;
+    if (reason === "poll" && realtimeState.refreshRunning) {
+      realtimeState.refreshPending = true;
+      return;
+    }
+    realtimeState.refreshPending = true;
+    if (realtimeState.refreshTimer) return;
+    realtimeState.refreshTimer = window.setTimeout(refreshLeaderIncrementalData, Math.max(0, delayMs || 0));
   }
 
   async function refreshLeaderIncrementalData() {
+    realtimeState.refreshTimer = null;
     if (!realtimeState.active || !isSupabaseReady() || !canUseNetwork()) return;
+    if (transferState.savingActionKey) {
+      scheduleTransferRealtimeRefresh("busy", 900);
+      return;
+    }
+    if (realtimeState.refreshRunning) {
+      realtimeState.refreshPending = true;
+      return;
+    }
+    realtimeState.refreshRunning = true;
+    realtimeState.refreshPending = false;
     try {
       var startedAt = performance.now();
       invalidateTransferStatsCache();
@@ -4249,6 +4294,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       recordPerformanceError("live-transfer", error);
       setSyncStatus("Erro tempo real", "error");
+    } finally {
+      realtimeState.refreshRunning = false;
+      if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
     }
   }
 
@@ -6211,7 +6259,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
       "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
-      "<p><strong>Tempo real do lider:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + (realtimeState.lastLiveUpdateAt ? " desde " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
+      "<p><strong>Tempo real das transferencias:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + (realtimeState.lastLiveUpdateAt ? " desde " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
       "<p><strong>Sincronizacao por modulo:</strong></p>",
       "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
       "<p><strong>Erros recentes:</strong></p>",
@@ -6295,7 +6343,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "Tempo transferencias: " + performanceState.lastTransferLoadMs + " ms",
         "Tempo conferencias: " + performanceState.lastConferenceLoadMs + " ms",
         "Tempo consulta SKU: " + performanceState.lastSkuQueryMs + " ms",
-        "Tempo real lider: " + (realtimeState.active ? "ativo" : "parado"),
+        "Tempo real transferencias: " + (realtimeState.active ? "ativo" : "parado"),
         recentErrors.length ? "Erros recentes: " + recentErrors.join(" | ") : "Erros recentes: nenhum"
       ],
       metrics: {
