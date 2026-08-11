@@ -17,7 +17,7 @@ Revisar o fluxo de abertura do WMS para reduzir carregamento antes do login, pre
 - Antes do login, o app mantem apenas login, solicitacao de acesso e recuperacao de senha visiveis.
 - Sem sessao salva, `initAuth()` nao busca usuarios, enderecamentos, transferencias, conferencias ou historico.
 - Com sessao salva, o sistema busca somente o minimo necessario para validar a sessao: estoques e usuarios.
-- A area interna fica inerte e com `aria-hidden` enquanto o usuario nao estiver autenticado.
+- A area interna fica inerte, com `aria-hidden` e removida do DOM enquanto o usuario nao estiver autenticado.
 - Apos login, o sistema carrega somente o enderecamento base usado pela tela inicial permitida.
 - Transferencias sao carregadas apenas quando a tela Transferencias e aberta.
 - Conferencias sao carregadas apenas quando a tela Conferencias e aberta.
@@ -57,7 +57,7 @@ Revisar o fluxo de abertura do WMS para reduzir carregamento antes do login, pre
 - Login abre mais rapido porque nao faz consultas operacionais antes da autenticacao.
 - Celular sofre menos com renderizacoes e tabelas grandes carregadas cedo demais.
 - Transferencias e conferencias deixam de pesar na primeira entrada do usuario.
-- Menor risco de dados internos aparecerem ou ficarem navegaveis antes do login.
+- Menor risco de dados internos aparecerem, ficarem navegaveis ou permanecerem montados antes do login.
 
 ## Riscos encontrados
 

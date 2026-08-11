@@ -63,6 +63,12 @@ where code = 'VDR'
 delete from public.wms_warehouses
 where code in ('VDR', 'DVR');
 
+create index if not exists wms_warehouses_code_idx
+on public.wms_warehouses (code);
+
+create index if not exists wms_warehouses_active_idx
+on public.wms_warehouses (active);
+
 alter table public.wms_bindings add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_bindings add column if not exists warehouse_code text default 'VDCG';
 
@@ -293,9 +299,13 @@ alter table public.wms_access_requests add column if not exists approved_at time
 alter table public.wms_access_requests add column if not exists rejected_by text default '';
 alter table public.wms_access_requests add column if not exists rejected_at timestamptz;
 alter table public.wms_access_requests add column if not exists rejection_reason text default '';
+alter table public.wms_access_requests add column if not exists warehouse_code text default 'VDCG';
 
 create index if not exists wms_access_requests_username_status_idx
 on public.wms_access_requests (username, status);
+
+create index if not exists wms_access_requests_warehouse_status_idx
+on public.wms_access_requests (warehouse_code, status);
 
 create table if not exists public.wms_sessions (
   id text primary key,
@@ -1126,11 +1136,19 @@ end $$;
 do $$
 begin
   if to_regclass('public.wms_locations') is not null then
+    alter table public.wms_locations add column if not exists warehouse_code text default 'VDCG';
+    update public.wms_locations
+    set warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+    where warehouse_code is null or warehouse_code = '';
     execute 'create index if not exists wms_locations_codigo_endereco_idx on public.wms_locations (codigo_endereco)';
     execute 'create index if not exists wms_locations_parts_idx on public.wms_locations (nome_estacao, nr_rack, linha, coluna)';
   end if;
 
   if to_regclass('public.wms_location_skus') is not null then
+    alter table public.wms_location_skus add column if not exists warehouse_code text default 'VDCG';
+    update public.wms_location_skus
+    set warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
+    where warehouse_code is null or warehouse_code = '';
     execute 'create index if not exists wms_location_skus_sku_idx on public.wms_location_skus (sku)';
     execute 'create index if not exists wms_location_skus_codigo_material_idx on public.wms_location_skus (codigo_material)';
     execute 'create index if not exists wms_location_skus_location_id_idx on public.wms_location_skus (location_id)';
@@ -1180,6 +1198,7 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'active') then execute 'create index if not exists wms_users_active_idx on public.wms_users (active)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'role') then execute 'create index if not exists wms_users_role_idx on public.wms_users (role)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') then execute 'create index if not exists wms_users_default_warehouse_idx on public.wms_users (default_warehouse_code)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'active') then execute 'create index if not exists wms_users_warehouse_active_idx on public.wms_users (default_warehouse_code, active)'; end if;
   end if;
 
   if to_regclass('public.wms_establishments') is not null then
@@ -1190,7 +1209,12 @@ begin
   end if;
 
   if to_regclass('public.wms_bindings') is not null then
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'warehouse_code') then execute 'create index if not exists wms_bindings_warehouse_idx on public.wms_bindings (warehouse_code)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'sku') then execute 'create index if not exists wms_bindings_warehouse_sku_idx on public.wms_bindings (warehouse_code, sku)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'location_code') then execute 'create index if not exists wms_bindings_location_code_idx on public.wms_bindings (location_code)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'location_code') then execute 'create index if not exists wms_bindings_warehouse_location_idx on public.wms_bindings (warehouse_code, location_code)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'codigo_material') then execute 'create index if not exists wms_bindings_warehouse_codigo_material_idx on public.wms_bindings (warehouse_code, codigo_material)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'codigo_endereco') then execute 'create index if not exists wms_bindings_warehouse_codigo_endereco_idx on public.wms_bindings (warehouse_code, codigo_endereco)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'nome_estacao') then execute 'create index if not exists wms_bindings_nome_estacao_idx on public.wms_bindings (nome_estacao)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'nr_rack') then execute 'create index if not exists wms_bindings_nr_rack_idx on public.wms_bindings (nr_rack)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_bindings' and column_name = 'linha') then execute 'create index if not exists wms_bindings_linha_idx on public.wms_bindings (linha)'; end if;
@@ -1202,16 +1226,24 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'origem_sigla') then execute 'create index if not exists wms_transfers_origem_sigla_idx on public.wms_transfers (origem_sigla)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'destino_sigla') then execute 'create index if not exists wms_transfers_destino_sigla_idx on public.wms_transfers (destino_sigla)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') then execute 'create index if not exists wms_transfers_warehouse_responsavel_status_idx on public.wms_transfers (warehouse_code, responsavel_id, status)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'last_action_at') then execute 'create index if not exists wms_transfers_warehouse_last_action_idx on public.wms_transfers (warehouse_code, last_action_at desc)'; end if;
   end if;
 
   if to_regclass('public.wms_transfer_items') is not null then
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'transfer_id') then execute 'create index if not exists wms_transfer_items_transfer_sku_idx on public.wms_transfer_items (transfer_id, sku)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'status') then execute 'create index if not exists wms_transfer_items_status_idx on public.wms_transfer_items (status)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'status') then execute 'create index if not exists wms_transfer_items_warehouse_status_idx on public.wms_transfer_items (warehouse_code, status)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'transfer_id') then execute 'create index if not exists wms_transfer_items_warehouse_transfer_idx on public.wms_transfer_items (warehouse_code, transfer_id)'; end if;
   end if;
 
   if to_regclass('public.wms_notifications') is not null then
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'read') then execute 'create index if not exists wms_notifications_user_read_created_idx on public.wms_notifications (user_id, read, created_at desc)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'warehouse_code') then execute 'create index if not exists wms_notifications_warehouse_created_idx on public.wms_notifications (warehouse_code, created_at desc)'; end if;
+  end if;
+
+  if to_regclass('public.wms_task_notifications') is not null then
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') then execute 'create index if not exists wms_task_notifications_user_warehouse_idx on public.wms_task_notifications (user_id, warehouse_code)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'created_at') then execute 'create index if not exists wms_task_notifications_warehouse_created_idx on public.wms_task_notifications (warehouse_code, created_at desc)'; end if;
   end if;
 
   if to_regclass('public.wms_locations') is not null then

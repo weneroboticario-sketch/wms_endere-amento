@@ -285,6 +285,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     conferences: false,
     assistant: false
   };
+  var protectedAppShell = null;
+  var protectedAppShellMarker = null;
 
   document.addEventListener("DOMContentLoaded", async function () {
     await initLocalCache();
@@ -387,11 +389,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function setAuthenticatedShellActive(active) {
-    var appShell = document.querySelector(".app-shell");
+    var appShell = protectedAppShell || document.querySelector(".app-shell");
     var loginShell = $("loginShell");
+    if (appShell && !protectedAppShell) protectedAppShell = appShell;
+    if (!protectedAppShellMarker) protectedAppShellMarker = document.createComment("wms-authenticated-shell");
     if (appShell) {
       appShell.inert = !active;
       appShell.setAttribute("aria-hidden", active ? "false" : "true");
+      if (!active && appShell.parentNode) {
+        appShell.parentNode.insertBefore(protectedAppShellMarker, appShell);
+        appShell.parentNode.removeChild(appShell);
+      }
+      if (active && !appShell.isConnected && protectedAppShellMarker.parentNode) {
+        protectedAppShellMarker.parentNode.insertBefore(appShell, protectedAppShellMarker.nextSibling);
+      }
     }
     if (loginShell) {
       loginShell.inert = active;
@@ -932,6 +943,32 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return allRows;
   }
 
+  async function fetchWarehouseRows(tableName, orderColumn, ascending) {
+    var allRows = [];
+    var from = 0;
+    var pageSize = 1000;
+    try {
+      while (true) {
+        var query = supabaseDb
+          .from(tableName)
+          .select("*")
+          .eq("warehouse_code", activeWarehouseCode());
+        if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        var response = await query.range(from, from + pageSize - 1);
+        if (response.error) throw response.error;
+        var rows = response.data || [];
+        allRows = allRows.concat(rows);
+        if (rows.length < pageSize) break;
+        from += pageSize;
+      }
+      return allRows;
+    } catch (error) {
+      if (!isMissingWarehouseColumnError(error)) throw error;
+      assertWarehouseFallbackAllowed(tableName, error);
+      return (await fetchAllRows(tableName, orderColumn, ascending)).filter(rowMatchesActiveWarehouse);
+    }
+  }
+
   async function fetchTransferUiEvents() {
     var allRows = [];
     var from = 0;
@@ -947,18 +984,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "TRANSFER_FINALIZED_WITH_DIVERGENCE",
       "TRANSFER_DELETED_TEST"
     ];
-    while (true) {
-      var response = await supabaseDb
-        .from("wms_transfer_events")
-        .select("*")
-        .in("event_type", uiEventTypes)
-        .order("created_at", { ascending: false })
-        .range(from, from + pageSize - 1);
-      if (response.error) throw response.error;
-      var rows = response.data || [];
-      allRows = allRows.concat(rows);
-      if (rows.length < pageSize) break;
-      from += pageSize;
+    try {
+      while (true) {
+        var response = await supabaseDb
+          .from("wms_transfer_events")
+          .select("*")
+          .eq("warehouse_code", activeWarehouseCode())
+          .in("event_type", uiEventTypes)
+          .order("created_at", { ascending: false })
+          .range(from, from + pageSize - 1);
+        if (response.error) throw response.error;
+        var rows = response.data || [];
+        allRows = allRows.concat(rows);
+        if (rows.length < pageSize) break;
+        from += pageSize;
+      }
+    } catch (error) {
+      if (!isMissingWarehouseColumnError(error)) throw error;
+      assertWarehouseFallbackAllowed("wms_transfer_events", error);
+      return (await fetchAllRows("wms_transfer_events", "created_at", false)).filter(function (row) {
+        return rowMatchesActiveWarehouse(row) && uiEventTypes.indexOf(row.event_type) >= 0;
+      });
     }
     return allRows;
   }
@@ -1091,22 +1137,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     try {
-      var bindingRows = await fetchAllRows("wms_bindings", "created_at", false);
-      bindingRows = bindingRows.filter(rowMatchesActiveWarehouse);
+      var bindingRows = await fetchWarehouseRows("wms_bindings", "created_at", false);
       state.bindings = expandDbBindingRows(bindingRows);
 
-      var historyResponse = await supabaseDb.from("wms_history").select("*").order("datetime", { ascending: false }).limit(1000);
       var historyMessage = "";
       var statusType = "success";
-      if (historyResponse.error) {
-        if (!isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
+      try {
+        var historyRows = (await fetchWarehouseRows("wms_history", "datetime", false)).slice(0, 1000);
+        historySchemaAvailable = true;
+        state.history = historyRows.map(fromDbHistory);
+      } catch (historyError) {
+        if (!isHistorySchemaError(historyError)) throw historyError;
         historySchemaAvailable = false;
         state.history = [];
         historyMessage = " Historico indisponivel: coluna datetime ausente em wms_history. Execute supabase-schema.sql no Supabase.";
         statusType = "warning";
-      } else {
-        historySchemaAvailable = true;
-        state.history = (historyResponse.data || []).filter(rowMatchesActiveWarehouse).map(fromDbHistory);
       }
 
       state.products = {};
@@ -1244,11 +1289,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     try {
       var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
-      var transferRows = await fetchAllRows("wms_transfers", "created_at", false);
-      var itemRows = await fetchAllRows("wms_transfer_items", "created_at", true);
+      var transferRows = await fetchWarehouseRows("wms_transfers", "created_at", false);
+      var itemRows = await fetchWarehouseRows("wms_transfer_items", "created_at", true);
       var eventRows = await fetchTransferUiEvents();
       var packagingRows = await fetchProductPackagingRows();
-      transferRows = transferRows.filter(rowMatchesActiveWarehouse);
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
       itemRows = itemRows.filter(function (row) {
@@ -1311,10 +1355,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return loadedFromCache;
     }
     try {
-      var conferenceRows = await fetchAllRows("wms_conferences", "created_at", false);
-      var itemRows = await fetchAllRows("wms_conference_items", "created_at", true);
-      var eventRows = await fetchAllRows("wms_conference_events", "created_at", false);
-      conferenceRows = conferenceRows.filter(rowMatchesActiveWarehouse);
+      var conferenceRows = await fetchWarehouseRows("wms_conferences", "created_at", false);
+      var itemRows = await fetchWarehouseRows("wms_conference_items", "created_at", true);
+      var eventRows = await fetchWarehouseRows("wms_conference_events", "created_at", false);
       var conferenceIds = {};
       conferenceRows.forEach(function (row) { conferenceIds[row.id] = true; });
       itemRows = itemRows.filter(function (row) {
