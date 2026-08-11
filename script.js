@@ -603,7 +603,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function ensureWarehouseSeparatedTable(tableName, statusId) {
     if (!isSupabaseReady() || !isMultiWarehouseMode()) return true;
-    var response = await supabaseDb.from(tableName).select("warehouse_code", { count: "exact", head: true }).limit(1);
+    var response = await supabaseDb.from(tableName).select("warehouse_code").limit(1);
     if (!response.error) return true;
     if (isMissingWarehouseColumnError(response.error)) {
       var message = multiWarehouseSchemaMessage(tableName);
@@ -613,8 +613,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return false;
     }
     var detail = formatSupabaseError(response.error);
-    if (statusId) setStatus(statusId, "Nao foi possivel validar o estoque no Supabase: " + detail, "error");
-    return false;
+    console.warn("Validacao preventiva de estoque ignorada; a gravacao real fara a verificacao final:", response.error);
+    updateSupabaseStatus("Validacao preventiva do estoque nao retornou detalhe do Supabase. Prosseguindo com a importacao para obter a resposta real." + (detail ? " Detalhe: " + detail : ""), "warning");
+    return true;
   }
 
   async function loadSupabaseConfig() {
@@ -10499,7 +10500,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("importStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
       return;
     }
-    if (!(await ensureWarehouseSeparatedTable("wms_bindings", "importStatus"))) return;
 
     var actionButton = $("importExcelButton");
     if (!beginTransferAction("import-addresses", actionButton, "Importando...")) return;
@@ -10511,6 +10511,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         setStatus("importStatus", "Nenhuma aba reconhecida. Selecione LinhaSeparacao e/ou MaterialLinhaSeparacao.", "error");
         return;
       }
+      if (parsed.addressRows.length && !(await ensureWarehouseSeparatedTable("wms_bindings", "importStatus"))) return;
       mergeProducts(parsed.products);
       var oldBindingsCount = state.bindings.length;
       if (parsed.addressRows.length) {
