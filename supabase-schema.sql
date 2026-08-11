@@ -404,7 +404,14 @@ alter table public.wms_transfers add column if not exists total_packed_quantity 
 alter table public.wms_transfers add column if not exists total_previsto numeric default 0;
 alter table public.wms_transfers add column if not exists total_enviado numeric default 0;
 alter table public.wms_transfers add column if not exists diferenca_total numeric default 0;
+alter table public.wms_transfers add column if not exists itens_total numeric default 0;
+alter table public.wms_transfers add column if not exists itens_separados numeric default 0;
+alter table public.wms_transfers add column if not exists itens_pendentes numeric default 0;
+alter table public.wms_transfers add column if not exists itens_divergentes numeric default 0;
 alter table public.wms_transfers add column if not exists total_caixas numeric default 0;
+alter table public.wms_transfers add column if not exists current_step text default '';
+alter table public.wms_transfers add column if not exists last_action_at timestamptz;
+alter table public.wms_transfers add column if not exists last_action_label text default '';
 alter table public.wms_transfers add column if not exists separation_started_at timestamptz;
 alter table public.wms_transfers add column if not exists separation_finished_at timestamptz;
 alter table public.wms_transfers add column if not exists separation_duration_seconds numeric default 0;
@@ -646,6 +653,18 @@ on public.wms_transfers (created_at);
 create index if not exists wms_transfers_warehouse_status_created_idx
 on public.wms_transfers (warehouse_code, status, created_at);
 
+create index if not exists wms_transfers_warehouse_status_updated_idx
+on public.wms_transfers (warehouse_code, status, updated_at desc);
+
+create index if not exists wms_transfers_warehouse_responsavel_status_idx
+on public.wms_transfers (warehouse_code, responsavel_id, status);
+
+create index if not exists wms_transfers_updated_at_idx
+on public.wms_transfers (updated_at desc);
+
+create index if not exists wms_transfers_last_action_at_idx
+on public.wms_transfers (last_action_at desc);
+
 create index if not exists wms_transfer_items_transfer_sku_idx
 on public.wms_transfer_items (transfer_id, sku);
 
@@ -657,6 +676,12 @@ on public.wms_transfer_items (sku);
 
 create index if not exists wms_transfer_items_warehouse_idx
 on public.wms_transfer_items (warehouse_code);
+
+create index if not exists wms_transfer_items_warehouse_transfer_sku_idx
+on public.wms_transfer_items (warehouse_code, transfer_id, sku);
+
+create index if not exists wms_transfer_items_updated_at_idx
+on public.wms_transfer_items (updated_at desc);
 
 create index if not exists wms_transfer_events_warehouse_idx
 on public.wms_transfer_events (warehouse_code);

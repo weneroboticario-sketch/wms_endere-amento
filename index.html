@@ -100,6 +100,7 @@
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
+          <button class="menu-item" data-icon="IA" data-screen="assistente" type="button">Assistente WMS</button>
           <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
           <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
           <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button">Etiquetas</button>
@@ -158,6 +159,10 @@
         <div class="header-pill connection-pill" id="topConnectionPill">
           <span>Supabase</span>
           <strong id="topConnectionLabel">Verificando</strong>
+        </div>
+        <div class="header-pill sync-pill" id="topSyncPill">
+          <span>Sincronizacao</span>
+          <strong id="topSyncLabel">Inicializando</strong>
         </div>
         <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
       </div>
@@ -1158,7 +1163,47 @@
               </table>
             </div>
           </section>
+          <section class="panel maintenance-panel">
+            <div class="panel-header">
+              <h3>Diagnostico do Sistema</h3>
+            </div>
+            <p class="muted">Resumo leve de cache, sincronizacao e tempos de consulta do estoque ativo.</p>
+            <div id="systemDiagnosticsSummary" class="transfer-summary-grid"></div>
+            <div class="button-row">
+              <button class="primary-button" id="refreshDiagnosticsButton" type="button">Atualizar diagnostico</button>
+            </div>
+            <div id="systemDiagnosticsDetails" class="diagnostics-list"></div>
+          </section>
         </div>
+      </section>
+
+      <section class="screen" id="assistente">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">IA consultiva</p>
+            <h2>Assistente WMS</h2>
+          </div>
+        </div>
+        <section class="panel assistant-panel">
+          <div class="panel-header">
+            <h3>Pergunte ao WMS</h3>
+          </div>
+          <p class="muted">O assistente consulta somente dados carregados do estoque ativo. Ele nao executa acoes criticas.</p>
+          <label for="assistantQuestionInput">Pergunta</label>
+          <textarea id="assistantQuestionInput" rows="3" placeholder="Ex.: Onde esta o SKU 53355?"></textarea>
+          <div class="assistant-suggestions">
+            <button class="secondary-button" data-ai-question="Onde esta o SKU 53355?" type="button">Onde esta um SKU?</button>
+            <button class="secondary-button" data-ai-question="Quais transferencias estao com divergencia?" type="button">Divergencias</button>
+            <button class="secondary-button" data-ai-question="Quais produtos estao sem localizacao?" type="button">Sem localizacao</button>
+            <button class="secondary-button" data-ai-question="Resumo das transferencias de hoje." type="button">Resumo de hoje</button>
+          </div>
+          <div class="button-row">
+            <button class="primary-button" id="askAssistantButton" type="button">Perguntar</button>
+            <button class="secondary-button" id="clearAssistantButton" type="button">Limpar</button>
+          </div>
+          <div id="assistantStatus" class="inline-status"></div>
+          <div id="assistantAnswer" class="assistant-answer"></div>
+        </section>
       </section>
 
       <section class="screen" id="configuracoes">

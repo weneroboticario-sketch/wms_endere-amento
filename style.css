@@ -125,6 +125,20 @@ button {
   padding-top: 42px;
 }
 
+.sync-pill.is-syncing strong,
+.connection-pill.is-warning strong {
+  color: var(--warning);
+}
+
+.sync-pill.is-ok strong,
+.connection-pill.is-online strong {
+  color: var(--success);
+}
+
+.sync-pill.is-error strong {
+  color: var(--danger);
+}
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -3478,6 +3492,58 @@ td {
     top: 72px;
     max-width: none;
   }
+}
+
+.assistant-panel {
+  max-width: 920px;
+}
+
+.assistant-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.assistant-answer {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-answer-card,
+.diagnostics-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fbfd;
+  padding: 14px;
+}
+
+.assistant-answer-card h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.assistant-answer-card p,
+.assistant-answer-card li,
+.diagnostics-list p {
+  color: #243244;
+  line-height: 1.45;
+}
+
+.assistant-answer-card ul,
+.diagnostics-list ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.diagnostics-list {
+  margin-top: 12px;
+}
+
+.diagnostics-list code {
+  color: var(--primary-dark);
+  font-weight: 700;
 }
 
 @media print {

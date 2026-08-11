@@ -21,6 +21,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
+    assistente: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -235,6 +236,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     available: false,
     warned: false
   };
+  var performanceState = {
+    syncStatus: "Inicializando",
+    syncType: "warning",
+    lastSyncAt: "",
+    lastCoreLoadMs: 0,
+    lastTransferLoadMs: 0,
+    lastConferenceLoadMs: 0,
+    lastSkuQueryMs: 0,
+    lastTransferQueryMs: 0,
+    recentErrors: []
+  };
+  var realtimeState = {
+    channel: null,
+    pollTimer: null,
+    lastLiveUpdateAt: "",
+    active: false
+  };
 
   var currentSku = "";
   var lastSkuSearch = "";
@@ -343,7 +361,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function writeModuleCache(moduleName, value) {
     var scopedKey = cacheKey(moduleName);
-    localStorage.setItem(LOCAL_SYNC_PREFIX + scopedKey, new Date().toISOString());
+    localStorage.setItem(LOCAL_SYNC_PREFIX + scopedKey, nowIso());
     return cacheSet(scopedKey, value);
   }
 
@@ -374,6 +392,73 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function canUseNetwork() {
     return !("onLine" in navigator) || navigator.onLine;
+  }
+
+  function nowIso() {
+    return new Date().toISOString();
+  }
+
+  function setSyncStatus(label, type) {
+    performanceState.syncStatus = label || "Sincronizado";
+    performanceState.syncType = type || "success";
+    if (type === "success") performanceState.lastSyncAt = nowIso();
+    updateHeaderSyncStatus();
+  }
+
+  function updateHeaderSyncStatus() {
+    var label = $("topSyncLabel");
+    var pill = $("topSyncPill");
+    if (!label || !pill) return;
+    label.textContent = performanceState.syncStatus || "Sincronizado";
+    pill.classList.toggle("is-ok", performanceState.syncType === "success");
+    pill.classList.toggle("is-syncing", performanceState.syncType === "warning");
+    pill.classList.toggle("is-error", performanceState.syncType === "error");
+  }
+
+  function recordPerformanceMetric(key, startedAt) {
+    performanceState[key] = Math.max(0, Math.round(performance.now() - startedAt));
+  }
+
+  function recordPerformanceError(label, error) {
+    performanceState.recentErrors.unshift({
+      label: label,
+      message: formatSupabaseError(error),
+      at: nowIso()
+    });
+    performanceState.recentErrors = performanceState.recentErrors.slice(0, 8);
+  }
+
+  async function estimateLocalCacheBytes() {
+    var bytes = 0;
+    try {
+      if (localCacheState.available && localCacheState.db) {
+        bytes += await new Promise(function (resolve) {
+          var total = 0;
+          var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readonly");
+          var request = tx.objectStore(LOCAL_CACHE_STORE).openCursor();
+          request.onsuccess = function () {
+            var cursor = request.result;
+            if (!cursor) return resolve(total);
+            try { total += JSON.stringify(cursor.value || {}).length * 2; } catch (error) { total += 0; }
+            cursor.continue();
+          };
+          request.onerror = function () { resolve(total); };
+        });
+      }
+      Object.keys(localStorage).forEach(function (key) {
+        if (key.indexOf("wms_") === 0) bytes += (key.length + String(localStorage.getItem(key) || "").length) * 2;
+      });
+    } catch (error) {
+      recordPerformanceError("cache", error);
+    }
+    return bytes;
+  }
+
+  function formatBytes(bytes) {
+    var value = Number(bytes || 0);
+    if (value < 1024) return value + " B";
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1).replace(".", ",") + " KB";
+    return (value / (1024 * 1024)).toFixed(1).replace(".", ",") + " MB";
   }
 
   function normalizeWarehouseCode(value) {
@@ -836,6 +921,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function loadData() {
+    var loadStartedAt = performance.now();
+    setSyncStatus("Sincronizando", "warning");
     state = { bindings: [], history: [], products: {} };
     var cachedCore = await readModuleCache("coreData");
     var loadedFromCache = false;
@@ -847,6 +934,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     if (!isSupabaseReady() || !canUseNetwork()) {
       if (loadedFromCache) updateSupabaseStatus("Dados carregados do cache local. Conecte para sincronizar com o Supabase.", "warning");
+      recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
+      setSyncStatus(loadedFromCache ? "Cache local" : "Offline", loadedFromCache ? "warning" : "error");
       return;
     }
     try {
@@ -889,12 +978,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         history: state.history,
         products: state.products
       });
+      recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
+      setSyncStatus("Sincronizado", "success");
       updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + historyMessage + productsMessage, statusType);
     } catch (error) {
+      recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
+      recordPerformanceError("enderecamento", error);
       var message = formatSupabaseError(error);
       console.error("Erro no SELECT do Supabase:", error);
       if (!loadedFromCache) state = { bindings: [], history: [], products: {} };
       updateSupabaseStatus("Falha no SELECT do Supabase: " + message, "error");
+      setSyncStatus(loadedFromCache ? "Cache local" : "Erro sync", loadedFromCache ? "warning" : "error");
       showToast(loadedFromCache ? "Supabase indisponivel. Usando cache local." : "Nao foi possivel carregar o banco Supabase.", loadedFromCache ? "warning" : "error");
     }
   }
@@ -971,6 +1065,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function loadTransferData() {
+    var loadStartedAt = performance.now();
     transferState.establishments = [];
     transferState.transfers = [];
     transferState.items = [];
@@ -988,7 +1083,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       invalidateTransferStatsCache();
       loadedFromCache = true;
     }
-    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
+    if (!isSupabaseReady() || !canUseNetwork()) {
+      recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
+      return loadedFromCache;
+    }
     try {
       var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
       var transferRows = await fetchAllRows("wms_transfers", "created_at", false);
@@ -1021,8 +1119,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         events: transferState.events,
         productPackaging: transferState.productPackaging
       });
+      recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
+      setSyncStatus("Sincronizado", "success");
       return true;
     } catch (error) {
+      recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
+      recordPerformanceError("transferencias", error);
       transferState.tablesAvailable = !isMissingTransferTableError(error);
       if (!transferState.tablesAvailable) {
         showToast("Tabelas de transferencias ausentes. Execute supabase-schema.sql.", "warning");
@@ -1035,6 +1137,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function loadConferenceData() {
+    var loadStartedAt = performance.now();
     conferenceState.conferences = [];
     conferenceState.items = [];
     conferenceState.events = [];
@@ -1047,7 +1150,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       conferenceState.tablesAvailable = true;
       loadedFromCache = true;
     }
-    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
+    if (!isSupabaseReady() || !canUseNetwork()) {
+      recordPerformanceMetric("lastConferenceLoadMs", loadStartedAt);
+      return loadedFromCache;
+    }
     try {
       var conferenceRows = await fetchAllRows("wms_conferences", "created_at", false);
       var itemRows = await fetchAllRows("wms_conference_items", "created_at", true);
@@ -1070,8 +1176,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         items: conferenceState.items,
         events: conferenceState.events
       });
+      recordPerformanceMetric("lastConferenceLoadMs", loadStartedAt);
+      setSyncStatus("Sincronizado", "success");
       return true;
     } catch (error) {
+      recordPerformanceMetric("lastConferenceLoadMs", loadStartedAt);
+      recordPerformanceError("conferencias", error);
       conferenceState.tablesAvailable = !isMissingConferenceTableError(error);
       if (!conferenceState.tablesAvailable) {
         showToast("Tabelas de conferencias ausentes. Execute supabase-conference-schema.sql no Supabase.", "warning");
@@ -1174,6 +1284,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       totalExpectedQuantity: Number(row.total_expected_quantity || 0),
       totalSeparatedQuantity: Number(row.total_separated_quantity || 0),
       totalPackedQuantity: Number(row.total_packed_quantity || 0),
+      totalPreviewQuantity: Number(row.total_previsto || row.total_expected_quantity || 0),
+      totalSentQuantity: Number(row.total_enviado || row.total_packed_quantity || 0),
+      totalDifference: Number(row.diferenca_total || 0),
+      totalBoxes: Number(row.total_caixas || 0),
+      currentStep: row.current_step || "",
+      lastActionAt: row.last_action_at || "",
+      lastActionLabel: row.last_action_label || "",
+      pendingItems: Number(row.itens_pendentes || 0),
+      separatedItems: Number(row.itens_separados || 0),
+      divergentItems: Number(row.itens_divergentes || 0),
       hasDivergence: row.has_divergence === true,
       divergenceCount: Number(row.divergence_count || 0),
       finalResult: row.final_result || "",
@@ -1323,6 +1443,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       lacre_iniciado_em: item.packingStartedAt || null,
       lacre_concluido_em: item.packingFinishedAt || null,
       duracao_lacre_segundos: Number(item.packingDurationSeconds || 0),
+      total_previsto: Number(item.totalPreviewQuantity || item.totalExpectedQuantity || 0),
+      total_enviado: Number(item.totalSentQuantity || item.totalPackedQuantity || 0),
+      diferenca_total: Number(item.totalDifference || 0),
+      itens_total: Number(item.totalItems || item.totalSkus || 0),
+      itens_separados: Number(item.separatedItems || 0),
+      itens_pendentes: Number(item.pendingItems || 0),
+      itens_divergentes: Number(item.divergentItems || item.divergenceCount || 0),
+      total_caixas: Number(item.totalBoxes || item.finalBoxCount || 0),
+      current_step: item.currentStep || transferStatusDisplayLabel(item.status),
+      last_action_at: item.lastActionAt || item.updatedAt || null,
+      last_action_label: item.lastActionLabel || "",
       is_merged: item.isMerged === true,
       merged_from_ids: item.mergedFromIds || [],
       merged_into_id: item.mergedIntoId || "",
@@ -2005,6 +2136,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     authState.currentSession = null;
     applyRoleClass();
     stopTaskPolling();
+    stopLeaderLiveSync();
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
     showLoginForm(false);
@@ -2766,14 +2898,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderAll();
     if (screenId === "usuarios") renderUsers();
     if (screenId === "manutencao") renderMaintenance();
+    if (screenId === "assistente") renderAssistant();
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
+    if (screenId === "transferencias" && isAdminOrSupervisor()) startLeaderLiveSync();
+    if (screenId !== "transferencias") stopLeaderLiveSync();
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : screenId === "assistente" ? "Assistente WMS" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
@@ -3008,6 +3143,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("verifyAddressMaintenanceButton")) $("verifyAddressMaintenanceButton").addEventListener("click", verifyAddressMaintenance);
     if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
     if ($("maintenanceAddressRows")) $("maintenanceAddressRows").addEventListener("click", handleAddressMaintenanceAction);
+    if ($("refreshDiagnosticsButton")) $("refreshDiagnosticsButton").addEventListener("click", renderSystemDiagnostics);
     $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -3015,6 +3151,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
     $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
+    if ($("askAssistantButton")) $("askAssistantButton").addEventListener("click", askWmsAssistant);
+    if ($("clearAssistantButton")) $("clearAssistantButton").addEventListener("click", clearWmsAssistant);
+    if ($("assistantQuestionInput")) $("assistantQuestionInput").addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) askWmsAssistant();
+    });
+    document.querySelectorAll("[data-ai-question]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        $("assistantQuestionInput").value = button.dataset.aiQuestion || "";
+        askWmsAssistant();
+      });
+    });
   }
 
   function cacheStaticOptions() {
@@ -3585,6 +3732,63 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (taskPollTimer) {
       window.clearInterval(taskPollTimer);
       taskPollTimer = null;
+    }
+  }
+
+  function startLeaderLiveSync() {
+    stopLeaderLiveSync();
+    if (!isSupabaseReady() || !isAdminOrSupervisor() || !canUseNetwork()) return;
+    realtimeState.active = true;
+    realtimeState.lastLiveUpdateAt = realtimeState.lastLiveUpdateAt || nowIso();
+    try {
+      if (typeof supabaseDb.channel === "function") {
+        realtimeState.channel = supabaseDb
+          .channel("wms-live-" + activeWarehouseCode())
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wms_transfer_events", filter: "warehouse_code=eq." + activeWarehouseCode() }, handleTransferRealtimeDelta)
+          .subscribe();
+      }
+    } catch (error) {
+      recordPerformanceError("realtime", error);
+    }
+    realtimeState.pollTimer = window.setInterval(refreshLeaderIncrementalData, 18000);
+  }
+
+  function stopLeaderLiveSync() {
+    realtimeState.active = false;
+    if (realtimeState.pollTimer) {
+      window.clearInterval(realtimeState.pollTimer);
+      realtimeState.pollTimer = null;
+    }
+    if (realtimeState.channel && supabaseDb && typeof supabaseDb.removeChannel === "function") {
+      try { supabaseDb.removeChannel(realtimeState.channel); } catch (error) { recordPerformanceError("realtime-stop", error); }
+    }
+    realtimeState.channel = null;
+  }
+
+  async function handleTransferRealtimeDelta(payload) {
+    if (!realtimeState.active) return;
+    var row = payload && (payload.new || payload.old) ? (payload.new || payload.old) : {};
+    if (row.warehouse_code && normalizeWarehouseCode(row.warehouse_code) !== activeWarehouseCode()) return;
+    realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
+    await refreshLeaderIncrementalData();
+  }
+
+  async function refreshLeaderIncrementalData() {
+    if (!realtimeState.active || !isSupabaseReady() || !canUseNetwork()) return;
+    try {
+      var startedAt = performance.now();
+      invalidateTransferStatsCache();
+      await loadTransferData();
+      recordPerformanceMetric("lastTransferQueryMs", startedAt);
+      renderTransfers();
+      renderDashboard();
+      renderOperatorTasksAlert();
+      setSyncStatus("Ao vivo", "success");
+    } catch (error) {
+      recordPerformanceError("live-transfer", error);
+      setSyncStatus("Erro tempo real", "error");
     }
   }
 
@@ -5254,6 +5458,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       ].join("");
     }).join("") : "<tr><td colspan=\"3\">Clique em Verificar resíduos para avaliar o banco.</td></tr>";
     renderAddressMaintenance(addressReport);
+    renderSystemDiagnostics();
   }
 
   function renderAddressMaintenance(report) {
@@ -5523,6 +5728,193 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       maintenanceState.checking = false;
       $("verifyMaintenanceButton").disabled = false;
       $("verifyMaintenanceButton").textContent = "Verificar resíduos";
+    }
+  }
+
+  async function renderSystemDiagnostics() {
+    if (!$("systemDiagnosticsSummary") || !$("systemDiagnosticsDetails")) return;
+    var cacheBytes = await estimateLocalCacheBytes();
+    var warehouse = activeWarehouseCode();
+    var syncKeys = ["coreData", "transferData", "conferenceData"].map(function (moduleName) {
+      var key = LOCAL_SYNC_PREFIX + moduleName + ":" + warehouse;
+      return { moduleName: moduleName, value: localStorage.getItem(key) || "" };
+    });
+    $("systemDiagnosticsSummary").innerHTML = [
+      summaryChip("Estoque ativo", warehouse),
+      summaryChip("Cache local", localCacheState.available ? "IndexedDB OK" : "Indisponivel", localCacheState.available ? "result-ok" : "result-missing"),
+      summaryChip("Tamanho cache", formatBytes(cacheBytes)),
+      summaryChip("Ultima sync", performanceState.lastSyncAt ? formatDateTime(performanceState.lastSyncAt) : "-"),
+      summaryChip("Enderecamento", performanceState.lastCoreLoadMs + " ms"),
+      summaryChip("Transferencias", performanceState.lastTransferLoadMs + " ms"),
+      summaryChip("Conferencias", performanceState.lastConferenceLoadMs + " ms"),
+      summaryChip("Consulta SKU", performanceState.lastSkuQueryMs + " ms")
+    ].join("");
+    $("systemDiagnosticsDetails").innerHTML = [
+      "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
+      "<p><strong>Sincronizacao por modulo:</strong></p>",
+      "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
+      "<p><strong>Erros recentes:</strong></p>",
+      performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
+    ].join("");
+  }
+
+  function renderAssistant() {
+    if (!$("assistantAnswer")) return;
+    if (!isAdminOrSupervisor()) {
+      $("assistantAnswer").innerHTML = "";
+      setStatus("assistantStatus", "Assistente disponivel apenas para administrador e lider nesta fase.", "warning");
+      return;
+    }
+    setStatus("assistantStatus", "Pronto para consultar o estoque " + activeWarehouseCode() + ".", "success");
+  }
+
+  function clearWmsAssistant() {
+    if ($("assistantQuestionInput")) $("assistantQuestionInput").value = "";
+    if ($("assistantAnswer")) $("assistantAnswer").innerHTML = "";
+    setStatus("assistantStatus", "", "");
+  }
+
+  async function askWmsAssistant() {
+    if (!isAdminOrSupervisor()) return;
+    var input = $("assistantQuestionInput");
+    var question = normalizeText(input && input.value);
+    if (!question) {
+      setStatus("assistantStatus", "Digite uma pergunta para o WMS.", "warning");
+      return;
+    }
+    var startedAt = performance.now();
+    setStatus("assistantStatus", "Consultando dados do estoque " + activeWarehouseCode() + "...", "warning");
+    var localAnswer = buildLocalAssistantAnswer(question);
+    recordPerformanceMetric("lastTransferQueryMs", startedAt);
+    $("assistantAnswer").innerHTML = assistantAnswerHtml(localAnswer);
+    setStatus("assistantStatus", "Resposta gerada sem executar nenhuma acao critica.", "success");
+    tryEnhanceAssistantAnswer(question, localAnswer);
+  }
+
+  function assistantAnswerHtml(answer) {
+    return [
+      "<article class=\"assistant-answer-card\">",
+      "<h3>" + escapeHtml(answer.title || "Resposta do WMS") + "</h3>",
+      "<p>" + escapeHtml(answer.summary || "") + "</p>",
+      answer.items && answer.items.length ? "<ul>" + answer.items.map(function (item) { return "<li>" + escapeHtml(item) + "</li>"; }).join("") + "</ul>" : "",
+      "<p class=\"muted\">Base: estoque " + escapeHtml(activeWarehouseCode()) + ". A IA consultiva nao altera dados.</p>",
+      "</article>"
+    ].join("");
+  }
+
+  function buildLocalAssistantAnswer(question) {
+    var text = normalizeText(question).toLowerCase();
+    var sku = extractSkuFromText(question);
+    if (sku) return assistantSkuLocationAnswer(sku);
+    if (text.indexOf("sem local") >= 0 || text.indexOf("sem endereco") >= 0 || text.indexOf("sem localização") >= 0) return assistantMissingLocationAnswer();
+    if (text.indexOf("diverg") >= 0 || text.indexOf("diferen") >= 0) return assistantDivergenceAnswer();
+    if (text.indexOf("parad") >= 0 || text.indexOf("atras") >= 0 || text.indexOf("andamento") >= 0 || text.indexOf("tarefa") >= 0) return assistantOperatorStatusAnswer();
+    if (text.indexOf("hoje") >= 0 || text.indexOf("resumo") >= 0 || text.indexOf("transfer") >= 0) return assistantTodayTransferAnswer();
+    return {
+      title: "Consulta preparada",
+      summary: "Ainda nao reconheci essa pergunta com seguranca. Posso responder sobre SKU, divergencias, produtos sem localizacao, tarefas em andamento e resumo das transferencias de hoje.",
+      items: ["Pergunta recebida: " + question]
+    };
+  }
+
+  function extractSkuFromText(value) {
+    var match = String(value || "").match(/\b\d{4,14}\b/);
+    if (!match) return "";
+    return normalizeSku(match[0]) || match[0];
+  }
+
+  function assistantSkuLocationAnswer(sku) {
+    var rows = state.bindings.filter(function (binding) { return isSameSku(binding.sku, sku); });
+    var product = rows[0] && rows[0].productName ? rows[0].productName : state.products[sku] || state.products[normalizeSkuKey(sku)] || "";
+    return {
+      title: "Localizacao do SKU " + sku,
+      summary: rows.length ? rows.length + " localizacao(oes) encontrada(s)" + (product ? " para " + product : "") + "." : "Nenhuma localizacao encontrada para este SKU no estoque ativo.",
+      items: rows.slice(0, 10).map(function (binding) {
+        return (binding.locationCode || "-") + (binding.productName ? " - " + binding.productName : "");
+      })
+    };
+  }
+
+  function assistantMissingLocationAnswer() {
+    var missing = transferState.items.filter(function (item) { return !item.isExtra && item.hasLocation !== true; });
+    var uniqueSkus = unique(missing.map(function (item) { return item.sku; })).slice(0, 12);
+    return {
+      title: "Produtos sem localizacao",
+      summary: missing.length + " item(ns) de transferencia sem localizacao cadastrada no estoque ativo.",
+      items: uniqueSkus.map(function (sku) {
+        var item = missing.find(function (entry) { return entry.sku === sku; });
+        return sku + " - " + (item && item.description ? item.description : "-");
+      })
+    };
+  }
+
+  function assistantDivergenceAnswer() {
+    var transfers = transferState.transfers.filter(function (transfer) {
+      return transfer.hasDivergence || transfer.divergenceCount > 0 || String(transfer.status || "").indexOf("DIVERGENCIA") >= 0;
+    }).slice(0, 12);
+    return {
+      title: "Transferencias com divergencia",
+      summary: transfers.length ? transfers.length + " transferencia(s) com alerta de divergencia." : "Nenhuma divergencia aberta encontrada no estoque ativo.",
+      items: transfers.map(function (transfer) {
+        var stats = getTransferStats(transfer.id);
+        return transferDisplayName(transfer) + " - " + transferStatusDisplayLabel(transfer.status) + " - diferenca " + formatQty(stats.packed - stats.requested);
+      })
+    };
+  }
+
+  function assistantOperatorStatusAnswer() {
+    var active = transferState.transfers.filter(function (transfer) { return !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; }).slice(0, 12);
+    return {
+      title: "Tarefas em andamento",
+      summary: active.length + " transferencia(s) abertas no estoque " + activeWarehouseCode() + ".",
+      items: active.map(function (transfer) {
+        var stats = getTransferStats(transfer.id);
+        return (transfer.responsibleName || "Sem responsavel") + " - " + transferRouteLabel(transfer) + " - " + transferStatusDisplayLabel(transfer.status) + " - " + stats.progress + "%";
+      })
+    };
+  }
+
+  function assistantTodayTransferAnswer() {
+    var today = new Date().toLocaleDateString("pt-BR");
+    var transfers = transferState.transfers.filter(function (transfer) { return formatDateTime(transfer.createdAt).indexOf(today) >= 0; });
+    var open = transfers.filter(function (transfer) { return !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; }).length;
+    var finished = transfers.filter(function (transfer) { return isFinalTransferStatus(transfer.status); }).length;
+    return {
+      title: "Resumo das transferencias de hoje",
+      summary: transfers.length + " transferencia(s) criadas hoje no estoque " + activeWarehouseCode() + ": " + open + " aberta(s), " + finished + " finalizada(s).",
+      items: transfers.slice(0, 12).map(function (transfer) {
+        return transferDisplayName(transfer) + " - " + transferStatusDisplayLabel(transfer.status) + " - " + (transfer.responsibleName || "sem responsavel");
+      })
+    };
+  }
+
+  async function tryEnhanceAssistantAnswer(question, localAnswer) {
+    if (!canUseNetwork()) return;
+    try {
+      var response = await fetch("/api/ai/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: question,
+          warehouseCode: activeWarehouseCode(),
+          role: (authState.currentUser || {}).role || "",
+          context: {
+            title: localAnswer.title,
+            summary: localAnswer.summary,
+            items: (localAnswer.items || []).slice(0, 20)
+          }
+        })
+      });
+      if (!response.ok) return;
+      var body = await response.json();
+      if (!body || !body.answer || !$("assistantAnswer")) return;
+      $("assistantAnswer").innerHTML = assistantAnswerHtml({
+        title: localAnswer.title,
+        summary: body.answer,
+        items: localAnswer.items || []
+      });
+    } catch (error) {
+      recordPerformanceError("assistente", error);
     }
   }
 
@@ -6281,6 +6673,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         }).eq("id", item.id);
       }
       if (response.error) throw response.error;
+      invalidateTransferStatsCache();
+      await persistTransferLightSummary(transfer, mode === "MONTAGEM" ? "ITEM_PACKED" : "ITEM_SEPARATED", { sku: item.sku });
       await loadTransferData();
       transferState.activeTransferId = transfer.id;
       transferState.activeWorkMode = mode;
@@ -6704,6 +7098,59 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
     transferStatsCache.statsByTransferId[transferId] = stats;
     return stats;
+  }
+
+  function buildTransferLightSummary(transfer, status, eventType, eventPayload) {
+    var effectiveStatus = status || (transfer && transfer.status) || "PENDENTE";
+    var stats = transfer && transfer.id ? getTransferStats(transfer.id) : {};
+    var pending = effectiveStatus === "EM_MONTAGEM_CAIXA" || effectiveStatus === "EM_LACRE" ? Number(stats.pendingPacking || 0) : Number(stats.pendingSeparation || 0);
+    var label = eventLabelForLeader(eventType, eventPayload, effectiveStatus);
+    return {
+      total_items: Number(stats.totalItems || 0),
+      total_skus: Number(stats.totalSkus || 0),
+      total_expected_quantity: Number(stats.requested || 0),
+      total_separated_quantity: Number(stats.separated || 0),
+      total_packed_quantity: Number(stats.packed || 0),
+      total_previsto: Number(stats.requested || 0),
+      total_enviado: Number(stats.packed || 0),
+      diferenca_total: Number(stats.packed || 0) - Number(stats.requested || 0),
+      itens_total: Number(stats.totalItems || 0),
+      itens_separados: Number(stats.separatedItems || 0),
+      itens_pendentes: Math.max(0, pending),
+      itens_divergentes: Number(stats.divergenceCount || 0),
+      current_step: transferStatusDisplayLabel(effectiveStatus),
+      last_action_at: nowIso(),
+      last_action_label: label,
+      has_divergence: Boolean((transfer && transfer.hasDivergence) || Number(stats.divergenceCount || 0) > 0)
+    };
+  }
+
+  function eventLabelForLeader(eventType, payload, status) {
+    var labels = {
+      TRANSFER_CREATED: "Transferencia criada",
+      TRANSFER_ASSIGNED: "Responsavel definido",
+      SEPARATION_STARTED: "Separacao iniciada",
+      ITEM_SEPARATED: "SKU separado",
+      SEPARATION_FINISHED: "Separacao finalizada",
+      PACKING_STARTED: "Montagem iniciada",
+      ITEM_PACKED: "SKU colocado na caixa",
+      PACKING_FINISHED: "Transferencia enviada",
+      TRANSFER_FINALIZED: "Transferencia finalizada",
+      TRANSFER_FINALIZED_WITH_DIVERGENCE: "Finalizada com divergencia"
+    };
+    var sku = payload && (payload.sku || payload.code) ? " - SKU " + (payload.sku || payload.code) : "";
+    return (labels[eventType] || transferStatusDisplayLabel(status)) + sku;
+  }
+
+  async function persistTransferLightSummary(transfer, eventType, payload) {
+    if (!transfer || !isSupabaseReady()) return;
+    try {
+      var update = Object.assign({ updated_at: nowIso() }, buildTransferLightSummary(transfer, transfer.status, eventType, payload));
+      var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
+      if (response.error && !isMissingColumnError(response.error)) throw response.error;
+    } catch (error) {
+      recordPerformanceError("transfer-summary", error);
+    }
   }
 
   function isFinalTransferStatus(status) {
@@ -7397,6 +7844,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function renderSkuSearch() {
+    var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
     var list = sku ? findBySku(sku) : [];
@@ -7405,6 +7853,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("skuResults").innerHTML = "";
       $("skuResultCards").innerHTML = "";
       $("skuResultActions").hidden = true;
+      recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
       return;
     }
     lastSkuSearch = sku;
@@ -7416,6 +7865,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("skuResultActions").hidden = false;
       clearSkuSearchInput();
       saveData();
+      recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
       return;
     }
     refreshProductNamesForBindings(list);
@@ -7431,6 +7881,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("skuResultActions").hidden = false;
     clearSkuSearchInput();
     saveData();
+    recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
   }
 
   function clearSkuSearchInput() {
@@ -8651,7 +9102,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function updateTransferStatus(transfer, status, extra, eventType, eventPayload, eventMeta) {
     var now = new Date().toISOString();
-    var update = Object.assign({ status: status, updated_at: now }, extra || {});
+    var update = Object.assign({ status: status, updated_at: now }, buildTransferLightSummary(transfer, status, eventType, eventPayload), extra || {});
     var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
     if (response.error && isMissingColumnError(response.error)) {
       response = await supabaseDb.from("wms_transfers").update(pickColumns(update, [
@@ -8673,6 +9124,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         "total_expected_quantity",
         "total_separated_quantity",
         "total_packed_quantity",
+        "total_previsto",
+        "total_enviado",
+        "diferenca_total",
+        "itens_total",
+        "itens_separados",
+        "itens_pendentes",
+        "itens_divergentes",
+        "total_caixas",
+        "current_step",
+        "last_action_at",
+        "last_action_label",
         "final_result"
       ])).eq("id", transfer.id);
     }
@@ -8688,6 +9150,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (update.duracao_segundos !== undefined) transfer.durationSeconds = Number(update.duracao_segundos || 0);
     if (update.duracao_separacao_segundos !== undefined) transfer.separationDurationSeconds = Number(update.duracao_separacao_segundos || 0);
     if (update.duracao_lacre_segundos !== undefined) transfer.packingDurationSeconds = Number(update.duracao_lacre_segundos || 0);
+    transfer.totalPreviewQuantity = Number(update.total_previsto || transfer.totalPreviewQuantity || 0);
+    transfer.totalSentQuantity = Number(update.total_enviado || transfer.totalSentQuantity || 0);
+    transfer.totalDifference = Number(update.diferenca_total || transfer.totalDifference || 0);
+    transfer.currentStep = update.current_step || transfer.currentStep || "";
+    transfer.lastActionAt = update.last_action_at || transfer.lastActionAt || "";
+    transfer.lastActionLabel = update.last_action_label || transfer.lastActionLabel || "";
     if (eventType) {
       var eventQuantity = eventMeta && eventMeta.quantity !== undefined ? Number(eventMeta.quantity || 0) : 0;
       await recordTransferEvent(transfer.id, "", eventType, "", eventQuantity, status, eventPayload || {}, eventMeta || {});
@@ -8924,6 +9392,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       observation: observation
     });
     await markTransferHasDivergence(transfer);
+    invalidateTransferStatsCache();
+    await persistTransferLightSummary(transfer, "ITEM_EXTRA_ADDED", { sku: sku });
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
     transferState.activeWorkMode = mode;
@@ -8953,6 +9423,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         inputType: inputType,
         divergenceType: "SKU_NAO_CONSTA_XML"
       });
+      invalidateTransferStatsCache();
+      await persistTransferLightSummary(transfer, "ITEM_EXTRA_ADDED", { sku: sku });
       await loadTransferData();
       transferState.activeTransferId = transfer.id;
       transferState.activeWorkMode = mode;
@@ -9180,6 +9652,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (sepMissing > 0 && !item.isExtra) await registerTransferDivergence(transfer, item, "FALTA_DE_ITEM", sepExpected, item.separatedQty, -sepMissing, inputType, "Pendencia registrada: " + (item.pendingReason || "Sem motivo informado") + (item.pendingObservation ? " - " + item.pendingObservation : ""));
     }
     if (Number(item.excessQty || 0) > 0 || Number(item.missingQty || 0) > 0 || item.divergenceType) await markTransferHasDivergence(transfer);
+    invalidateTransferStatsCache();
+    await persistTransferLightSummary(transfer, mode === "MONTAGEM" ? "ITEM_PACKED" : "ITEM_SEPARATED", { sku: item.sku });
     clearTransferInputs();
     if (mode === "SEPARACAO") transferState.manualSeparationQty = false;
     await loadTransferData();
