@@ -570,8 +570,50 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function ensureActiveWarehouse() {
-    if (activeWarehouseCode()) return true;
+    if (activeWarehouseCode()) {
+      if (authState.currentUser && !authState.currentUser.warehouseAccessConfirmed && !isGlobalAdminUser(authState.currentUser)) {
+        showToast("Usuario sem estoque confirmado no Supabase. Atualize o schema e salve o usuario novamente.", "error");
+        return false;
+      }
+      if (authState.currentUser && !userCanAccessWarehouse(authState.currentUser, activeWarehouseCode())) {
+        var allowed = allowedWarehouseCodesForUser(authState.currentUser);
+        if (allowed.length) setActiveWarehouse(allowed[0]);
+        showToast("Seu usuario nao possui acesso ao estoque selecionado. O estoque ativo foi ajustado.", "error");
+        return false;
+      }
+      return true;
+    }
     showToast("Selecione um estoque antes de continuar.", "error");
+    return false;
+  }
+
+  function isMultiWarehouseMode() {
+    return activeWarehouseCodes().length > 1;
+  }
+
+  function multiWarehouseSchemaMessage(tableName) {
+    return "Estrutura multiestoque desatualizada no Supabase. A tabela " + tableName + " precisa da coluna warehouse_code para separar VDCG, VDAR e VDSI. Execute supabase-schema.sql no SQL Editor do Supabase e recarregue o app.";
+  }
+
+  function assertWarehouseFallbackAllowed(tableName, error) {
+    if (isMissingWarehouseColumnError(error) && isMultiWarehouseMode()) {
+      throw new Error(multiWarehouseSchemaMessage(tableName));
+    }
+  }
+
+  async function ensureWarehouseSeparatedTable(tableName, statusId) {
+    if (!isSupabaseReady() || !isMultiWarehouseMode()) return true;
+    var response = await supabaseDb.from(tableName).select("warehouse_code", { count: "exact", head: true }).limit(1);
+    if (!response.error) return true;
+    if (isMissingWarehouseColumnError(response.error)) {
+      var message = multiWarehouseSchemaMessage(tableName);
+      if (statusId) setStatus(statusId, message, "error");
+      updateSupabaseStatus(message, "error");
+      showToast("Schema multiestoque ausente. Importacao bloqueada para nao misturar estoques.", "error");
+      return false;
+    }
+    var detail = formatSupabaseError(response.error);
+    if (statusId) setStatus(statusId, "Nao foi possivel validar o estoque no Supabase: " + detail, "error");
     return false;
   }
 
@@ -1022,6 +1064,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "id");
         } catch (bindingError) {
           if (!isMissingWarehouseColumnError(bindingError)) throw bindingError;
+          assertWarehouseFallbackAllowed("wms_bindings", bindingError);
           await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding).map(stripWarehouseColumns), "id");
         }
       }
@@ -1030,6 +1073,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           await upsertInChunks("wms_history", state.history.map(toDbHistory), "id");
         } catch (historyError) {
           if (isMissingWarehouseColumnError(historyError)) {
+            assertWarehouseFallbackAllowed("wms_history", historyError);
             await upsertInChunks("wms_history", state.history.map(toDbHistory).map(stripWarehouseColumns), "id");
             historyError = null;
           }
@@ -1595,6 +1639,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function insertTransferRows(rows) {
     var response = await supabaseDb.from("wms_transfers").insert(rows);
     if (response.error && isMissingColumnError(response.error)) {
+      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfers", response.error);
       if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw response.error;
       response = await supabaseDb.from("wms_transfers").insert(rows.map(stripOptionalTransferColumns));
     }
@@ -1606,6 +1651,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       await upsertInChunks("wms_transfer_items", rows, "id");
     } catch (error) {
       if (!isMissingColumnError(error)) throw error;
+      if (isMissingWarehouseColumnError(error)) assertWarehouseFallbackAllowed("wms_transfer_items", error);
       if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw error;
       await upsertInChunks("wms_transfer_items", rows.map(stripOptionalTransferItemColumns), "id");
     }
@@ -1773,6 +1819,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var response = await supabaseDb.from("wms_transfer_events").insert(extendedRow);
     if (response.error && isMissingColumnError(response.error)) {
+      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfer_events", response.error);
       response = await supabaseDb.from("wms_transfer_events").insert(row);
     }
     if (response.error && !isMissingTransferTableError(response.error)) {
@@ -1825,23 +1872,25 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return { ok: false, message: "Supabase nao conectado. " + problem };
     }
     try {
-      var bindingResponse = await supabaseDb
+    var bindingResponse = await supabaseDb
+      .from("wms_bindings")
+      .upsert(toDbBinding(binding), { onConflict: "warehouse_code,sku,location_code" });
+    if (bindingResponse.error && isMissingWarehouseColumnError(bindingResponse.error)) {
+      assertWarehouseFallbackAllowed("wms_bindings", bindingResponse.error);
+      bindingResponse = await supabaseDb
         .from("wms_bindings")
-        .upsert(toDbBinding(binding), { onConflict: "warehouse_code,sku,location_code" });
-      if (bindingResponse.error && isMissingWarehouseColumnError(bindingResponse.error)) {
-        bindingResponse = await supabaseDb
-          .from("wms_bindings")
-          .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "sku,location_code" });
+        .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "sku,location_code" });
       }
       if (bindingResponse.error) throw bindingResponse.error;
 
-      var historyResponse = await supabaseDb
+    var historyResponse = await supabaseDb
+      .from("wms_history")
+      .upsert(toDbHistory(historyItem), { onConflict: "id" });
+    if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
+      assertWarehouseFallbackAllowed("wms_history", historyResponse.error);
+      historyResponse = await supabaseDb
         .from("wms_history")
-        .upsert(toDbHistory(historyItem), { onConflict: "id" });
-      if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
-        historyResponse = await supabaseDb
-          .from("wms_history")
-          .upsert(stripWarehouseColumns(toDbHistory(historyItem)), { onConflict: "id" });
+        .upsert(stripWarehouseColumns(toDbHistory(historyItem)), { onConflict: "id" });
       }
       if (historyResponse.error) {
         if (!isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
@@ -2008,6 +2057,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     authState.usersTableAvailable = true;
     authState.users = (response.data || []).map(fromDbUser);
+    if (authState.currentUser) {
+      var refreshedCurrentUser = authState.users.find(function (user) { return user.id === authState.currentUser.id; });
+      if (refreshedCurrentUser) {
+        authState.currentUser = refreshedCurrentUser;
+        var nextWarehouse = resolveLoginWarehouseForUser(refreshedCurrentUser, authState.currentSession && authState.currentSession.activeWarehouseCode);
+        if (nextWarehouse && !userCanAccessWarehouse(refreshedCurrentUser, activeWarehouseCode())) setActiveWarehouse(nextWarehouse);
+      }
+    }
     if (!options || options.repair !== false) {
       var repaired = await repairUserWarehouseAssignments();
       if (repaired) return loadUsers({ repair: false });
@@ -2063,6 +2120,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       role: role,
       default_warehouse_id: warehouseIdForCode(defaultCode),
       default_warehouse_code: defaultCode,
+      warehouse_id: warehouseIdForCode(defaultCode),
+      warehouse_code: defaultCode,
       allowed_warehouse_codes: allowed.join(","),
       is_global_admin: isGlobal
     };
@@ -2123,6 +2182,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       available_for_tasks: false,
       default_warehouse_id: DEFAULT_WAREHOUSE_ID,
       default_warehouse_code: DEFAULT_WAREHOUSE_CODE,
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      warehouse_code: DEFAULT_WAREHOUSE_CODE,
       allowed_warehouse_codes: WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }).join(","),
       is_global_admin: true,
       created_at: now,
@@ -2514,10 +2575,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function fromDbUser(row) {
     var role = ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR";
+    var hasStoredWarehouse = Boolean(row.default_warehouse_code || row.warehouse_code || row.allowed_warehouse_codes);
     var defaultWarehouse = normalizeWarehouseCode(row.default_warehouse_code || row.warehouse_code || DEFAULT_WAREHOUSE_CODE);
     var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes || row.warehouse_code);
     if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }) : [defaultWarehouse];
-    return {
+    var user = {
       id: row.id,
       name: row.name || "",
       username: row.username || "",
@@ -2530,10 +2592,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       defaultWarehouseCode: defaultWarehouse,
       allowedWarehouseCodes: allowedWarehouses,
       isGlobalAdmin: role === "ADMINISTRADOR" && row.is_global_admin !== false,
+      warehouseAccessConfirmed: hasStoredWarehouse || role === "ADMINISTRADOR",
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString(),
       lastLoginAt: row.last_login_at || ""
     };
+    if (!row.default_warehouse_code && !row.warehouse_code) {
+      var patch = canonicalUserWarehousePatch(user);
+      user.role = patch.role;
+      user.defaultWarehouseId = patch.default_warehouse_id;
+      user.defaultWarehouseCode = patch.default_warehouse_code;
+      user.allowedWarehouseCodes = parseWarehouseCodes(patch.allowed_warehouse_codes);
+      user.isGlobalAdmin = patch.role === "ADMINISTRADOR" && patch.is_global_admin !== false;
+      user.warehouseAccessConfirmed = isNamedUser(user, "gustavo") || isNamedUser(user, "henrique") || user.isGlobalAdmin;
+    }
+    return user;
   }
 
   function stripOptionalUserWarehouseColumns(row) {
@@ -2693,6 +2766,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       available_for_tasks: availableForTasks,
       default_warehouse_id: warehouseIdForCode(defaultWarehouseCode),
       default_warehouse_code: defaultWarehouseCode,
+      warehouse_id: warehouseIdForCode(defaultWarehouseCode),
+      warehouse_code: defaultWarehouseCode,
       allowed_warehouse_codes: unique(allowedWarehouses).join(","),
       is_global_admin: isGlobal,
       updated_at: now
@@ -2710,6 +2785,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     var savedUser = fromDbUser(confirmResponse.data);
+    if (!savedUser.warehouseAccessConfirmed && role !== "ADMINISTRADOR") {
+      setStatus("userFormStatus", multiWarehouseSchemaMessage("wms_users"), "error");
+      return;
+    }
     if (normalizeWarehouseCode(savedUser.defaultWarehouseCode) !== defaultWarehouseCode) {
       setStatus("userFormStatus", "Erro ao confirmar estoque salvo. Esperado " + defaultWarehouseCode + ", gravado " + savedUser.defaultWarehouseCode + ".", "error");
       return;
@@ -2954,6 +3033,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       available_for_tasks: true,
       default_warehouse_id: activeWarehouseId(),
       default_warehouse_code: activeWarehouseCode(),
+      warehouse_id: activeWarehouseId(),
+      warehouse_code: activeWarehouseCode(),
       allowed_warehouse_codes: activeWarehouseCode(),
       is_global_admin: false,
       last_login_at: null
@@ -3539,6 +3620,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         .from("wms_bindings")
         .upsert(toDbBinding(binding), { onConflict: "id" });
       if (bindingResponse.error && isMissingWarehouseColumnError(bindingResponse.error)) {
+        assertWarehouseFallbackAllowed("wms_bindings", bindingResponse.error);
         bindingResponse = await supabaseDb
           .from("wms_bindings")
           .upsert(stripWarehouseColumns(toDbBinding(binding)), { onConflict: "id" });
@@ -3555,6 +3637,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .from("wms_history")
           .upsert(historyItems.map(toDbHistory), { onConflict: "id" });
         if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
+          assertWarehouseFallbackAllowed("wms_history", historyResponse.error);
           historyResponse = await supabaseDb
             .from("wms_history")
             .upsert(historyItems.map(toDbHistory).map(stripWarehouseColumns), { onConflict: "id" });
@@ -8566,12 +8649,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
   }
 
-  function exportExcel() {
+  async function exportExcel() {
     if (!ensureActiveWarehouse()) return;
     if (!window.XLSX) {
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
       return;
     }
+    if (!(await ensureWarehouseSeparatedTable("wms_bindings", "exportStatus"))) return;
     var actionButton = $("exportExcelButton");
     if (!beginTransferAction("export-addresses", actionButton, "Exportando...")) return;
     try {
@@ -8638,7 +8722,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var fileName = "LinhaSeparacao_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
     addHistory("Excel exportado", "", "", exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao.");
-    saveData();
+    await saveData();
     if ($("exportStatus")) setStatus("exportStatus", "Excel exportado no modelo LinhaSeparacao.", "success");
     showToast("Excel exportado no mesmo modelo da importacao.", "success");
     } finally {
@@ -9586,6 +9670,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
     var response = await supabaseDb.from("wms_transfer_divergences").insert(row);
     if (response.error && isMissingColumnError(response.error)) {
+      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfer_divergences", response.error);
       response = await supabaseDb.from("wms_transfer_divergences").insert(stripWarehouseColumns(row));
     }
     if (response.error && !isMissingTransferTableError(response.error)) {
@@ -10414,6 +10499,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("importStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
       return;
     }
+    if (!(await ensureWarehouseSeparatedTable("wms_bindings", "importStatus"))) return;
 
     var actionButton = $("importExcelButton");
     if (!beginTransferAction("import-addresses", actionButton, "Importando...")) return;
@@ -10691,6 +10777,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
       var insertResponse = await supabaseDb.from("wms_bindings").upsert(probe, { onConflict: "warehouse_code,sku,location_code" });
       if (insertResponse.error && isMissingWarehouseColumnError(insertResponse.error)) {
+        assertWarehouseFallbackAllowed("wms_bindings", insertResponse.error);
         insertResponse = await supabaseDb.from("wms_bindings").upsert(stripWarehouseColumns(probe), { onConflict: "sku,location_code" });
       }
       if (insertResponse.error) throw insertResponse.error;
@@ -10926,6 +11013,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!isSupabaseReady()) return;
     var response = await supabaseDb.from(tableName).delete().eq("warehouse_code", activeWarehouseCode());
     if (response.error && isMissingWarehouseColumnError(response.error)) {
+      assertWarehouseFallbackAllowed(tableName, response.error);
       await clearRemoteTable(tableName, columnName);
       return;
     }

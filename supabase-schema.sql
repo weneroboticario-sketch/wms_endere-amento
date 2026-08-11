@@ -164,18 +164,24 @@ alter table public.wms_users add column if not exists last_login_at timestamptz;
 alter table public.wms_users add column if not exists default_warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_users add column if not exists default_warehouse_code text default 'VDCG';
 alter table public.wms_users add column if not exists allowed_warehouse_codes text default 'VDCG';
+alter table public.wms_users add column if not exists warehouse_id text default 'warehouse-vdcg';
+alter table public.wms_users add column if not exists warehouse_code text default 'VDCG';
 alter table public.wms_users add column if not exists is_global_admin boolean not null default false;
 
 update public.wms_users
 set default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    warehouse_id = coalesce(nullif(warehouse_id, ''), nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG'),
     allowed_warehouse_codes = case
       when role = 'ADMINISTRADOR' then 'VDCG,VDAR,VDSI'
-      else coalesce(nullif(allowed_warehouse_codes, ''), 'VDCG')
+      else coalesce(nullif(allowed_warehouse_codes, ''), nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG')
     end,
     is_global_admin = case when role = 'ADMINISTRADOR' then true else is_global_admin end
 where default_warehouse_code is null
    or default_warehouse_code = ''
+   or warehouse_code is null
+   or warehouse_code = ''
    or allowed_warehouse_codes is null
    or allowed_warehouse_codes = ''
    or role = 'ADMINISTRADOR';
@@ -187,10 +193,14 @@ where profile is null or profile = '';
 update public.wms_users
 set default_warehouse_id = case when default_warehouse_code in ('VDR', 'DVR') or default_warehouse_id in ('warehouse-vdr', 'warehouse-dvr') then 'warehouse-vdar' else default_warehouse_id end,
     default_warehouse_code = case when default_warehouse_code in ('VDR', 'DVR') then 'VDAR' else default_warehouse_code end,
+    warehouse_id = case when warehouse_code in ('VDR', 'DVR') or warehouse_id in ('warehouse-vdr', 'warehouse-dvr') then 'warehouse-vdar' else coalesce(nullif(warehouse_id, ''), default_warehouse_id) end,
+    warehouse_code = case when warehouse_code in ('VDR', 'DVR') then 'VDAR' else coalesce(nullif(warehouse_code, ''), default_warehouse_code) end,
     allowed_warehouse_codes = replace(replace(coalesce(allowed_warehouse_codes, 'VDCG'), 'VDR', 'VDAR'), 'DVR', 'VDAR'),
     updated_at = now()
 where default_warehouse_code in ('VDR', 'DVR')
    or default_warehouse_id in ('warehouse-vdr', 'warehouse-dvr')
+   or warehouse_code in ('VDR', 'DVR')
+   or warehouse_id in ('warehouse-vdr', 'warehouse-dvr')
    or allowed_warehouse_codes like '%VDR%'
    or allowed_warehouse_codes like '%DVR%';
 
@@ -199,6 +209,8 @@ set role = 'SUPERVISOR',
     profile = 'SUPERVISOR',
     default_warehouse_id = 'warehouse-vdar',
     default_warehouse_code = 'VDAR',
+    warehouse_id = 'warehouse-vdar',
+    warehouse_code = 'VDAR',
     allowed_warehouse_codes = 'VDAR',
     is_global_admin = false,
     updated_at = now()
@@ -209,6 +221,8 @@ set role = 'SUPERVISOR',
     profile = 'SUPERVISOR',
     default_warehouse_id = 'warehouse-vdsi',
     default_warehouse_code = 'VDSI',
+    warehouse_id = 'warehouse-vdsi',
+    warehouse_code = 'VDSI',
     allowed_warehouse_codes = 'VDSI',
     is_global_admin = false,
     updated_at = now()
@@ -219,6 +233,8 @@ set role = 'ADMINISTRADOR',
     profile = 'ADMINISTRADOR',
     default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    warehouse_id = coalesce(nullif(warehouse_id, ''), nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
+    warehouse_code = coalesce(nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG'),
     allowed_warehouse_codes = 'VDCG,VDAR,VDSI',
     is_global_admin = true,
     updated_at = now()
@@ -227,7 +243,7 @@ where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coales
 
 update public.wms_users
 set is_global_admin = false,
-    allowed_warehouse_codes = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    allowed_warehouse_codes = coalesce(nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG'),
     updated_at = now()
 where role <> 'ADMINISTRADOR'
   and is_global_admin = true;
