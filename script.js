@@ -463,8 +463,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function normalizeWarehouseCode(value) {
     var code = normalizeText(value).toUpperCase().replace(/[^A-Z0-9_-]/g, "");
-    if (code === "VDR") return "VDAR";
+    if (code === "VDR" || code === "DVR") return "VDAR";
     return code || DEFAULT_WAREHOUSE_CODE;
+  }
+
+  function activeWarehouseCodes() {
+    var source = warehouseState.warehouses && warehouseState.warehouses.length ? warehouseState.warehouses : WAREHOUSE_SEED;
+    return unique(source.filter(function (warehouse) { return warehouse.active !== false; }).map(function (warehouse) {
+      return normalizeWarehouseCode(warehouse.code);
+    }));
+  }
+
+  function warehouseExistsAndActive(code) {
+    code = normalizeWarehouseCode(code);
+    var codes = activeWarehouseCodes();
+    return codes.indexOf(code) >= 0 || !warehouseState.tableAvailable;
   }
 
   function fromDbWarehouse(row) {
@@ -520,7 +533,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function allowedWarehouseCodesForUser(user) {
-    var activeCodes = warehouseState.warehouses.filter(function (warehouse) { return warehouse.active !== false; }).map(function (warehouse) { return warehouse.code; });
+    var activeCodes = activeWarehouseCodes();
     if (!user) return [DEFAULT_WAREHOUSE_CODE];
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return activeCodes.length ? activeCodes : WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; });
     var allowed = parseWarehouseCodes(user.allowedWarehouseCodes);
@@ -867,18 +880,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var update = {};
         update[table.code] = "VDAR";
         if (table.id) update[table.id] = "warehouse-vdar";
-        var response = await supabaseDb.from(table.name).update(update).eq(table.code, "VDR");
+        var response = await supabaseDb.from(table.name).update(update).in(table.code, ["VDR", "DVR"]);
         if (response.error && !isMissingColumnError(response.error) && !isMissingAuthTableError(response.error) && !isMissingTransferTableError(response.error)) {
-          console.warn("Nao foi possivel migrar " + table.name + " de VDR para VDAR:", response.error);
+          console.warn("Nao foi possivel migrar " + table.name + " de VDR/DVR para VDAR:", response.error);
         }
       } catch (error) {
-        console.warn("Migracao VDR/VDAR ignorada em " + table.name + ":", error);
+        console.warn("Migracao VDR/DVR/VDAR ignorada em " + table.name + ":", error);
       }
     }
     try {
-      await supabaseDb.from("wms_warehouses").delete().eq("code", "VDR");
+      await supabaseDb.from("wms_warehouses").delete().in("code", ["VDR", "DVR"]);
     } catch (error) {
-      console.warn("Nao foi possivel remover estoque legado VDR:", error);
+      console.warn("Nao foi possivel remover estoque legado VDR/DVR:", error);
     }
   }
 
@@ -1979,7 +1992,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     showLogin("", "");
   }
 
-  async function loadUsers() {
+  async function loadUsers(options) {
     if (!isSupabaseReady()) return false;
     var response = await supabaseDb
       .from("wms_users")
@@ -1995,7 +2008,89 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     authState.usersTableAvailable = true;
     authState.users = (response.data || []).map(fromDbUser);
+    if (!options || options.repair !== false) {
+      var repaired = await repairUserWarehouseAssignments();
+      if (repaired) return loadUsers({ repair: false });
+    }
     return true;
+  }
+
+  function isNamedUser(user, token) {
+    token = normalizeText(token).toLowerCase();
+    return [
+      user && user.name,
+      user && user.username,
+      user && user.matricula
+    ].some(function (value) {
+      return normalizeText(value).toLowerCase().indexOf(token) >= 0;
+    });
+  }
+
+  function canonicalUserWarehousePatch(user) {
+    var activeCodes = activeWarehouseCodes();
+    var defaultCode = normalizeWarehouseCode(user.defaultWarehouseCode || DEFAULT_WAREHOUSE_CODE);
+    if (activeCodes.indexOf(defaultCode) < 0) defaultCode = DEFAULT_WAREHOUSE_CODE;
+    var role = ROLES.indexOf(user.role) >= 0 ? user.role : "OPERADOR";
+    var isGlobal = user.isGlobalAdmin === true || role === "ADMINISTRADOR";
+    var allowed = isGlobal ? activeCodes : [defaultCode];
+
+    if (isNamedUser(user, "gustavo")) {
+      role = "SUPERVISOR";
+      defaultCode = "VDAR";
+      isGlobal = false;
+      allowed = ["VDAR"];
+    } else if (isNamedUser(user, "henrique")) {
+      role = "SUPERVISOR";
+      defaultCode = "VDSI";
+      isGlobal = false;
+      allowed = ["VDSI"];
+    } else if (isNamedUser(user, "wener") || String(user.username || "").toLowerCase() === "admin") {
+      role = "ADMINISTRADOR";
+      defaultCode = defaultCode || DEFAULT_WAREHOUSE_CODE;
+      isGlobal = true;
+      allowed = activeCodes;
+    }
+
+    if (!allowed.length) allowed = [defaultCode || DEFAULT_WAREHOUSE_CODE];
+    if (allowed.indexOf(defaultCode) < 0) allowed.push(defaultCode);
+    allowed = unique(allowed.map(normalizeWarehouseCode)).filter(function (code) {
+      return activeCodes.indexOf(code) >= 0 || !warehouseState.tableAvailable;
+    });
+    if (!allowed.length) allowed = [DEFAULT_WAREHOUSE_CODE];
+    if (allowed.indexOf(defaultCode) < 0) defaultCode = allowed[0];
+
+    return {
+      role: role,
+      default_warehouse_id: warehouseIdForCode(defaultCode),
+      default_warehouse_code: defaultCode,
+      allowed_warehouse_codes: allowed.join(","),
+      is_global_admin: isGlobal
+    };
+  }
+
+  async function repairUserWarehouseAssignments() {
+    if (!isSupabaseReady() || !authState.users.length) return false;
+    var changed = false;
+    for (var i = 0; i < authState.users.length; i += 1) {
+      var user = authState.users[i];
+      var patch = canonicalUserWarehousePatch(user);
+      var currentAllowed = unique(parseWarehouseCodes(user.allowedWarehouseCodes)).join(",");
+      if (
+        user.role !== patch.role ||
+        normalizeWarehouseCode(user.defaultWarehouseCode) !== patch.default_warehouse_code ||
+        currentAllowed !== patch.allowed_warehouse_codes ||
+        Boolean(user.isGlobalAdmin) !== Boolean(patch.is_global_admin)
+      ) {
+        patch.updated_at = new Date().toISOString();
+        var response = await supabaseDb.from("wms_users").update(patch).eq("id", user.id);
+        if (response.error) {
+          console.warn("Nao foi possivel corrigir vinculo de estoque do usuario " + user.username + ":", response.error);
+          continue;
+        }
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   async function loadAccessRequests() {
@@ -2499,13 +2594,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var availableForTasks = $("userAvailableInput").checked;
     var defaultWarehouseCode = normalizeWarehouseCode($("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode());
     var allowedWarehouses = selectedUserWarehouseCodes();
+    var previousUser = id ? authState.users.find(function (item) { return item.id === id; }) : null;
+    if (previousUser && !canManageUserRecord(previousUser)) {
+      setStatus("userFormStatus", "Voce nao possui permissao para alterar este usuario.", "error");
+      return;
+    }
+    if (isSupervisor()) {
+      if (role !== "OPERADOR") {
+        setStatus("userFormStatus", "Supervisor so pode cadastrar ou editar operadores.", "error");
+        return;
+      }
+      defaultWarehouseCode = activeWarehouseCode();
+      allowedWarehouses = [activeWarehouseCode()];
+    }
     if (!isAdmin() && role === "ADMINISTRADOR") {
       setStatus("userFormStatus", "Somente administrador pode criar ou alterar perfil ADMINISTRADOR.", "error");
       return;
     }
     var isGlobal = isAdmin() && $("userGlobalAdminInput") && $("userGlobalAdminInput").checked;
     if (isGlobal || role === "ADMINISTRADOR") {
-      allowedWarehouses = warehouseState.warehouses.filter(function (warehouse) { return warehouse.active !== false; }).map(function (warehouse) { return warehouse.code; });
+      allowedWarehouses = activeWarehouseCodes();
       isGlobal = true;
     }
     if (allowedWarehouses.indexOf(defaultWarehouseCode) < 0) allowedWarehouses.push(defaultWarehouseCode);
@@ -2513,11 +2621,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("userFormStatus", "Preencha nome, usuario e perfil.", "error");
       return;
     }
+    if (!defaultWarehouseCode || !warehouseExistsAndActive(defaultWarehouseCode)) {
+      setStatus("userFormStatus", "Estoque vinculado invalido ou inativo.", "error");
+      return;
+    }
+    if (isSupervisor() && defaultWarehouseCode !== activeWarehouseCode()) {
+      setStatus("userFormStatus", "Voce so pode cadastrar usuarios no seu estoque.", "error");
+      return;
+    }
     if (!id && !password) {
       setStatus("userFormStatus", "Informe a senha inicial.", "error");
       return;
     }
-    var previousUser = id ? authState.users.find(function (item) { return item.id === id; }) : null;
     var previousWarehouseCode = previousUser ? normalizeWarehouseCode(previousUser.defaultWarehouseCode) : "";
     var actionButton = $("saveUserButton");
     if (!beginTransferAction("save-user:" + (id || username), actionButton, "Salvando...")) return;
@@ -2540,21 +2655,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!id) row.created_at = now;
     if (password) row.password_hash = await hashPassword(username, password);
     var response = await supabaseDb.from("wms_users").upsert(row, { onConflict: "id" });
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb.from("wms_users").upsert(stripOptionalUserWarehouseColumns(row), { onConflict: "id" });
-    }
     if (response.error) {
       setStatus("userFormStatus", "Erro ao salvar usuario: " + formatSupabaseError(response.error), "error");
       return;
     }
-    await loadUsers();
+    var confirmResponse = await supabaseDb.from("wms_users").select("*").eq("id", row.id).single();
+    if (confirmResponse.error) {
+      setStatus("userFormStatus", "Usuario salvo, mas nao foi possivel confirmar no Supabase: " + formatSupabaseError(confirmResponse.error), "warning");
+      return;
+    }
+    var savedUser = fromDbUser(confirmResponse.data);
+    if (normalizeWarehouseCode(savedUser.defaultWarehouseCode) !== defaultWarehouseCode) {
+      setStatus("userFormStatus", "Erro ao confirmar estoque salvo. Esperado " + defaultWarehouseCode + ", gravado " + savedUser.defaultWarehouseCode + ".", "error");
+      return;
+    }
+    await loadUsers({ repair: false });
     await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role + " - Estoque " + defaultWarehouseCode);
     if (previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode) {
       await recordAuthHistory("Estoque do usuario alterado", username, "", "De " + previousWarehouseCode + " para " + defaultWarehouseCode + " por " + authState.currentUser.username);
     }
     resetUserForm();
     renderUsers();
-    setStatus("userFormStatus", "Usuario salvo com sucesso.", "success");
+    setStatus("userFormStatus", previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode ? "Usuario atualizado com sucesso. Estoque alterado; a mudanca sera aplicada no proximo login do colaborador." : "Usuario atualizado com sucesso.", "success");
     } finally {
       endTransferAction(actionButton);
     }
@@ -2568,6 +2690,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("userUsernameInput").disabled = false;
     $("userPasswordInput").value = "";
     $("userRoleInput").value = "OPERADOR";
+    $("userRoleInput").disabled = isSupervisor();
     $("userActiveInput").checked = true;
     $("userAvailableInput").checked = true;
     if ($("userGlobalAdminInput")) $("userGlobalAdminInput").checked = false;
@@ -2578,21 +2701,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var defaultSelect = $("userDefaultWarehouseInput");
     var allowedBox = $("userAllowedWarehousesInput");
     if (!defaultSelect || !allowedBox) return;
-    var warehouses = warehouseState.warehouses.filter(function (warehouse) { return warehouse.active !== false; });
+    var warehouses = warehouseState.warehouses.filter(function (warehouse) {
+      if (warehouse.active === false) return false;
+      return isGlobalAdmin() || normalizeWarehouseCode(warehouse.code) === activeWarehouseCode();
+    });
     var allowed = user && user.isGlobalAdmin ? warehouses.map(function (warehouse) { return warehouse.code; }) : parseWarehouseCodes(user && user.allowedWarehouseCodes);
     if (!allowed.length) allowed = [normalizeWarehouseCode(user && user.defaultWarehouseCode || activeWarehouseCode())];
     var defaultCode = normalizeWarehouseCode(user && user.defaultWarehouseCode || allowed[0] || activeWarehouseCode());
+    if (isSupervisor()) {
+      defaultCode = activeWarehouseCode();
+      allowed = [activeWarehouseCode()];
+    }
     defaultSelect.innerHTML = warehouses.map(function (warehouse) {
       return "<option value=\"" + escapeHtml(warehouse.code) + "\">" + escapeHtml(warehouse.code + " - " + warehouse.name) + "</option>";
     }).join("");
     defaultSelect.value = defaultCode;
+    defaultSelect.disabled = isSupervisor();
     allowedBox.innerHTML = warehouses.map(function (warehouse) {
       var checked = allowed.indexOf(warehouse.code) >= 0 ? " checked" : "";
-      return "<label class=\"checkbox-label\"><input type=\"checkbox\" value=\"" + escapeHtml(warehouse.code) + "\"" + checked + "> " + escapeHtml(warehouse.code + " - " + warehouse.name) + "</label>";
+      var disabled = isSupervisor() ? " disabled" : "";
+      return "<label class=\"checkbox-label\"><input type=\"checkbox\" value=\"" + escapeHtml(warehouse.code) + "\"" + checked + disabled + "> " + escapeHtml(warehouse.code + " - " + warehouse.name) + "</label>";
     }).join("");
   }
 
   function selectedUserWarehouseCodes() {
+    if (isSupervisor()) return [activeWarehouseCode()];
     var allowedBox = $("userAllowedWarehousesInput");
     if (!allowedBox) return [activeWarehouseCode()];
     var selected = Array.from(allowedBox.querySelectorAll("input[type=\"checkbox\"]:checked")).map(function (input) {
@@ -2603,7 +2736,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderUsers() {
     if (!$("usersRows") || !isAdminOrSupervisor()) return;
-    $("usersRows").innerHTML = authState.users.length ? authState.users.map(userRowHtml).join("") : "<tr><td colspan=\"6\">Nenhum usuario cadastrado.</td></tr>";
+    var users = visibleUsersForManagement();
+    $("usersRows").innerHTML = users.length ? users.map(userRowHtml).join("") : "<tr><td colspan=\"7\">Nenhum usuario cadastrado neste estoque.</td></tr>";
     renderAccessRequests();
     renderWarehouses();
   }
@@ -2613,6 +2747,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<tr>",
       "<td><strong>" + escapeHtml(user.name) + "</strong><br><span class=\"muted\">" + escapeHtml(user.username) + "</span></td>",
       "<td><span class=\"role-badge\">" + escapeHtml(user.role) + "</span></td>",
+      "<td><strong>" + escapeHtml(user.defaultWarehouseCode || "-") + "</strong><br><span class=\"muted\">" + escapeHtml((allowedWarehouseCodesForUser(user) || []).join(", ")) + "</span></td>",
       "<td>" + formatDateTime(user.lastLoginAt) + "</td>",
       "<td><span class=\"status-badge " + (user.active ? "active" : "inactive") + "\">" + (user.active ? "Ativo" : "Inativo") + "</span></td>",
       "<td>" + (user.availableForTasks ? "Sim" : "Nao") + "</td>",
@@ -2685,6 +2820,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function editUser(id) {
     var user = authState.users.find(function (item) { return item.id === id; });
     if (!user) return;
+    if (!canManageUserRecord(user)) {
+      showToast("Voce nao possui permissao para editar este usuario.", "error");
+      return;
+    }
     $("userEditId").value = user.id;
     $("userFormTitle").textContent = "Editar usuário";
     $("userNameInput").value = user.name;
@@ -2692,6 +2831,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("userUsernameInput").disabled = true;
     $("userPasswordInput").value = "";
     $("userRoleInput").value = user.role;
+    $("userRoleInput").disabled = isSupervisor();
     $("userActiveInput").checked = user.active;
     $("userAvailableInput").checked = user.availableForTasks;
     if ($("userGlobalAdminInput")) $("userGlobalAdminInput").checked = user.isGlobalAdmin === true;
@@ -2702,6 +2842,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function resetUserPassword(id) {
     var user = authState.users.find(function (item) { return item.id === id; });
     if (!user) return;
+    if (!canManageUserRecord(user)) {
+      showToast("Voce nao possui permissao para redefinir este usuario.", "error");
+      return;
+    }
     var password = window.prompt("Nova senha para " + user.name + ":");
     if (!password) return;
     var response = await supabaseDb
@@ -2719,6 +2863,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function toggleUserActive(id) {
     var user = authState.users.find(function (item) { return item.id === id; });
     if (!user) return;
+    if (!canManageUserRecord(user)) {
+      showToast("Voce nao possui permissao para alterar este usuario.", "error");
+      return;
+    }
     if (user.id === authState.currentUser.id && user.active) {
       showToast("Voce nao pode desativar seu proprio usuario.", "error");
       return;
@@ -2766,9 +2914,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       last_login_at: null
     };
     var userResponse = await supabaseDb.from("wms_users").insert(userRow);
-    if (userResponse.error && isMissingColumnError(userResponse.error)) {
-      userResponse = await supabaseDb.from("wms_users").insert(stripOptionalUserWarehouseColumns(userRow));
-    }
     if (userResponse.error) {
       showToast("Erro ao aprovar: " + formatSupabaseError(userResponse.error), "error");
       return;
@@ -3531,7 +3676,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     setTextIfExists("metricConferencesPending", conferenceState.conferences.filter(function (conference) {
       return !isFinalConferenceStatus(conference.status);
     }).length);
-    setTextIfExists("metricUsersActive", authState.users.filter(function (user) {
+    setTextIfExists("metricUsersActive", visibleUsersForManagement().filter(function (user) {
       return user.active !== false;
     }).length);
     setTextIfExists("metricTasksActive", getActiveUserTasks().length);
@@ -3876,9 +4021,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderConferenceSelects() {
     if (!$("conferenceResponsibleInput")) return;
-    var users = authState.users.filter(function (user) {
-      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
-    });
+    var users = getTaskAssignableUsers();
     var options = "<option value=\"\">Selecionar responsável</option>" + users.map(function (user) {
       return "<option value=\"" + user.id + "\">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
     }).join("");
@@ -4582,7 +4725,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("conferenceUserSelect").innerHTML = transferConferenceOptionsHtml(selectedConferenceUser);
     }
     if ($("transferResponsibleFilter")) {
-      $("transferResponsibleFilter").innerHTML = "<option value=\"\">Todos</option>" + authState.users.map(function (user) {
+      $("transferResponsibleFilter").innerHTML = "<option value=\"\">Todos</option>" + getTaskAssignableUsers().map(function (user) {
         return "<option value=\"" + user.id + "\">" + escapeHtml(user.name) + "</option>";
       }).join("");
     }
@@ -4608,7 +4751,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getTaskAssignableUsers() {
     return authState.users.filter(function (user) {
-      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
+      return userCanReceiveTaskInActiveWarehouse(user);
     });
   }
 
@@ -5125,9 +5268,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function transferConferenceOptionsHtml(selectedUserId) {
-    var users = authState.users.filter(function (user) {
-      return user.active && user.availableForTasks && ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) >= 0;
-    });
+    var users = getTaskAssignableUsers();
     return "<option value=\"\">Selecionar conferente</option>" + users.map(function (user) {
       return "<option value=\"" + user.id + "\"" + (user.id === selectedUserId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
     }).join("");
@@ -7193,6 +7334,41 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isAdminOrSupervisor() {
     return authState.currentUser && ["ADMINISTRADOR", "SUPERVISOR"].indexOf(authState.currentUser.role) >= 0;
+  }
+
+  function isSupervisor() {
+    return authState.currentUser && authState.currentUser.role === "SUPERVISOR";
+  }
+
+  function userBelongsToWarehouse(user, code) {
+    code = normalizeWarehouseCode(code);
+    return normalizeWarehouseCode(user && user.defaultWarehouseCode) === code || allowedWarehouseCodesForUser(user).indexOf(code) >= 0;
+  }
+
+  function canManageUserRecord(user) {
+    if (!authState.currentUser || !user) return false;
+    if (isGlobalAdmin()) return true;
+    if (!isSupervisor()) return false;
+    if (user.role === "ADMINISTRADOR" || user.isGlobalAdmin) return false;
+    return userBelongsToWarehouse(user, activeWarehouseCode());
+  }
+
+  function visibleUsersForManagement() {
+    if (isGlobalAdmin()) return authState.users.slice();
+    if (isSupervisor()) {
+      return authState.users.filter(function (user) {
+        return user.role !== "ADMINISTRADOR" && !user.isGlobalAdmin && userBelongsToWarehouse(user, activeWarehouseCode());
+      });
+    }
+    return [];
+  }
+
+  function userCanReceiveTaskInActiveWarehouse(user) {
+    if (!user || !user.active || !user.availableForTasks) return false;
+    if (["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].indexOf(user.role) < 0) return false;
+    if (!userCanAccessWarehouse(user, activeWarehouseCode())) return false;
+    if (isSupervisor() && user.role === "ADMINISTRADOR") return false;
+    return true;
   }
 
   function getTransferById(id) {

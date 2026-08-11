@@ -61,7 +61,7 @@ where code = 'VDR'
   and not exists (select 1 from public.wms_warehouses where code = 'VDAR');
 
 delete from public.wms_warehouses
-where code = 'VDR';
+where code in ('VDR', 'DVR');
 
 alter table public.wms_bindings add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_bindings add column if not exists warehouse_code text default 'VDCG';
@@ -157,6 +157,7 @@ alter table public.wms_users add column if not exists username text not null def
 alter table public.wms_users add column if not exists matricula text default '';
 alter table public.wms_users add column if not exists password_hash text not null default '';
 alter table public.wms_users add column if not exists role text not null default 'OPERADOR';
+alter table public.wms_users add column if not exists profile text default 'OPERADOR';
 alter table public.wms_users add column if not exists active boolean not null default true;
 alter table public.wms_users add column if not exists available_for_tasks boolean not null default true;
 alter table public.wms_users add column if not exists last_login_at timestamptz;
@@ -180,13 +181,49 @@ where default_warehouse_code is null
    or role = 'ADMINISTRADOR';
 
 update public.wms_users
-set default_warehouse_id = case when default_warehouse_code = 'VDR' or default_warehouse_id = 'warehouse-vdr' then 'warehouse-vdar' else default_warehouse_id end,
-    default_warehouse_code = case when default_warehouse_code = 'VDR' then 'VDAR' else default_warehouse_code end,
-    allowed_warehouse_codes = replace(coalesce(allowed_warehouse_codes, 'VDCG'), 'VDR', 'VDAR'),
+set profile = coalesce(nullif(profile, ''), role, 'OPERADOR')
+where profile is null or profile = '';
+
+update public.wms_users
+set default_warehouse_id = case when default_warehouse_code in ('VDR', 'DVR') or default_warehouse_id in ('warehouse-vdr', 'warehouse-dvr') then 'warehouse-vdar' else default_warehouse_id end,
+    default_warehouse_code = case when default_warehouse_code in ('VDR', 'DVR') then 'VDAR' else default_warehouse_code end,
+    allowed_warehouse_codes = replace(replace(coalesce(allowed_warehouse_codes, 'VDCG'), 'VDR', 'VDAR'), 'DVR', 'VDAR'),
     updated_at = now()
-where default_warehouse_code = 'VDR'
-   or default_warehouse_id = 'warehouse-vdr'
-   or allowed_warehouse_codes like '%VDR%';
+where default_warehouse_code in ('VDR', 'DVR')
+   or default_warehouse_id in ('warehouse-vdr', 'warehouse-dvr')
+   or allowed_warehouse_codes like '%VDR%'
+   or allowed_warehouse_codes like '%DVR%';
+
+update public.wms_users
+set role = 'SUPERVISOR',
+    profile = 'SUPERVISOR',
+    default_warehouse_id = 'warehouse-vdar',
+    default_warehouse_code = 'VDAR',
+    allowed_warehouse_codes = 'VDAR',
+    is_global_admin = false,
+    updated_at = now()
+where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%gustavo%';
+
+update public.wms_users
+set role = 'SUPERVISOR',
+    profile = 'SUPERVISOR',
+    default_warehouse_id = 'warehouse-vdsi',
+    default_warehouse_code = 'VDSI',
+    allowed_warehouse_codes = 'VDSI',
+    is_global_admin = false,
+    updated_at = now()
+where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%henrique%';
+
+update public.wms_users
+set role = 'ADMINISTRADOR',
+    profile = 'ADMINISTRADOR',
+    default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
+    default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
+    allowed_warehouse_codes = 'VDCG,VDAR,VDSI',
+    is_global_admin = true,
+    updated_at = now()
+where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%wener%'
+   or lower(coalesce(username, '')) = 'admin';
 
 create unique index if not exists wms_users_username_idx
 on public.wms_users (username);
@@ -1044,8 +1081,8 @@ begin
           and table_name = tbl_name
           and column_name = 'warehouse_code'
       ) then
-        execute format('update public.%I set warehouse_code = $1 where warehouse_code = $2', tbl_name)
-        using 'VDAR', 'VDR';
+        execute format('update public.%I set warehouse_code = $1 where warehouse_code in ($2, $3)', tbl_name)
+        using 'VDAR', 'VDR', 'DVR';
       end if;
       if exists (
         select 1
@@ -1054,8 +1091,8 @@ begin
           and table_name = tbl_name
           and column_name = 'warehouse_id'
       ) then
-        execute format('update public.%I set warehouse_id = $1 where warehouse_id = $2', tbl_name)
-        using 'warehouse-vdar', 'warehouse-vdr';
+        execute format('update public.%I set warehouse_id = $1 where warehouse_id in ($2, $3)', tbl_name)
+        using 'warehouse-vdar', 'warehouse-vdr', 'warehouse-dvr';
       end if;
     end if;
   end loop;
