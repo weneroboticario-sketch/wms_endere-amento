@@ -1155,7 +1155,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         if (!isHistorySchemaError(historyError)) throw historyError;
         historySchemaAvailable = false;
         state.history = [];
-        historyMessage = " Historico indisponivel: coluna datetime ausente em wms_history. Execute supabase-schema.sql no Supabase.";
+        historyMessage = " Historico indisponivel: estrutura wms_history desatualizada. Execute supabase-schema.sql no Supabase.";
         statusType = "warning";
       }
 
@@ -11231,8 +11231,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isHistorySchemaError(error) {
     var message = formatSupabaseError(error).toLowerCase();
-    return message.indexOf("wms_history") >= 0 && (
+    return (message.indexOf("wms_history") >= 0 || message.indexOf("tabela wms_history") >= 0) && (
       message.indexOf("datetime") >= 0 ||
+      message.indexOf("warehouse_code") >= 0 ||
+      message.indexOf("warehouse_id") >= 0 ||
+      message.indexOf("estrutura multiestoque desatualizada") >= 0 ||
       message.indexOf("schema cache") >= 0 ||
       message.indexOf("does not exist") >= 0 ||
       message.indexOf("not found") >= 0 ||
