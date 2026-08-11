@@ -276,6 +276,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     accessRequestsTableAvailable: true,
     loginInProgress: false
   };
+  var moduleLoadState = {
+    warehouses: false,
+    users: false,
+    accessRequests: false,
+    core: false,
+    transfers: false,
+    conferences: false,
+    assistant: false
+  };
 
   document.addEventListener("DOMContentLoaded", async function () {
     await initLocalCache();
@@ -363,6 +372,92 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var scopedKey = cacheKey(moduleName);
     localStorage.setItem(LOCAL_SYNC_PREFIX + scopedKey, nowIso());
     return cacheSet(scopedKey, value);
+  }
+
+  function resetLazyModuleState(keepUsers) {
+    moduleLoadState.accessRequests = false;
+    moduleLoadState.core = false;
+    moduleLoadState.transfers = false;
+    moduleLoadState.conferences = false;
+    moduleLoadState.assistant = false;
+    if (!keepUsers) {
+      moduleLoadState.users = false;
+      moduleLoadState.warehouses = false;
+    }
+  }
+
+  function setAuthenticatedShellActive(active) {
+    var appShell = document.querySelector(".app-shell");
+    var loginShell = $("loginShell");
+    if (appShell) {
+      appShell.inert = !active;
+      appShell.setAttribute("aria-hidden", active ? "false" : "true");
+    }
+    if (loginShell) {
+      loginShell.inert = active;
+      loginShell.setAttribute("aria-hidden", active ? "true" : "false");
+    }
+  }
+
+  async function ensureWarehousesLoaded() {
+    if (moduleLoadState.warehouses) return true;
+    var loaded = await ensureWarehouses();
+    moduleLoadState.warehouses = loaded !== false;
+    return moduleLoadState.warehouses;
+  }
+
+  async function ensureUsersLoaded(options) {
+    if (moduleLoadState.users && authState.users.length && (!options || options.repair === false)) return true;
+    var loaded = await loadUsers(options);
+    moduleLoadState.users = loaded === true;
+    return loaded;
+  }
+
+  async function ensureAccessRequestsLoaded() {
+    if (moduleLoadState.accessRequests) return true;
+    if (!isAdminOrSupervisor()) return false;
+    var loaded = await loadAccessRequests();
+    moduleLoadState.accessRequests = loaded === true;
+    return loaded;
+  }
+
+  async function ensureCoreDataLoaded() {
+    if (moduleLoadState.core) return true;
+    await loadData();
+    moduleLoadState.core = true;
+    return true;
+  }
+
+  async function ensureTransferDataLoaded() {
+    if (moduleLoadState.transfers) return true;
+    if (!canAccessScreen("transferencias")) return false;
+    var loaded = await loadTransferData();
+    moduleLoadState.transfers = loaded === true;
+    return loaded;
+  }
+
+  async function ensureConferenceDataLoaded() {
+    if (moduleLoadState.conferences) return true;
+    if (!canAccessScreen("conferencias")) return false;
+    var loaded = await loadConferenceData();
+    moduleLoadState.conferences = loaded === true;
+    return loaded;
+  }
+
+  async function ensureScreenDataLoaded(screenId) {
+    if (!authState.currentUser) return false;
+    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "exportar", "importar", "historico", "manutencao", "assistente"].indexOf(screenId) >= 0) {
+      await ensureCoreDataLoaded();
+    }
+    if (screenId === "transferencias") await ensureTransferDataLoaded();
+    if (screenId === "conferencias") await ensureConferenceDataLoaded();
+    if (screenId === "usuarios") {
+      await ensureUsersLoaded({ repair: false });
+      await ensureAccessRequestsLoaded();
+    }
+    if (screenId === "estoques") await ensureWarehousesLoaded();
+    if (screenId === "assistente") moduleLoadState.assistant = true;
+    return true;
   }
 
   function registerServiceWorker() {
@@ -957,6 +1052,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       renderActiveWarehouseUi();
       await cacheSet("warehouses:global", warehouseState.warehouses);
+      moduleLoadState.warehouses = true;
       return true;
     } catch (error) {
       warehouseState.tableAvailable = !isMissingWarehouseTableError(error);
@@ -1036,6 +1132,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
       setSyncStatus("Sincronizado", "success");
+      moduleLoadState.core = true;
       updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + historyMessage + productsMessage, statusType);
     } catch (error) {
       recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
@@ -1179,6 +1276,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       setSyncStatus("Sincronizado", "success");
+      moduleLoadState.transfers = true;
       return true;
     } catch (error) {
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
@@ -1236,6 +1334,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       recordPerformanceMetric("lastConferenceLoadMs", loadStartedAt);
       setSyncStatus("Sincronizado", "success");
+      moduleLoadState.conferences = true;
       return true;
     } catch (error) {
       recordPerformanceMetric("lastConferenceLoadMs", loadStartedAt);
@@ -2012,20 +2111,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function initAuth() {
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
+    setAuthenticatedShellActive(false);
     if (!isSupabaseReady()) {
       showLogin("Supabase nao conectado. Configure as variaveis antes de entrar.", "error");
       return;
     }
-    await ensureWarehouses();
-    var loaded = await loadUsers();
+    var savedSession = readStoredSession();
+    if (!savedSession) {
+      showLogin("", "");
+      return;
+    }
+    await ensureWarehousesLoaded();
+    var loaded = await ensureUsersLoaded({ repair: false });
     if (!loaded) {
+      localStorage.removeItem(AUTH_SESSION_KEY);
       showLogin("Tabelas de usuarios ausentes. Execute supabase-schema.sql no SQL Editor do Supabase.", "error");
       return;
     }
-    await ensureInitialAdmin();
-    await loadUsers();
-    await loadAccessRequests();
-    var savedSession = readStoredSession();
     if (savedSession) {
       var user = authState.users.find(function (item) {
         return item.id === savedSession.userId && item.active;
@@ -2058,6 +2160,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     authState.usersTableAvailable = true;
     authState.users = (response.data || []).map(fromDbUser);
+    moduleLoadState.users = true;
     if (authState.currentUser) {
       var refreshedCurrentUser = authState.users.find(function (user) { return user.id === authState.currentUser.id; });
       if (refreshedCurrentUser) {
@@ -2166,6 +2269,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     authState.accessRequestsTableAvailable = true;
     authState.accessRequests = (response.data || []).map(fromDbAccessRequest);
+    moduleLoadState.accessRequests = true;
     return true;
   }
 
@@ -2213,20 +2317,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("loginStatus", "Informe usuario e senha.", "error");
       return;
     }
-    var loaded = await loadUsers();
+    await ensureWarehousesLoaded();
+    var loaded = await ensureUsersLoaded();
     if (!loaded) {
       setStatus("loginStatus", "Tabela wms_users ausente. Execute supabase-schema.sql no SQL Editor do Supabase e atualize a pagina.", "error");
       return;
     }
     if (!authState.users.length) {
       await ensureInitialAdmin();
-      await loadUsers();
+      moduleLoadState.users = false;
+      await ensureUsersLoaded({ repair: false });
     }
-    await loadAccessRequests();
     var user = authState.users.find(function (item) {
       return String(item.username).toLowerCase() === login || String(item.matricula).toLowerCase() === login;
     });
     if (!user) {
+      await loadAccessRequests();
       var pendingRequest = authState.accessRequests.find(function (item) {
         return item.status === "PENDENTE" && String(item.username).toLowerCase() === login;
       });
@@ -2270,18 +2376,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function enterAuthenticatedApp(showWelcome) {
     document.body.classList.remove("auth-locked");
     document.body.classList.add("auth-unlocked");
+    setAuthenticatedShellActive(true);
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
-    if (isAdminOrSupervisor()) await loadAccessRequests();
-    await loadData();
-    await loadTransferData();
-    await loadConferenceData();
+    await ensureCoreDataLoaded();
     await applyDataMigrations();
     startTaskPolling();
-    renderAll();
-    renderUsers();
-    showScreen(defaultScreenForUser());
+    await showScreen(defaultScreenForUser());
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
   }
 
@@ -2291,6 +2393,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     applyRoleClass();
     stopTaskPolling();
     stopLeaderLiveSync();
+    resetLazyModuleState(false);
+    setAuthenticatedShellActive(false);
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
     showLoginForm(false);
@@ -2398,6 +2502,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     state = { bindings: [], history: [], products: {} };
     transferState.transfers = [];
     transferState.items = [];
+    transferState.events = [];
+    conferenceState.conferences = [];
+    conferenceState.items = [];
+    conferenceState.events = [];
+    resetLazyModuleState(false);
     taskAlertState.initialized = false;
     taskAlertState.signature = "";
     applyRoleClass();
@@ -2462,13 +2571,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     if (code === activeWarehouseCode()) return;
+    stopLeaderLiveSync();
     setActiveWarehouse(code);
-    await loadData();
-    await loadTransferData();
-    await loadConferenceData();
-    renderAll();
-    renderUsers();
-    showScreen(defaultScreenForUser());
+    resetLazyModuleState(true);
+    await ensureCoreDataLoaded();
+    await showScreen(defaultScreenForUser());
     showToast("Estoque ativo: " + code + ".", "success");
   }
 
@@ -3151,7 +3258,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
   }
 
-  function showScreen(screenId) {
+  async function showScreen(screenId) {
     if (!authState.currentUser) {
       showLogin("Entre para acessar o sistema.", "warning");
       return;
@@ -3160,6 +3267,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Acesso não autorizado.", "error");
       screenId = defaultScreenForUser();
     }
+    await ensureScreenDataLoaded(screenId);
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") {
       activateTransferTab("myTransfersSection");
     }
@@ -3999,10 +4107,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!isSupabaseReady() || !authState.currentUser) return;
     taskPollTimer = window.setInterval(async function () {
       try {
-        await loadTransferData();
-        await loadConferenceData();
-        renderTransfers();
-        renderConferences();
+        if (moduleLoadState.transfers) {
+          await loadTransferData();
+          renderTransfers();
+        }
+        if (moduleLoadState.conferences) {
+          await loadConferenceData();
+          renderConferences();
+        }
         renderOperatorTasksAlert();
       } catch (error) {
         if (authState.currentUser && authState.currentUser.role === "OPERADOR") showToast("Não foi possível carregar suas tarefas. Tente novamente.", "error");
