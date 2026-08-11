@@ -2740,6 +2740,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("userFormStatus", "Preencha nome, usuario e perfil.", "error");
       return;
     }
+    var duplicateUser = authState.users.find(function (item) {
+      return String(item.username || "").toLowerCase() === username && item.id !== id;
+    });
+    if (duplicateUser) {
+      setStatus("userFormStatus", "Matricula/usuario ja cadastrado para " + duplicateUser.name + ". Clique em Editar nesse usuario para alterar o cadastro.", "error");
+      return;
+    }
     if (!defaultWarehouseCode || !warehouseExistsAndActive(defaultWarehouseCode)) {
       setStatus("userFormStatus", "Estoque vinculado invalido ou inativo.", "error");
       return;
@@ -10903,7 +10910,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (lower.indexOf("row-level security") >= 0 || lower.indexOf("42501") >= 0) {
       return message + ". Execute o arquivo supabase-schema.sql no SQL Editor do Supabase para criar as policies de leitura e gravacao.";
     }
-    if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("wms_bindings_warehouse_sku_location_idx") >= 0 || lower.indexOf("duplicate key value") >= 0) {
+    if (lower.indexOf("wms_users_username_key") >= 0) {
+      return message + ". Esta matricula/usuario ja existe. Use o botao Editar do cadastro existente ou informe outra matricula.";
+    }
+    if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("wms_bindings_warehouse_sku_location_idx") >= 0 || (lower.indexOf("duplicate key value") >= 0 && lower.indexOf("wms_bindings") >= 0)) {
       return message + ". O mesmo SKU ja existe nesse endereco dentro do estoque atual; o app atualiza esse vinculo usando estoque + sku + endereco como chave.";
     }
     return message;
