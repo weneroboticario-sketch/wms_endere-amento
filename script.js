@@ -1007,6 +1007,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return allRows;
     } catch (error) {
       if (!isMissingWarehouseColumnError(error)) throw error;
+      if (isOptionalRealtimeTable(tableName)) {
+        recordPerformanceError("warehouse-optional-" + tableName, error);
+        return [];
+      }
       assertWarehouseFallbackAllowed(tableName, error);
       return (await fetchAllRows(tableName, orderColumn, ascending)).filter(rowMatchesActiveWarehouse);
     }
@@ -1043,7 +1047,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         from += pageSize;
       }
     } catch (error) {
-      if (!isMissingWarehouseColumnError(error)) throw error;
+      if (!isMissingWarehouseColumnError(error)) {
+        if (isMissingTransferTableError(error) || isMissingColumnError(error)) {
+          recordPerformanceError("transfer-events-optional", error);
+          return [];
+        }
+        throw error;
+      }
+      recordPerformanceError("transfer-events-warehouse", error);
+      if (isMultiWarehouseMode()) return [];
       assertWarehouseFallbackAllowed("wms_transfer_events", error);
       return (await fetchAllRows("wms_transfer_events", "created_at", false)).filter(function (row) {
         return rowMatchesActiveWarehouse(row) && uiEventTypes.indexOf(row.event_type) >= 0;
@@ -1053,15 +1065,51 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
-    var query = supabaseDb
-      .from(tableName)
-      .select("*")
-      .eq("warehouse_code", activeWarehouseCode());
-    if (sinceIso) query = query.gt(timeColumn, sinceIso);
-    query = query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
-    var response = await query;
-    if (response.error) throw response.error;
-    return response.data || [];
+    try {
+      var query = supabaseDb
+        .from(tableName)
+        .select("*")
+        .eq("warehouse_code", activeWarehouseCode());
+      if (sinceIso) query = query.gt(timeColumn, sinceIso);
+      query = query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
+      var response = await query;
+      if (response.error) throw response.error;
+      return response.data || [];
+    } catch (error) {
+      if (isMissingWarehouseColumnError(error)) {
+        if (isOptionalRealtimeTable(tableName)) {
+          recordPerformanceError("live-optional-" + tableName, error);
+          return [];
+        }
+        assertWarehouseFallbackAllowed(tableName, error);
+        var fallbackQuery = supabaseDb.from(tableName).select("*");
+        if (sinceIso) fallbackQuery = fallbackQuery.gt(timeColumn, sinceIso);
+        fallbackQuery = fallbackQuery.order(orderColumn || timeColumn, { ascending: true }).limit(500);
+        var fallbackResponse = await fallbackQuery;
+        if (fallbackResponse.error) {
+          if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(fallbackResponse.error) || isMissingColumnError(fallbackResponse.error))) {
+            recordPerformanceError("live-optional-" + tableName, fallbackResponse.error);
+            return [];
+          }
+          throw fallbackResponse.error;
+        }
+        return (fallbackResponse.data || []).filter(rowMatchesActiveWarehouse);
+      }
+      if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
+        recordPerformanceError("live-optional-" + tableName, error);
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  function isOptionalRealtimeTable(tableName) {
+    return [
+      "wms_transfer_events",
+      "wms_transfer_divergences",
+      "wms_task_notifications",
+      "wms_notifications"
+    ].indexOf(tableName) >= 0;
   }
 
   async function ensureWarehouses() {
@@ -4323,12 +4371,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (typeof supabaseDb.channel === "function") {
         realtimeState.channel = supabaseDb
           .channel("wms-live-" + realtimeState.warehouseCode)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "INSERT", schema: "public", table: "wms_transfer_events", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_divergences", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_task_notifications", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_notifications", filter: "warehouse_code=eq." + realtimeState.warehouseCode }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers" }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items" }, handleTransferRealtimeDelta)
           .subscribe(function (status) {
             realtimeState.subscriptionStatus = status;
             if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
@@ -11377,6 +11421,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_history") >= 0 ||
       message.indexOf("wms_users") >= 0 ||
       message.indexOf("wms_sessions") >= 0 ||
+      message.indexOf("wms_task_notifications") >= 0 ||
+      message.indexOf("wms_notifications") >= 0 ||
       message.indexOf("wms_conferences") >= 0 ||
       message.indexOf("wms_conference_items") >= 0 ||
       message.indexOf("wms_conference_events") >= 0 ||
