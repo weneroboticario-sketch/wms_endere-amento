@@ -265,6 +265,9 @@ on public.wms_users (active);
 create index if not exists wms_users_default_warehouse_idx
 on public.wms_users (default_warehouse_code);
 
+create index if not exists idx_users_warehouse_active
+on public.wms_users (default_warehouse_code, active);
+
 create table if not exists public.wms_access_requests (
   id text primary key,
   created_at timestamptz not null default now(),
@@ -875,6 +878,12 @@ on public.wms_stock_positions (warehouse_code, source_type, codigo_material);
 create index if not exists wms_stock_positions_batch_idx
 on public.wms_stock_positions (batch_id);
 
+create index if not exists idx_stock_positions_replenishment
+on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, active);
+
+create index if not exists idx_stock_positions_codigo_active
+on public.wms_stock_positions (warehouse_code, codigo_material, active);
+
 alter table public.wms_stock_import_batches enable row level security;
 alter table public.wms_stock_positions enable row level security;
 
@@ -1478,6 +1487,9 @@ on public.wms_replenishment_requests (warehouse_code, solicitado_por_id, status)
 
 create index if not exists wms_replenishment_sku_idx
 on public.wms_replenishment_requests (warehouse_code, codigo_material);
+
+create index if not exists idx_replenishment_open_sku
+on public.wms_replenishment_requests (warehouse_code, codigo_material, status);
 
 alter table public.wms_replenishment_requests enable row level security;
 

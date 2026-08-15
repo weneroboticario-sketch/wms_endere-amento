@@ -3820,6 +3820,78 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.replenishment-suggestions-panel {
+  margin-bottom: 14px;
+}
+
+.replenishment-suggestion-filters {
+  margin: 8px 0 12px;
+}
+
+.replenishment-suggestions-list {
+  display: grid;
+  gap: 10px;
+}
+
+.replenishment-suggestion-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 0;
+}
+
+.replenishment-suggestion-card.tone-danger {
+  border-left-color: #d92d20;
+  background: #fff7f7;
+}
+
+.replenishment-suggestion-card.tone-warning {
+  border-left-color: #c47b00;
+  background: #fffaf0;
+}
+
+.replenishment-suggestion-card.tone-info {
+  border-left-color: var(--accent);
+  background: #f5fbff;
+}
+
+.replenishment-suggestion-main,
+.replenishment-suggestion-locations,
+.replenishment-suggestion-modal-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.replenishment-suggestion-main span,
+.replenishment-suggestion-locations small,
+.replenishment-suggestion-modal-summary span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.replenishment-suggestion-main strong,
+.replenishment-suggestion-locations b,
+.replenishment-suggestion-modal-summary strong {
+  display: block;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.replenishment-suggestion-main p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .replenishment-card {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(300px, 0.92fr);
@@ -4065,7 +4137,10 @@ tbody tr:hover td {
   .replenishment-layout,
   .stock-base-layout,
   .replenishment-card,
-  .replenishment-card-main {
+  .replenishment-card-main,
+  .replenishment-suggestion-main,
+  .replenishment-suggestion-locations,
+  .replenishment-suggestion-modal-summary {
     grid-template-columns: 1fr;
   }
 
@@ -4097,6 +4172,15 @@ tbody tr:hover td {
     width: 100%;
     min-width: 0;
     padding-inline: 8px;
+  }
+
+  .replenishment-suggestion-card {
+    padding: 10px;
+  }
+
+  .replenishment-suggestion-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

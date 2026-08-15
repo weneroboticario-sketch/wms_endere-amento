@@ -66,6 +66,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "SEPARADO", "ENTREGUE_NA_LOJA", "CONCLUIDO", "ATENDIDO_PARCIAL", "SEM_ESTOQUE", "CANCELADO"];
   var FINAL_REPLENISHMENT_STATUSES = ["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE", "CANCELADO"];
   var REPLENISHMENT_RENDER_PAGE_SIZE = 30;
+  var REPLENISHMENT_SUGGESTION_PAGE_SIZE = 50;
+  var OPEN_REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"];
   var STORE_REFERENCE_ROWS = [
     { cnpj: "00.138.798/0001-32", loja: "14A1", cod: "5508", canal: "VAREJO", codVf: "743" },
     { cnpj: "00.138.798/0014-57", loja: "14D2", cod: "20004", canal: "VAREJO", codVf: "744" },
@@ -245,6 +247,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     requests: [],
     activeFilter: "",
     renderLimit: REPLENISHMENT_RENDER_PAGE_SIZE,
+    suggestions: [],
+    suggestionFilter: "",
+    suggestionOffset: 0,
+    suggestionsLoaded: false,
+    suggestionsLoading: false,
+    suggestionsHasMore: false,
+    activeSuggestion: null,
     saving: false,
     lastCreatedSignature: "",
     lastCreatedAt: 0,
@@ -755,6 +764,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       authState.currentSession.activeWarehouseCode = code;
       authState.currentSession.activeWarehouseId = warehouseState.activeId;
       localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authState.currentSession));
+    }
+    if (replenishmentState) {
+      replenishmentState.suggestions = [];
+      replenishmentState.suggestionOffset = 0;
+      replenishmentState.suggestionsLoaded = false;
+      replenishmentState.suggestionsHasMore = false;
+      replenishmentState.activeSuggestion = null;
     }
     renderActiveWarehouseUi();
   }
@@ -2572,6 +2588,197 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
   }
 
+  function stockPositionSelectColumns() {
+    return "id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at";
+  }
+
+  async function fetchReplenishmentStoreCandidates(filter, offset, limit) {
+    var query = supabaseDb
+      .from("wms_stock_positions")
+      .select(stockPositionSelectColumns())
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("source_type", "LOJA")
+      .eq("active", true)
+      .eq("is_sellable", true)
+      .order("total_disponivel", { ascending: true })
+      .order("codigo_material", { ascending: true });
+    if (filter === "LOJA_NEGATIVA" || filter === "SEM_SALDO_CAPTACAO") {
+      query = query.lt("total_disponivel", 0);
+    } else if (filter === "LOJA_ZERADA") {
+      query = query.eq("total_disponivel", 0);
+    } else {
+      query = query.lte("total_disponivel", 0);
+    }
+    var response = await query.range(offset, offset + limit - 1);
+    if (response.error) throw response.error;
+    return (response.data || []).map(fromDbStockPosition);
+  }
+
+  async function fetchReplenishmentNoLocationCandidates(offset, limit) {
+    var response = await supabaseDb
+      .from("wms_stock_positions")
+      .select(stockPositionSelectColumns())
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("source_type", "CAPTACAO")
+      .eq("active", true)
+      .eq("is_sellable", true)
+      .gt("total_disponivel", 0)
+      .order("codigo_material", { ascending: true })
+      .range(offset, offset + limit - 1);
+    if (response.error) throw response.error;
+    return (response.data || []).map(fromDbStockPosition).filter(function (position) {
+      return !stockPositionLocation(position);
+    });
+  }
+
+  async function fetchActiveStockPositionsForSkus(skus) {
+    var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
+    if (!cleanSkus.length) return [];
+    var response = await supabaseDb
+      .from("wms_stock_positions")
+      .select(stockPositionSelectColumns())
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("active", true)
+      .in("codigo_material", cleanSkus)
+      .limit(Math.max(300, cleanSkus.length * 8));
+    if (response.error) throw response.error;
+    return (response.data || []).map(fromDbStockPosition);
+  }
+
+  async function getOpenRequestsBySkus(skus) {
+    var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
+    if (!cleanSkus.length || !isSupabaseReady()) return {};
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,responsavel_nome,created_at,is_deleted")
+      .eq("warehouse_code", activeWarehouseCode())
+      .in("codigo_material", cleanSkus)
+      .in("status", OPEN_REPLENISHMENT_STATUSES)
+      .neq("is_deleted", true)
+      .order("created_at", { ascending: false })
+      .limit(Math.max(100, cleanSkus.length * 3));
+    if (response.error) throw response.error;
+    return (response.data || []).reduce(function (acc, row) {
+      var sku = normalizeSku(row.codigo_material || "");
+      if (sku && !acc[sku]) acc[sku] = row;
+      return acc;
+    }, {});
+  }
+
+  async function getOpenRequestBySku(sku) {
+    var map = await getOpenRequestsBySkus([sku]);
+    return map[normalizeSku(sku)] || null;
+  }
+
+  function groupStockPositionsBySku(positions) {
+    return (positions || []).reduce(function (acc, position) {
+      var sku = position.codigoMaterial || "";
+      if (!sku) return acc;
+      if (!acc[sku]) acc[sku] = [];
+      acc[sku].push(position);
+      return acc;
+    }, {});
+  }
+
+  function classifyReplenishmentSuggestion(suggestion) {
+    var loja = Number(suggestion.storeAvailable || 0);
+    var captacao = Number(suggestion.captureAvailable || 0);
+    if (loja < 0 && captacao > 0) {
+      return {
+        type: "LOJA_NEGATIVA_CAPTACAO_POSITIVA",
+        priority: 1,
+        qty: Math.min(Math.abs(loja), captacao),
+        message: "Produto negativo em loja com saldo disponivel na captacao."
+      };
+    }
+    if (loja === 0 && captacao > 0) {
+      return {
+        type: "LOJA_ZERADA_CAPTACAO_POSITIVA",
+        priority: 2,
+        qty: Math.min(1, captacao),
+        message: "Produto zerado em loja com saldo disponivel na captacao."
+      };
+    }
+    if (loja < 0 && captacao <= 0) {
+      return {
+        type: "LOJA_NEGATIVA_SEM_CAPTACAO",
+        priority: 3,
+        qty: 0,
+        message: "Produto negativo em loja sem saldo disponivel na captacao."
+      };
+    }
+    if (captacao > 0 && !suggestion.captureLocation) {
+      return {
+        type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
+        priority: 4,
+        qty: 0,
+        message: "Captacao positiva sem localizacao cadastrada."
+      };
+    }
+    return null;
+  }
+
+  function replenishmentSuggestionMatchesFilter(suggestion, filter) {
+    if (!filter) return true;
+    if (filter === "LOJA_NEGATIVA") return Number(suggestion.storeAvailable || 0) < 0;
+    if (filter === "LOJA_ZERADA") return Number(suggestion.storeAvailable || 0) === 0;
+    if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
+    if (filter === "SEM_SALDO_CAPTACAO") return Number(suggestion.storeAvailable || 0) < 0 && Number(suggestion.captureAvailable || 0) <= 0;
+    if (filter === "SEM_LOCALIZACAO") return !suggestion.captureLocation || !suggestion.officialLocation;
+    if (filter === "COM_PEDIDO_ABERTO") return suggestion.hasOpenRequest;
+    if (filter === "SEM_PEDIDO_ABERTO") return !suggestion.hasOpenRequest;
+    return true;
+  }
+
+  async function getReplenishmentSuggestions(options) {
+    options = options || {};
+    if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
+    var filter = options.filter || "";
+    var offset = Math.max(0, Number(options.offset || 0));
+    var limit = Math.min(REPLENISHMENT_SUGGESTION_PAGE_SIZE, Math.max(1, Number(options.limit || REPLENISHMENT_SUGGESTION_PAGE_SIZE)));
+    var candidateLimit = limit * 4;
+    var candidates = [];
+    if (filter === "SEM_LOCALIZACAO") {
+      candidates = await fetchReplenishmentNoLocationCandidates(offset, candidateLimit);
+    } else {
+      candidates = await fetchReplenishmentStoreCandidates(filter, offset, candidateLimit);
+      if (!filter) {
+        var noLocation = await fetchReplenishmentNoLocationCandidates(offset, Math.max(25, limit));
+        candidates = candidates.concat(noLocation);
+      }
+    }
+    var skus = unique(candidates.map(function (position) { return position.codigoMaterial; }).filter(Boolean));
+    var positions = await fetchActiveStockPositionsForSkus(skus);
+    var grouped = groupStockPositionsBySku(positions);
+    var openRequests = await getOpenRequestsBySkus(skus);
+    var suggestions = Object.keys(grouped).map(function (sku) {
+      var suggestion = buildStockSuggestion(sku, 0, grouped[sku]);
+      var classification = classifyReplenishmentSuggestion(suggestion);
+      if (!classification || !suggestion.sellable) return null;
+      var openRequest = openRequests[sku] || null;
+      return Object.assign({}, suggestion, {
+        suggestionType: classification.type,
+        suggestionPriority: classification.priority,
+        suggestedReplenishmentQty: classification.qty,
+        alertMessage: classification.message,
+        hasOpenRequest: Boolean(openRequest),
+        openRequestId: openRequest ? openRequest.id : "",
+        openRequestStatus: openRequest ? openRequest.status : "",
+        openRequestResponsible: openRequest ? openRequest.responsavel_nome || "" : ""
+      });
+    }).filter(function (suggestion) {
+      return suggestion && replenishmentSuggestionMatchesFilter(suggestion, filter);
+    }).sort(function (a, b) {
+      if (a.suggestionPriority !== b.suggestionPriority) return a.suggestionPriority - b.suggestionPriority;
+      return String(a.sku).localeCompare(String(b.sku));
+    }).slice(0, limit);
+    return {
+      rows: suggestions,
+      nextOffset: offset + candidateLimit,
+      hasMore: candidates.length >= candidateLimit
+    };
+  }
+
   function stockAlertExportRow(alert) {
     return {
       SKU: alert.sku || "",
@@ -2695,6 +2902,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       exportCurrentStock: exportCurrentStock,
       exportStockAlerts: exportStockAlerts,
       exportStockTemplate: exportStockTemplate,
+      getReplenishmentSuggestions: getReplenishmentSuggestions,
       getTransferStockSuggestion: getStockSuggestion,
       getReplenishmentStockSuggestion: getStockSuggestion
     };
@@ -2707,7 +2915,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     try {
       var response = await supabaseDb
         .from("wms_replenishment_requests")
-        .select("*")
+        .select(replenishmentRequestSelectColumns())
         .eq("warehouse_code", activeWarehouseCode())
         .neq("is_deleted", true)
         .order("updated_at", { ascending: false })
@@ -2733,6 +2941,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await loadReplenishmentData();
     renderReplenishment();
     renderOperatorTasksAlert();
+  }
+
+  function replenishmentRequestSelectColumns() {
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,status,prioridade,observacao,motivo_cancelamento,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -2824,6 +3036,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createReplenishmentRequest: createReplenishmentRequest,
       getReplenishmentRequests: getVisibleReplenishmentRequests,
       getMyReplenishmentRequests: getMyReplenishmentRequests,
+      getAssignableUsersByWarehouse: getAssignableUsersByWarehouse,
+      getOpenRequestBySku: getOpenRequestBySku,
       assignReplenishmentRequest: assignReplenishmentRequest,
       startReplenishmentRequest: startReplenishmentRequest,
       updateReplenishmentQuantity: updateReplenishmentQuantity,
@@ -2848,6 +3062,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
       if (!window.confirm("Ja existe um pedido recente para este produto. Deseja criar outro mesmo assim?")) return null;
     }
+    var openRequest = await getOpenRequestBySku(sku);
+    if (openRequest && !data.forceDuplicate && !window.confirm("Ja existe um pedido aberto para este produto. Deseja abrir outro mesmo assim?")) return null;
+    var responsible = data.responsibleId ? getAssignableUsersByWarehouse(activeWarehouseCode()).find(function (user) {
+      return user.id === data.responsibleId;
+    }) : null;
+    if (data.responsibleId && !responsible) throw new Error("Responsavel invalido: este usuario pertence a outro estoque.");
     var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
     try {
       var stockSuggestion = await getStockSuggestion(sku, requestedQty);
@@ -2881,13 +3101,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       captacaoColuna: productInfo.captureColumn || "",
       solicitadoPorId: authState.currentUser.id,
       solicitadoPorNome: authState.currentUser.name || authState.currentUser.username || "",
-      responsavelId: "",
-      responsavelNome: "",
-      status: "PENDENTE",
+      responsavelId: responsible ? responsible.id : "",
+      responsavelNome: responsible ? (responsible.name || responsible.username) : "",
+      status: responsible ? "ATRIBUIDO" : "PENDENTE",
       prioridade: "NORMAL",
       observacao: normalizeText(data.observation)
     };
-    var response = await supabaseDb.from("wms_replenishment_requests").insert(toDbReplenishmentRequest(request)).select("*").single();
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .insert(toDbReplenishmentRequest(request))
+      .select(replenishmentRequestSelectColumns())
+      .single();
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
     upsertById(replenishmentState.requests, saved);
@@ -2962,7 +3186,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       .update(toDbReplenishmentRequest(updated))
       .eq("id", id)
       .eq("warehouse_code", activeWarehouseCode())
-      .select("*")
+      .select(replenishmentRequestSelectColumns())
       .single();
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
@@ -2971,8 +3195,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function assignReplenishmentRequest(id, userId) {
+    var request = getReplenishmentById(id);
+    if (!request) throw new Error("Pedido de reposicao nao encontrado.");
     var user = authState.users.find(function (entry) { return entry.id === userId; });
-    if (!user || !userCanReceiveTaskInActiveWarehouse(user)) throw new Error("Responsavel invalido: usuario pertence a outro estoque.");
+    if (!user || !userCanReceiveReplenishmentInWarehouse(user, request.warehouseCode)) throw new Error("Responsavel invalido: este usuario pertence a outro estoque.");
     return updateReplenishmentRow(id, {
       responsavelId: user.id,
       responsavelNome: user.name || user.username,
@@ -4598,7 +4824,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
-    if (screenId === "reposicao" && $("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
+    if (screenId === "reposicao" && $("replenishmentSkuInput")) {
+      $("replenishmentSkuInput").focus();
+      if (!replenishmentState.suggestionsLoaded) refreshReplenishmentSuggestions(true);
+    }
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
     if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
     if (screenId === "reposicao" && !realtimeState.active) startLeaderLiveSync();
@@ -4747,6 +4976,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("replenishmentList").addEventListener("click", handleReplenishmentActionClick);
       $("replenishmentList").addEventListener("change", handleReplenishmentActionChange);
     }
+    if ($("replenishmentSuggestionsList")) $("replenishmentSuggestionsList").addEventListener("click", handleReplenishmentSuggestionClick);
     document.querySelectorAll("[data-replenishment-filter]").forEach(function (button) {
       button.addEventListener("click", function () {
         replenishmentState.activeFilter = button.dataset.replenishmentFilter || "";
@@ -4757,9 +4987,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         renderReplenishment();
       });
     });
+    document.querySelectorAll("[data-replenishment-suggestion-filter]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        replenishmentState.suggestionFilter = button.dataset.replenishmentSuggestionFilter || "";
+        document.querySelectorAll("[data-replenishment-suggestion-filter]").forEach(function (entry) {
+          entry.classList.toggle("active", entry === button);
+        });
+        refreshReplenishmentSuggestions(true);
+      });
+    });
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").addEventListener("click", function () {
       replenishmentState.renderLimit += REPLENISHMENT_RENDER_PAGE_SIZE;
       renderReplenishment();
+    });
+    if ($("refreshReplenishmentSuggestionsButton")) $("refreshReplenishmentSuggestionsButton").addEventListener("click", function () {
+      refreshReplenishmentSuggestions(true);
+    });
+    if ($("loadMoreReplenishmentSuggestionsButton")) $("loadMoreReplenishmentSuggestionsButton").addEventListener("click", function () {
+      refreshReplenishmentSuggestions(false);
+    });
+    if ($("replenishmentSuggestionForm")) $("replenishmentSuggestionForm").addEventListener("submit", handleConfirmReplenishmentSuggestion);
+    document.querySelectorAll("[data-replenishment-suggestion-close]").forEach(function (button) {
+      button.addEventListener("click", closeReplenishmentSuggestionModal);
     });
     ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
       $(id).addEventListener("input", renderTransferPanel);
@@ -5337,6 +5586,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderReplenishment() {
     if (!$("replenishmentList")) return;
+    renderReplenishmentSuggestions();
     var visible = getVisibleReplenishmentRequests().slice().sort(function (a, b) {
       return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
     });
@@ -5354,6 +5604,106 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       : "<div class=\"empty-state\">Nenhum pedido de reposicao encontrado para o estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
     setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
+  }
+
+  async function refreshReplenishmentSuggestions(reset) {
+    if (!$("replenishmentSuggestionsList") || replenishmentState.suggestionsLoading) return;
+    if (!isSupabaseReady()) {
+      setStatus("replenishmentSuggestionsStatus", "Supabase nao conectado.", "error");
+      return;
+    }
+    try {
+      replenishmentState.suggestionsLoading = true;
+      if (reset) {
+        replenishmentState.suggestions = [];
+        replenishmentState.suggestionOffset = 0;
+        replenishmentState.suggestionsHasMore = false;
+      }
+      renderReplenishmentSuggestions();
+      setStatus("replenishmentSuggestionsStatus", "Buscando sugestoes do estoque " + activeWarehouseCode() + "...", "warning");
+      var result = await getReplenishmentSuggestions({
+        filter: replenishmentState.suggestionFilter,
+        offset: replenishmentState.suggestionOffset,
+        limit: REPLENISHMENT_SUGGESTION_PAGE_SIZE
+      });
+      replenishmentState.suggestions = reset ? (result.rows || []) : mergeReplenishmentSuggestions(replenishmentState.suggestions, result.rows || []);
+      replenishmentState.suggestionOffset = result.nextOffset || (replenishmentState.suggestionOffset + REPLENISHMENT_SUGGESTION_PAGE_SIZE);
+      replenishmentState.suggestionsHasMore = result.hasMore === true;
+      replenishmentState.suggestionsLoaded = true;
+      renderReplenishmentSuggestions();
+      setStatus("replenishmentSuggestionsStatus", replenishmentState.suggestions.length + " sugestao(oes) no filtro atual.", replenishmentState.suggestions.length ? "success" : "warning");
+    } catch (error) {
+      recordPerformanceError("reposicao-sugestoes", error);
+      setStatus("replenishmentSuggestionsStatus", missingStockSchemaMessage(error), "error");
+    } finally {
+      replenishmentState.suggestionsLoading = false;
+      renderReplenishmentSuggestions();
+    }
+  }
+
+  function mergeReplenishmentSuggestions(current, incoming) {
+    var map = {};
+    (current || []).concat(incoming || []).forEach(function (item) {
+      if (!item || !item.sku) return;
+      var existing = map[item.sku];
+      if (!existing || Number(item.suggestionPriority || 99) < Number(existing.suggestionPriority || 99)) map[item.sku] = item;
+    });
+    return Object.keys(map).map(function (sku) { return map[sku]; }).sort(function (a, b) {
+      if (a.suggestionPriority !== b.suggestionPriority) return a.suggestionPriority - b.suggestionPriority;
+      return String(a.sku).localeCompare(String(b.sku));
+    });
+  }
+
+  function renderReplenishmentSuggestions() {
+    if (!$("replenishmentSuggestionsList")) return;
+    if (replenishmentState.suggestionsLoading && !replenishmentState.suggestions.length) {
+      $("replenishmentSuggestionsList").innerHTML = "<div class=\"empty-state\">Carregando sugestoes...</div>";
+    } else if (!replenishmentState.suggestionsLoaded) {
+      $("replenishmentSuggestionsList").innerHTML = "<div class=\"empty-state\">Abra ou atualize para buscar sugestoes do estoque atual.</div>";
+    } else {
+      $("replenishmentSuggestionsList").innerHTML = replenishmentState.suggestions.length
+        ? replenishmentState.suggestions.map(replenishmentSuggestionCardHtml).join("")
+        : "<div class=\"empty-state\">Nenhuma sugestao encontrada para o estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
+    }
+    if ($("loadMoreReplenishmentSuggestionsButton")) {
+      $("loadMoreReplenishmentSuggestionsButton").hidden = !replenishmentState.suggestionsHasMore;
+      $("loadMoreReplenishmentSuggestionsButton").disabled = replenishmentState.suggestionsLoading;
+    }
+    if ($("refreshReplenishmentSuggestionsButton")) $("refreshReplenishmentSuggestionsButton").disabled = replenishmentState.suggestionsLoading;
+  }
+
+  function replenishmentSuggestionCardHtml(item) {
+    var location = item.captureLocation || "Sem localizacao";
+    var official = item.officialLocation || "Sem WMS";
+    var tone = item.suggestionPriority === 1 ? "danger" : item.suggestionPriority === 2 ? "warning" : item.suggestionPriority === 3 ? "danger" : "info";
+    return [
+      "<article class=\"replenishment-suggestion-card tone-" + escapeHtml(tone) + "\" data-replenishment-suggestion-sku=\"" + escapeHtml(item.sku) + "\">",
+      "<div class=\"replenishment-suggestion-main\">",
+      "<div><span>Codigo Material</span><strong>" + escapeHtml(item.sku) + "</strong><p>" + escapeHtml(item.name || "Produto sem nome") + "</p></div>",
+      "<div><span>Tipo</span><strong>" + escapeHtml(displaySuggestionType(item.suggestionType)) + "</strong><p>" + escapeHtml(item.alertMessage || "") + "</p></div>",
+      "</div>",
+      "<div class=\"replenishment-card-metrics\">",
+      replenishmentMetricHtml("Loja", formatQty(item.storeAvailable)),
+      replenishmentMetricHtml("Captacao", formatQty(item.captureAvailable)),
+      replenishmentMetricHtml("Qtd sugerida", item.suggestedReplenishmentQty > 0 ? formatQty(item.suggestedReplenishmentQty) : "Analise"),
+      replenishmentMetricHtml("Pedido aberto", item.hasOpenRequest ? "Sim" : "Nao"),
+      "</div>",
+      "<div class=\"replenishment-suggestion-locations\">",
+      "<span><small>Localizacao captacao</small><b>" + escapeHtml(location) + "</b></span>",
+      "<span><small>Localizacao WMS</small><b>" + escapeHtml(official) + "</b></span>",
+      item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(item.openRequestStatus + (item.openRequestResponsible ? " - " + item.openRequestResponsible : "")) + "</b></span>" : "",
+      "</div>",
+      "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
+      "</article>"
+    ].join("");
+  }
+
+  function displaySuggestionType(type) {
+    if (type === "LOJA_NEGATIVA_CAPTACAO_POSITIVA") return "Loja negativa + captacao";
+    if (type === "LOJA_ZERADA_CAPTACAO_POSITIVA") return "Loja zerada + captacao";
+    if (type === "LOJA_NEGATIVA_SEM_CAPTACAO") return "Loja negativa sem captacao";
+    if (type === "CAPTACAO_POSITIVA_SEM_LOCALIZACAO") return "Captacao sem localizacao";
+    return type || "-";
   }
 
   function replenishmentCardHtml(item) {
@@ -5391,7 +5741,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function replenishmentActionsHtml(item, canManage, canWork) {
-    var assign = canManage ? "<select data-replenishment-assign=\"" + escapeHtml(item.id) + "\"><option value=\"\">Atribuir responsavel</option>" + getTaskAssignableUsers().map(function (user) {
+    var assign = canManage ? "<select data-replenishment-assign=\"" + escapeHtml(item.id) + "\"><option value=\"\">Atribuir responsavel</option>" + getAssignableUsersByWarehouse(item.warehouseCode).map(function (user) {
       return "<option value=\"" + escapeHtml(user.id) + "\"" + (user.id === item.responsavelId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
     }).join("") + "</select>" : "";
     var actions = [];
@@ -5557,6 +5907,93 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atribuir responsavel: " + formatSupabaseError(error), "error");
       renderReplenishment();
+    }
+  }
+
+  function handleReplenishmentSuggestionClick(event) {
+    var button = event.target.closest("[data-create-replenishment-from-suggestion]");
+    if (!button) return;
+    var sku = normalizeSku(button.dataset.createReplenishmentFromSuggestion || "");
+    var suggestion = replenishmentState.suggestions.find(function (item) { return item.sku === sku; });
+    if (suggestion) openReplenishmentSuggestionModal(suggestion);
+  }
+
+  function responsibleOptionsHtml(selectedId) {
+    var users = getAssignableUsersByWarehouse(activeWarehouseCode());
+    if (!users.length) return "<option value=\"\">Nenhum responsavel do estoque atual</option>";
+    return "<option value=\"\">Selecionar responsavel</option>" + users.map(function (user) {
+      return "<option value=\"" + escapeHtml(user.id) + "\"" + (user.id === selectedId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+    }).join("");
+  }
+
+  function openReplenishmentSuggestionModal(suggestion) {
+    replenishmentState.activeSuggestion = suggestion;
+    if (!$("replenishmentSuggestionModal")) return;
+    if ($("replenishmentSuggestionModalSummary")) {
+      $("replenishmentSuggestionModalSummary").innerHTML = [
+        "<div><span>Codigo Material</span><strong>" + escapeHtml(suggestion.sku) + "</strong></div>",
+        "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || "-") + "</strong></div>",
+        "<div><span>Saldo loja</span><strong>" + escapeHtml(formatQty(suggestion.storeAvailable)) + "</strong></div>",
+        "<div><span>Saldo captacao</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>",
+        "<div><span>Localizacao captacao</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localizacao") + "</strong></div>",
+        "<div><span>Localizacao WMS</span><strong>" + escapeHtml(suggestion.officialLocation || "Sem WMS") + "</strong></div>"
+      ].join("");
+    }
+    if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").value = suggestion.suggestedReplenishmentQty > 0 ? String(suggestion.suggestedReplenishmentQty) : "";
+    if ($("suggestionResponsibleSelect")) $("suggestionResponsibleSelect").innerHTML = responsibleOptionsHtml("");
+    if ($("suggestionObservationInput")) $("suggestionObservationInput").value = suggestion.alertMessage || "";
+    setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
+    $("replenishmentSuggestionModal").hidden = false;
+    if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").focus();
+  }
+
+  function closeReplenishmentSuggestionModal() {
+    replenishmentState.activeSuggestion = null;
+    if ($("replenishmentSuggestionModal")) $("replenishmentSuggestionModal").hidden = true;
+    setStatus("replenishmentSuggestionModalStatus", "", "");
+  }
+
+  async function handleConfirmReplenishmentSuggestion(event) {
+    event.preventDefault();
+    var suggestion = replenishmentState.activeSuggestion;
+    if (!suggestion) return;
+    var button = event.target.querySelector("button[type='submit']");
+    var originalText = button ? button.textContent : "";
+    try {
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Criando...";
+      }
+      var created = await createReplenishmentRequest({
+        codigoMaterial: suggestion.sku,
+        storeQty: suggestion.storeAvailable,
+        requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
+        responsibleId: $("suggestionResponsibleSelect") ? $("suggestionResponsibleSelect").value : "",
+        observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
+        productInfo: {
+          sku: suggestion.sku,
+          name: suggestion.name,
+          storeBalance: suggestion.storeAvailable,
+          captureBalance: suggestion.captureAvailable,
+          wmsLocation: suggestion.officialLocation,
+          captureStation: suggestion.captureStation,
+          captureRack: suggestion.captureRack,
+          captureLine: suggestion.captureLine,
+          captureColumn: suggestion.captureColumn
+        }
+      });
+      if (!created) return;
+      closeReplenishmentSuggestionModal();
+      await refreshReplenishmentData();
+      await refreshReplenishmentSuggestions(true);
+      showToast("Pedido de reposicao criado.", "success");
+    } catch (error) {
+      setStatus("replenishmentSuggestionModalStatus", "Erro ao criar pedido: " + formatSupabaseError(error), "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText || "Confirmar pedido";
+      }
     }
   }
 
@@ -6778,6 +7215,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function getTaskAssignableUsers() {
     return authState.users.filter(function (user) {
       return userCanReceiveTaskInActiveWarehouse(user);
+    });
+  }
+
+  function userCanReceiveReplenishmentInWarehouse(user, warehouseCode) {
+    warehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    if (!user || !user.active || !user.availableForTasks) return false;
+    if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return false;
+    if (["OPERADOR", "ESTOQUISTA", "SUPERVISOR", "LIDER"].indexOf(user.role) < 0) return false;
+    return normalizeWarehouseCode(user.defaultWarehouseCode) === warehouseCode;
+  }
+
+  function getAssignableUsersByWarehouse(warehouseCode) {
+    warehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    return authState.users.filter(function (user) {
+      return userCanReceiveReplenishmentInWarehouse(user, warehouseCode);
+    }).sort(function (a, b) {
+      return String(a.name || a.username).localeCompare(String(b.name || b.username));
     });
   }
 
