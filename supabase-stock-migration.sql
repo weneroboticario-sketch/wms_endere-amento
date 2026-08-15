@@ -69,3 +69,5 @@ for all using (true) with check (true);
 drop policy if exists "wms_stock_positions_public_all" on public.wms_stock_positions;
 create policy "wms_stock_positions_public_all" on public.wms_stock_positions
 for all using (true) with check (true);
+
+notify pgrst, 'reload schema';
