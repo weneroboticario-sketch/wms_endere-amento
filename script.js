@@ -35,6 +35,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     manutencao: ["ADMINISTRADOR"],
     estoques: ["ADMINISTRADOR"],
+    baseEstoque: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
   var TRANSFER_STATUSES = [
@@ -250,6 +251,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     currentProduct: null,
     tablesAvailable: true
   };
+  var stockState = {
+    batches: [],
+    summary: { loja: 0, captacao: 0, updatedAt: "" },
+    positionCache: {},
+    lookupTimer: null,
+    tablesAvailable: true,
+    importing: false
+  };
   var localCacheState = {
     db: null,
     available: false,
@@ -263,6 +272,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastTransferLoadMs: 0,
     lastConferenceLoadMs: 0,
     lastReplenishmentLoadMs: 0,
+    lastStockLoadMs: 0,
     lastSkuQueryMs: 0,
     lastTransferQueryMs: 0,
     recentErrors: []
@@ -310,6 +320,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transfers: false,
     conferences: false,
     replenishment: false,
+    stock: false,
     assistant: false
   };
   var protectedAppShell = null;
@@ -409,6 +420,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     moduleLoadState.transfers = false;
     moduleLoadState.conferences = false;
     moduleLoadState.replenishment = false;
+    moduleLoadState.stock = false;
     moduleLoadState.assistant = false;
     if (!keepUsers) {
       moduleLoadState.users = false;
@@ -491,15 +503,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return loaded;
   }
 
+  async function ensureStockDataLoaded() {
+    if (moduleLoadState.stock) return true;
+    if (!canAccessScreen("baseEstoque")) return false;
+    var loaded = await loadStockOperationalData();
+    moduleLoadState.stock = loaded === true;
+    return loaded;
+  }
+
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
-    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "exportar", "importar", "historico", "manutencao", "assistente", "reposicao"].indexOf(screenId) >= 0) {
+    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "exportar", "importar", "historico", "manutencao", "assistente", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
     if (screenId === "transferencias") await ensureTransferDataLoaded();
     if (screenId === "conferencias") await ensureConferenceDataLoaded();
     if (screenId === "dashboard") await ensureReplenishmentDataLoaded();
     if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
+    if (screenId === "baseEstoque") await ensureStockDataLoaded();
     if (screenId === "usuarios") {
       await ensureUsersLoaded({ repair: false });
       await ensureAccessRequestsLoaded();
@@ -1823,6 +1844,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: row.endereco_codigo || "",
       hasLocation: row.has_location === true,
       locationWarning: row.location_warning || "",
+      storeAvailable: Number(row.saldo_loja_disponivel || 0),
+      captureAvailable: Number(row.saldo_captacao_disponivel || 0),
+      originSuggested: row.origem_sugerida || "",
+      suggestedCaptureQty: Number(row.quantidade_sugerida_captacao || 0),
+      suggestedStoreQty: Number(row.quantidade_sugerida_loja || 0),
+      stockAlert: row.alerta_saldo === true,
+      stockAlertMessage: row.alerta_saldo_mensagem || "",
+      suggestedLocation: row.localizacao_sugerida || "",
       quantityType: row.tipo_envio || row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
       unitsPerBox: Number(row.unidades_por_caixa || 0),
@@ -1959,6 +1988,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       endereco_codigo: item.addressCode || "",
       has_location: item.hasLocation === true,
       location_warning: item.locationWarning || "",
+      saldo_loja_disponivel: Number(item.storeAvailable || 0),
+      saldo_captacao_disponivel: Number(item.captureAvailable || 0),
+      origem_sugerida: item.originSuggested || "",
+      quantidade_sugerida_captacao: Number(item.suggestedCaptureQty || 0),
+      quantidade_sugerida_loja: Number(item.suggestedStoreQty || 0),
+      alerta_saldo: item.stockAlert === true,
+      alerta_saldo_mensagem: item.stockAlertMessage || "",
+      localizacao_sugerida: item.suggestedLocation || "",
       tipo_quantidade: item.quantityType || "UNIDADE",
       tipo_envio: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
@@ -2038,6 +2075,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "quantidade_total_unidades",
       "quantidade_separada",
       "quantidade_lacrada",
+      "saldo_loja_disponivel",
+      "saldo_captacao_disponivel",
+      "origem_sugerida",
+      "quantidade_sugerida_captacao",
+      "quantidade_sugerida_loja",
+      "alerta_saldo",
+      "alerta_saldo_mensagem",
+      "localizacao_sugerida",
       "status"
     ]);
   }
@@ -2101,6 +2146,558 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw error;
       await upsertInChunks("wms_transfer_items", rows.map(stripOptionalTransferItemColumns), "id");
     }
+  }
+
+  async function loadStockOperationalData() {
+    var startedAt = performance.now();
+    stockState.batches = [];
+    stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
+    if (!isSupabaseReady()) return false;
+    try {
+      var batchResponse = await supabaseDb
+        .from("wms_stock_import_batches")
+        .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,ignored_rows,error_rows,status,notes")
+        .eq("warehouse_code", activeWarehouseCode())
+        .order("created_at", { ascending: false })
+        .limit(10);
+      if (batchResponse.error) throw batchResponse.error;
+      stockState.batches = batchResponse.data || [];
+      stockState.summary.loja = await countActiveStockPositions("LOJA");
+      stockState.summary.captacao = await countActiveStockPositions("CAPTACAO");
+      stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
+      stockState.tablesAvailable = true;
+      recordPerformanceMetric("lastStockLoadMs", startedAt);
+      return true;
+    } catch (error) {
+      stockState.tablesAvailable = !isMissingStockTableError(error);
+      recordPerformanceError("base-estoque", error);
+      if (getActiveScreenId() === "baseEstoque") setStatus("stockImportStatus", missingStockSchemaMessage(error), "error");
+      return false;
+    }
+  }
+
+  async function countActiveStockPositions(sourceType) {
+    var response = await supabaseDb
+      .from("wms_stock_positions")
+      .select("id", { count: "exact", head: true })
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("source_type", sourceType)
+      .eq("active", true);
+    if (response.error) throw response.error;
+    return Number(response.count || 0);
+  }
+
+  async function refreshStockOperationalData() {
+    moduleLoadState.stock = false;
+    await ensureStockDataLoaded();
+    renderStockBase();
+  }
+
+  function renderStockBase() {
+    if (!$("stockBaseSummary")) return;
+    $("stockBaseSummary").innerHTML = [
+      stockSummaryCard("Loja", stockState.summary.loja || 0),
+      stockSummaryCard("Captacao", stockState.summary.captacao || 0),
+      stockSummaryCard("Ultima importacao", stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-")
+    ].join("");
+    if ($("stockBatchRows")) {
+      $("stockBatchRows").innerHTML = stockState.batches.length ? stockState.batches.map(function (batch) {
+        return [
+          "<tr>",
+          "<td>" + formatDateTime(batch.created_at) + "</td>",
+          "<td>" + escapeHtml(batch.source_type || "-") + "</td>",
+          "<td>" + escapeHtml(batch.file_name || "-") + "</td>",
+          "<td>" + formatQty(batch.imported_rows || 0) + "</td>",
+          "<td>" + formatQty(batch.ignored_rows || 0) + "</td>",
+          "<td><span class=\"status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning") + "\">" + escapeHtml(batch.status || "-") + "</span></td>",
+          "<td>" + escapeHtml(batch.imported_by_name || "-") + "</td>",
+          "</tr>"
+        ].join("");
+      }).join("") : "<tr><td colspan=\"7\">Nenhuma importacao operacional no estoque atual.</td></tr>";
+    }
+  }
+
+  function stockSummaryCard(label, value) {
+    return "<article class=\"stock-summary-card\"><span>" + escapeHtml(label) + "</span><strong>" + escapeHtml(String(value)) + "</strong></article>";
+  }
+
+  async function importStockFromInput(sourceType) {
+    if (!ensureActiveWarehouse()) return;
+    if (!window.XLSX) {
+      setStatus("stockImportStatus", "Biblioteca xlsx nao carregada.", "error");
+      return;
+    }
+    if (!isSupabaseReady()) {
+      setStatus("stockImportStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
+      return;
+    }
+    var input = sourceType === "CAPTACAO" ? $("captureStockFileInput") : $("storeStockFileInput");
+    var file = input && input.files ? input.files[0] : null;
+    if (!file) {
+      setStatus("stockImportStatus", "Selecione a planilha de " + stockSourceLabel(sourceType) + ".", "error");
+      return;
+    }
+    var button = sourceType === "CAPTACAO" ? $("importCaptureStockButton") : $("importStoreStockButton");
+    if (!beginTransferAction("import-stock-" + sourceType, button, "Importando...")) return;
+    try {
+      stockState.importing = true;
+      setStatus("stockImportStatus", "Lendo planilha de " + stockSourceLabel(sourceType) + "...", "warning");
+      var entry = await readWorkbookFile(file);
+      var parsed = parseStockWorkbook(entry.workbook, sourceType);
+      if (!parsed.rows.length) {
+        setStatus("stockImportStatus", "Nenhuma linha valida encontrada no modelo de " + stockSourceLabel(sourceType) + ".", "error");
+        return;
+      }
+      setStatus("stockImportStatus", "Gravando " + parsed.rows.length + " item(ns) no Supabase...", "warning");
+      await saveStockImportBatch(sourceType, file.name, parsed);
+      stockState.positionCache = {};
+      await refreshStockOperationalData();
+      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " importada: " + parsed.rows.length + " linha(s), " + parsed.ignored + " ignorada(s).", "success");
+      showToast("Base de estoque importada.", "success");
+    } catch (error) {
+      setStatus("stockImportStatus", "Falha na importacao: " + formatSupabaseError(error), "error");
+      recordPerformanceError("import-stock-" + sourceType, error);
+    } finally {
+      stockState.importing = false;
+      endTransferAction(button);
+    }
+  }
+
+  function parseStockWorkbook(workbook, sourceType) {
+    var result = { rows: [], ignored: 0, errors: [] };
+    workbook.SheetNames.forEach(function (sheetName) {
+      var rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: false });
+      rows.forEach(function (row) {
+        var sku = firstSkuValue(getByAliases(row, sourceType === "CAPTACAO" ? ["Cod Material", "Codigo Material", "Código Material"] : ["Codigo Material", "Código Material", "Cod Material"]));
+        var name = normalizeText(getByAliases(row, sourceType === "CAPTACAO" ? ["Desc Material", "Descricao Material", "Descrição Material", "Nome Material"] : ["Nome Material", "Desc Material", "Descricao Material", "Descrição Material"]));
+        if (!sku) {
+          result.ignored += 1;
+          return;
+        }
+        var station = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Estacao", "Estação", "Nome estacao", "Nome estação"])) : "";
+        var rack = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Rack", "Nr Rack"])) : "";
+        var line = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Linha prod alocado", "Linha", "Linha Produto Alocado"])) : "";
+        var column = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Coluna prod alocado", "Coluna", "Coluna Produto Alocado"])) : "";
+        var location = sourceType === "CAPTACAO" ? buildLocationFromParts(station, rack, line, column) : { valid: false };
+        result.rows.push({
+          codigoMaterial: normalizeSku(sku) || normalizeText(sku),
+          nomeMaterial: name,
+          totalFisico: parseQuantity(getByAliases(row, ["Total fisico", "Total físico", "Total - Fisico", "Total - Físico"])),
+          totalAlocado: parseQuantity(getByAliases(row, ["Total alocado", "Total - Alocado"])),
+          totalDisponivel: parseQuantity(getByAliases(row, ["Total disponivel", "Total disponível", "Total - Disponivel", "Total - Disponível"])),
+          estacao: station,
+          rack: rack,
+          linha: line,
+          coluna: column,
+          codigoEndereco: location.valid ? location.code : "",
+          isSellable: isSellableStockProduct(name)
+        });
+      });
+    });
+    return result;
+  }
+
+  async function saveStockImportBatch(sourceType, fileName, parsed) {
+    var batchId = "stock-batch-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+    var now = nowIso();
+    var batch = {
+      id: batchId,
+      created_at: now,
+      warehouse_code: activeWarehouseCode(),
+      source_type: sourceType,
+      file_name: fileName || "",
+      imported_by_id: authState.currentUser ? authState.currentUser.id : "",
+      imported_by_name: authState.currentUser ? (authState.currentUser.name || authState.currentUser.username) : "",
+      total_rows: parsed.rows.length + parsed.ignored,
+      imported_rows: 0,
+      ignored_rows: parsed.ignored,
+      error_rows: parsed.errors.length,
+      status: "PROCESSING",
+      notes: ""
+    };
+    var batchResponse = await supabaseDb.from("wms_stock_import_batches").insert(batch);
+    if (batchResponse.error) throw batchResponse.error;
+    try {
+      var rows = parsed.rows.map(function (row, index) {
+        return toDbStockPosition(Object.assign({}, row, {
+          id: "stock-" + batchId + "-" + index,
+          batchId: batchId,
+          sourceType: sourceType,
+          warehouseCode: activeWarehouseCode(),
+          active: false,
+          createdAt: now,
+          updatedAt: now
+        }));
+      });
+      await upsertInChunks("wms_stock_positions", rows, "id");
+      var activate = await supabaseDb
+        .from("wms_stock_positions")
+        .update({ active: true, updated_at: now })
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("source_type", sourceType)
+        .eq("batch_id", batchId);
+      if (activate.error) throw activate.error;
+      var deactivate = await supabaseDb
+        .from("wms_stock_positions")
+        .update({ active: false, updated_at: now })
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("source_type", sourceType)
+        .neq("batch_id", batchId);
+      if (deactivate.error) throw deactivate.error;
+      await supabaseDb.from("wms_stock_import_batches").update({ imported_rows: parsed.rows.length, status: "COMPLETED", notes: "Base anterior substituida para " + stockSourceLabel(sourceType) + "." }).eq("id", batchId);
+    } catch (error) {
+      await supabaseDb.from("wms_stock_import_batches").update({ status: "FAILED", notes: formatSupabaseError(error), imported_rows: 0 }).eq("id", batchId);
+      throw error;
+    }
+  }
+
+  function toDbStockPosition(item) {
+    return {
+      id: item.id,
+      created_at: item.createdAt || nowIso(),
+      updated_at: item.updatedAt || nowIso(),
+      warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
+      source_type: item.sourceType || "CAPTACAO",
+      batch_id: item.batchId || "",
+      codigo_material: normalizeSku(item.codigoMaterial || ""),
+      nome_material: item.nomeMaterial || "",
+      total_fisico: Number(item.totalFisico || 0),
+      total_alocado: Number(item.totalAlocado || 0),
+      total_disponivel: Number(item.totalDisponivel || 0),
+      estacao: item.estacao || "",
+      rack: item.rack || "",
+      linha: item.linha || "",
+      coluna: item.coluna || "",
+      codigo_endereco: item.codigoEndereco || "",
+      active: item.active !== false,
+      is_sellable: item.isSellable === true
+    };
+  }
+
+  function fromDbStockPosition(row) {
+    return {
+      id: row.id,
+      warehouseCode: row.warehouse_code || activeWarehouseCode(),
+      sourceType: row.source_type || "",
+      batchId: row.batch_id || "",
+      codigoMaterial: normalizeSku(row.codigo_material || ""),
+      nomeMaterial: row.nome_material || "",
+      totalFisico: Number(row.total_fisico || 0),
+      totalAlocado: Number(row.total_alocado || 0),
+      totalDisponivel: Number(row.total_disponivel || 0),
+      estacao: row.estacao || "",
+      rack: row.rack || "",
+      linha: row.linha || "",
+      coluna: row.coluna || "",
+      codigoEndereco: row.codigo_endereco || "",
+      active: row.active === true,
+      isSellable: row.is_sellable === true,
+      createdAt: row.created_at || "",
+      updatedAt: row.updated_at || ""
+    };
+  }
+
+  async function getStockPositionsForSkus(skus) {
+    var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
+    if (!cleanSkus.length || !isSupabaseReady()) return [];
+    var missing = cleanSkus.filter(function (sku) { return !stockState.positionCache[activeWarehouseCode() + ":" + sku]; });
+    if (missing.length) {
+      var response = await supabaseDb
+        .from("wms_stock_positions")
+        .select("id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at")
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("active", true)
+        .in("codigo_material", missing)
+        .limit(Math.max(1000, missing.length * 4));
+      if (response.error) throw response.error;
+      missing.forEach(function (sku) { stockState.positionCache[activeWarehouseCode() + ":" + sku] = []; });
+      (response.data || []).map(fromDbStockPosition).forEach(function (position) {
+        var key = activeWarehouseCode() + ":" + position.codigoMaterial;
+        if (!stockState.positionCache[key]) stockState.positionCache[key] = [];
+        stockState.positionCache[key].push(position);
+      });
+    }
+    return cleanSkus.reduce(function (all, sku) {
+      return all.concat(stockState.positionCache[activeWarehouseCode() + ":" + sku] || []);
+    }, []);
+  }
+
+  async function getStockSuggestion(sku, requestedQty) {
+    var positions = await getStockPositionsForSkus([sku]);
+    return buildStockSuggestion(sku, requestedQty, positions);
+  }
+
+  function buildStockSuggestion(sku, requestedQty, positions) {
+    sku = normalizeSku(sku);
+    var loja = aggregateStockPositions((positions || []).filter(function (item) { return item.sourceType === "LOJA"; }));
+    var captacaoPositions = (positions || []).filter(function (item) { return item.sourceType === "CAPTACAO"; });
+    var captacao = aggregateStockPositions(captacaoPositions);
+    var captureLocation = captacaoPositions.filter(function (item) { return item.codigoEndereco || stockPositionLocation(item); }).sort(function (a, b) {
+      return Number(b.totalDisponivel || 0) - Number(a.totalDisponivel || 0);
+    })[0] || null;
+    var official = findTransferLocationForSku(sku);
+    var needed = Number(requestedQty || 0);
+    var captureAvailable = Number(captacao.totalDisponivel || 0);
+    var storeAvailable = Number(loja.totalDisponivel || 0);
+    var originSuggested = "SEM_SALDO";
+    var captureQty = 0;
+    var storeQty = 0;
+    if (needed > 0 && captureAvailable >= needed) {
+      originSuggested = "CAPTACAO";
+      captureQty = needed;
+    } else if (needed > 0 && captureAvailable > 0 && storeAvailable > 0) {
+      originSuggested = "CAPTACAO_E_LOJA";
+      captureQty = Math.min(captureAvailable, needed);
+      storeQty = Math.min(storeAvailable, Math.max(0, needed - captureQty));
+    } else if (needed > 0 && captureAvailable > 0) {
+      originSuggested = captureAvailable >= needed ? "CAPTACAO" : "VERIFICAR";
+      captureQty = Math.min(captureAvailable, needed);
+    } else if (storeAvailable > 0) {
+      originSuggested = "LOJA";
+      storeQty = needed > 0 ? Math.min(storeAvailable, needed) : storeAvailable;
+    }
+    var location = captureLocation ? stockPositionLocation(captureLocation) : "";
+    var officialCode = official ? official.locationCode : "";
+    var hasDivergence = Boolean(location && officialCode && location !== officialCode);
+    var hasNegative = captureAvailable < 0 || storeAvailable < 0;
+    var suggestionQty = storeAvailable < 0 && captureAvailable > 0 ? Math.min(Math.abs(storeAvailable), captureAvailable) : 0;
+    return {
+      sku: sku,
+      name: (captacao.nomeMaterial || loja.nomeMaterial || (official && official.productName) || findProductName(sku) || ""),
+      storePhysical: loja.totalFisico,
+      storeAllocated: loja.totalAlocado,
+      storeAvailable: loja.totalDisponivel,
+      capturePhysical: captacao.totalFisico,
+      captureAllocated: captacao.totalAlocado,
+      captureAvailable: captacao.totalDisponivel,
+      captureLocation: location,
+      captureStation: captureLocation ? captureLocation.estacao : "",
+      captureRack: captureLocation ? captureLocation.rack : "",
+      captureLine: captureLocation ? captureLocation.linha : "",
+      captureColumn: captureLocation ? captureLocation.coluna : "",
+      officialLocation: officialCode,
+      originSuggested: originSuggested,
+      suggestedCaptureQty: captureQty,
+      suggestedStoreQty: storeQty,
+      suggestedReplenishmentQty: suggestionQty,
+      stockAlert: hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "VERIFICAR",
+      alertMessage: hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : originSuggested === "VERIFICAR" ? "Saldo parcial. Lider deve decidir origem complementar." : "",
+      sellable: captacao.isSellable || loja.isSellable
+    };
+  }
+
+  function aggregateStockPositions(items) {
+    return (items || []).reduce(function (acc, item) {
+      acc.totalFisico += Number(item.totalFisico || 0);
+      acc.totalAlocado += Number(item.totalAlocado || 0);
+      acc.totalDisponivel += Number(item.totalDisponivel || 0);
+      acc.nomeMaterial = acc.nomeMaterial || item.nomeMaterial || "";
+      acc.isSellable = acc.isSellable || item.isSellable === true;
+      return acc;
+    }, { totalFisico: 0, totalAlocado: 0, totalDisponivel: 0, nomeMaterial: "", isSellable: false });
+  }
+
+  function stockPositionLocation(item) {
+    if (!item) return "";
+    if (item.codigoEndereco) return item.codigoEndereco;
+    var built = buildLocationFromParts(item.estacao, item.rack, item.linha, item.coluna);
+    return built.valid ? built.code : "";
+  }
+
+  function isSellableStockProduct(name) {
+    var text = normalizeText(name).toUpperCase();
+    return /\b(ML|G|GR|GRS|KG|MG|L|LT|LITRO|LITROS)\b/.test(text) || /\d+\s*(ML|G|GR|GRS|KG|MG|L|LT)\b/.test(text);
+  }
+
+  function stockSourceLabel(sourceType) {
+    return sourceType === "LOJA" ? "Loja" : "Captacao";
+  }
+
+  async function fetchActiveStockPositions(sourceType) {
+    if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
+    var allRows = [];
+    var from = 0;
+    var pageSize = 1000;
+    while (true) {
+      var query = supabaseDb
+        .from("wms_stock_positions")
+        .select("id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at")
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("active", true)
+        .order("codigo_material", { ascending: true });
+      if (sourceType) query = query.eq("source_type", sourceType);
+      var response = await query.range(from, from + pageSize - 1);
+      if (response.error) throw response.error;
+      var rows = response.data || [];
+      allRows = allRows.concat(rows.map(fromDbStockPosition));
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return allRows;
+  }
+
+  function stockPositionExportRow(position) {
+    return {
+      Estoque: position.warehouseCode || activeWarehouseCode(),
+      Origem: position.sourceType || "",
+      "Codigo Material": position.codigoMaterial || "",
+      "Nome Material": position.nomeMaterial || "",
+      "Total fisico": Number(position.totalFisico || 0),
+      "Total alocado": Number(position.totalAlocado || 0),
+      "Total disponivel": Number(position.totalDisponivel || 0),
+      Estacao: position.estacao || "",
+      Rack: position.rack || "",
+      Linha: position.linha || "",
+      Coluna: position.coluna || "",
+      Endereco: stockPositionLocation(position),
+      "Produto vendavel": position.isSellable ? "Sim" : "Nao",
+      Atualizado: formatDateTime(position.updatedAt || position.createdAt)
+    };
+  }
+
+  async function getStockAlerts(kind) {
+    var positions = await fetchActiveStockPositions("");
+    var grouped = {};
+    positions.forEach(function (position) {
+      var key = position.codigoMaterial || "";
+      if (!key) return;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(position);
+    });
+    return Object.keys(grouped).map(function (sku) {
+      return buildStockSuggestion(sku, 0, grouped[sku]);
+    }).filter(function (suggestion) {
+      if (kind === "SEM_LOCALIZACAO") return !suggestion.captureLocation;
+      return suggestion.stockAlert || !suggestion.captureLocation || suggestion.suggestedReplenishmentQty > 0;
+    });
+  }
+
+  function stockAlertExportRow(alert) {
+    return {
+      SKU: alert.sku || "",
+      Produto: alert.name || "",
+      "Saldo loja": Number(alert.storeAvailable || 0),
+      "Saldo captacao": Number(alert.captureAvailable || 0),
+      "Endereco WMS": alert.officialLocation || "",
+      "Endereco captacao": alert.captureLocation || "",
+      "Sugestao reposicao": Number(alert.suggestedReplenishmentQty || 0),
+      "Origem sugerida": alert.originSuggested || "",
+      Alerta: alert.alertMessage || (!alert.captureLocation ? "Produto sem localizacao na base de captacao." : "")
+    };
+  }
+
+  function writeWorkbookFromSheets(fileName, sheets) {
+    if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
+    var workbook = window.XLSX.utils.book_new();
+    sheets.forEach(function (sheet) {
+      var rows = sheet.rows || [];
+      var worksheet = rows.length && Array.isArray(rows[0])
+        ? window.XLSX.utils.aoa_to_sheet(rows)
+        : window.XLSX.utils.json_to_sheet(rows);
+      if (sheet.cols) worksheet["!cols"] = sheet.cols;
+      window.XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+    });
+    window.XLSX.writeFile(workbook, fileName);
+  }
+
+  function exportStockTemplate(sourceType) {
+    try {
+      var headers = sourceType === "CAPTACAO"
+        ? [["Codigo Material", "Nome Material", "Total fisico", "Total alocado", "Total disponivel", "Estacao", "Rack", "Linha", "Coluna"]]
+        : [["Codigo Material", "Nome Material", "Total fisico", "Total alocado", "Total disponivel"]];
+      writeWorkbookFromSheets("Modelo_Base_" + stockSourceLabel(sourceType) + "_" + dateForFileName(new Date()) + ".xlsx", [{ name: stockSourceLabel(sourceType), rows: headers }]);
+      setStatus("stockExportStatus", "Modelo de " + stockSourceLabel(sourceType) + " exportado.", "success");
+    } catch (error) {
+      setStatus("stockExportStatus", "Erro ao exportar modelo: " + formatSupabaseError(error), "error");
+    }
+  }
+
+  async function exportCurrentStock() {
+    try {
+      var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
+      setStatus("stockExportStatus", "Preparando exportacao da base atual...", "warning");
+      var rows = await fetchActiveStockPositions(sourceType);
+      writeWorkbookFromSheets("Base_Estoque_" + activeWarehouseCode() + "_" + dateForFileName(new Date()) + ".xlsx", [
+        { name: "Base", rows: rows.map(stockPositionExportRow) }
+      ]);
+      setStatus("stockExportStatus", rows.length + " linha(s) exportada(s).", "success");
+    } catch (error) {
+      setStatus("stockExportStatus", missingStockSchemaMessage(error), "error");
+    }
+  }
+
+  async function exportStockAlerts(kind) {
+    try {
+      setStatus("stockExportStatus", "Gerando alertas da base operacional...", "warning");
+      var alerts = await getStockAlerts(kind || "");
+      writeWorkbookFromSheets((kind === "SEM_LOCALIZACAO" ? "Produtos_Sem_Localizacao_" : "Alertas_Estoque_") + activeWarehouseCode() + "_" + dateForFileName(new Date()) + ".xlsx", [
+        { name: "Alertas", rows: alerts.map(stockAlertExportRow) }
+      ]);
+      setStatus("stockExportStatus", alerts.length + " alerta(s) exportado(s).", "success");
+    } catch (error) {
+      setStatus("stockExportStatus", missingStockSchemaMessage(error), "error");
+    }
+  }
+
+  async function exportReplenishmentSuggestions() {
+    try {
+      setStatus("stockExportStatus", "Calculando sugestoes de reposicao...", "warning");
+      var alerts = await getStockAlerts("");
+      var rows = alerts.filter(function (alert) {
+        return Number(alert.suggestedReplenishmentQty || 0) > 0;
+      }).map(function (alert) {
+        return {
+          SKU: alert.sku,
+          Produto: alert.name,
+          "Saldo loja": alert.storeAvailable,
+          "Saldo captacao": alert.captureAvailable,
+          "Qtd sugerida": alert.suggestedReplenishmentQty,
+          "Endereco captacao": alert.captureLocation || "",
+          "Endereco WMS": alert.officialLocation || ""
+        };
+      });
+      writeWorkbookFromSheets("Sugestao_Reposicao_" + activeWarehouseCode() + "_" + dateForFileName(new Date()) + ".xlsx", [{ name: "Reposicao", rows: rows }]);
+      setStatus("stockExportStatus", rows.length + " sugestao(oes) exportada(s).", "success");
+    } catch (error) {
+      setStatus("stockExportStatus", missingStockSchemaMessage(error), "error");
+    }
+  }
+
+  function isMissingStockTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return (
+      message.indexOf("wms_stock_positions") >= 0 ||
+      message.indexOf("wms_stock_import_batches") >= 0
+    ) && (
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0 ||
+      message.indexOf("column") >= 0 ||
+      message.indexOf("could not find") >= 0
+    );
+  }
+
+  function missingStockSchemaMessage(error) {
+    if (isMissingStockTableError(error) || isMissingColumnError(error)) {
+      return "Estrutura da Base de Estoque desatualizada no Supabase. Execute supabase-schema.sql no SQL Editor e recarregue o app. Erro original: " + formatSupabaseError(error);
+    }
+    return "Erro na Base de Estoque: " + formatSupabaseError(error);
+  }
+
+  function stockService() {
+    return {
+      importStoreStock: function () { return importStockFromInput("LOJA"); },
+      importCaptureStock: function () { return importStockFromInput("CAPTACAO"); },
+      getStockPosition: getStockSuggestion,
+      getStockAlerts: getStockAlerts,
+      exportCurrentStock: exportCurrentStock,
+      exportStockAlerts: exportStockAlerts,
+      exportStockTemplate: exportStockTemplate,
+      getTransferStockSuggestion: getStockSuggestion,
+      getReplenishmentStockSuggestion: getStockSuggestion
+    };
   }
 
   async function loadReplenishmentData() {
@@ -2252,6 +2849,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!window.confirm("Ja existe um pedido recente para este produto. Deseja criar outro mesmo assim?")) return null;
     }
     var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
+    try {
+      var stockSuggestion = await getStockSuggestion(sku, requestedQty);
+      productInfo = enrichReplenishmentProductWithStock(productInfo, stockSuggestion);
+      if (Number(stockSuggestion.suggestedReplenishmentQty || 0) > 0 && (!requestedQty || requestedQty <= 0)) {
+        requestedQty = Number(stockSuggestion.suggestedReplenishmentQty || 0);
+      }
+    } catch (error) {
+      if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock", error);
+    }
     var now = nowIso();
     var request = {
       id: "rep-" + Date.now() + "-" + Math.random().toString(16).slice(2),
@@ -2260,7 +2866,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       warehouseCode: activeWarehouseCode(),
       codigoMaterial: sku,
       nomeMaterial: productInfo.name || findProductName(sku) || "",
-      storeQty: Math.max(0, storeQty || 0),
+      storeQty: Number(storeQty || 0),
       requestedQty: requestedQty,
       attendedQty: 0,
       pendingQty: requestedQty,
@@ -2311,6 +2917,39 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       captureColumn: "",
       balanceWarning: "Saldo ainda nao importado."
     };
+  }
+
+  function enrichReplenishmentProductWithStock(product, suggestion) {
+    product = Object.assign({}, product || {});
+    if (!suggestion || !suggestion.sku) return product;
+    product.name = suggestion.name || product.name || "";
+    product.storeBalance = Number(suggestion.storeAvailable || 0);
+    product.captureBalance = Number(suggestion.captureAvailable || 0);
+    product.captureStation = suggestion.captureStation || product.captureStation || "";
+    product.captureRack = suggestion.captureRack || product.captureRack || "";
+    product.captureLine = suggestion.captureLine || product.captureLine || "";
+    product.captureColumn = suggestion.captureColumn || product.captureColumn || "";
+    product.balanceWarning = suggestion.alertMessage || (suggestion.suggestedReplenishmentQty > 0 ? "Sugestao de reposicao: " + formatQty(suggestion.suggestedReplenishmentQty) + "." : "");
+    return product;
+  }
+
+  async function lookupReplenishmentProductWithStock(sku) {
+    var product = lookupReplenishmentProduct(sku);
+    try {
+      var suggestion = await getStockSuggestion(sku, 0);
+      product = enrichReplenishmentProductWithStock(product, suggestion);
+      if ($("replenishmentRequestQtyInput") && !normalizeText($("replenishmentRequestQtyInput").value) && Number(suggestion.suggestedReplenishmentQty || 0) > 0) {
+        $("replenishmentRequestQtyInput").value = String(suggestion.suggestedReplenishmentQty);
+      }
+      if ($("replenishmentStoreQtyInput") && Number(suggestion.storeAvailable || 0) !== 0) {
+        $("replenishmentStoreQtyInput").value = String(suggestion.storeAvailable);
+      }
+    } catch (error) {
+      if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock-lookup", error);
+    }
+    replenishmentState.currentProduct = product;
+    renderReplenishmentProductCard(product);
+    return product;
   }
 
   async function updateReplenishmentRow(id, patch) {
@@ -3966,7 +4605,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : screenId === "reposicao" ? "Reposição" : screenId === "assistente" ? "Assistente WMS" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base de Estoque" : screenId === "assistente" ? "Assistente WMS" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
@@ -4058,6 +4697,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
     $("exportExcelButton").addEventListener("click", exportExcel);
     $("importExcelButton").addEventListener("click", importExcel);
+    if ($("importCaptureStockButton")) $("importCaptureStockButton").addEventListener("click", function () { importStockFromInput("CAPTACAO"); });
+    if ($("importStoreStockButton")) $("importStoreStockButton").addEventListener("click", function () { importStockFromInput("LOJA"); });
+    if ($("exportCaptureStockTemplateButton")) $("exportCaptureStockTemplateButton").addEventListener("click", function () { exportStockTemplate("CAPTACAO"); });
+    if ($("exportStoreStockTemplateButton")) $("exportStoreStockTemplateButton").addEventListener("click", function () { exportStockTemplate("LOJA"); });
+    if ($("exportCurrentStockButton")) $("exportCurrentStockButton").addEventListener("click", exportCurrentStock);
+    if ($("exportStockAlertsButton")) $("exportStockAlertsButton").addEventListener("click", function () { exportStockAlerts(""); });
+    if ($("exportStockNoLocationButton")) $("exportStockNoLocationButton").addEventListener("click", function () { exportStockAlerts("SEM_LOCALIZACAO"); });
+    if ($("exportReplenishmentSuggestionButton")) $("exportReplenishmentSuggestionButton").addEventListener("click", exportReplenishmentSuggestions);
+    if ($("refreshStockBaseButton")) $("refreshStockBaseButton").addEventListener("click", refreshStockOperationalData);
     $("historyFilterButton").addEventListener("click", renderHistory);
     $("historyFilterInput").addEventListener("input", renderHistory);
     document.querySelectorAll(".transfer-tab").forEach(function (button) {
@@ -4599,6 +5247,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (activeScreen === "transferencias") renderTransfers();
     if (activeScreen === "conferencias") renderConferences();
     if (activeScreen === "reposicao") renderReplenishment();
+    if (activeScreen === "baseEstoque") renderStockBase();
     if (activeScreen === "manutencao") renderMaintenance();
     if (activeScreen === "estoques") renderWarehouses();
     renderOperatorTasksAlert();
@@ -4801,6 +5450,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function handleReplenishmentSkuInput() {
     if (!$("replenishmentSkuInput")) return;
     var sku = normalizeSku($("replenishmentSkuInput").value);
+    if (stockState.lookupTimer) {
+      window.clearTimeout(stockState.lookupTimer);
+      stockState.lookupTimer = null;
+    }
     if (!sku || sku.length < 4) {
       replenishmentState.currentProduct = null;
       renderReplenishmentProductCard(null);
@@ -4809,6 +5462,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var product = lookupReplenishmentProduct(sku);
     replenishmentState.currentProduct = product;
     renderReplenishmentProductCard(product);
+    stockState.lookupTimer = window.setTimeout(function () {
+      lookupReplenishmentProductWithStock(sku);
+    }, 250);
   }
 
   async function handleCreateReplenishment(event) {
@@ -10198,6 +10854,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transferState.previewRawText = mode === "MESSAGE" ? $("transferMessageInput").value : "";
       transferState.previewFileName = parsed.fileName || "";
       parsed = filterTransferPreviewByActiveWarehouse(parsed);
+      await enrichTransferItemsWithStock(parsed.items || []);
       transferState.previewGroups = parsed.groups;
       transferState.previewItems = parsed.items;
       transferState.previewErrors = parsed.errors;
@@ -10600,6 +11257,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     try {
       transferDebugLog("Criando transferencia", { transfers: transfers.length, items: items.length, warehouse: activeWarehouseCode() });
+      await enrichTransferItemsWithStock(items);
       await insertTransferRows(transfers.map(toDbTransfer));
       try {
         await upsertTransferItemRows(items.map(toDbTransferItem));
@@ -10703,6 +11361,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: item.addressCode || "",
       hasLocation: item.hasLocation === true,
       locationWarning: item.locationWarning || "",
+      storeAvailable: Number(item.storeAvailable || 0),
+      captureAvailable: Number(item.captureAvailable || 0),
+      originSuggested: item.originSuggested || "",
+      suggestedCaptureQty: Number(item.suggestedCaptureQty || 0),
+      suggestedStoreQty: Number(item.suggestedStoreQty || 0),
+      stockAlert: item.stockAlert === true,
+      stockAlertMessage: item.stockAlertMessage || "",
+      suggestedLocation: item.suggestedLocation || "",
       quantityType: item.quantityType || "UNIDADE",
       boxQty: item.boxQty || 0,
       unitsPerBox: item.unitsPerBox || 0,
@@ -10717,6 +11383,46 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createdAt: now,
       updatedAt: now
     };
+  }
+
+  async function enrichTransferItemsWithStock(items) {
+    if (!items || !items.length || !isSupabaseReady()) return;
+    var skus = unique(items.map(function (item) { return normalizeSku(item.sku); }).filter(Boolean));
+    if (!skus.length) return;
+    try {
+      var positions = await getStockPositionsForSkus(skus);
+      var grouped = {};
+      positions.forEach(function (position) {
+        var key = position.codigoMaterial || "";
+        if (!key) return;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(position);
+      });
+      items.forEach(function (item) {
+        var suggestion = buildStockSuggestion(item.sku, getTransferExpectedUnits(item) || item.requestedQty || 0, grouped[normalizeSku(item.sku)] || []);
+        applyTransferItemStockSuggestion(item, suggestion);
+      });
+    } catch (error) {
+      if (isMissingStockTableError(error) || isMissingColumnError(error)) {
+        recordPerformanceError("transfer-stock-schema", error);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  function applyTransferItemStockSuggestion(item, suggestion) {
+    if (!item || !suggestion) return item;
+    item.storeAvailable = Number(suggestion.storeAvailable || 0);
+    item.captureAvailable = Number(suggestion.captureAvailable || 0);
+    item.originSuggested = suggestion.originSuggested || "";
+    item.suggestedCaptureQty = Number(suggestion.suggestedCaptureQty || 0);
+    item.suggestedStoreQty = Number(suggestion.suggestedStoreQty || 0);
+    item.stockAlert = suggestion.stockAlert === true;
+    item.stockAlertMessage = suggestion.alertMessage || "";
+    item.suggestedLocation = suggestion.captureLocation || suggestion.officialLocation || "";
+    if (!item.description && suggestion.name) item.description = suggestion.name;
+    return item;
   }
 
   function getPreparedTransferItems(items, transferId) {
@@ -10815,8 +11521,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function transferLocationLabel(item) {
     var status = transferLocationStatus(item);
-    if (!status.hasLocation) return status.warning;
-    return "Rua: " + status.rua + " | Rack: " + status.rack + " | Linha: " + status.linha + " | Letra: " + status.letra + " | Endereço: " + status.code;
+    var base = status.hasLocation
+      ? "Rua: " + status.rua + " | Rack: " + status.rack + " | Linha: " + status.linha + " | Letra: " + status.letra + " | Endereço: " + status.code
+      : status.warning;
+    var stock = transferStockLabel(item);
+    return stock ? base + " | " + stock : base;
+  }
+
+  function transferStockLabel(item) {
+    if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
+    var origin = {
+      CAPTACAO: "Captacao",
+      LOJA: "Loja",
+      CAPTACAO_E_LOJA: "Captacao + Loja",
+      SEM_SALDO: "Sem saldo",
+      VERIFICAR: "Verificar"
+    }[item.originSuggested] || item.originSuggested || "";
+    var parts = [];
+    if (origin) parts.push("Pegar: " + origin);
+    if (item.suggestedLocation) parts.push("Base: " + item.suggestedLocation);
+    if (item.captureAvailable || item.storeAvailable) parts.push("Captacao " + formatQty(item.captureAvailable || 0) + " / Loja " + formatQty(item.storeAvailable || 0));
+    if (item.stockAlertMessage) parts.push(item.stockAlertMessage);
+    return parts.join(" | ");
   }
 
   function transferLocationCells(item) {
@@ -10827,14 +11553,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function transferLocationSummaryCell(item) {
     var status = transferLocationStatus(item);
+    var stock = transferStockLabel(item);
     if (!status.hasLocation) {
-      return "<td data-label=\"Localização\" class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span></td>";
+      return "<td data-label=\"Localização\" class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span>" + (stock ? "<em class=\"transfer-stock-line\">" + escapeHtml(stock) + "</em>" : "") + "</td>";
     }
     return [
       "<td data-label=\"Localização\" class=\"transfer-location-cell\">",
       "<strong>" + escapeHtml(status.code) + "</strong>",
       "<span>" + escapeHtml(status.rua) + " | " + escapeHtml(status.rack) + " | " + escapeHtml(status.linha) + " | " + escapeHtml(status.letra) + "</span>",
       "<em>Localizado</em>",
+      stock ? "<em class=\"transfer-stock-line\">" + escapeHtml(stock) + "</em>" : "",
       "</td>"
     ].join("");
   }
@@ -12284,7 +13012,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_product_packaging") >= 0 ||
       message.indexOf("wms_task_notifications") >= 0 ||
       message.indexOf("wms_notifications") >= 0 ||
-      message.indexOf("wms_replenishment_requests") >= 0
+      message.indexOf("wms_replenishment_requests") >= 0 ||
+      message.indexOf("wms_stock_positions") >= 0 ||
+      message.indexOf("wms_stock_import_batches") >= 0
     ) && (
       message.indexOf("not found") >= 0 ||
       message.indexOf("schema cache") >= 0 ||
@@ -12334,7 +13064,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_conferences") >= 0 ||
       message.indexOf("wms_conference_items") >= 0 ||
       message.indexOf("wms_conference_events") >= 0 ||
-      message.indexOf("wms_conference_divergences") >= 0
+      message.indexOf("wms_conference_divergences") >= 0 ||
+      message.indexOf("wms_stock_positions") >= 0 ||
+      message.indexOf("wms_stock_import_batches") >= 0
     );
   }
 

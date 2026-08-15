@@ -1952,6 +1952,16 @@ tbody tr:hover td {
   color: var(--warning);
 }
 
+.transfer-location-cell .transfer-stock-line {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #eef8fb;
+  color: #0b5e73;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .transfer-conference-select {
   min-height: 34px;
   padding: 6px 10px;
@@ -3704,6 +3714,45 @@ tbody tr:hover td {
   align-items: start;
 }
 
+.stock-base-layout {
+  grid-template-columns: minmax(320px, 0.8fr) minmax(420px, 1.2fr);
+}
+
+.stock-base-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stock-summary-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.stock-summary-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.stock-summary-card strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 1.15rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.stock-export-actions {
+  margin-top: 10px;
+}
+
 .replenishment-summary-grid,
 .replenishment-card-metrics,
 .replenishment-product-meta {
@@ -4014,6 +4063,7 @@ tbody tr:hover td {
   }
 
   .replenishment-layout,
+  .stock-base-layout,
   .replenishment-card,
   .replenishment-card-main {
     grid-template-columns: 1fr;
@@ -4022,7 +4072,8 @@ tbody tr:hover td {
   .replenishment-summary-grid,
   .replenishment-card-metrics,
   .replenishment-product-meta,
-  .replenishment-leader-grid {
+  .replenishment-leader-grid,
+  .stock-base-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

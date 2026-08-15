@@ -102,6 +102,7 @@
           <p class="menu-label">Gestao</p>
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="IA" data-screen="assistente" type="button">Assistente WMS</button>
+          <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
           <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
           <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
           <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button">Etiquetas</button>
@@ -459,6 +460,76 @@
         </section>
       </section>
 
+      <section class="screen" id="baseEstoque">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Estoque operacional</p>
+            <h2>Base de Estoque</h2>
+          </div>
+        </div>
+
+        <div class="dashboard-layout stock-base-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Importar base operacional</h3>
+            </div>
+            <label for="captureStockFileInput">Estoque / Captacao</label>
+            <input id="captureStockFileInput" type="file" accept=".xlsx,.xls">
+            <button class="primary-button wide-button" id="importCaptureStockButton" type="button">Importar Estoque/Captacao</button>
+
+            <label for="storeStockFileInput">Estoque Loja</label>
+            <input id="storeStockFileInput" type="file" accept=".xlsx,.xls">
+            <button class="secondary-button wide-button" id="importStoreStockButton" type="button">Importar Estoque Loja</button>
+            <div id="stockImportStatus" class="inline-status"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Resumo e exportacoes</h3>
+            </div>
+            <div id="stockBaseSummary" class="stock-base-summary"></div>
+            <label for="stockExportSourceFilter">Filtro de origem</label>
+            <select id="stockExportSourceFilter">
+              <option value="">Ambas</option>
+              <option value="CAPTACAO">Captacao</option>
+              <option value="LOJA">Loja</option>
+            </select>
+            <div class="button-row stock-export-actions">
+              <button class="secondary-button" id="exportCaptureStockTemplateButton" type="button">Exportar Modelo Estoque/Captacao</button>
+              <button class="secondary-button" id="exportStoreStockTemplateButton" type="button">Exportar Modelo Loja</button>
+              <button class="secondary-button" id="exportCurrentStockButton" type="button">Exportar Base Atual</button>
+              <button class="secondary-button" id="exportStockAlertsButton" type="button">Exportar Alertas</button>
+              <button class="secondary-button" id="exportStockNoLocationButton" type="button">Exportar Produtos sem Localizacao</button>
+              <button class="secondary-button" id="exportReplenishmentSuggestionButton" type="button">Exportar Sugestao de Reposicao</button>
+            </div>
+            <div id="stockExportStatus" class="inline-status"></div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h3>Ultimas importacoes</h3>
+            <button class="secondary-button" id="refreshStockBaseButton" type="button">Atualizar</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Origem</th>
+                  <th>Arquivo</th>
+                  <th>Importadas</th>
+                  <th>Ignoradas</th>
+                  <th>Status</th>
+                  <th>Usuario</th>
+                </tr>
+              </thead>
+              <tbody id="stockBatchRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
       <section class="screen" id="reposicao">
         <div class="page-title">
           <div>
@@ -478,7 +549,7 @@
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
               <div class="replenishment-qty-grid">
                 <label>Qtd na loja
-                  <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" min="0" step="1" value="0">
+                  <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" step="1" value="0">
                 </label>
                 <label>Qtd para repor
                   <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
