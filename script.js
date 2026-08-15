@@ -261,6 +261,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     warehouseCode: "",
     subscriptionStatus: "",
     lastLiveUpdateAt: "",
+    recentEvents: [],
     active: false
   };
 
@@ -1112,6 +1113,41 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].indexOf(tableName) >= 0;
   }
 
+  async function fetchActiveWarehouseTransferIds() {
+    try {
+      var response = await supabaseDb
+        .from("wms_transfers")
+        .select("id,is_deleted,deleted_at")
+        .eq("warehouse_code", activeWarehouseCode());
+      if (response.error) throw response.error;
+      var ids = {};
+      (response.data || []).forEach(function (row) {
+        if (row && row.id && row.is_deleted !== true && !row.deleted_at) ids[row.id] = true;
+      });
+      return ids;
+    } catch (error) {
+      if (isMissingWarehouseColumnError(error)) {
+        assertWarehouseFallbackAllowed("wms_transfers", error);
+        var legacy = await supabaseDb.from("wms_transfers").select("id");
+        if (legacy.error) throw legacy.error;
+        var legacyIds = {};
+        (legacy.data || []).forEach(function (row) { if (row && row.id) legacyIds[row.id] = true; });
+        return legacyIds;
+      }
+      if (isMissingColumnError(error)) {
+        var fallback = await supabaseDb
+          .from("wms_transfers")
+          .select("id")
+          .eq("warehouse_code", activeWarehouseCode());
+        if (fallback.error) throw fallback.error;
+        var fallbackIds = {};
+        (fallback.data || []).forEach(function (row) { if (row && row.id) fallbackIds[row.id] = true; });
+        return fallbackIds;
+      }
+      throw error;
+    }
+  }
+
   async function ensureWarehouses() {
     warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
     warehouseState.tableAvailable = true;
@@ -1378,9 +1414,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var loadedFromCache = false;
     if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
       transferState.establishments = cachedTransfers.establishments || [];
-      transferState.transfers = cachedTransfers.transfers || [];
-      transferState.items = cachedTransfers.items || [];
-      transferState.events = cachedTransfers.events || [];
+      transferState.transfers = (cachedTransfers.transfers || []).filter(isOperationalTransferRecord);
+      var cachedTransferIds = {};
+      transferState.transfers.forEach(function (transfer) { cachedTransferIds[transfer.id] = true; });
+      transferState.items = (cachedTransfers.items || []).filter(function (item) { return item && item.transferId && cachedTransferIds[item.transferId]; });
+      transferState.events = (cachedTransfers.events || []).filter(function (event) { return event && (!event.transfer_id || cachedTransferIds[event.transfer_id]); });
       transferState.productPackaging = cachedTransfers.productPackaging || {};
       transferState.tablesAvailable = true;
       invalidateTransferStatsCache();
@@ -1405,9 +1443,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return rowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
       });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
-      transferState.transfers = transferRows.map(fromDbTransfer);
+      transferState.transfers = transferRows.map(fromDbTransfer).filter(isOperationalTransferRecord);
+      transferIds = {};
+      transferState.transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
       transferState.items = itemRows.map(fromDbTransferItem);
+      transferState.items = transferState.items.filter(function (item) { return item.transferId && transferIds[item.transferId]; });
       transferState.events = eventRows;
+      transferState.events = transferState.events.filter(function (event) { return !event.transfer_id || transferIds[event.transfer_id]; });
       invalidateTransferStatsCache();
       packagingRows.forEach(function (row) {
         var pattern = fromDbProductPackaging(row);
@@ -1467,8 +1509,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (index >= 0) list.splice(index, 1);
   }
 
+  function isOperationalTransferRecord(transfer) {
+    return !!transfer && transfer.isDeleted !== true && !transfer.deletedAt;
+  }
+
   function applyLocalTransferUpdate(transfer) {
-    if (!transfer || !transfer.id || !transferBelongsToActiveWarehouse(transfer)) return;
+    if (!transfer || !transfer.id) return;
+    if (!isOperationalTransferRecord(transfer)) {
+      removeLocalTransferEverywhere(transfer.id);
+      return;
+    }
+    if (!transferBelongsToActiveWarehouse(transfer)) return;
     upsertById(transferState.transfers, transfer);
     invalidateTransferStatsCache();
     writeTransferCacheSoon();
@@ -1476,9 +1527,34 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function applyLocalTransferItemUpdate(item) {
     if (!item || !item.id || normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()) !== activeWarehouseCode()) return;
+    if (item.transferId && !getTransferById(item.transferId)) {
+      scheduleTransferRealtimeRefresh("item-without-transfer", 250);
+      return;
+    }
     upsertById(transferState.items, item);
     invalidateTransferStatsCache();
     writeTransferCacheSoon();
+  }
+
+  function removeLocalTransferEverywhere(transferId) {
+    if (!transferId) return;
+    removeById(transferState.transfers, transferId);
+    transferState.items = transferState.items.filter(function (item) { return item.transferId !== transferId; });
+    transferState.events = transferState.events.filter(function (event) { return event.transfer_id !== transferId && event.transferId !== transferId; });
+    if (transferState.activeTransferId === transferId) transferState.activeTransferId = "";
+    if (transferState.mergeSelection && transferState.mergeSelection[transferId]) delete transferState.mergeSelection[transferId];
+    transferState.mergePreview = null;
+    maintenanceState.lastReport = null;
+    invalidateTransferStatsCache();
+    writeTransferCacheSoon();
+  }
+
+  function transferDebugLog(message, data) {
+    try {
+      if (import.meta.env && import.meta.env.DEV) console.log("[transferencias] " + message, data || "");
+    } catch (error) {
+      // Log de desenvolvimento indisponivel fora do build Vite.
+    }
   }
 
   async function loadConferenceData() {
@@ -1586,6 +1662,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function fromDbTransfer(row) {
     var normalizedStatus = normalizeTransferStatus(row.status);
+    var deletedAt = row.deleted_at || "";
     return {
       id: row.id,
       code: row.codigo_transferencia || "",
@@ -1652,6 +1729,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       mergedById: row.merged_by_id || "",
       mergedByName: row.merged_by_name || "",
       mergedAt: row.merged_at || "",
+      isDeleted: row.is_deleted === true || !!deletedAt,
+      deletedAt: deletedAt,
+      deletedById: row.deleted_by_id || "",
+      deletedByName: row.deleted_by_name || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
       warehouseCode: rowWarehouseCode(row),
       createdAt: row.created_at || new Date().toISOString(),
@@ -1818,6 +1899,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       merged_by_id: item.mergedById || "",
       merged_by_name: item.mergedByName || "",
       merged_at: item.mergedAt || null,
+      is_deleted: item.isDeleted === true,
+      deleted_at: item.deletedAt || null,
+      deleted_by_id: item.deletedById || "",
+      deleted_by_name: item.deletedByName || "",
       warehouse_id: item.warehouseId || activeWarehouseId(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
       created_at: item.createdAt || new Date().toISOString(),
@@ -1965,11 +2050,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function insertTransferRows(rows) {
-    var response = await supabaseDb.from("wms_transfers").insert(rows);
-    if (response.error && isMissingColumnError(response.error)) {
+    var payload = rows.map(function (row) { return Object.assign({}, row); });
+    var attemptedMissingColumns = {};
+    var response = await supabaseDb.from("wms_transfers").insert(payload);
+    while (response.error && isMissingColumnError(response.error)) {
       if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfers", response.error);
-      if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw response.error;
-      response = await supabaseDb.from("wms_transfers").insert(rows.map(stripOptionalTransferColumns));
+      var missingColumn = getMissingColumnName(response.error);
+      if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
+      attemptedMissingColumns[missingColumn] = true;
+      payload.forEach(function (row) { delete row[missingColumn]; });
+      response = await supabaseDb.from("wms_transfers").insert(payload);
     }
     if (response.error) throw response.error;
   }
@@ -4373,6 +4463,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .channel("wms-live-" + realtimeState.warehouseCode)
           .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers" }, handleTransferRealtimeDelta)
           .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items" }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_task_notifications" }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_notifications" }, handleTransferRealtimeDelta)
           .subscribe(function (status) {
             realtimeState.subscriptionStatus = status;
             if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
@@ -4411,9 +4503,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function handleTransferRealtimeDelta(payload) {
     if (!realtimeState.active) return;
     var row = payload && (payload.new || payload.old) ? (payload.new || payload.old) : {};
-    if (row.warehouse_code && normalizeWarehouseCode(row.warehouse_code) !== activeWarehouseCode()) return;
+    if (row.warehouse_code && normalizeWarehouseCode(row.warehouse_code) !== activeWarehouseCode()) {
+      transferDebugLog("Evento ignorado por warehouse_code diferente", payload);
+      return;
+    }
     realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
     try {
+      transferDebugLog("Realtime " + ((payload && payload.eventType) || "EVENTO") + " recebido", payload);
+      realtimeState.recentEvents.unshift({
+        at: nowIso(),
+        table: (payload && payload.table) || "",
+        event: (payload && payload.eventType) || "",
+        id: row.id || "",
+        transferId: row.transfer_id || row.id || "",
+        warehouseCode: row.warehouse_code || ""
+      });
+      realtimeState.recentEvents = realtimeState.recentEvents.slice(0, 10);
       applyTransferRealtimePayload(payload);
       renderTransferRealtimeViews();
       setSyncStatus("Ao vivo", "success");
@@ -4429,7 +4534,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var row = payload && payload.new ? payload.new : {};
     var oldRow = payload && payload.old ? payload.old : {};
     if (table === "wms_transfers") {
-      if (eventType === "DELETE") removeById(transferState.transfers, oldRow.id);
+      if (eventType === "DELETE") removeLocalTransferEverywhere(oldRow.id);
       else applyLocalTransferUpdate(fromDbTransfer(row));
     } else if (table === "wms_transfer_items") {
       if (eventType === "DELETE") removeById(transferState.items, oldRow.id);
@@ -4491,6 +4596,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var transferRows = await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since);
         var itemRows = await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since);
         var eventRows = await fetchWarehouseUpdatedRows("wms_transfer_events", "created_at", since, "created_at");
+        var activeTransferIds = await fetchActiveWarehouseTransferIds();
+        transferState.transfers.slice().forEach(function (transfer) {
+          if (transferBelongsToActiveWarehouse(transfer) && !activeTransferIds[transfer.id]) removeLocalTransferEverywhere(transfer.id);
+        });
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         eventRows.forEach(function (row) { if (row.id) upsertById(transferState.events, row); });
@@ -5338,7 +5447,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var query = normalizeText($("transferCodeFilter").value).toLowerCase();
       transfers = transfers.filter(function (transfer) {
         if (status && transfer.status !== status) return false;
-        if (!status && isFinalTransferStatus(transfer.status)) return false;
+        if (!status && (isFinalTransferStatus(transfer.status) || transfer.status === "CANCELADA")) return false;
         if (responsible && transfer.responsibleId !== responsible) return false;
         if (establishment && transfer.establishmentId !== establishment) return false;
         if (query) {
@@ -6482,6 +6591,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Tempo real das transferencias:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + " | Canal: " + escapeHtml(realtimeState.warehouseCode ? "wms-live-" + realtimeState.warehouseCode : "-") + " | Status: " + escapeHtml(realtimeState.subscriptionStatus || "-") + (realtimeState.lastLiveUpdateAt ? " | Ultima mensagem: " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
       "<p><strong>Sessao:</strong> usuario " + escapeHtml((authState.currentUser || {}).name || "-") + " | perfil " + escapeHtml((authState.currentUser || {}).role || "-") + " | id " + escapeHtml((authState.currentUser || {}).id || "-") + " | responsavel em tarefas: " + escapeHtml((authState.currentUser || {}).availableForTasks ? "sim" : "nao") + ".</p>",
       "<p><strong>Consulta transferencias:</strong> ultima " + performanceState.lastTransferQueryMs + " ms | carregamento " + performanceState.lastTransferLoadMs + " ms | pendente refresh: " + escapeHtml(realtimeState.refreshPending ? "sim" : "nao") + " | executando: " + escapeHtml(realtimeState.refreshRunning ? "sim" : "nao") + ".</p>",
+      "<p><strong>Ultimos eventos realtime:</strong></p>",
+      realtimeState.recentEvents.length ? "<ul>" + realtimeState.recentEvents.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.table + " " + entry.event + " - " + (entry.transferId || entry.id || "-") + " - " + (entry.warehouseCode || "-")) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum evento realtime recebido nesta sessao.</p>",
       "<p><strong>Sincronizacao por modulo:</strong></p>",
       "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
       "<p><strong>Erros recentes:</strong></p>",
@@ -7909,7 +8020,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getVisibleTransfers() {
     if (!authState.currentUser) return [];
-    var activeTransfers = transferState.transfers.filter(transferBelongsToActiveWarehouse);
+    var activeTransfers = transferState.transfers.filter(function (transfer) {
+      return isOperationalTransferRecord(transfer) && transferBelongsToActiveWarehouse(transfer);
+    });
     if (isAdminOrSupervisor()) return activeTransfers;
     return activeTransfers.filter(function (transfer) {
       return transfer.responsibleId === authState.currentUser.id;
@@ -9790,13 +9903,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         items.push(buildImportedTransferItem(item, transferId, now));
       });
     });
+    var duplicateLabels = findDuplicateTransferImportGroups(groups);
+    if (duplicateLabels.length && !window.confirm("Ja existe transferencia ativa parecida neste estoque:\n" + duplicateLabels.join("\n") + "\n\nDeseja importar mesmo assim?")) {
+      setStatus("transferImportStatus", "Importacao cancelada para evitar duplicidade.", "warning");
+      endTransferAction(actionButton);
+      return;
+    }
     try {
+      transferDebugLog("Criando transferencia", { transfers: transfers.length, items: items.length, warehouse: activeWarehouseCode() });
       await insertTransferRows(transfers.map(toDbTransfer));
-      await upsertTransferItemRows(items.map(toDbTransferItem));
-      for (var i = 0; i < transfers.length; i += 1) {
-        await recordTransferEvent(transfers[i].id, "", "TRANSFER_CREATED", "", 0, "Transferencia criada por importacao inteligente.", { itemCount: getPreparedTransferItems(items, transfers[i].id).length, importSource: transfers[i].importSource });
-        await recordTransferEvent(transfers[i].id, "", "TRANSFER_ASSIGNED", "", 0, "Responsavel atribuido.", { responsibleId: transfers[i].responsibleId });
+      try {
+        await upsertTransferItemRows(items.map(toDbTransferItem));
+      } catch (itemError) {
+        for (var rollbackIndex = 0; rollbackIndex < transfers.length; rollbackIndex += 1) {
+          await deleteRelatedTransferRows("wms_transfers", "id", transfers[rollbackIndex].id);
+        }
+        throw itemError;
       }
+      for (var i = 0; i < transfers.length; i += 1) {
+        applyLocalTransferUpdate(transfers[i]);
+        getPreparedTransferItems(items, transfers[i].id).forEach(applyLocalTransferItemUpdate);
+        await recordTransferEvent(transfers[i].id, "", "TRANSFER_CREATED", "", 0, "Transferencia criada por importacao inteligente.", { itemCount: getPreparedTransferItems(items, transfers[i].id).length, importSource: transfers[i].importSource });
+        if (transfers[i].responsibleId) await recordTransferEvent(transfers[i].id, "", "TRANSFER_ASSIGNED", "", 0, "Responsavel atribuido.", { responsibleId: transfers[i].responsibleId });
+      }
+      transferDebugLog("Transferencia criada", { transfers: transfers.map(function (transfer) { return transfer.id; }) });
     } catch (error) {
       setStatus("transferImportStatus", missingTransferImportSchemaMessage(error), "error");
       endTransferAction(actionButton);
@@ -9805,7 +9935,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     clearTransferPreview();
     $("newTransferForm").reset();
     handleTransferImportModeChange();
-    await loadTransferData();
+    scheduleTransferRealtimeRefresh("created-transfer", 0);
     renderTransfers();
     setStatus("transferImportStatus", "Transferencias criadas com sucesso.", "success");
     endTransferAction(actionButton);
@@ -9855,6 +9985,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       startedAt: "",
       separationFinishedAt: "",
       packingFinishedAt: "",
+      warehouseId: activeWarehouseId(),
+      warehouseCode: activeWarehouseCode(),
       createdAt: now,
       updatedAt: now
     };
@@ -9900,6 +10032,41 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getPreparedTransferItems(items, transferId) {
     return items.filter(function (item) { return item.transferId === transferId; });
+  }
+
+  function transferImportGroupSignature(group) {
+    var items = (group.items || []).map(function (item) {
+      return normalizeSkuKey(item.sku) + ":" + formatQty(item.requestedQty);
+    }).sort().join("|");
+    return [
+      normalizeWarehouseCode(activeWarehouseCode()),
+      normalizeText(group.sourceCode || ""),
+      normalizeText(group.destinationCode || ""),
+      items
+    ].join("::");
+  }
+
+  function existingTransferSignature(transfer) {
+    var items = getTransferItems(transfer.id).map(function (item) {
+      return normalizeSkuKey(item.sku) + ":" + formatQty(item.requestedQty);
+    }).sort().join("|");
+    return [
+      normalizeWarehouseCode(transfer.warehouseCode || activeWarehouseCode()),
+      normalizeText(transfer.originStoreCode || transfer.originName || ""),
+      normalizeText(transfer.destinationStoreCode || transfer.destinationName || ""),
+      items
+    ].join("::");
+  }
+
+  function findDuplicateTransferImportGroups(groups) {
+    var activeSignatures = {};
+    getVisibleTransfers().forEach(function (transfer) {
+      if (transfer.status === "CANCELADA" || isFinalTransferStatus(transfer.status)) return;
+      activeSignatures[existingTransferSignature(transfer)] = transferDisplayName(transfer) || transfer.code || transfer.id;
+    });
+    return groups.map(function (group) {
+      return activeSignatures[transferImportGroupSignature(group)] || "";
+    }).filter(Boolean);
   }
 
   function applyTransferItemLocation(item) {
@@ -10851,6 +11018,62 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     await rebuildConferenceAfterAdminChange(transfer, "Conferência recalculada após remoção de item extra.");
   }
 
+  function requestTransferDeleteConfirmation(transfer) {
+    var items = getTransferItems(transfer.id);
+    var details = [
+      "Transferencia: " + (transferDisplayName(transfer) || transfer.code || transfer.id),
+      "Rota: " + transferRouteOriginLabel(transfer) + " > " + transferRouteDestinationLabel(transfer),
+      "Responsavel: " + (transfer.responsibleName || "-"),
+      "Status: " + transferStatusDisplayLabel(transfer.status),
+      "Itens: " + items.length
+    ];
+    var modal = $("transferDeleteModal");
+    if (!modal) {
+      return Promise.resolve(window.confirm("Tem certeza que deseja excluir esta transferencia?\n\n" + details.join("\n") + "\n\nEsta acao removera a transferencia e seus dados relacionados da operacao."));
+    }
+    $("transferDeleteDetails").innerHTML = details.map(function (detail) {
+      return "<span>" + escapeHtml(detail) + "</span>";
+    }).join("");
+    modal.hidden = false;
+    return new Promise(function (resolve) {
+      var buttons = modal.querySelectorAll("[data-transfer-delete-decision]");
+      function close(result) {
+        modal.hidden = true;
+        buttons.forEach(function (button) { button.removeEventListener("click", onClick); });
+        resolve(result);
+      }
+      function onClick(event) {
+        close(event.currentTarget.dataset.transferDeleteDecision === "confirm");
+      }
+      buttons.forEach(function (button) { button.addEventListener("click", onClick); });
+      var cancelButton = modal.querySelector("[data-transfer-delete-decision='cancel']");
+      if (cancelButton) cancelButton.focus();
+    });
+  }
+
+  async function deleteRelatedTransferRows(tableName, columnName, transferId) {
+    var response = await supabaseDb.from(tableName).delete().eq(columnName, transferId);
+    if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+  }
+
+  async function cleanupTransferRelatedData(transferId) {
+    if (!isSupabaseReady() || !transferId) return;
+    var tables = [
+      { name: "wms_task_notifications", column: "transfer_id" },
+      { name: "wms_notifications", column: "transfer_id" },
+      { name: "wms_transfer_boxes", column: "transfer_id" },
+      { name: "wms_transfer_packages", column: "transfer_id" },
+      { name: "wms_transfer_divergences", column: "transfer_id" },
+      { name: "wms_transfer_merge_items", column: "merged_transfer_id" },
+      { name: "wms_transfer_merge_items", column: "original_transfer_id" },
+      { name: "wms_transfer_events", column: "transfer_id" },
+      { name: "wms_transfer_items", column: "transfer_id" }
+    ];
+    for (var i = 0; i < tables.length; i += 1) {
+      await deleteRelatedTransferRows(tables[i].name, tables[i].column, transferId);
+    }
+  }
+
   async function deleteTransferPermanently(id) {
     if (!isAdmin()) {
       showToast("Somente administrador pode excluir transferencia de teste.", "error");
@@ -10858,35 +11081,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
-    var transferLabel = transferDisplayName(transfer) || transfer.code || id;
-    if (!window.confirm("Esta ação remove apenas dados de teste e registros vinculados a esta transferência. Deseja continuar?")) return false;
-    var typed = window.prompt("Para confirmar, digite EXCLUIR TESTE:\n" + transferLabel);
-    if (normalizeText(typed).toUpperCase() !== "EXCLUIR TESTE") {
+    var confirmed = await requestTransferDeleteConfirmation(transfer);
+    if (!confirmed) {
       showToast("Exclusão cancelada.", "warning");
       return false;
     }
     var actionButton = document.querySelector("[data-transfer-delete-permanent=\"" + id + "\"]");
     if (!beginTransferAction("delete-test:" + id, actionButton, "Excluindo...")) return false;
     try {
-      var tables = [
-        { name: "wms_task_notifications", column: "transfer_id" },
-        { name: "wms_notifications", column: "transfer_id" },
-        { name: "wms_transfer_boxes", column: "transfer_id" },
-        { name: "wms_transfer_packages", column: "transfer_id" },
-        { name: "wms_transfer_divergences", column: "transfer_id" },
-        { name: "wms_transfer_merge_items", column: "merged_transfer_id" },
-        { name: "wms_transfer_merge_items", column: "original_transfer_id" },
-        { name: "wms_transfer_events", column: "transfer_id" },
-        { name: "wms_transfer_items", column: "transfer_id" },
-        { name: "wms_transfers", column: "id" }
-      ];
-      for (var i = 0; i < tables.length; i += 1) {
-        var deleteResponse = await supabaseDb.from(tables[i].name).delete().eq(tables[i].column, id);
-        if (deleteResponse.error && !isMissingTransferTableError(deleteResponse.error)) throw deleteResponse.error;
-      }
-      if (transferState.activeTransferId === id) transferState.activeTransferId = "";
+      transferDebugLog("Excluindo transferencia", { id: id, code: transfer.code });
+      var now = nowIso();
+      var response = await updateTransferWithSchemaFallback(id, {
+        status: "CANCELADA",
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by_id: (authState.currentUser || {}).id || "",
+        deleted_by_name: (authState.currentUser || {}).name || "",
+        updated_at: now,
+        last_action_at: now,
+        last_action_label: "Transferencia excluida"
+      });
+      if (response.error) throw response.error;
+      await cleanupTransferRelatedData(id);
+      removeLocalTransferEverywhere(id);
       maintenanceState.lastReport = null;
-      await loadTransferData();
       renderTransfers();
       renderMaintenance();
       showToast("Transferencia de teste excluida.", "success");

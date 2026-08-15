@@ -1251,6 +1251,18 @@
       </div>
     </div>
   </div>
+  <div class="decision-modal" id="transferDeleteModal" hidden role="dialog" aria-modal="true" aria-labelledby="transferDeleteTitle">
+    <div class="decision-card">
+      <p class="eyebrow">Exclusao de transferencia</p>
+      <h2 id="transferDeleteTitle">Tem certeza que deseja excluir esta transferencia?</h2>
+      <p class="muted">Esta acao removera a transferencia e seus dados relacionados da operacao.</p>
+      <div id="transferDeleteDetails" class="decision-list"></div>
+      <div class="decision-actions">
+        <button class="danger-button" data-transfer-delete-decision="confirm" type="button">Confirmar exclusao</button>
+        <button class="secondary-button" data-transfer-delete-decision="cancel" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
   <div class="labels-print-sheet" id="labelsPrintSheet" aria-hidden="true"></div>
 </body>
 </html>

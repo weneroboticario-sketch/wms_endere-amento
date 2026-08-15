@@ -503,6 +503,10 @@ alter table public.wms_transfers add column if not exists merge_status text defa
 alter table public.wms_transfers add column if not exists merged_by_id text default '';
 alter table public.wms_transfers add column if not exists merged_by_name text default '';
 alter table public.wms_transfers add column if not exists merged_at timestamptz;
+alter table public.wms_transfers add column if not exists is_deleted boolean default false;
+alter table public.wms_transfers add column if not exists deleted_at timestamptz;
+alter table public.wms_transfers add column if not exists deleted_by_id text default '';
+alter table public.wms_transfers add column if not exists deleted_by_name text default '';
 alter table public.wms_transfers add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_transfers add column if not exists warehouse_code text default 'VDCG';
 
@@ -729,6 +733,9 @@ on public.wms_transfers (warehouse_code, status, created_at);
 create index if not exists idx_wms_transfers_warehouse_status
 on public.wms_transfers (warehouse_code, status);
 
+create index if not exists idx_wms_transfers_warehouse_deleted
+on public.wms_transfers (warehouse_code, is_deleted);
+
 create index if not exists wms_transfers_warehouse_status_updated_idx
 on public.wms_transfers (warehouse_code, status, updated_at desc);
 
@@ -757,6 +764,9 @@ create index if not exists wms_transfer_items_transfer_idx
 on public.wms_transfer_items (transfer_id);
 
 create index if not exists idx_wms_transfer_items_transfer
+on public.wms_transfer_items (transfer_id);
+
+create index if not exists idx_wms_transfer_items_transfer_id
 on public.wms_transfer_items (transfer_id);
 
 create index if not exists wms_transfer_items_sku_idx
@@ -1259,12 +1269,14 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'read') then execute 'create index if not exists wms_notifications_user_read_created_idx on public.wms_notifications (user_id, read, created_at desc)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'read') then execute 'create index if not exists idx_wms_notifications_user_read on public.wms_notifications (warehouse_code, user_id, read)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'warehouse_code') then execute 'create index if not exists wms_notifications_warehouse_created_idx on public.wms_notifications (warehouse_code, created_at desc)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_notifications' and column_name = 'transfer_id') then execute 'create index if not exists idx_wms_notifications_transfer on public.wms_notifications (warehouse_code, transfer_id)'; end if;
   end if;
 
   if to_regclass('public.wms_task_notifications') is not null then
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') then execute 'create index if not exists wms_task_notifications_user_warehouse_idx on public.wms_task_notifications (user_id, warehouse_code)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'user_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'read') then execute 'create index if not exists idx_wms_task_notifications_user_read on public.wms_task_notifications (warehouse_code, user_id, read)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'created_at') then execute 'create index if not exists wms_task_notifications_warehouse_created_idx on public.wms_task_notifications (warehouse_code, created_at desc)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_task_notifications' and column_name = 'transfer_id') then execute 'create index if not exists idx_wms_task_notifications_transfer on public.wms_task_notifications (warehouse_code, transfer_id)'; end if;
   end if;
 
   if to_regclass('public.wms_locations') is not null then
