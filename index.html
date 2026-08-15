@@ -96,6 +96,7 @@
           <p class="menu-label">Processos</p>
           <button class="menu-item transfer-full-menu" data-icon="TRF" data-screen="transferencias" type="button">Transferencias</button>
           <button class="menu-item" data-icon="XML" data-screen="conferencias" type="button">Conferencias <span class="menu-badge" id="conferenceMenuBadge" hidden>0</span></button>
+          <button class="menu-item" data-icon="REP" data-screen="reposicao" type="button">Pedidos de Reposicao <span class="menu-badge" id="replenishmentMenuBadge" hidden>0</span></button>
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
@@ -211,6 +212,10 @@
             <span>Tarefas em andamento</span>
             <strong id="metricTasksActive">0</strong>
           </article>
+          <article class="metric-card compact-metric">
+            <span>Reposicoes pendentes</span>
+            <strong id="metricReplenishmentPending">0</strong>
+          </article>
         </div>
 
         <div class="dashboard-layout">
@@ -241,10 +246,19 @@
           </section>
         </div>
 
+        <section class="panel replenishment-dashboard-panel">
+          <div class="panel-header">
+            <h3>Reposicao no estoque atual</h3>
+            <button class="secondary-button" data-screen-target="reposicao" type="button">Abrir reposicao</button>
+          </div>
+          <div id="replenishmentLeaderSummary" class="replenishment-leader-summary"></div>
+        </section>
+
         <div class="quick-actions">
           <button class="secondary-button" data-screen-target="consultaSku" type="button">Consultar SKU</button>
           <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar prateleira</button>
           <button class="secondary-button" data-screen-target="bipagem" type="button">Alocar produto</button>
+          <button class="secondary-button" data-screen-target="reposicao" type="button">Pedidos de reposicao</button>
           <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas tarefas</button>
           <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
           <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
@@ -442,6 +456,71 @@
           <input id="excelFileInput" type="file" accept=".xlsx,.xls" multiple>
           <button class="primary-button wide-button" id="importExcelButton" type="button">Importar planilha</button>
           <div id="importStatus" class="inline-status"></div>
+        </section>
+      </section>
+
+      <section class="screen" id="reposicao">
+        <div class="page-title">
+          <div>
+            <p class="eyebrow">Operacao loja</p>
+            <h2>Pedidos de Reposicao</h2>
+          </div>
+        </div>
+
+        <div class="replenishment-layout">
+          <section class="panel replenishment-create-panel">
+            <div class="panel-header">
+              <h3>Novo pedido</h3>
+            </div>
+            <form id="replenishmentForm" autocomplete="off">
+              <label for="replenishmentSkuInput">Codigo do produto</label>
+              <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
+              <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
+              <div class="replenishment-qty-grid">
+                <label>Qtd na loja
+                  <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" min="0" step="1" value="0">
+                </label>
+                <label>Qtd para repor
+                  <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
+                </label>
+              </div>
+              <label for="replenishmentObservationInput">Observacao</label>
+              <textarea id="replenishmentObservationInput" rows="2" placeholder="Opcional"></textarea>
+              <button class="primary-button wide-button" id="createReplenishmentButton" type="submit">Criar pedido</button>
+              <div id="replenishmentCreateStatus" class="inline-status"></div>
+            </form>
+          </section>
+
+          <section class="panel replenishment-leader-panel">
+            <div class="panel-header">
+              <h3>Resumo da reposicao</h3>
+            </div>
+            <div class="replenishment-summary-grid">
+              <div><span>Pendentes</span><strong id="replenishmentMetricPending">0</strong></div>
+              <div><span>Em separacao</span><strong id="replenishmentMetricSeparating">0</strong></div>
+              <div><span>Concluidos hoje</span><strong id="replenishmentMetricDoneToday">0</strong></div>
+              <div><span>Sem estoque</span><strong id="replenishmentMetricNoStock">0</strong></div>
+            </div>
+            <div class="button-row replenishment-filters">
+              <button class="secondary-button active" data-replenishment-filter="" type="button">Todos</button>
+              <button class="secondary-button" data-replenishment-filter="PENDENTE" type="button">Pendentes</button>
+              <button class="secondary-button" data-replenishment-filter="ATRIBUIDO" type="button">Atribuidos</button>
+              <button class="secondary-button" data-replenishment-filter="EM_SEPARACAO" type="button">Em separacao</button>
+              <button class="secondary-button" data-replenishment-filter="ATENDIDO_PARCIAL" type="button">Parcial</button>
+              <button class="secondary-button" data-replenishment-filter="SEM_ESTOQUE" type="button">Sem estoque</button>
+              <button class="secondary-button" data-replenishment-filter="CONCLUIDO" type="button">Concluidos</button>
+              <button class="secondary-button" data-replenishment-filter="CANCELADO" type="button">Cancelados</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panel-header">
+            <h3>Fila de Reposicao</h3>
+            <button class="secondary-button" id="loadMoreReplenishmentButton" type="button">Carregar mais</button>
+          </div>
+          <div id="replenishmentList" class="replenishment-list"></div>
+          <div id="replenishmentQueueStatus" class="inline-status"></div>
         </section>
       </section>
 

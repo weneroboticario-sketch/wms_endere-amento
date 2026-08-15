@@ -30,6 +30,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     conferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     historico: ["ADMINISTRADOR"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     manutencao: ["ADMINISTRADOR"],
@@ -61,6 +62,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   ];
   var FINAL_TRANSFER_STATUSES = ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "FINALIZADA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "UNIFICADA", "ARQUIVADA_POR_UNIFICACAO"];
   var MERGEABLE_TRANSFER_STATUSES = ["PENDENTE", "ATRIBUIDA", "AGUARDANDO_SEPARACAO"];
+  var REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "SEPARADO", "ENTREGUE_NA_LOJA", "CONCLUIDO", "ATENDIDO_PARCIAL", "SEM_ESTOQUE", "CANCELADO"];
+  var FINAL_REPLENISHMENT_STATUSES = ["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE", "CANCELADO"];
+  var REPLENISHMENT_RENDER_PAGE_SIZE = 30;
   var STORE_REFERENCE_ROWS = [
     { cnpj: "00.138.798/0001-32", loja: "14A1", cod: "5508", canal: "VAREJO", codVf: "743" },
     { cnpj: "00.138.798/0014-57", loja: "14D2", cod: "20004", canal: "VAREJO", codVf: "744" },
@@ -236,6 +240,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastScanInputAt: 0,
     tablesAvailable: true
   };
+  var replenishmentState = {
+    requests: [],
+    activeFilter: "",
+    renderLimit: REPLENISHMENT_RENDER_PAGE_SIZE,
+    saving: false,
+    lastCreatedSignature: "",
+    lastCreatedAt: 0,
+    currentProduct: null,
+    tablesAvailable: true
+  };
   var localCacheState = {
     db: null,
     available: false,
@@ -248,6 +262,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastCoreLoadMs: 0,
     lastTransferLoadMs: 0,
     lastConferenceLoadMs: 0,
+    lastReplenishmentLoadMs: 0,
     lastSkuQueryMs: 0,
     lastTransferQueryMs: 0,
     recentErrors: []
@@ -294,6 +309,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     core: false,
     transfers: false,
     conferences: false,
+    replenishment: false,
     assistant: false
   };
   var protectedAppShell = null;
@@ -392,6 +408,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     moduleLoadState.core = false;
     moduleLoadState.transfers = false;
     moduleLoadState.conferences = false;
+    moduleLoadState.replenishment = false;
     moduleLoadState.assistant = false;
     if (!keepUsers) {
       moduleLoadState.users = false;
@@ -466,13 +483,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return loaded;
   }
 
+  async function ensureReplenishmentDataLoaded() {
+    if (moduleLoadState.replenishment) return true;
+    if (!canAccessScreen("reposicao")) return false;
+    var loaded = await loadReplenishmentData();
+    moduleLoadState.replenishment = loaded === true;
+    return loaded;
+  }
+
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
-    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "exportar", "importar", "historico", "manutencao", "assistente"].indexOf(screenId) >= 0) {
+    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "exportar", "importar", "historico", "manutencao", "assistente", "reposicao"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
     if (screenId === "transferencias") await ensureTransferDataLoaded();
     if (screenId === "conferencias") await ensureConferenceDataLoaded();
+    if (screenId === "dashboard") await ensureReplenishmentDataLoaded();
+    if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
     if (screenId === "usuarios") {
       await ensureUsersLoaded({ repair: false });
       await ensureAccessRequestsLoaded();
@@ -1109,7 +1136,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "wms_transfer_events",
       "wms_transfer_divergences",
       "wms_task_notifications",
-      "wms_notifications"
+      "wms_notifications",
+      "wms_replenishment_requests"
     ].indexOf(tableName) >= 0;
   }
 
@@ -2073,6 +2101,328 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw error;
       await upsertInChunks("wms_transfer_items", rows.map(stripOptionalTransferItemColumns), "id");
     }
+  }
+
+  async function loadReplenishmentData() {
+    var loadStartedAt = performance.now();
+    replenishmentState.requests = [];
+    if (!isSupabaseReady()) return false;
+    try {
+      var response = await supabaseDb
+        .from("wms_replenishment_requests")
+        .select("*")
+        .eq("warehouse_code", activeWarehouseCode())
+        .neq("is_deleted", true)
+        .order("updated_at", { ascending: false })
+        .limit(120);
+      if (response.error) throw response.error;
+      replenishmentState.requests = (response.data || []).map(fromDbReplenishmentRequest);
+      replenishmentState.tablesAvailable = true;
+      recordPerformanceMetric("lastReplenishmentLoadMs", loadStartedAt);
+      return true;
+    } catch (error) {
+      replenishmentState.tablesAvailable = !isMissingTransferTableError(error);
+      recordPerformanceError("reposicao", error);
+      var message = isMissingTransferTableError(error) || isMissingColumnError(error)
+        ? "Tabela de reposicao ausente ou desatualizada. Execute supabase-schema.sql no SQL Editor do Supabase."
+        : "Nao foi possivel carregar pedidos de reposicao: " + formatSupabaseError(error);
+      if (getActiveScreenId() === "reposicao") setStatus("replenishmentQueueStatus", message, "error");
+      return false;
+    }
+  }
+
+  async function refreshReplenishmentData() {
+    if (!moduleLoadState.replenishment || !isSupabaseReady() || !canUseNetwork()) return;
+    await loadReplenishmentData();
+    renderReplenishment();
+    renderOperatorTasksAlert();
+  }
+
+  function fromDbReplenishmentRequest(row) {
+    var requested = Number(row.quantidade_solicitada || 0);
+    var attended = Number(row.quantidade_atendida || 0);
+    var pending = row.quantidade_pendente === null || row.quantidade_pendente === undefined
+      ? Math.max(0, requested - attended)
+      : Number(row.quantidade_pendente || 0);
+    var status = REPLENISHMENT_STATUSES.indexOf(row.status) >= 0 ? row.status : "PENDENTE";
+    return {
+      id: row.id,
+      createdAt: row.created_at || nowIso(),
+      updatedAt: row.updated_at || row.created_at || nowIso(),
+      warehouseCode: rowWarehouseCode(row),
+      codigoMaterial: normalizeSku(row.codigo_material || row.sku || ""),
+      nomeMaterial: row.nome_material || "",
+      storeQty: Number(row.quantidade_disponivel_loja_informada || 0),
+      requestedQty: requested,
+      attendedQty: attended,
+      pendingQty: Math.max(0, pending),
+      localizacaoWms: row.localizacao_wms || "",
+      localizacaoEstacao: row.localizacao_estacao || "",
+      localizacaoRack: row.localizacao_rack || "",
+      localizacaoLinha: row.localizacao_linha || "",
+      localizacaoColuna: row.localizacao_coluna || "",
+      captacaoEstacao: row.captacao_estacao || "",
+      captacaoRack: row.captacao_rack || "",
+      captacaoLinha: row.captacao_linha || "",
+      captacaoColuna: row.captacao_coluna || "",
+      solicitadoPorId: row.solicitado_por_id || "",
+      solicitadoPorNome: row.solicitado_por_nome || "",
+      responsavelId: row.responsavel_id || "",
+      responsavelNome: row.responsavel_nome || "",
+      status: status,
+      prioridade: row.prioridade || "NORMAL",
+      observacao: row.observacao || "",
+      motivoCancelamento: row.motivo_cancelamento || "",
+      startedAt: row.started_at || "",
+      finishedAt: row.finished_at || "",
+      durationSeconds: Number(row.duration_seconds || 0),
+      isDeleted: row.is_deleted === true,
+      deletedAt: row.deleted_at || "",
+      deletedById: row.deleted_by_id || "",
+      deletedByName: row.deleted_by_name || ""
+    };
+  }
+
+  function toDbReplenishmentRequest(item) {
+    return {
+      id: item.id,
+      created_at: item.createdAt || nowIso(),
+      updated_at: item.updatedAt || nowIso(),
+      warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
+      codigo_material: normalizeSku(item.codigoMaterial || ""),
+      nome_material: item.nomeMaterial || "",
+      quantidade_disponivel_loja_informada: Number(item.storeQty || 0),
+      quantidade_solicitada: Number(item.requestedQty || 0),
+      quantidade_atendida: Number(item.attendedQty || 0),
+      quantidade_pendente: Number(item.pendingQty || 0),
+      localizacao_wms: item.localizacaoWms || "",
+      localizacao_estacao: item.localizacaoEstacao || "",
+      localizacao_rack: item.localizacaoRack || "",
+      localizacao_linha: item.localizacaoLinha || "",
+      localizacao_coluna: item.localizacaoColuna || "",
+      captacao_estacao: item.captacaoEstacao || "",
+      captacao_rack: item.captacaoRack || "",
+      captacao_linha: item.captacaoLinha || "",
+      captacao_coluna: item.captacaoColuna || "",
+      solicitado_por_id: item.solicitadoPorId || "",
+      solicitado_por_nome: item.solicitadoPorNome || "",
+      responsavel_id: item.responsavelId || "",
+      responsavel_nome: item.responsavelNome || "",
+      status: item.status || "PENDENTE",
+      prioridade: item.prioridade || "NORMAL",
+      observacao: item.observacao || "",
+      motivo_cancelamento: item.motivoCancelamento || "",
+      started_at: item.startedAt || null,
+      finished_at: item.finishedAt || null,
+      duration_seconds: Number(item.durationSeconds || 0),
+      is_deleted: item.isDeleted === true,
+      deleted_at: item.deletedAt || null,
+      deleted_by_id: item.deletedById || "",
+      deleted_by_name: item.deletedByName || ""
+    };
+  }
+
+  function replenishmentService() {
+    return {
+      createReplenishmentRequest: createReplenishmentRequest,
+      getReplenishmentRequests: getVisibleReplenishmentRequests,
+      getMyReplenishmentRequests: getMyReplenishmentRequests,
+      assignReplenishmentRequest: assignReplenishmentRequest,
+      startReplenishmentRequest: startReplenishmentRequest,
+      updateReplenishmentQuantity: updateReplenishmentQuantity,
+      markReplenishmentNoStock: markReplenishmentNoStock,
+      completeReplenishmentRequest: completeReplenishmentRequest,
+      cancelReplenishmentRequest: cancelReplenishmentRequest,
+      deleteTestReplenishmentRequest: deleteTestReplenishmentRequest,
+      subscribeReplenishmentRealtime: startLeaderLiveSync
+    };
+  }
+
+  async function createReplenishmentRequest(data) {
+    if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
+    if (!ensureActiveWarehouse()) throw new Error("Estoque ativo invalido.");
+    var sku = normalizeSku(data.codigoMaterial);
+    var requestedQty = Number(data.requestedQty || 0);
+    var storeQty = Number(data.storeQty || 0);
+    if (!sku) throw new Error("Codigo Material obrigatorio.");
+    if (!authState.currentUser) throw new Error("Usuario solicitante obrigatorio.");
+    if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
+    var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty].join(":");
+    if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
+      if (!window.confirm("Ja existe um pedido recente para este produto. Deseja criar outro mesmo assim?")) return null;
+    }
+    var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
+    var now = nowIso();
+    var request = {
+      id: "rep-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      createdAt: now,
+      updatedAt: now,
+      warehouseCode: activeWarehouseCode(),
+      codigoMaterial: sku,
+      nomeMaterial: productInfo.name || findProductName(sku) || "",
+      storeQty: Math.max(0, storeQty || 0),
+      requestedQty: requestedQty,
+      attendedQty: 0,
+      pendingQty: requestedQty,
+      localizacaoWms: productInfo.wmsLocation || "",
+      localizacaoEstacao: productInfo.wmsStation || "",
+      localizacaoRack: productInfo.wmsRack || "",
+      localizacaoLinha: productInfo.wmsLine || "",
+      localizacaoColuna: productInfo.wmsColumn || "",
+      captacaoEstacao: productInfo.captureStation || "",
+      captacaoRack: productInfo.captureRack || "",
+      captacaoLinha: productInfo.captureLine || "",
+      captacaoColuna: productInfo.captureColumn || "",
+      solicitadoPorId: authState.currentUser.id,
+      solicitadoPorNome: authState.currentUser.name || authState.currentUser.username || "",
+      responsavelId: "",
+      responsavelNome: "",
+      status: "PENDENTE",
+      prioridade: "NORMAL",
+      observacao: normalizeText(data.observation)
+    };
+    var response = await supabaseDb.from("wms_replenishment_requests").insert(toDbReplenishmentRequest(request)).select("*").single();
+    if (response.error) throw response.error;
+    var saved = fromDbReplenishmentRequest(response.data);
+    upsertById(replenishmentState.requests, saved);
+    replenishmentState.lastCreatedSignature = signature;
+    replenishmentState.lastCreatedAt = Date.now();
+    return saved;
+  }
+
+  function lookupReplenishmentProduct(sku) {
+    sku = normalizeSku(sku);
+    var bindings = findBySku(sku).slice().sort(sortByDateDesc);
+    var latest = bindings[0] || null;
+    var name = (latest && latest.productName) || findProductName(sku) || "";
+    return {
+      sku: sku,
+      name: name,
+      storeBalance: null,
+      captureBalance: null,
+      wmsLocation: latest ? latest.locationCode : "",
+      wmsStation: latest ? "R" + pad2(latest.rua) : "",
+      wmsRack: latest ? "RK" + pad2(latest.rack) : "",
+      wmsLine: latest ? "L" + pad2(latest.linha) : "",
+      wmsColumn: latest ? latest.letra : "",
+      captureStation: "",
+      captureRack: "",
+      captureLine: "",
+      captureColumn: "",
+      balanceWarning: "Saldo ainda nao importado."
+    };
+  }
+
+  async function updateReplenishmentRow(id, patch) {
+    var existing = getReplenishmentById(id);
+    if (!existing) throw new Error("Pedido de reposicao nao encontrado.");
+    if (existing.warehouseCode !== activeWarehouseCode()) throw new Error("Pedido pertence a outro estoque.");
+    var updated = Object.assign({}, existing, patch, { updatedAt: nowIso() });
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .update(toDbReplenishmentRequest(updated))
+      .eq("id", id)
+      .eq("warehouse_code", activeWarehouseCode())
+      .select("*")
+      .single();
+    if (response.error) throw response.error;
+    var saved = fromDbReplenishmentRequest(response.data);
+    upsertById(replenishmentState.requests, saved);
+    return saved;
+  }
+
+  async function assignReplenishmentRequest(id, userId) {
+    var user = authState.users.find(function (entry) { return entry.id === userId; });
+    if (!user || !userCanReceiveTaskInActiveWarehouse(user)) throw new Error("Responsavel invalido: usuario pertence a outro estoque.");
+    return updateReplenishmentRow(id, {
+      responsavelId: user.id,
+      responsavelNome: user.name || user.username,
+      status: "ATRIBUIDO"
+    });
+  }
+
+  async function startReplenishmentRequest(id) {
+    var request = getReplenishmentById(id);
+    return updateReplenishmentRow(id, {
+      status: "EM_SEPARACAO",
+      startedAt: request && request.startedAt ? request.startedAt : nowIso()
+    });
+  }
+
+  async function updateReplenishmentQuantity(id, qty, observation) {
+    var request = getReplenishmentById(id);
+    if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    qty = Number(qty || 0);
+    if (qty < 0) throw new Error("Quantidade atendida invalida.");
+    var requested = Number(request.requestedQty || 0);
+    var attended = Math.min(requested, Number(request.attendedQty || 0) + qty);
+    var pending = Math.max(0, requested - attended);
+    var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
+    if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
+    return updateReplenishmentRow(id, {
+      attendedQty: attended,
+      pendingQty: pending,
+      status: status,
+      observacao: normalizeText(observation || request.observacao)
+    });
+  }
+
+  async function markReplenishmentNoStock(id, reason) {
+    if (!normalizeText(reason)) throw new Error("Informe o motivo do sem estoque.");
+    return updateReplenishmentQuantity(id, 0, reason);
+  }
+
+  async function completeReplenishmentRequest(id) {
+    var request = getReplenishmentById(id);
+    if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    var now = nowIso();
+    var started = request.startedAt || request.createdAt || now;
+    return updateReplenishmentRow(id, {
+      status: "CONCLUIDO",
+      pendingQty: Math.max(0, Number(request.requestedQty || 0) - Number(request.attendedQty || 0)),
+      finishedAt: now,
+      durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
+    });
+  }
+
+  async function cancelReplenishmentRequest(id, reason) {
+    if (!isAdminOrSupervisor()) throw new Error("Apenas lider ou administrador pode cancelar.");
+    if (!normalizeText(reason)) throw new Error("Motivo do cancelamento obrigatorio.");
+    return updateReplenishmentRow(id, {
+      status: "CANCELADO",
+      motivoCancelamento: normalizeText(reason)
+    });
+  }
+
+  async function deleteTestReplenishmentRequest(id) {
+    if (!isGlobalAdminUser(authState.currentUser)) throw new Error("Somente administrador geral pode excluir pedido de teste.");
+    return updateReplenishmentRow(id, {
+      isDeleted: true,
+      deletedAt: nowIso(),
+      deletedById: authState.currentUser.id,
+      deletedByName: authState.currentUser.name || authState.currentUser.username || ""
+    });
+  }
+
+  function getReplenishmentById(id) {
+    return replenishmentState.requests.find(function (request) { return request.id === id; }) || null;
+  }
+
+  function getVisibleReplenishmentRequests() {
+    return replenishmentState.requests.filter(function (request) {
+      if (request.isDeleted) return false;
+      if (request.warehouseCode !== activeWarehouseCode()) return false;
+      if (isAdminOrSupervisor()) return true;
+      return request.solicitadoPorId === authState.currentUser.id || request.responsavelId === authState.currentUser.id;
+    });
+  }
+
+  function getMyReplenishmentRequests() {
+    if (!authState.currentUser) return [];
+    return getVisibleReplenishmentRequests().filter(function (request) {
+      if (FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) >= 0) return false;
+      return request.responsavelId === authState.currentUser.id || request.solicitadoPorId === authState.currentUser.id;
+    });
   }
 
   function fromDbConference(row) {
@@ -3609,12 +3959,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
+    if (screenId === "reposicao" && $("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
     if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
+    if (screenId === "reposicao" && !realtimeState.active) startLeaderLiveSync();
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : screenId === "assistente" ? "Assistente WMS" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "conferencias" ? "Conferências" : screenId === "reposicao" ? "Reposição" : screenId === "assistente" ? "Assistente WMS" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
@@ -3730,6 +4082,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (event.target.closest("[data-open-tasks]")) showScreen("transferencias");
       var conferenceButton = event.target.closest("[data-open-conferences]");
       if (conferenceButton) showScreen("conferencias");
+      if (event.target.closest("[data-open-replenishments]")) showScreen("reposicao");
+    });
+    if ($("replenishmentForm")) $("replenishmentForm").addEventListener("submit", handleCreateReplenishment);
+    if ($("replenishmentSkuInput")) {
+      $("replenishmentSkuInput").addEventListener("input", handleReplenishmentSkuInput);
+      $("replenishmentSkuInput").addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          handleReplenishmentSkuInput();
+          $("replenishmentStoreQtyInput").focus();
+        }
+      });
+    }
+    if ($("replenishmentList")) {
+      $("replenishmentList").addEventListener("click", handleReplenishmentActionClick);
+      $("replenishmentList").addEventListener("change", handleReplenishmentActionChange);
+    }
+    document.querySelectorAll("[data-replenishment-filter]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        replenishmentState.activeFilter = button.dataset.replenishmentFilter || "";
+        replenishmentState.renderLimit = REPLENISHMENT_RENDER_PAGE_SIZE;
+        document.querySelectorAll("[data-replenishment-filter]").forEach(function (entry) {
+          entry.classList.toggle("active", entry === button);
+        });
+        renderReplenishment();
+      });
+    });
+    if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").addEventListener("click", function () {
+      replenishmentState.renderLimit += REPLENISHMENT_RENDER_PAGE_SIZE;
+      renderReplenishment();
     });
     ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
       $(id).addEventListener("input", renderTransferPanel);
@@ -4216,6 +4598,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (activeScreen === "historico") renderHistory();
     if (activeScreen === "transferencias") renderTransfers();
     if (activeScreen === "conferencias") renderConferences();
+    if (activeScreen === "reposicao") renderReplenishment();
     if (activeScreen === "manutencao") renderMaintenance();
     if (activeScreen === "estoques") renderWarehouses();
     renderOperatorTasksAlert();
@@ -4243,6 +4626,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return user.active !== false;
     }).length);
     setTextIfExists("metricTasksActive", getActiveUserTasks().length);
+    setTextIfExists("metricReplenishmentPending", getVisibleReplenishmentRequests().filter(function (request) {
+      return ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"].indexOf(request.status) >= 0;
+    }).length);
 
     $("areaTotals").innerHTML = AREAS.map(function (area) {
       var total = state.bindings.filter(function (binding) { return binding.areaCode === area.code; }).length;
@@ -4255,6 +4641,267 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).join("") : "<tr><td colspan=\"4\">Nenhum endereco cadastrado.</td></tr>";
 
     renderTransferDashboardAlert();
+    renderReplenishmentLeaderSummary();
+  }
+
+  function renderReplenishmentLeaderSummary() {
+    if (!$("replenishmentLeaderSummary")) return;
+    var requests = getVisibleReplenishmentRequests();
+    var open = requests.filter(function (request) {
+      return FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) < 0;
+    });
+    var completed = requests.filter(function (request) {
+      return request.status === "CONCLUIDO" || request.status === "ENTREGUE_NA_LOJA";
+    });
+    var avgSeconds = completed.length
+      ? Math.round(completed.reduce(function (sum, request) { return sum + Number(request.durationSeconds || 0); }, 0) / completed.length)
+      : 0;
+    var people = {};
+    open.forEach(function (request) {
+      var key = request.responsavelNome || "Sem responsavel";
+      people[key] = (people[key] || 0) + 1;
+    });
+    var peopleHtml = Object.keys(people).sort(function (a, b) { return people[b] - people[a]; }).slice(0, 4).map(function (name) {
+      return "<span><strong>" + escapeHtml(String(people[name])) + "</strong> " + escapeHtml(name) + "</span>";
+    }).join("");
+    $("replenishmentLeaderSummary").innerHTML = [
+      "<div class=\"replenishment-leader-grid\">",
+      replenishmentSummaryTile("Pendentes", requests.filter(function (item) { return item.status === "PENDENTE"; }).length, "warning"),
+      replenishmentSummaryTile("Atribuidos", requests.filter(function (item) { return item.status === "ATRIBUIDO"; }).length, "info"),
+      replenishmentSummaryTile("Em separacao", requests.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length, "info"),
+      replenishmentSummaryTile("Parcial", requests.filter(function (item) { return item.status === "ATENDIDO_PARCIAL"; }).length, "warning"),
+      replenishmentSummaryTile("Sem estoque", requests.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length, "danger"),
+      replenishmentSummaryTile("Concluidos", completed.length, "success"),
+      replenishmentSummaryTile("Tempo medio", humanizeDuration(avgSeconds), "neutral"),
+      replenishmentSummaryTile("Em aberto", open.length, "neutral"),
+      "</div>",
+      "<div class=\"replenishment-open-people\">",
+      "<strong>Colaboradores com pedidos em aberto</strong>",
+      peopleHtml || "<span>Nenhum pedido em aberto.</span>",
+      "</div>"
+    ].join("");
+  }
+
+  function replenishmentSummaryTile(label, value, tone) {
+    return "<div class=\"replenishment-summary-tile tone-" + escapeHtml(tone || "neutral") + "\"><span>" + escapeHtml(label) + "</span><strong>" + escapeHtml(String(value)) + "</strong></div>";
+  }
+
+  function renderReplenishment() {
+    if (!$("replenishmentList")) return;
+    var visible = getVisibleReplenishmentRequests().slice().sort(function (a, b) {
+      return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
+    });
+    var today = new Date().toISOString().slice(0, 10);
+    setTextIfExists("replenishmentMetricPending", visible.filter(function (item) { return item.status === "PENDENTE" || item.status === "ATRIBUIDO"; }).length);
+    setTextIfExists("replenishmentMetricSeparating", visible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
+    setTextIfExists("replenishmentMetricDoneToday", visible.filter(function (item) { return item.status === "CONCLUIDO" && String(item.finishedAt || item.updatedAt).slice(0, 10) === today; }).length);
+    setTextIfExists("replenishmentMetricNoStock", visible.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length);
+    if (replenishmentState.activeFilter) {
+      visible = visible.filter(function (item) { return item.status === replenishmentState.activeFilter; });
+    }
+    var limited = visible.slice(0, replenishmentState.renderLimit);
+    $("replenishmentList").innerHTML = limited.length
+      ? limited.map(replenishmentCardHtml).join("")
+      : "<div class=\"empty-state\">Nenhum pedido de reposicao encontrado para o estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
+    if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
+    setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
+  }
+
+  function replenishmentCardHtml(item) {
+    var canManage = isAdminOrSupervisor();
+    var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
+    var location = item.localizacaoWms || "Sem localizacao WMS";
+    var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
+    return [
+      "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
+      "<div class=\"replenishment-card-main\">",
+      "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
+      "<div class=\"replenishment-location\"><span>Localizacao</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.localizacaoEstacao || "-") + " | " + escapeHtml(item.localizacaoRack || "-") + " | " + escapeHtml(item.localizacaoLinha || "-") + " | " + escapeHtml(item.localizacaoColuna || "-") + "</small></div>",
+      "</div>",
+      "<div class=\"replenishment-card-metrics\">",
+      replenishmentMetricHtml("Loja", formatQty(item.storeQty)),
+      replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
+      replenishmentMetricHtml("Atendida", formatQty(item.attendedQty)),
+      replenishmentMetricHtml("Pendente", formatQty(item.pendingQty)),
+      "</div>",
+      "<div class=\"replenishment-card-footer\">",
+      "<span class=\"status-badge " + statusBadgeClass(item.status) + "\">" + displayReplenishmentStatus(item.status) + "</span>",
+      "<span>Solicitado por <strong>" + escapeHtml(item.solicitadoPorNome || "-") + "</strong></span>",
+      "<span>Responsavel <strong>" + escapeHtml(item.responsavelNome || "-") + "</strong></span>",
+      "<span>" + escapeHtml(elapsed) + "</span>",
+      "</div>",
+      replenishmentActionsHtml(item, canManage, canWork),
+      item.observacao ? "<p class=\"replenishment-note\">" + escapeHtml(item.observacao) + "</p>" : "",
+      item.motivoCancelamento ? "<p class=\"replenishment-note danger-text\">" + escapeHtml(item.motivoCancelamento) + "</p>" : "",
+      "</article>"
+    ].join("");
+  }
+
+  function replenishmentMetricHtml(label, value) {
+    return "<span><small>" + escapeHtml(label) + "</small><strong>" + escapeHtml(value) + "</strong></span>";
+  }
+
+  function replenishmentActionsHtml(item, canManage, canWork) {
+    var assign = canManage ? "<select data-replenishment-assign=\"" + escapeHtml(item.id) + "\"><option value=\"\">Atribuir responsavel</option>" + getTaskAssignableUsers().map(function (user) {
+      return "<option value=\"" + escapeHtml(user.id) + "\"" + (user.id === item.responsavelId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
+    }).join("") + "</select>" : "";
+    var actions = [];
+    if (canWork && ["PENDENTE", "ATRIBUIDO", "ATENDIDO_PARCIAL"].indexOf(item.status) >= 0) actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
+    if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
+      actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
+      actions.push("<button class=\"secondary-button\" data-replenishment-nostock=\"" + escapeHtml(item.id) + "\" type=\"button\">Sem estoque</button>");
+      actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
+    }
+    if (canManage && item.status !== "CANCELADO" && item.status !== "CONCLUIDO") actions.push("<button class=\"danger-button\" data-replenishment-cancel=\"" + escapeHtml(item.id) + "\" type=\"button\">Cancelar</button>");
+    if (isGlobalAdminUser(authState.currentUser)) actions.push("<button class=\"danger-button\" data-replenishment-delete=\"" + escapeHtml(item.id) + "\" type=\"button\">Excluir teste</button>");
+    return "<div class=\"replenishment-actions\">" + assign + actions.join("") + "</div>";
+  }
+
+  function displayReplenishmentStatus(status) {
+    return normalizeText(status).replace(/_/g, " ").toLowerCase().replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
+  }
+
+  function statusBadgeClass(status) {
+    if (["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEPARADO"].indexOf(status) >= 0) return "active";
+    if (["CANCELADO", "SEM_ESTOQUE"].indexOf(status) >= 0) return "inactive";
+    return "warning";
+  }
+
+  function humanizeDuration(seconds) {
+    seconds = Number(seconds || 0);
+    if (seconds < 60) return seconds + "s";
+    var minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + "min";
+    var hours = Math.floor(minutes / 60);
+    minutes = minutes % 60;
+    return hours + "h " + String(minutes).padStart(2, "0") + "min";
+  }
+
+  function renderReplenishmentProductCard(product) {
+    if (!$("replenishmentProductCard")) return;
+    if (!product || !product.sku) {
+      $("replenishmentProductCard").className = "replenishment-product-card empty-state";
+      $("replenishmentProductCard").textContent = "Bipe um produto para consultar.";
+      return;
+    }
+    $("replenishmentProductCard").className = "replenishment-product-card";
+    $("replenishmentProductCard").innerHTML = [
+      "<strong>SKU " + escapeHtml(product.sku) + "</strong>",
+      "<span>" + escapeHtml(product.name || "Produto sem nome cadastrado") + "</span>",
+      "<div class=\"replenishment-product-meta\">",
+      "<span><small>Saldo loja</small><b>" + escapeHtml(product.storeBalance === null ? "Nao importado" : formatQty(product.storeBalance)) + "</b></span>",
+      "<span><small>Saldo captacao</small><b>" + escapeHtml(product.captureBalance === null ? "Nao importado" : formatQty(product.captureBalance)) + "</b></span>",
+      "<span><small>Endereco WMS</small><b>" + escapeHtml(product.wmsLocation || "Sem localizacao") + "</b></span>",
+      "<span><small>Endereco captacao</small><b>" + escapeHtml([product.captureStation, product.captureRack, product.captureLine, product.captureColumn].filter(Boolean).join("-") || "Nao importado") + "</b></span>",
+      "</div>",
+      product.balanceWarning ? "<em>" + escapeHtml(product.balanceWarning) + "</em>" : ""
+    ].join("");
+  }
+
+  function handleReplenishmentSkuInput() {
+    if (!$("replenishmentSkuInput")) return;
+    var sku = normalizeSku($("replenishmentSkuInput").value);
+    if (!sku || sku.length < 4) {
+      replenishmentState.currentProduct = null;
+      renderReplenishmentProductCard(null);
+      return;
+    }
+    var product = lookupReplenishmentProduct(sku);
+    replenishmentState.currentProduct = product;
+    renderReplenishmentProductCard(product);
+  }
+
+  async function handleCreateReplenishment(event) {
+    event.preventDefault();
+    if (replenishmentState.saving) return;
+    var button = $("createReplenishmentButton");
+    var originalText = button ? button.textContent : "";
+    try {
+      replenishmentState.saving = true;
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Criando pedido...";
+      }
+      handleReplenishmentSkuInput();
+      var created = await createReplenishmentRequest({
+        codigoMaterial: $("replenishmentSkuInput").value,
+        storeQty: $("replenishmentStoreQtyInput").value,
+        requestedQty: $("replenishmentRequestQtyInput").value,
+        observation: $("replenishmentObservationInput").value,
+        productInfo: replenishmentState.currentProduct
+      });
+      if (!created) return;
+      if ($("replenishmentForm")) $("replenishmentForm").reset();
+      replenishmentState.currentProduct = null;
+      renderReplenishmentProductCard(null);
+      await refreshReplenishmentData();
+      setStatus("replenishmentCreateStatus", "Pedido criado com sucesso.", "success");
+      showToast("Pedido de reposicao criado.", "success");
+      if ($("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
+    } catch (error) {
+      var message = formatSupabaseError(error);
+      setStatus("replenishmentCreateStatus", "Erro ao criar pedido: " + message, "error");
+      showToast("Erro ao criar pedido de reposicao.", "error");
+    } finally {
+      replenishmentState.saving = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText || "Criar pedido";
+      }
+    }
+  }
+
+  async function handleReplenishmentActionClick(event) {
+    var target = event.target.closest("button");
+    if (!target) return;
+    var id = target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
+    if (!id) return;
+    try {
+      target.disabled = true;
+      if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
+      if (target.dataset.replenishmentAttend) {
+        var request = getReplenishmentById(id);
+        var qty = window.prompt("Quantidade atendida agora:", request ? String(request.pendingQty || request.requestedQty || "") : "");
+        if (qty === null) return;
+        var note = "";
+        if (Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
+        await updateReplenishmentQuantity(id, Number(qty || 0), note);
+      }
+      if (target.dataset.replenishmentNostock) {
+        var reason = window.prompt("Motivo do sem estoque:");
+        if (reason === null) return;
+        await markReplenishmentNoStock(id, reason);
+      }
+      if (target.dataset.replenishmentComplete) await completeReplenishmentRequest(id);
+      if (target.dataset.replenishmentCancel) {
+        var cancelReason = window.prompt("Motivo do cancelamento:");
+        if (cancelReason === null) return;
+        await cancelReplenishmentRequest(id, cancelReason);
+      }
+      if (target.dataset.replenishmentDelete) {
+        if (!window.confirm("Excluir logicamente este pedido de teste?")) return;
+        await deleteTestReplenishmentRequest(id);
+      }
+      await refreshReplenishmentData();
+      showToast("Pedido atualizado.", "success");
+    } catch (error) {
+      setStatus("replenishmentQueueStatus", "Erro ao atualizar pedido: " + formatSupabaseError(error), "error");
+    } finally {
+      target.disabled = false;
+    }
+  }
+
+  async function handleReplenishmentActionChange(event) {
+    var select = event.target.closest("[data-replenishment-assign]");
+    if (!select || !select.value) return;
+    try {
+      await assignReplenishmentRequest(select.dataset.replenishmentAssign, select.value);
+      await refreshReplenishmentData();
+      showToast("Responsavel atribuido.", "success");
+    } catch (error) {
+      setStatus("replenishmentQueueStatus", "Erro ao atribuir responsavel: " + formatSupabaseError(error), "error");
+      renderReplenishment();
+    }
   }
 
   function renderTransferDashboardAlert() {
@@ -4308,7 +4955,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var conferences = getActiveUserConferences().map(function (conference) {
       return { type: "CONFERENCIA", id: conference.id, title: conference.name || conference.documentNumber || "Conferência", subtitle: (conference.issuerName || "-") + " / " + (conference.recipientName || "-"), source: conference };
     });
-    return transfers.concat(conferences);
+    var replenishments = getMyReplenishmentRequests().map(function (request) {
+      return {
+        type: "REPOSICAO",
+        id: request.id,
+        title: "SKU " + request.codigoMaterial,
+        subtitle: request.nomeMaterial || "Pedido de reposicao",
+        source: request
+      };
+    });
+    return transfers.concat(conferences, replenishments);
   }
 
   function renderOperatorTasksAlert() {
@@ -4317,6 +4973,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var unreadTasks = tasks.filter(function (task) { return !isTaskAlertRead(task); });
     var transferTasks = tasks.filter(function (task) { return task.type === "TRANSFERENCIA"; });
     var conferenceTasks = tasks.filter(function (task) { return task.type === "CONFERENCIA"; });
+    var replenishmentTasks = tasks.filter(function (task) { return task.type === "REPOSICAO"; });
     var isOperatorUser = authState.currentUser && authState.currentUser.role === "OPERADOR";
     updateHeaderTaskCount(tasks.length);
     $("taskMenuBadge").hidden = !isOperatorUser || !transferTasks.length;
@@ -4324,6 +4981,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("conferenceMenuBadge")) {
       $("conferenceMenuBadge").hidden = !isOperatorUser || !conferenceTasks.length;
       $("conferenceMenuBadge").textContent = String(conferenceTasks.length);
+    }
+    if ($("replenishmentMenuBadge")) {
+      $("replenishmentMenuBadge").hidden = !isOperatorUser || !replenishmentTasks.length;
+      $("replenishmentMenuBadge").textContent = String(replenishmentTasks.length);
     }
     if (!isOperatorUser || !unreadTasks.length) {
       $("operatorTaskAlert").hidden = true;
@@ -4339,7 +5000,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span>" + escapeHtml(taskMessage(mainTask)) + "</span>",
       "<span>" + escapeHtml(mainTask.title || "-") + " - " + escapeHtml(mainTask.subtitle || "-") + "</span>",
       "</div>",
-      "<button class=\"primary-button\" " + (mainTask.type === "CONFERENCIA" ? "data-open-conferences" : "data-open-tasks") + " type=\"button\">Ver minhas tarefas</button>"
+      "<button class=\"primary-button\" " + (mainTask.type === "CONFERENCIA" ? "data-open-conferences" : mainTask.type === "REPOSICAO" ? "data-open-replenishments" : "data-open-tasks") + " type=\"button\">Ver minhas tarefas</button>"
     ].join("");
     notifyTaskChanges(tasks);
   }
@@ -4347,6 +5008,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function taskMessage(task) {
     if (!task) return "Não foi possível carregar suas tarefas. Tente novamente.";
     if (task.type === "CONFERENCIA") return "Você recebeu uma conferência para realizar.";
+    if (task.type === "REPOSICAO") return "Você recebeu um pedido de reposição para atender.";
     var transfer = task.source || task;
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA") return "Separação concluída. Faça a montagem da caixa.";
     if (transfer.status === "EM_SEPARACAO") return "Você possui uma transferência em andamento.";
@@ -4465,6 +5127,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items" }, handleTransferRealtimeDelta)
           .on("postgres_changes", { event: "*", schema: "public", table: "wms_task_notifications" }, handleTransferRealtimeDelta)
           .on("postgres_changes", { event: "*", schema: "public", table: "wms_notifications" }, handleTransferRealtimeDelta)
+          .on("postgres_changes", { event: "*", schema: "public", table: "wms_replenishment_requests" }, handleTransferRealtimeDelta)
           .subscribe(function (status) {
             realtimeState.subscriptionStatus = status;
             if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
@@ -4519,6 +5182,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         warehouseCode: row.warehouse_code || ""
       });
       realtimeState.recentEvents = realtimeState.recentEvents.slice(0, 10);
+      if (payload && payload.table === "wms_replenishment_requests") {
+        applyReplenishmentRealtimePayload(payload);
+        renderReplenishmentRealtimeViews();
+        setSyncStatus("Ao vivo", "success");
+        return;
+      }
       applyTransferRealtimePayload(payload);
       renderTransferRealtimeViews();
       setSyncStatus("Ao vivo", "success");
@@ -4559,6 +5228,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderOperatorTasksAlert();
   }
 
+  function applyReplenishmentRealtimePayload(payload) {
+    var eventType = payload && payload.eventType ? payload.eventType : "";
+    var row = payload && payload.new ? payload.new : {};
+    var oldRow = payload && payload.old ? payload.old : {};
+    if (eventType === "DELETE" || (row && row.is_deleted === true)) {
+      removeById(replenishmentState.requests, (oldRow && oldRow.id) || (row && row.id));
+      return;
+    }
+    if (row && row.id) upsertById(replenishmentState.requests, fromDbReplenishmentRequest(row));
+  }
+
+  function renderReplenishmentRealtimeViews() {
+    var activeScreen = getActiveScreenId();
+    if (activeScreen === "reposicao") renderReplenishment();
+    if (activeScreen === "dashboard") renderDashboard();
+    renderOperatorTasksAlert();
+  }
+
   function scheduleTransferRealtimeRefresh(reason, delayMs) {
     if (!realtimeState.active || !isSupabaseReady() || !canUseNetwork()) return;
     if (reason === "poll" && realtimeState.refreshRunning) {
@@ -4589,6 +5276,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       invalidateTransferStatsCache();
       if (!since || !moduleLoadState.transfers) {
         await loadTransferData();
+        if (moduleLoadState.replenishment) await refreshReplenishmentData();
         realtimeState.lastLiveUpdateAt = latestDate(transferState.transfers.concat(transferState.items).map(function (row) {
           return { createdAt: row.updatedAt || row.createdAt || nowIso() };
         })) || nowIso();
@@ -4603,6 +5291,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         eventRows.forEach(function (row) { if (row.id) upsertById(transferState.events, row); });
+        if (moduleLoadState.replenishment) await refreshReplenishmentData();
         var newest = [since].concat(transferRows.map(function (row) { return row.updated_at || row.created_at || ""; }), itemRows.map(function (row) { return row.updated_at || row.created_at || ""; }), eventRows.map(function (row) { return row.created_at || ""; })).sort().pop();
         realtimeState.lastLiveUpdateAt = newest || nowIso();
         writeTransferCacheSoon();
@@ -11594,7 +12283,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_transfer_packages") >= 0 ||
       message.indexOf("wms_product_packaging") >= 0 ||
       message.indexOf("wms_task_notifications") >= 0 ||
-      message.indexOf("wms_notifications") >= 0
+      message.indexOf("wms_notifications") >= 0 ||
+      message.indexOf("wms_replenishment_requests") >= 0
     ) && (
       message.indexOf("not found") >= 0 ||
       message.indexOf("schema cache") >= 0 ||
