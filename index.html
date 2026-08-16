@@ -330,6 +330,7 @@
           </div>
           <div id="skuSearchStatus" class="inline-status"></div>
           <div id="skuResultCards" class="sku-card-grid"></div>
+          <div id="skuOperationalHub" class="sku-operational-hub" hidden></div>
           <div class="button-row sku-result-actions" id="skuResultActions" hidden>
             <button class="secondary-button" id="clearSkuSearchButton" type="button">Limpar</button>
             <button class="primary-button" id="newSkuSearchButton" type="button">Nova consulta</button>
@@ -1408,6 +1409,22 @@
             <input id="taskSoundInput" type="checkbox" checked>
             Som discreto ao receber nova tarefa
           </label>
+          <label class="checkbox-label">
+            <input id="replenishmentSoundInput" type="checkbox" checked>
+            Som forte para pedidos de reposicao
+          </label>
+          <label for="replenishmentSoundVolumeInput">Volume do som de reposicao</label>
+          <select id="replenishmentSoundVolumeInput">
+            <option value="high">Alto</option>
+            <option value="medium">Medio</option>
+            <option value="low">Baixo</option>
+          </select>
+          <label for="replenishmentSoundRepeatInput">Tipo de alerta de reposicao</label>
+          <select id="replenishmentSoundRepeatInput">
+            <option value="repeat_30">Repetir por ate 30 segundos</option>
+            <option value="repeat_open">Repetir ate abrir</option>
+            <option value="once">Toque unico</option>
+          </select>
           <button class="secondary-button wide-button" id="resetSampleButton" type="button">Restaurar dados de exemplo</button>
           <button class="danger-button wide-button" id="clearAllButton" type="button">Apagar todos os dados</button>
         </section>

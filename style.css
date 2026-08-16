@@ -872,6 +872,102 @@ textarea {
   display: none;
 }
 
+.sku-operational-hub[hidden] {
+  display: none;
+}
+
+.sku-operational-hub {
+  margin-top: 12px;
+}
+
+.sku-hub-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sku-hub-title span,
+.sku-hub-grid small,
+.sku-replenishment-box span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sku-hub-title strong {
+  display: block;
+  color: var(--ink);
+  font-size: 1.4rem;
+}
+
+.sku-hub-title p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.sku-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sku-hub-grid span {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 7px;
+  background: var(--surface-alt);
+}
+
+.sku-hub-grid strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.sku-replenishment-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 4px solid var(--accent);
+  background: #f5fbff;
+}
+
+.sku-replenishment-box.tone-danger {
+  border-left-color: #d92d20;
+  background: #fff4f4;
+}
+
+.sku-replenishment-box.tone-warning {
+  border-left-color: #c47b00;
+  background: #fff9ed;
+}
+
+.sku-replenishment-box strong {
+  display: block;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.sku-replenishment-box p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.sku-stock-error {
+  color: #b42318;
+  font-weight: 700;
+}
+
 .result-actions,
 .row-actions {
   display: flex;
@@ -3241,6 +3337,29 @@ tbody tr:hover td {
 
   .role-operador #consultaSku .sku-location-code {
     font-size: 1.2rem;
+  }
+
+  .sku-hub-card {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .sku-hub-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .sku-hub-grid span {
+    padding: 8px;
+  }
+
+  .sku-replenishment-box {
+    grid-template-columns: 1fr;
+  }
+
+  .sku-replenishment-box button {
+    width: 100%;
+    min-height: 46px;
   }
 
   .transfer-alert {

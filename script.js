@@ -7,6 +7,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var AUTH_SESSION_KEY = "wms_auth_session_v1";
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
+  var REPLENISHMENT_SOUND_KEY = "wms_replenishment_sound_enabled_v1";
+  var REPLENISHMENT_SOUND_VOLUME_KEY = "wms_replenishment_sound_volume_v1";
+  var REPLENISHMENT_SOUND_REPEAT_KEY = "wms_replenishment_sound_repeat_v1";
+  var REPLENISHMENT_NOTIFICATION_PERMISSION_KEY = "wms_replenishment_notification_prompt_v1";
   var LOCAL_CACHE_DB_NAME = "wms_operational_cache_v1";
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
@@ -301,6 +305,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   var currentSku = "";
   var lastSkuSearch = "";
+  var skuSearchRequestSeq = 0;
+  var skuSearchState = {
+    currentSku: "",
+    locations: [],
+    stockSuggestion: null,
+    stockError: ""
+  };
   var currentLocation = null;
   var editingId = null;
   var taskPollTimer = null;
@@ -309,6 +320,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     signature: "",
     audioUnlocked: false,
     pendingSound: false,
+    pendingReplenishmentSound: false,
+    replenishmentSoundTimer: null,
+    replenishmentSoundUntil: 0,
+    notifiedReplenishments: {},
     read: {}
   };
   var authState = {
@@ -772,6 +787,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       replenishmentState.suggestionsHasMore = false;
       replenishmentState.activeSuggestion = null;
     }
+    skuSearchState = { currentSku: "", locations: [], stockSuggestion: null, stockError: "" };
+    if ($("skuOperationalHub")) renderSkuOperationalHub("", [], null, "");
     renderActiveWarehouseUi();
   }
 
@@ -986,6 +1003,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ["taskSoundInput", "sidebarTaskSoundInput"].forEach(function (id) {
       if ($(id)) $(id).checked = enabled;
     });
+    if ($("replenishmentSoundInput")) $("replenishmentSoundInput").checked = localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
+    if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").value = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
+    if ($("replenishmentSoundRepeatInput")) $("replenishmentSoundRepeatInput").value = localStorage.getItem(REPLENISHMENT_SOUND_REPEAT_KEY) || "repeat_30";
   }
 
   function isTaskSoundEnabled() {
@@ -999,12 +1019,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     fillTaskSoundSetting();
   }
 
+  function isReplenishmentSoundEnabled() {
+    return localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
+  }
+
+  function saveReplenishmentSoundSetting() {
+    if ($("replenishmentSoundInput")) localStorage.setItem(REPLENISHMENT_SOUND_KEY, $("replenishmentSoundInput").checked ? "true" : "false");
+    if ($("replenishmentSoundVolumeInput")) localStorage.setItem(REPLENISHMENT_SOUND_VOLUME_KEY, $("replenishmentSoundVolumeInput").value || "high");
+    if ($("replenishmentSoundRepeatInput")) localStorage.setItem(REPLENISHMENT_SOUND_REPEAT_KEY, $("replenishmentSoundRepeatInput").value || "repeat_30");
+    fillTaskSoundSetting();
+  }
+
   function bindTaskAudioUnlock() {
     var unlock = function () {
       taskAlertState.audioUnlocked = true;
       if (taskAlertState.pendingSound) {
         taskAlertState.pendingSound = false;
         playTaskSound();
+      }
+      if (taskAlertState.pendingReplenishmentSound) {
+        taskAlertState.pendingReplenishmentSound = false;
+        playReplenishmentSound();
       }
     };
     document.addEventListener("click", unlock, { once: true });
@@ -2443,6 +2478,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return buildStockSuggestion(sku, requestedQty, positions);
   }
 
+  async function getReplenishmentSuggestion(sku, warehouseCode) {
+    if (warehouseCode && normalizeWarehouseCode(warehouseCode) !== activeWarehouseCode()) throw new Error("Estoque da consulta diferente do estoque ativo.");
+    return getStockSuggestion(sku, 0);
+  }
+
   function buildStockSuggestion(sku, requestedQty, positions) {
     sku = normalizeSku(sku);
     var loja = aggregateStockPositions((positions || []).filter(function (item) { return item.sourceType === "LOJA"; }));
@@ -2903,6 +2943,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       exportStockAlerts: exportStockAlerts,
       exportStockTemplate: exportStockTemplate,
       getReplenishmentSuggestions: getReplenishmentSuggestions,
+      getReplenishmentSuggestion: getReplenishmentSuggestion,
       getTransferStockSuggestion: getStockSuggestion,
       getReplenishmentStockSuggestion: getStockSuggestion
     };
@@ -3117,6 +3158,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     upsertById(replenishmentState.requests, saved);
     replenishmentState.lastCreatedSignature = signature;
     replenishmentState.lastCreatedAt = Date.now();
+    createReplenishmentNotification(saved, responsible ? "assigned" : "created");
     return saved;
   }
 
@@ -3199,11 +3241,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
     var user = authState.users.find(function (entry) { return entry.id === userId; });
     if (!user || !userCanReceiveReplenishmentInWarehouse(user, request.warehouseCode)) throw new Error("Responsavel invalido: este usuario pertence a outro estoque.");
-    return updateReplenishmentRow(id, {
+    var saved = await updateReplenishmentRow(id, {
       responsavelId: user.id,
       responsavelNome: user.name || user.username,
       status: "ATRIBUIDO"
     });
+    createReplenishmentNotification(saved, "assigned");
+    return saved;
   }
 
   async function startReplenishmentRequest(id) {
@@ -3670,6 +3714,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         authState.currentSession = savedSession;
         setActiveWarehouse(resolveLoginWarehouseForUser(user, savedSession.activeWarehouseCode));
         await enterAuthenticatedApp(false);
+        requestBrowserNotificationPermission();
         return;
       }
       localStorage.removeItem(AUTH_SESSION_KEY);
@@ -3894,6 +3939,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(authState.currentSession));
     $("loginPasswordInput").value = "";
     await enterAuthenticatedApp(true);
+    requestBrowserNotificationPermission();
     } catch (error) {
       console.error("Erro ao entrar:", error);
       showLogin("Erro ao entrar: " + formatSupabaseError(error), "error");
@@ -4043,6 +4089,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     resetLazyModuleState(false);
     taskAlertState.initialized = false;
     taskAlertState.signature = "";
+    taskAlertState.notifiedReplenishments = {};
     applyRoleClass();
     showLogin("Sessao encerrada.", "success");
   }
@@ -4896,6 +4943,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("clearSkuSearchButton").addEventListener("click", resetSkuSearchView);
     $("newSkuSearchButton").addEventListener("click", resetSkuSearchView);
     $("allocateSkuSearchButton").addEventListener("click", allocateLastSkuSearch);
+    if ($("skuOperationalHub")) $("skuOperationalHub").addEventListener("click", handleSkuOperationalHubClick);
     $("skuSearchInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -5137,6 +5185,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
     $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
+    if ($("replenishmentSoundInput")) $("replenishmentSoundInput").addEventListener("change", saveReplenishmentSoundSetting);
+    if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").addEventListener("change", saveReplenishmentSoundSetting);
+    if ($("replenishmentSoundRepeatInput")) $("replenishmentSoundRepeatInput").addEventListener("change", saveReplenishmentSoundSetting);
     if ($("askAssistantButton")) $("askAssistantButton").addEventListener("click", askWmsAssistant);
     if ($("clearAssistantButton")) $("clearAssistantButton").addEventListener("click", clearWmsAssistant);
     if ($("assistantQuestionInput")) $("assistantQuestionInput").addEventListener("keydown", function (event) {
@@ -5970,7 +6021,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
         responsibleId: $("suggestionResponsibleSelect") ? $("suggestionResponsibleSelect").value : "",
         observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
-        productInfo: {
+        productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
           name: suggestion.name,
           storeBalance: suggestion.storeAvailable,
@@ -5987,6 +6038,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       await refreshReplenishmentData();
       await refreshReplenishmentSuggestions(true);
       showToast("Pedido de reposicao criado.", "success");
+      if (suggestion.source === "consultaSku") {
+        resetSkuSearchView();
+        setStatus("skuSearchStatus", "Pedido de reposicao criado para SKU " + created.codigoMaterial + ".", "success");
+      }
     } catch (error) {
       setStatus("replenishmentSuggestionModalStatus", "Erro ao criar pedido: " + formatSupabaseError(error), "error");
     } finally {
@@ -6076,8 +6131,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("conferenceMenuBadge").textContent = String(conferenceTasks.length);
     }
     if ($("replenishmentMenuBadge")) {
-      $("replenishmentMenuBadge").hidden = !isOperatorUser || !replenishmentTasks.length;
-      $("replenishmentMenuBadge").textContent = String(replenishmentTasks.length);
+      var openReplenishments = getVisibleReplenishmentRequests().filter(function (request) {
+        return FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) < 0;
+      });
+      var badgeCount = isOperatorUser ? replenishmentTasks.length : openReplenishments.length;
+      $("replenishmentMenuBadge").hidden = !badgeCount;
+      $("replenishmentMenuBadge").textContent = String(badgeCount);
     }
     if (!isOperatorUser || !unreadTasks.length) {
       $("operatorTaskAlert").hidden = true;
@@ -6174,6 +6233,107 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       taskAlertState.pendingSound = true;
     }
+  }
+
+  function notificationService() {
+    return {
+      createReplenishmentNotification: createReplenishmentNotification,
+      playReplenishmentSound: playReplenishmentSound,
+      requestBrowserNotificationPermission: requestBrowserNotificationPermission,
+      showBrowserNotification: showBrowserNotification
+    };
+  }
+
+  function requestBrowserNotificationPermission() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "default") return;
+    if (localStorage.getItem(REPLENISHMENT_NOTIFICATION_PERMISSION_KEY) === "asked") return;
+    localStorage.setItem(REPLENISHMENT_NOTIFICATION_PERMISSION_KEY, "asked");
+    try {
+      Notification.requestPermission().catch(function () {});
+    } catch (error) {
+      recordPerformanceError("notificacao-reposicao", error);
+    }
+  }
+
+  function showBrowserNotification(title, body) {
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    try {
+      new Notification(title, {
+        body: body,
+        tag: "wms-reposicao-" + activeWarehouseCode(),
+        icon: "/favicon.svg"
+      });
+    } catch (error) {
+      recordPerformanceError("notificacao-browser", error);
+    }
+  }
+
+  function createReplenishmentNotification(request, type) {
+    if (!request || !authState.currentUser) return;
+    if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return;
+    if (!shouldNotifyCurrentUserAboutReplenishment(request)) return;
+    var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || ""].join(":");
+    if (taskAlertState.notifiedReplenishments[notifyKey] && Date.now() - taskAlertState.notifiedReplenishments[notifyKey] < 30000) return;
+    taskAlertState.notifiedReplenishments[notifyKey] = Date.now();
+    var assigned = type === "assigned" || request.responsavelId;
+    var title = assigned ? "Pedido de reposicao atribuido" : "Novo pedido de reposicao";
+    var body = "SKU " + request.codigoMaterial + " - " + (request.nomeMaterial || "Produto") + " (" + activeWarehouseCode() + ")";
+    showToast(title + ": " + request.codigoMaterial, "success");
+    showBrowserNotification(title, body);
+    if (isReplenishmentSoundEnabled()) {
+      if (taskAlertState.audioUnlocked) playReplenishmentSound();
+      else taskAlertState.pendingReplenishmentSound = true;
+    }
+    renderReplenishmentRealtimeViews();
+  }
+
+  function shouldNotifyCurrentUserAboutReplenishment(request) {
+    if (!authState.currentUser) return false;
+    if (request.responsavelId && request.responsavelId === authState.currentUser.id) return true;
+    if (isAdminOrSupervisor() && userCanAccessWarehouse(authState.currentUser, request.warehouseCode)) return true;
+    return false;
+  }
+
+  function playReplenishmentSound() {
+    if (!isReplenishmentSoundEnabled()) return;
+    var repeat = localStorage.getItem(REPLENISHMENT_SOUND_REPEAT_KEY) || "repeat_30";
+    var maxRuns = repeat === "once" ? 1 : repeat === "repeat_open" ? 6 : 10;
+    taskAlertState.replenishmentSoundUntil = Date.now() + 30000;
+    runReplenishmentSoundPulse(0, maxRuns);
+  }
+
+  function runReplenishmentSoundPulse(count, maxRuns) {
+    if (!isReplenishmentSoundEnabled() || count >= maxRuns || Date.now() > taskAlertState.replenishmentSoundUntil) return;
+    try {
+      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextCtor) return;
+      var context = new AudioContextCtor();
+      var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
+      var targetGain = volume === "low" ? 0.05 : volume === "medium" ? 0.1 : 0.18;
+      [740, 980].forEach(function (frequency, index) {
+        var oscillator = context.createOscillator();
+        var gain = context.createGain();
+        var start = context.currentTime + index * 0.16;
+        oscillator.type = "square";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(targetGain, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start(start);
+        oscillator.stop(start + 0.14);
+      });
+      window.setTimeout(function () { context.close(); }, 520);
+    } catch (error) {
+      taskAlertState.pendingReplenishmentSound = true;
+      return;
+    }
+    window.clearTimeout(taskAlertState.replenishmentSoundTimer);
+    taskAlertState.replenishmentSoundTimer = window.setTimeout(function () {
+      runReplenishmentSoundPulse(count + 1, maxRuns);
+    }, 3000);
   }
 
   function startTaskPolling() {
@@ -6329,7 +6489,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       removeById(replenishmentState.requests, (oldRow && oldRow.id) || (row && row.id));
       return;
     }
-    if (row && row.id) upsertById(replenishmentState.requests, fromDbReplenishmentRequest(row));
+    if (row && row.id) {
+      var before = getReplenishmentById(row.id);
+      var request = fromDbReplenishmentRequest(row);
+      upsertById(replenishmentState.requests, request);
+      if (eventType === "INSERT" || (!before && request.id) || (before && before.responsavelId !== request.responsavelId && request.responsavelId)) {
+        createReplenishmentNotification(request, request.responsavelId ? "assigned" : "created");
+      }
+    }
   }
 
   function renderReplenishmentRealtimeViews() {
@@ -10700,41 +10867,53 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return node ? normalizeText(node.textContent) : "";
   }
 
-  function renderSkuSearch() {
+  async function renderSkuSearch() {
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
     var list = sku ? findBySku(sku) : [];
+    var requestSeq = ++skuSearchRequestSeq;
     if (!sku) {
       setStatus("skuSearchStatus", "Informe ou bipe um SKU.", "error");
       $("skuResults").innerHTML = "";
       $("skuResultCards").innerHTML = "";
+      renderSkuOperationalHub("", [], null, "");
       $("skuResultActions").hidden = true;
       recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
       return;
     }
     lastSkuSearch = sku;
-    addHistory("SKU consultado", sku, "", list.length ? "Consulta por SKU encontrou registros." : "Nenhuma localizacao encontrada.");
-    if (!list.length) {
-      setStatus("skuSearchStatus", "Nenhuma localizacao encontrada para este SKU.", "warning");
-      $("skuResults").innerHTML = "";
-      $("skuResultCards").innerHTML = "";
-      $("skuResultActions").hidden = false;
-      clearSkuSearchInput();
-      saveData();
-      recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
-      return;
+    setStatus("skuSearchStatus", "Consultando SKU " + sku + " no estoque " + activeWarehouseCode() + "...", "warning");
+    var stockSuggestion = null;
+    var stockError = "";
+    try {
+      stockSuggestion = await stockService().getReplenishmentSuggestion(sku, activeWarehouseCode());
+    } catch (error) {
+      stockError = missingStockSchemaMessage(error);
+      recordPerformanceError("consulta-sku-estoque", error);
     }
-    refreshProductNamesForBindings(list);
+    if (requestSeq !== skuSearchRequestSeq) return;
+    addHistory("SKU consultado", sku, "", list.length ? "Consulta por SKU encontrou registros." : "Nenhuma localizacao encontrada.");
+    if (list.length) refreshProductNamesForBindings(list);
     list = list.slice().sort(sortByDateDesc);
     var hasSkuConflict = list.length > 1;
-    setStatus("skuSearchStatus", hasSkuConflict ? "Atencao: este SKU possui mais de uma localizacao cadastrada." : list.length + " localizacao(oes) encontrada(s).", hasSkuConflict ? "warning" : "success");
+    var hasStockData = stockSuggestion && (stockSuggestion.name || Number(stockSuggestion.storeAvailable || 0) !== 0 || Number(stockSuggestion.capturePhysical || 0) !== 0 || Number(stockSuggestion.captureAvailable || 0) !== 0);
+    if (!list.length && !hasStockData) {
+      setStatus("skuSearchStatus", stockError || "Nenhuma localizacao encontrada para este SKU.", stockError ? "error" : "warning");
+    } else if (hasSkuConflict) {
+      setStatus("skuSearchStatus", "Atencao: este SKU possui mais de uma localizacao cadastrada.", "warning");
+    } else if (!list.length) {
+      setStatus("skuSearchStatus", "SKU encontrado na base operacional, sem localizacao WMS cadastrada.", "warning");
+    } else {
+      setStatus("skuSearchStatus", list.length + " localizacao(oes) encontrada(s).", "success");
+    }
     $("skuResults").innerHTML = list.map(skuTableRowHtml).join("");
     bindActionButtons($("skuResults"));
     $("skuResultCards").innerHTML = list.map(function (binding, index) {
       return skuLocationCardHtml(binding, index === 0);
     }).join("");
     bindActionButtons($("skuResultCards"));
+    renderSkuOperationalHub(sku, list, stockSuggestion, stockError);
     $("skuResultActions").hidden = false;
     clearSkuSearchInput();
     saveData();
@@ -10753,6 +10932,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("skuSearchInput").value = "";
     $("skuResults").innerHTML = "";
     $("skuResultCards").innerHTML = "";
+    renderSkuOperationalHub("", [], null, "");
     $("skuResultActions").hidden = true;
     setStatus("skuSearchStatus", "", "");
     window.setTimeout(function () { $("skuSearchInput").focus(); }, 60);
@@ -10766,6 +10946,100 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       renderScanResults(findBySku(lastSkuSearch));
       $("locationInput").focus();
     }
+  }
+
+  function renderSkuOperationalHub(sku, locations, stockSuggestion, stockError) {
+    var hub = $("skuOperationalHub");
+    if (!hub) return;
+    sku = normalizeSku(sku || "");
+    if (!sku) {
+      skuSearchState = { currentSku: "", locations: [], stockSuggestion: null, stockError: "" };
+      hub.hidden = true;
+      hub.innerHTML = "";
+      return;
+    }
+    var suggestion = buildSkuReplenishmentSuggestion(sku, locations || [], stockSuggestion);
+    skuSearchState = {
+      currentSku: sku,
+      locations: locations || [],
+      stockSuggestion: suggestion,
+      stockError: stockError || ""
+    };
+    var tone = suggestion.suggestionPriority === 1 || suggestion.suggestionPriority === 3 ? "danger" : suggestion.suggestionPriority === 2 ? "warning" : "info";
+    var suggestionQty = Number(suggestion.suggestedReplenishmentQty || 0);
+    hub.hidden = false;
+    hub.innerHTML = [
+      "<section class=\"sku-hub-card\">",
+      "<div class=\"sku-hub-title\"><span>Produto</span><strong>" + escapeHtml(sku) + "</strong><p>" + escapeHtml(suggestion.name || "Produto sem nome") + "</p></div>",
+      "<div class=\"sku-hub-grid\">",
+      skuHubTile("Localizacao WMS", suggestion.officialLocation || "Sem WMS"),
+      skuHubTile("Localizacao captacao", suggestion.captureLocation || "Sem captacao"),
+      skuHubTile("Saldo loja", formatQty(suggestion.storeAvailable)),
+      skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)),
+      skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)),
+      skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)),
+      "</div>",
+      "<div class=\"sku-replenishment-box tone-" + escapeHtml(tone) + "\">",
+      "<div><span>Reposicao</span><strong>" + escapeHtml(suggestion.alertMessage || "Pedido manual disponivel para este SKU.") + "</strong>",
+      "<p>" + (suggestionQty > 0 ? "Quantidade sugerida: " + escapeHtml(formatQty(suggestionQty)) : "Informe a quantidade no pedido, se precisar repor.") + "</p>",
+      stockError ? "<p class=\"sku-stock-error\">" + escapeHtml(stockError) + "</p>" : "",
+      "</div>",
+      "<button class=\"primary-button\" data-sku-create-replenishment=\"" + escapeHtml(sku) + "\" type=\"button\">Criar pedido de reposicao</button>",
+      "</div>",
+      "</section>"
+    ].join("");
+  }
+
+  function skuHubTile(label, value) {
+    return "<span><small>" + escapeHtml(label) + "</small><strong>" + escapeHtml(value || "-") + "</strong></span>";
+  }
+
+  function buildSkuReplenishmentSuggestion(sku, locations, stockSuggestion) {
+    var latest = (locations || []).slice().sort(sortByDateDesc)[0] || null;
+    var suggestion = stockSuggestion ? Object.assign({}, stockSuggestion) : {
+      sku: sku,
+      name: "",
+      storeAvailable: 0,
+      capturePhysical: 0,
+      captureAllocated: 0,
+      captureAvailable: 0,
+      captureLocation: "",
+      officialLocation: ""
+    };
+    var classification = classifyReplenishmentSuggestion(suggestion);
+    suggestion.sku = sku;
+    suggestion.name = suggestion.name || (latest && (latest.productName || findProductName(latest.sku))) || findProductName(sku) || "";
+    suggestion.officialLocation = suggestion.officialLocation || (latest ? latest.locationCode : "");
+    suggestion.suggestionType = classification ? classification.type : "MANUAL";
+    suggestion.suggestionPriority = classification ? classification.priority : 5;
+    suggestion.suggestedReplenishmentQty = classification ? classification.qty : 0;
+    suggestion.alertMessage = classification ? classification.message : "Produto consultado. Crie pedido manual se houver necessidade operacional.";
+    suggestion.source = "consultaSku";
+    suggestion.productInfo = {
+      sku: sku,
+      name: suggestion.name,
+      storeBalance: suggestion.storeAvailable,
+      captureBalance: suggestion.captureAvailable,
+      wmsLocation: suggestion.officialLocation,
+      wmsStation: latest ? "R" + pad2(latest.rua) : "",
+      wmsRack: latest ? "RK" + pad2(latest.rack) : "",
+      wmsLine: latest ? "L" + pad2(latest.linha) : "",
+      wmsColumn: latest ? latest.letra : "",
+      captureStation: suggestion.captureStation || "",
+      captureRack: suggestion.captureRack || "",
+      captureLine: suggestion.captureLine || "",
+      captureColumn: suggestion.captureColumn || ""
+    };
+    return suggestion;
+  }
+
+  function handleSkuOperationalHubClick(event) {
+    var button = event.target.closest("[data-sku-create-replenishment]");
+    if (!button) return;
+    var sku = normalizeSku(button.dataset.skuCreateReplenishment || skuSearchState.currentSku || "");
+    if (!sku) return;
+    var suggestion = skuSearchState.stockSuggestion || buildSkuReplenishmentSuggestion(sku, skuSearchState.locations || [], null);
+    openReplenishmentSuggestionModal(suggestion);
   }
 
   function renderShelfSearch() {
