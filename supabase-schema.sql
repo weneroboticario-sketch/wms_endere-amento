@@ -1425,6 +1425,13 @@ create table if not exists public.wms_replenishment_requests (
   solicitado_por_nome text,
   responsavel_id text,
   responsavel_nome text,
+  claimed_by_id text,
+  claimed_by_name text,
+  claimed_at timestamptz,
+  returned_to_queue_at timestamptz,
+  returned_to_queue_by_id text,
+  returned_to_queue_by_name text,
+  return_reason text,
   status text not null default 'PENDENTE',
   prioridade text default 'NORMAL',
   observacao text,
@@ -1460,6 +1467,13 @@ alter table public.wms_replenishment_requests add column if not exists solicitad
 alter table public.wms_replenishment_requests add column if not exists solicitado_por_nome text;
 alter table public.wms_replenishment_requests add column if not exists responsavel_id text;
 alter table public.wms_replenishment_requests add column if not exists responsavel_nome text;
+alter table public.wms_replenishment_requests add column if not exists claimed_by_id text;
+alter table public.wms_replenishment_requests add column if not exists claimed_by_name text;
+alter table public.wms_replenishment_requests add column if not exists claimed_at timestamptz;
+alter table public.wms_replenishment_requests add column if not exists returned_to_queue_at timestamptz;
+alter table public.wms_replenishment_requests add column if not exists returned_to_queue_by_id text;
+alter table public.wms_replenishment_requests add column if not exists returned_to_queue_by_name text;
+alter table public.wms_replenishment_requests add column if not exists return_reason text;
 alter table public.wms_replenishment_requests add column if not exists status text not null default 'PENDENTE';
 alter table public.wms_replenishment_requests add column if not exists prioridade text default 'NORMAL';
 alter table public.wms_replenishment_requests add column if not exists observacao text;
@@ -1490,6 +1504,18 @@ on public.wms_replenishment_requests (warehouse_code, codigo_material);
 
 create index if not exists idx_replenishment_open_sku
 on public.wms_replenishment_requests (warehouse_code, codigo_material, status);
+
+create index if not exists idx_replenishment_queue
+on public.wms_replenishment_requests (warehouse_code, status, created_at);
+
+create index if not exists idx_replenishment_responsavel_status
+on public.wms_replenishment_requests (warehouse_code, responsavel_id, status);
+
+create index if not exists idx_replenishment_codigo_status
+on public.wms_replenishment_requests (warehouse_code, codigo_material, status);
+
+create index if not exists idx_replenishment_updated
+on public.wms_replenishment_requests (warehouse_code, updated_at);
 
 alter table public.wms_replenishment_requests enable row level security;
 

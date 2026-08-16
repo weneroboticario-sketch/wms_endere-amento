@@ -2985,7 +2985,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,status,prioridade,observacao,motivo_cancelamento,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -3019,6 +3019,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       solicitadoPorNome: row.solicitado_por_nome || "",
       responsavelId: row.responsavel_id || "",
       responsavelNome: row.responsavel_nome || "",
+      claimedById: row.claimed_by_id || "",
+      claimedByName: row.claimed_by_name || "",
+      claimedAt: row.claimed_at || "",
+      returnedToQueueAt: row.returned_to_queue_at || "",
+      returnedToQueueById: row.returned_to_queue_by_id || "",
+      returnedToQueueByName: row.returned_to_queue_by_name || "",
+      returnReason: row.return_reason || "",
       status: status,
       prioridade: row.prioridade || "NORMAL",
       observacao: row.observacao || "",
@@ -3058,6 +3065,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       solicitado_por_nome: item.solicitadoPorNome || "",
       responsavel_id: item.responsavelId || "",
       responsavel_nome: item.responsavelNome || "",
+      claimed_by_id: item.claimedById || "",
+      claimed_by_name: item.claimedByName || "",
+      claimed_at: item.claimedAt || null,
+      returned_to_queue_at: item.returnedToQueueAt || null,
+      returned_to_queue_by_id: item.returnedToQueueById || "",
+      returned_to_queue_by_name: item.returnedToQueueByName || "",
+      return_reason: item.returnReason || "",
       status: item.status || "PENDENTE",
       prioridade: item.prioridade || "NORMAL",
       observacao: item.observacao || "",
@@ -3080,6 +3094,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       getAssignableUsersByWarehouse: getAssignableUsersByWarehouse,
       getOpenRequestBySku: getOpenRequestBySku,
       assignReplenishmentRequest: assignReplenishmentRequest,
+      claimReplenishmentRequest: claimReplenishmentRequest,
+      returnReplenishmentRequestToQueue: returnReplenishmentRequestToQueue,
       startReplenishmentRequest: startReplenishmentRequest,
       updateReplenishmentQuantity: updateReplenishmentQuantity,
       markReplenishmentNoStock: markReplenishmentNoStock,
@@ -3105,10 +3121,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var openRequest = await getOpenRequestBySku(sku);
     if (openRequest && !data.forceDuplicate && !window.confirm("Ja existe um pedido aberto para este produto. Deseja abrir outro mesmo assim?")) return null;
-    var responsible = data.responsibleId ? getAssignableUsersByWarehouse(activeWarehouseCode()).find(function (user) {
-      return user.id === data.responsibleId;
-    }) : null;
-    if (data.responsibleId && !responsible) throw new Error("Responsavel invalido: este usuario pertence a outro estoque.");
     var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
     try {
       var stockSuggestion = await getStockSuggestion(sku, requestedQty);
@@ -3142,9 +3154,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       captacaoColuna: productInfo.captureColumn || "",
       solicitadoPorId: authState.currentUser.id,
       solicitadoPorNome: authState.currentUser.name || authState.currentUser.username || "",
-      responsavelId: responsible ? responsible.id : "",
-      responsavelNome: responsible ? (responsible.name || responsible.username) : "",
-      status: responsible ? "ATRIBUIDO" : "PENDENTE",
+      responsavelId: "",
+      responsavelNome: "",
+      claimedById: "",
+      claimedByName: "",
+      claimedAt: "",
+      returnedToQueueAt: "",
+      returnedToQueueById: "",
+      returnedToQueueByName: "",
+      returnReason: "",
+      status: "PENDENTE",
       prioridade: "NORMAL",
       observacao: normalizeText(data.observation)
     };
@@ -3158,7 +3177,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     upsertById(replenishmentState.requests, saved);
     replenishmentState.lastCreatedSignature = signature;
     replenishmentState.lastCreatedAt = Date.now();
-    createReplenishmentNotification(saved, responsible ? "assigned" : "created");
+    createReplenishmentNotification(saved, "created");
     return saved;
   }
 
@@ -3250,6 +3269,65 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return saved;
   }
 
+  async function claimReplenishmentRequest(id) {
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
+    var request = getReplenishmentById(id);
+    if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!canClaimReplenishmentRequest(request)) throw new Error("Pedido indisponivel para o usuario atual.");
+    var now = nowIso();
+    var userName = authState.currentUser.name || authState.currentUser.username || "";
+    var patch = {
+      responsavel_id: authState.currentUser.id,
+      responsavel_nome: userName,
+      claimed_by_id: authState.currentUser.id,
+      claimed_by_name: userName,
+      claimed_at: now,
+      status: "EM_SEPARACAO",
+      started_at: request.startedAt || now,
+      updated_at: now
+    };
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .update(patch)
+      .eq("id", id)
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("status", "PENDENTE")
+      .or("responsavel_id.is.null,responsavel_id.eq.")
+      .select(replenishmentRequestSelectColumns());
+    if (response.error) throw response.error;
+    if (!response.data || !response.data.length) throw new Error("Este pedido ja foi assumido por outro colaborador.");
+    var saved = fromDbReplenishmentRequest(response.data[0]);
+    upsertById(replenishmentState.requests, saved);
+    createReplenishmentNotification(saved, "claimed");
+    return saved;
+  }
+
+  async function returnReplenishmentRequestToQueue(id, reason) {
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
+    var request = getReplenishmentById(id);
+    if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!canReturnReplenishmentRequest(request)) throw new Error("Apenas o responsavel atual, supervisor ou administrador pode devolver para a fila.");
+    var now = nowIso();
+    var userName = authState.currentUser.name || authState.currentUser.username || "";
+    var saved = await updateReplenishmentRow(id, {
+      responsavelId: "",
+      responsavelNome: "",
+      claimedById: "",
+      claimedByName: "",
+      claimedAt: "",
+      returnedToQueueAt: now,
+      returnedToQueueById: authState.currentUser.id,
+      returnedToQueueByName: userName,
+      returnReason: normalizeText(reason || "Devolvido para a fila."),
+      startedAt: "",
+      finishedAt: "",
+      durationSeconds: 0,
+      status: "PENDENTE"
+    });
+    createReplenishmentNotification(saved, "returned");
+    return saved;
+  }
+
   async function startReplenishmentRequest(id) {
     var request = getReplenishmentById(id);
     return updateReplenishmentRow(id, {
@@ -3284,11 +3362,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function completeReplenishmentRequest(id) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
+    if (Number(request.attendedQty || 0) < Number(request.requestedQty || 0)) throw new Error("Ainda ha quantidade pendente. Use Atender para parcial ou Sem estoque com motivo.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
     return updateReplenishmentRow(id, {
       status: "CONCLUIDO",
-      pendingQty: Math.max(0, Number(request.requestedQty || 0) - Number(request.attendedQty || 0)),
+      pendingQty: 0,
       finishedAt: now,
       durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
     });
@@ -3317,20 +3397,44 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return replenishmentState.requests.find(function (request) { return request.id === id; }) || null;
   }
 
+  function canClaimReplenishmentRequest(request) {
+    if (!authState.currentUser || !request || request.isDeleted) return false;
+    if (request.status !== "PENDENTE") return false;
+    if (request.responsavelId) return false;
+    if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return false;
+    if (!userCanAccessWarehouse(authState.currentUser, request.warehouseCode)) return false;
+    return isAdminOrSupervisor() || userCanReceiveReplenishmentInWarehouse(authState.currentUser, request.warehouseCode);
+  }
+
+  function canReturnReplenishmentRequest(request) {
+    if (!authState.currentUser || !request || request.isDeleted) return false;
+    if (FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) >= 0) return false;
+    if (!request.responsavelId) return false;
+    if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return false;
+    return isAdminOrSupervisor() || request.responsavelId === authState.currentUser.id;
+  }
+
+  function isReplenishmentInCurrentUserQueue(request) {
+    if (!authState.currentUser || !request || request.isDeleted) return false;
+    if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return false;
+    if (request.status === "PENDENTE" && canClaimReplenishmentRequest(request)) return true;
+    return request.responsavelId === authState.currentUser.id;
+  }
+
   function getVisibleReplenishmentRequests() {
     return replenishmentState.requests.filter(function (request) {
       if (request.isDeleted) return false;
       if (request.warehouseCode !== activeWarehouseCode()) return false;
       if (isAdminOrSupervisor()) return true;
-      return request.solicitadoPorId === authState.currentUser.id || request.responsavelId === authState.currentUser.id;
+      return isReplenishmentInCurrentUserQueue(request) || (authState.currentUser && request.solicitadoPorId === authState.currentUser.id);
     });
   }
 
   function getMyReplenishmentRequests() {
     if (!authState.currentUser) return [];
     return getVisibleReplenishmentRequests().filter(function (request) {
-      if (FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) >= 0) return false;
-      return request.responsavelId === authState.currentUser.id || request.solicitadoPorId === authState.currentUser.id;
+      if (["EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(request.status) < 0) return false;
+      return request.responsavelId === authState.currentUser.id;
     });
   }
 
@@ -5607,7 +5711,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       : 0;
     var people = {};
     open.forEach(function (request) {
-      var key = request.responsavelNome || "Sem responsavel";
+      var key = request.responsavelNome || "Na fila";
       people[key] = (people[key] || 0) + 1;
     });
     var peopleHtml = Object.keys(people).sort(function (a, b) { return people[b] - people[a]; }).slice(0, 4).map(function (name) {
@@ -5615,8 +5719,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).join("");
     $("replenishmentLeaderSummary").innerHTML = [
       "<div class=\"replenishment-leader-grid\">",
-      replenishmentSummaryTile("Pendentes", requests.filter(function (item) { return item.status === "PENDENTE"; }).length, "warning"),
-      replenishmentSummaryTile("Atribuidos", requests.filter(function (item) { return item.status === "ATRIBUIDO"; }).length, "info"),
+      replenishmentSummaryTile("Na fila", requests.filter(function (item) { return item.status === "PENDENTE" && !item.responsavelId; }).length, "warning"),
       replenishmentSummaryTile("Em separacao", requests.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length, "info"),
       replenishmentSummaryTile("Parcial", requests.filter(function (item) { return item.status === "ATENDIDO_PARCIAL"; }).length, "warning"),
       replenishmentSummaryTile("Sem estoque", requests.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length, "danger"),
@@ -5642,7 +5745,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
     });
     var today = new Date().toISOString().slice(0, 10);
-    setTextIfExists("replenishmentMetricPending", visible.filter(function (item) { return item.status === "PENDENTE" || item.status === "ATRIBUIDO"; }).length);
+    setTextIfExists("replenishmentMetricPending", visible.filter(function (item) { return item.status === "PENDENTE" && !item.responsavelId; }).length);
     setTextIfExists("replenishmentMetricSeparating", visible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
     setTextIfExists("replenishmentMetricDoneToday", visible.filter(function (item) { return item.status === "CONCLUIDO" && String(item.finishedAt || item.updatedAt).slice(0, 10) === today; }).length);
     setTextIfExists("replenishmentMetricNoStock", visible.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length);
@@ -5760,6 +5863,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function replenishmentCardHtml(item) {
     var canManage = isAdminOrSupervisor();
     var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
+    var queueLabel = item.status === "PENDENTE" && !item.responsavelId ? "Na fila" : displayReplenishmentStatus(item.status);
     var location = item.localizacaoWms || "Sem localizacao WMS";
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
@@ -5775,7 +5879,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       replenishmentMetricHtml("Pendente", formatQty(item.pendingQty)),
       "</div>",
       "<div class=\"replenishment-card-footer\">",
-      "<span class=\"status-badge " + statusBadgeClass(item.status) + "\">" + displayReplenishmentStatus(item.status) + "</span>",
+      "<span class=\"status-badge " + statusBadgeClass(item.status) + "\">" + escapeHtml(queueLabel) + "</span>",
       "<span>Solicitado por <strong>" + escapeHtml(item.solicitadoPorNome || "-") + "</strong></span>",
       "<span>Responsavel <strong>" + escapeHtml(item.responsavelNome || "-") + "</strong></span>",
       "<span>" + escapeHtml(elapsed) + "</span>",
@@ -5792,22 +5896,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function replenishmentActionsHtml(item, canManage, canWork) {
-    var assign = canManage ? "<select data-replenishment-assign=\"" + escapeHtml(item.id) + "\"><option value=\"\">Atribuir responsavel</option>" + getAssignableUsersByWarehouse(item.warehouseCode).map(function (user) {
-      return "<option value=\"" + escapeHtml(user.id) + "\"" + (user.id === item.responsavelId ? " selected" : "") + ">" + escapeHtml(user.name + " (" + user.username + ")") + "</option>";
-    }).join("") + "</select>" : "";
     var actions = [];
-    if (canWork && ["PENDENTE", "ATRIBUIDO", "ATENDIDO_PARCIAL"].indexOf(item.status) >= 0) actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
+    if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Puxar pedido</button>");
+    if (canWork && item.status === "ATRIBUIDO") actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
       actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
       actions.push("<button class=\"secondary-button\" data-replenishment-nostock=\"" + escapeHtml(item.id) + "\" type=\"button\">Sem estoque</button>");
-      actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
+      if (Number(item.attendedQty || 0) >= Number(item.requestedQty || 0) && Number(item.requestedQty || 0) > 0) actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
+    }
+    if (canReturnReplenishmentRequest(item)) {
+      actions.push("<button class=\"secondary-button\" data-replenishment-return=\"" + escapeHtml(item.id) + "\" type=\"button\">Devolver para fila</button>");
     }
     if (canManage && item.status !== "CANCELADO" && item.status !== "CONCLUIDO") actions.push("<button class=\"danger-button\" data-replenishment-cancel=\"" + escapeHtml(item.id) + "\" type=\"button\">Cancelar</button>");
     if (isGlobalAdminUser(authState.currentUser)) actions.push("<button class=\"danger-button\" data-replenishment-delete=\"" + escapeHtml(item.id) + "\" type=\"button\">Excluir teste</button>");
-    return "<div class=\"replenishment-actions\">" + assign + actions.join("") + "</div>";
+    return "<div class=\"replenishment-actions\">" + actions.join("") + "</div>";
   }
 
   function displayReplenishmentStatus(status) {
+    if (status === "PENDENTE") return "Na fila";
+    if (status === "EM_SEPARACAO") return "Em separacao";
+    if (status === "ATENDIDO_PARCIAL") return "Atendido parcial";
+    if (status === "SEM_ESTOQUE") return "Sem estoque";
     return normalizeText(status).replace(/_/g, " ").toLowerCase().replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
   }
 
@@ -5911,10 +6020,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function handleReplenishmentActionClick(event) {
     var target = event.target.closest("button");
     if (!target) return;
-    var id = target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
+    var id = target.dataset.replenishmentClaim || target.dataset.replenishmentReturn || target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
     if (!id) return;
     try {
       target.disabled = true;
+      if (target.dataset.replenishmentClaim) await claimReplenishmentRequest(id);
+      if (target.dataset.replenishmentReturn) {
+        var returnReason = window.prompt("Motivo para devolver para a fila:", "");
+        if (returnReason === null) return;
+        await returnReplenishmentRequestToQueue(id, returnReason);
+      }
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
@@ -5991,7 +6106,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       ].join("");
     }
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").value = suggestion.suggestedReplenishmentQty > 0 ? String(suggestion.suggestedReplenishmentQty) : "";
-    if ($("suggestionResponsibleSelect")) $("suggestionResponsibleSelect").innerHTML = responsibleOptionsHtml("");
     if ($("suggestionObservationInput")) $("suggestionObservationInput").value = suggestion.alertMessage || "";
     setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
     $("replenishmentSuggestionModal").hidden = false;
@@ -6019,7 +6133,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         codigoMaterial: suggestion.sku,
         storeQty: suggestion.storeAvailable,
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
-        responsibleId: $("suggestionResponsibleSelect") ? $("suggestionResponsibleSelect").value : "",
         observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
         productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
@@ -6276,8 +6389,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || ""].join(":");
     if (taskAlertState.notifiedReplenishments[notifyKey] && Date.now() - taskAlertState.notifiedReplenishments[notifyKey] < 30000) return;
     taskAlertState.notifiedReplenishments[notifyKey] = Date.now();
-    var assigned = type === "assigned" || request.responsavelId;
-    var title = assigned ? "Pedido de reposicao atribuido" : "Novo pedido de reposicao";
+    var title = type === "returned" ? "Pedido voltou para a fila" : type === "claimed" || type === "assigned" ? "Pedido de reposicao assumido" : "Novo pedido de reposicao";
     var body = "SKU " + request.codigoMaterial + " - " + (request.nomeMaterial || "Produto") + " (" + activeWarehouseCode() + ")";
     showToast(title + ": " + request.codigoMaterial, "success");
     showBrowserNotification(title, body);
@@ -6290,6 +6402,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function shouldNotifyCurrentUserAboutReplenishment(request) {
     if (!authState.currentUser) return false;
+    if (request.status === "PENDENTE" && !request.responsavelId && userCanAccessWarehouse(authState.currentUser, request.warehouseCode)) return true;
     if (request.responsavelId && request.responsavelId === authState.currentUser.id) return true;
     if (isAdminOrSupervisor() && userCanAccessWarehouse(authState.currentUser, request.warehouseCode)) return true;
     return false;
@@ -6493,8 +6606,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var before = getReplenishmentById(row.id);
       var request = fromDbReplenishmentRequest(row);
       upsertById(replenishmentState.requests, request);
-      if (eventType === "INSERT" || (!before && request.id) || (before && before.responsavelId !== request.responsavelId && request.responsavelId)) {
-        createReplenishmentNotification(request, request.responsavelId ? "assigned" : "created");
+      if (eventType === "INSERT" || (!before && request.id) || (before && before.responsavelId !== request.responsavelId) || (before && before.status !== request.status && request.status === "PENDENTE")) {
+        var type = request.status === "PENDENTE" && !request.responsavelId ? (before ? "returned" : "created") : request.responsavelId ? "claimed" : "created";
+        createReplenishmentNotification(request, type);
       }
     }
   }
