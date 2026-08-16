@@ -45,6 +45,11 @@ textarea {
   font: inherit;
 }
 
+.secret-input {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
 button {
   cursor: pointer;
 }
