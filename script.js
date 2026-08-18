@@ -823,7 +823,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function multiWarehouseSchemaMessage(tableName) {
-    return "Estrutura multiestoque desatualizada no Supabase. A tabela " + tableName + " precisa da coluna warehouse_code para separar VDCG, VDAR e VDSI. Execute supabase-schema.sql no SQL Editor do Supabase e recarregue o app.";
+    var codes = activeWarehouseCodes();
+    var label = codes.length ? codes.join(", ") : "os estoques ativos";
+    return "Estrutura multiestoque desatualizada no Supabase. A tabela " + tableName + " precisa da coluna warehouse_code para separar " + label + ". Execute supabase-schema.sql no SQL Editor do Supabase e recarregue o app.";
   }
 
   function assertWarehouseFallbackAllowed(tableName, error) {
@@ -2205,12 +2207,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
     if (!isSupabaseReady()) return false;
     try {
-      var batchResponse = await supabaseDb
-        .from("wms_stock_import_batches")
-        .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,ignored_rows,error_rows,status,notes")
-        .eq("warehouse_code", activeWarehouseCode())
-        .order("created_at", { ascending: false })
-        .limit(10);
+      var batchResponse = await loadStockImportBatchRows();
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
       stockState.summary.loja = await countActiveStockPositions("LOJA");
@@ -2238,6 +2235,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return Number(response.count || 0);
   }
 
+  async function loadStockImportBatchRows() {
+    var response = await supabaseDb
+      .from("wms_stock_import_batches")
+      .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,inserted_rows,updated_rows,unchanged_rows,deactivated_rows,ignored_rows,error_rows,status,notes")
+      .eq("warehouse_code", activeWarehouseCode())
+      .order("created_at", { ascending: false })
+      .limit(10);
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb
+        .from("wms_stock_import_batches")
+        .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,ignored_rows,error_rows,status,notes")
+        .eq("warehouse_code", activeWarehouseCode())
+        .order("created_at", { ascending: false })
+        .limit(10);
+    }
+    return response;
+  }
+
   async function refreshStockOperationalData() {
     moduleLoadState.stock = false;
     await ensureStockDataLoaded();
@@ -2258,7 +2273,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           "<td>" + formatDateTime(batch.created_at) + "</td>",
           "<td>" + escapeHtml(batch.source_type || "-") + "</td>",
           "<td>" + escapeHtml(batch.file_name || "-") + "</td>",
-          "<td>" + formatQty(batch.imported_rows || 0) + "</td>",
+          "<td title=\"" + escapeHtml(batch.notes || "") + "\">" + stockBatchImportedSummary(batch) + "</td>",
           "<td>" + formatQty(batch.ignored_rows || 0) + "</td>",
           "<td><span class=\"status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning") + "\">" + escapeHtml(batch.status || "-") + "</span></td>",
           "<td>" + escapeHtml(batch.imported_by_name || "-") + "</td>",
@@ -2270,6 +2285,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function stockSummaryCard(label, value) {
     return "<article class=\"stock-summary-card\"><span>" + escapeHtml(label) + "</span><strong>" + escapeHtml(String(value)) + "</strong></article>";
+  }
+
+  function stockBatchImportedSummary(batch) {
+    if (batch.inserted_rows === undefined && batch.updated_rows === undefined && batch.deactivated_rows === undefined) return formatQty(batch.imported_rows || 0);
+    return [
+      formatQty(batch.imported_rows || 0),
+      "<small>+ " + formatQty(batch.inserted_rows || 0) + " novo(s) / " + formatQty(batch.updated_rows || 0) + " alt. / " + formatQty(batch.deactivated_rows || 0) + " inat.</small>"
+    ].join("<br>");
   }
 
   async function importStockFromInput(sourceType) {
@@ -2300,10 +2323,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
       setStatus("stockImportStatus", "Gravando " + parsed.rows.length + " item(ns) no Supabase...", "warning");
-      await saveStockImportBatch(sourceType, file.name, parsed);
+      var importResult = await saveStockImportBatch(sourceType, file.name, parsed);
       stockState.positionCache = {};
       await refreshStockOperationalData();
-      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " importada: " + parsed.rows.length + " linha(s), " + parsed.ignored + " ignorada(s).", "success");
+      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada: " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
     } catch (error) {
       setStatus("stockImportStatus", "Falha na importacao: " + formatSupabaseError(error), "error");
@@ -2345,16 +2368,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         });
       });
     });
+    result.rows = dedupeStockRows(sourceType, result.rows);
     return result;
+  }
+
+  function dedupeStockRows(sourceType, rows) {
+    var grouped = {};
+    (rows || []).forEach(function (row) {
+      var key = stockPositionOperationalKey(sourceType, row, activeWarehouseCode());
+      if (!key) return;
+      if (!grouped[key]) {
+        grouped[key] = Object.assign({}, row);
+        return;
+      }
+      grouped[key].nomeMaterial = grouped[key].nomeMaterial || row.nomeMaterial || "";
+      grouped[key].totalFisico = Number(grouped[key].totalFisico || 0) + Number(row.totalFisico || 0);
+      grouped[key].totalAlocado = Number(grouped[key].totalAlocado || 0) + Number(row.totalAlocado || 0);
+      grouped[key].totalDisponivel = Number(grouped[key].totalDisponivel || 0) + Number(row.totalDisponivel || 0);
+      grouped[key].isSellable = grouped[key].isSellable || row.isSellable === true;
+    });
+    return Object.keys(grouped).map(function (key) { return grouped[key]; });
   }
 
   async function saveStockImportBatch(sourceType, fileName, parsed) {
     var batchId = "stock-batch-" + Date.now() + "-" + Math.random().toString(16).slice(2);
     var now = nowIso();
+    var warehouseCode = activeWarehouseCode();
     var batch = {
       id: batchId,
       created_at: now,
-      warehouse_code: activeWarehouseCode(),
+      warehouse_code: warehouseCode,
       source_type: sourceType,
       file_name: fileName || "",
       imported_by_id: authState.currentUser ? authState.currentUser.id : "",
@@ -2369,37 +2412,131 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var batchResponse = await supabaseDb.from("wms_stock_import_batches").insert(batch);
     if (batchResponse.error) throw batchResponse.error;
     try {
-      var rows = parsed.rows.map(function (row, index) {
-        return toDbStockPosition(Object.assign({}, row, {
-          id: "stock-" + batchId + "-" + index,
+      var currentRows = await fetchActiveStockPositions(sourceType);
+      var currentByKey = {};
+      var duplicateActiveIds = {};
+      currentRows.forEach(function (position) {
+        var key = stockPositionOperationalKey(sourceType, position, warehouseCode);
+        if (!key) return;
+        if (!currentByKey[key]) currentByKey[key] = position;
+        else duplicateActiveIds[position.id] = true;
+      });
+      var incomingKeys = {};
+      var upsertRows = [];
+      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0 };
+      parsed.rows.forEach(function (row, index) {
+        var key = stockPositionOperationalKey(sourceType, row, warehouseCode);
+        if (!key) return;
+        incomingKeys[key] = true;
+        var current = currentByKey[key];
+        if (current && !stockPositionChanged(current, row, sourceType)) {
+          metrics.unchanged += 1;
+          return;
+        }
+        if (current) metrics.updated += 1;
+        else metrics.inserted += 1;
+        upsertRows.push(toDbStockPosition(Object.assign({}, row, {
+          id: current ? current.id : "stock-" + batchId + "-" + index,
           batchId: batchId,
           sourceType: sourceType,
-          warehouseCode: activeWarehouseCode(),
-          active: false,
-          createdAt: now,
+          warehouseCode: warehouseCode,
+          active: true,
+          createdAt: current ? (current.createdAt || now) : now,
           updatedAt: now
-        }));
+        })));
       });
-      await upsertInChunks("wms_stock_positions", rows, "id");
-      var activate = await supabaseDb
-        .from("wms_stock_positions")
-        .update({ active: true, updated_at: now })
-        .eq("warehouse_code", activeWarehouseCode())
-        .eq("source_type", sourceType)
-        .eq("batch_id", batchId);
-      if (activate.error) throw activate.error;
-      var deactivate = await supabaseDb
-        .from("wms_stock_positions")
-        .update({ active: false, updated_at: now })
-        .eq("warehouse_code", activeWarehouseCode())
-        .eq("source_type", sourceType)
-        .neq("batch_id", batchId);
-      if (deactivate.error) throw deactivate.error;
-      await supabaseDb.from("wms_stock_import_batches").update({ imported_rows: parsed.rows.length, status: "COMPLETED", notes: "Base anterior substituida para " + stockSourceLabel(sourceType) + "." }).eq("id", batchId);
+      if (upsertRows.length) await upsertInChunks("wms_stock_positions", upsertRows, "id");
+      var deactivatedIds = currentRows.filter(function (position) {
+        return duplicateActiveIds[position.id] || !incomingKeys[stockPositionOperationalKey(sourceType, position, warehouseCode)];
+      }).map(function (position) { return position.id; }).filter(Boolean);
+      metrics.deactivated = deactivatedIds.length;
+      if (deactivatedIds.length) await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
+      await updateStockBatchMetrics(batchId, Object.assign({}, metrics, {
+        importedRows: parsed.rows.length,
+        ignoredRows: parsed.ignored,
+        errorRows: parsed.errors.length,
+        status: "COMPLETED",
+        notes: "Importacao incremental " + stockSourceLabel(sourceType) + ": " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s)."
+      }));
+      return metrics;
     } catch (error) {
       await supabaseDb.from("wms_stock_import_batches").update({ status: "FAILED", notes: formatSupabaseError(error), imported_rows: 0 }).eq("id", batchId);
       throw error;
     }
+  }
+
+  async function updateStockRowsByIds(ids, payload) {
+    var size = 400;
+    for (var i = 0; i < ids.length; i += size) {
+      var response = await supabaseDb
+        .from("wms_stock_positions")
+        .update(payload)
+        .in("id", ids.slice(i, i + size));
+      if (response.error) throw response.error;
+    }
+  }
+
+  async function updateStockBatchMetrics(batchId, metrics) {
+    var payload = {
+      imported_rows: Number(metrics.importedRows || 0),
+      inserted_rows: Number(metrics.inserted || 0),
+      updated_rows: Number(metrics.updated || 0),
+      unchanged_rows: Number(metrics.unchanged || 0),
+      deactivated_rows: Number(metrics.deactivated || 0),
+      ignored_rows: Number(metrics.ignoredRows || 0),
+      error_rows: Number(metrics.errorRows || 0),
+      status: metrics.status || "COMPLETED",
+      notes: metrics.notes || ""
+    };
+    var response = await supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+    if (response.error && isMissingColumnError(response.error)) {
+      delete payload.inserted_rows;
+      delete payload.updated_rows;
+      delete payload.unchanged_rows;
+      delete payload.deactivated_rows;
+      response = await supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+    }
+    if (response.error) throw response.error;
+  }
+
+  function stockPositionOperationalKey(sourceType, row, warehouseCode) {
+    var sku = normalizeSku(row && (row.codigoMaterial || row.codigo_material || row.sku) || "");
+    if (!sku) return "";
+    var normalizedSource = normalizeText(sourceType || row.sourceType || row.source_type || "").toUpperCase() || "CAPTACAO";
+    var parts = [normalizeWarehouseCode(warehouseCode || row.warehouseCode || row.warehouse_code || activeWarehouseCode()), normalizedSource, sku];
+    if (normalizedSource === "CAPTACAO") {
+      parts.push(normalizeHeader(row.estacao || ""));
+      parts.push(normalizeHeader(row.rack || ""));
+      parts.push(normalizeHeader(row.linha || ""));
+      parts.push(normalizeHeader(row.coluna || ""));
+      parts.push(normalizeHeader(row.codigoEndereco || row.codigo_endereco || ""));
+    }
+    return parts.join("|");
+  }
+
+  function stockPositionComparable(row) {
+    return [
+      normalizeSku(row && (row.codigoMaterial || row.codigo_material || row.sku) || ""),
+      normalizeText(row && (row.nomeMaterial || row.nome_material || "")).toUpperCase(),
+      normalizeDecimalForCompare(row && (row.totalFisico !== undefined ? row.totalFisico : row.total_fisico)),
+      normalizeDecimalForCompare(row && (row.totalAlocado !== undefined ? row.totalAlocado : row.total_alocado)),
+      normalizeDecimalForCompare(row && (row.totalDisponivel !== undefined ? row.totalDisponivel : row.total_disponivel)),
+      normalizeHeader(row && row.estacao || ""),
+      normalizeHeader(row && row.rack || ""),
+      normalizeHeader(row && row.linha || ""),
+      normalizeHeader(row && row.coluna || ""),
+      normalizeHeader(row && (row.codigoEndereco || row.codigo_endereco || "")),
+      row && row.isSellable === true ? "1" : "0"
+    ].join("|");
+  }
+
+  function normalizeDecimalForCompare(value) {
+    var number = Number(value || 0);
+    return Number.isFinite(number) ? number.toFixed(4) : "0.0000";
+  }
+
+  function stockPositionChanged(current, incoming) {
+    return stockPositionComparable(current) !== stockPositionComparable(incoming);
   }
 
   function toDbStockPosition(item) {
@@ -2495,6 +2632,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var needed = Number(requestedQty || 0);
     var captureAvailable = Number(captacao.totalDisponivel || 0);
     var storeAvailable = Number(loja.totalDisponivel || 0);
+    var operationalTotal = captureAvailable + storeAvailable;
+    var rupture = operationalTotal < 3;
     var originSuggested = "SEM_SALDO";
     var captureQty = 0;
     var storeQty = 0;
@@ -2502,7 +2641,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       originSuggested = "CAPTACAO";
       captureQty = needed;
     } else if (needed > 0 && captureAvailable > 0 && storeAvailable > 0) {
-      originSuggested = "CAPTACAO_E_LOJA";
+      originSuggested = "LOJA_E_CAPTACAO";
       captureQty = Math.min(captureAvailable, needed);
       storeQty = Math.min(storeAvailable, Math.max(0, needed - captureQty));
     } else if (needed > 0 && captureAvailable > 0) {
@@ -2516,7 +2655,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var officialCode = official ? official.locationCode : "";
     var hasDivergence = Boolean(location && officialCode && location !== officialCode);
     var hasNegative = captureAvailable < 0 || storeAvailable < 0;
-    var suggestionQty = storeAvailable < 0 && captureAvailable > 0 ? Math.min(Math.abs(storeAvailable), captureAvailable) : 0;
+    var suggestionQty = !rupture && storeAvailable < 0 && captureAvailable > 0 ? Math.min(Math.abs(storeAvailable), captureAvailable) : 0;
+    var alertMessage = rupture ? "Ruptura operacional: saldo loja + captacao menor que 3." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : originSuggested === "VERIFICAR" ? "Saldo parcial. Lider deve decidir origem complementar." : "";
     return {
       sku: sku,
       name: (captacao.nomeMaterial || loja.nomeMaterial || (official && official.productName) || findProductName(sku) || ""),
@@ -2526,6 +2666,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       capturePhysical: captacao.totalFisico,
       captureAllocated: captacao.totalAlocado,
       captureAvailable: captacao.totalDisponivel,
+      operationalTotal: operationalTotal,
+      rupture: rupture,
       captureLocation: location,
       captureStation: captureLocation ? captureLocation.estacao : "",
       captureRack: captureLocation ? captureLocation.rack : "",
@@ -2536,8 +2678,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       suggestedCaptureQty: captureQty,
       suggestedStoreQty: storeQty,
       suggestedReplenishmentQty: suggestionQty,
-      stockAlert: hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "VERIFICAR",
-      alertMessage: hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : originSuggested === "VERIFICAR" ? "Saldo parcial. Lider deve decidir origem complementar." : "",
+      stockAlert: rupture || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "VERIFICAR",
+      alertMessage: alertMessage,
       sellable: captacao.isSellable || loja.isSellable
     };
   }
@@ -2723,10 +2865,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function classifyReplenishmentSuggestion(suggestion) {
     var loja = Number(suggestion.storeAvailable || 0);
     var captacao = Number(suggestion.captureAvailable || 0);
+    var total = Number(suggestion.operationalTotal !== undefined ? suggestion.operationalTotal : loja + captacao);
+    if (total < 3) {
+      return {
+        type: "RUPTURA",
+        priority: 1,
+        qty: 0,
+        message: "Ruptura operacional: saldo loja + captacao menor que 3."
+      };
+    }
     if (loja < 0 && captacao > 0) {
       return {
         type: "LOJA_NEGATIVA_CAPTACAO_POSITIVA",
-        priority: 1,
+        priority: 2,
         qty: Math.min(Math.abs(loja), captacao),
         message: "Produto negativo em loja com saldo disponivel na captacao."
       };
@@ -2734,7 +2885,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (loja === 0 && captacao > 0) {
       return {
         type: "LOJA_ZERADA_CAPTACAO_POSITIVA",
-        priority: 2,
+        priority: 3,
         qty: Math.min(1, captacao),
         message: "Produto zerado em loja com saldo disponivel na captacao."
       };
@@ -2742,7 +2893,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (loja < 0 && captacao <= 0) {
       return {
         type: "LOJA_NEGATIVA_SEM_CAPTACAO",
-        priority: 3,
+        priority: 4,
         qty: 0,
         message: "Produto negativo em loja sem saldo disponivel na captacao."
       };
@@ -2750,7 +2901,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (captacao > 0 && !suggestion.captureLocation) {
       return {
         type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
-        priority: 4,
+        priority: 5,
         qty: 0,
         message: "Captacao positiva sem localizacao cadastrada."
       };
@@ -2760,6 +2911,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentSuggestionMatchesFilter(suggestion, filter) {
     if (!filter) return true;
+    if (filter !== "CAPTACAO_POSITIVA" && suggestion.suggestionType === "RUPTURA") return filter === "SEM_SALDO_CAPTACAO";
     if (filter === "LOJA_NEGATIVA") return Number(suggestion.storeAvailable || 0) < 0;
     if (filter === "LOJA_ZERADA") return Number(suggestion.storeAvailable || 0) === 0;
     if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
@@ -3871,28 +4023,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function canonicalUserWarehousePatch(user) {
     var activeCodes = activeWarehouseCodes();
-    var defaultCode = normalizeWarehouseCode(user.defaultWarehouseCode || DEFAULT_WAREHOUSE_CODE);
-    if (activeCodes.indexOf(defaultCode) < 0) defaultCode = DEFAULT_WAREHOUSE_CODE;
+    var defaultCode = normalizeWarehouseCode(user.defaultWarehouseCode || user.warehouseCode || DEFAULT_WAREHOUSE_CODE);
+    if (activeCodes.length && activeCodes.indexOf(defaultCode) < 0) defaultCode = activeCodes[0];
     var role = ROLES.indexOf(user.role) >= 0 ? user.role : "OPERADOR";
     var isGlobal = role === "ADMINISTRADOR";
-    var allowed = isGlobal ? activeCodes : [defaultCode];
-
-    if (isNamedUser(user, "gustavo")) {
-      role = "SUPERVISOR";
-      defaultCode = "VDAR";
-      isGlobal = false;
-      allowed = ["VDAR"];
-    } else if (isNamedUser(user, "henrique")) {
-      role = "SUPERVISOR";
-      defaultCode = "VDSI";
-      isGlobal = false;
-      allowed = ["VDSI"];
-    } else if (isNamedUser(user, "wener") || String(user.username || "").toLowerCase() === "admin") {
-      role = "ADMINISTRADOR";
-      defaultCode = defaultCode || DEFAULT_WAREHOUSE_CODE;
-      isGlobal = true;
-      allowed = activeCodes;
-    }
+    var allowed = isGlobal ? activeCodes.slice() : parseWarehouseCodes(user.allowedWarehouseCodes);
 
     if (!allowed.length) allowed = [defaultCode || DEFAULT_WAREHOUSE_CODE];
     if (allowed.indexOf(defaultCode) < 0) allowed.push(defaultCode);
@@ -4398,7 +4533,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       user.defaultWarehouseCode = patch.default_warehouse_code;
       user.allowedWarehouseCodes = parseWarehouseCodes(patch.allowed_warehouse_codes);
       user.isGlobalAdmin = patch.role === "ADMINISTRADOR" && patch.is_global_admin !== false;
-      user.warehouseAccessConfirmed = isNamedUser(user, "gustavo") || isNamedUser(user, "henrique") || user.isGlobalAdmin;
+      user.warehouseAccessConfirmed = user.isGlobalAdmin || Boolean(user.defaultWarehouseCode);
     }
     return user;
   }
@@ -5853,6 +5988,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function displaySuggestionType(type) {
+    if (type === "RUPTURA") return "Ruptura";
     if (type === "LOJA_NEGATIVA_CAPTACAO_POSITIVA") return "Loja negativa + captacao";
     if (type === "LOJA_ZERADA_CAPTACAO_POSITIVA") return "Loja zerada + captacao";
     if (type === "LOJA_NEGATIVA_SEM_CAPTACAO") return "Loja negativa sem captacao";
@@ -9443,7 +9579,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isTransferItemSeparationClosed(item) {
     if (isTransferItemNotSent(item)) return true;
-    return normalizeText(item && item.divergenceType).toUpperCase() === "FALTA_DE_ITEM" && Number(item && item.missingQty || 0) > 0;
+    var status = normalizeText(item && item.status).toUpperCase();
+    if (["SEPARADO", "SEPARADO_COM_DIVERGENCIA", "ENVIADO", "ENVIADO_PARCIAL", "ENVIADO_COM_DIVERGENCIA", "CONCLUIDO"].indexOf(status) >= 0) return true;
+    if (item && item.divergenceType) return true;
+    return false;
   }
 
   function isBoxQuantityItem(item) {
@@ -12375,6 +12514,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var origin = {
       CAPTACAO: "Captacao",
       LOJA: "Loja",
+      LOJA_E_CAPTACAO: "Loja + Captacao",
       CAPTACAO_E_LOJA: "Captacao + Loja",
       SEM_SALDO: "Sem saldo",
       VERIFICAR: "Verificar"
@@ -12981,7 +13121,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         item.pendingReason = pendingInfo ? pendingInfo.reason : item.pendingReason || "Separacao parcial autorizada";
         item.pendingObservation = pendingInfo ? pendingInfo.observation : item.pendingObservation || "";
       }
-      item.status = sepMissing > 0 && !item.isExtra ? (item.separatedQty > 0 ? "SEPARADO_COM_DIVERGENCIA" : "FALTA_TOTAL") : item.separatedQty >= item.requestedQty ? "SEPARADO" : "PARCIAL";
+      item.status = "SEPARADO";
       var sepUpdate = Object.assign({
         quantidade_separada: item.separatedQty,
         quantidade_faltante: item.missingQty || 0,
@@ -13631,7 +13771,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var message = formatSupabaseError(error);
     var lower = message.toLowerCase();
     if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("wms_bindings_sku_location_key") >= 0) {
-      return "O Supabase ainda esta com a regra antiga de enderecamento sem estoque. Execute supabase-schema.sql para remover o indice antigo e permitir VDCG, VDAR e VDSI separados. Erro original: " + message;
+      var label = activeWarehouseCodes().length ? activeWarehouseCodes().join(", ") : "os estoques ativos";
+      return "O Supabase ainda esta com a regra antiga de enderecamento sem estoque. Execute supabase-schema.sql para remover o indice antigo e permitir " + label + " separados. Erro original: " + message;
     }
     if (lower.indexOf("duplicate key value") >= 0 && lower.indexOf("wms_bindings") >= 0) {
       return "A importacao encontrou uma duplicidade no banco. Execute supabase-schema.sql para garantir o indice por estoque (warehouse_code, sku, location_code). Erro original: " + message;

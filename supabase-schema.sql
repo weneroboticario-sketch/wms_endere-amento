@@ -182,7 +182,7 @@ set default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse
     warehouse_id = coalesce(nullif(warehouse_id, ''), nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     warehouse_code = coalesce(nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG'),
     allowed_warehouse_codes = case
-      when role = 'ADMINISTRADOR' then 'VDCG,VDAR,VDSI'
+      when role = 'ADMINISTRADOR' then coalesce((select string_agg(code, ',' order by code) from public.wms_warehouses where active = true), 'VDCG')
       else coalesce(nullif(allowed_warehouse_codes, ''), nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG')
     end,
     is_global_admin = case when role = 'ADMINISTRADOR' then true else is_global_admin end
@@ -213,41 +213,16 @@ where default_warehouse_code in ('VDR', 'DVR')
    or allowed_warehouse_codes like '%DVR%';
 
 update public.wms_users
-set role = 'SUPERVISOR',
-    profile = 'SUPERVISOR',
-    default_warehouse_id = 'warehouse-vdar',
-    default_warehouse_code = 'VDAR',
-    warehouse_id = 'warehouse-vdar',
-    warehouse_code = 'VDAR',
-    allowed_warehouse_codes = 'VDAR',
-    is_global_admin = false,
-    updated_at = now()
-where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%gustavo%';
-
-update public.wms_users
-set role = 'SUPERVISOR',
-    profile = 'SUPERVISOR',
-    default_warehouse_id = 'warehouse-vdsi',
-    default_warehouse_code = 'VDSI',
-    warehouse_id = 'warehouse-vdsi',
-    warehouse_code = 'VDSI',
-    allowed_warehouse_codes = 'VDSI',
-    is_global_admin = false,
-    updated_at = now()
-where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%henrique%';
-
-update public.wms_users
 set role = 'ADMINISTRADOR',
     profile = 'ADMINISTRADOR',
     default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     default_warehouse_code = coalesce(nullif(default_warehouse_code, ''), 'VDCG'),
     warehouse_id = coalesce(nullif(warehouse_id, ''), nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
     warehouse_code = coalesce(nullif(warehouse_code, ''), nullif(default_warehouse_code, ''), 'VDCG'),
-    allowed_warehouse_codes = 'VDCG,VDAR,VDSI',
+    allowed_warehouse_codes = coalesce((select string_agg(code, ',' order by code) from public.wms_warehouses where active = true), 'VDCG'),
     is_global_admin = true,
     updated_at = now()
-where lower(coalesce(name, '') || ' ' || coalesce(username, '') || ' ' || coalesce(matricula, '')) like '%wener%'
-   or lower(coalesce(username, '')) = 'admin';
+where lower(coalesce(username, '')) = 'admin';
 
 update public.wms_users
 set is_global_admin = false,
@@ -805,6 +780,10 @@ create table if not exists public.wms_stock_import_batches (
   imported_by_name text default '',
   total_rows integer default 0,
   imported_rows integer default 0,
+  inserted_rows integer default 0,
+  updated_rows integer default 0,
+  unchanged_rows integer default 0,
+  deactivated_rows integer default 0,
   ignored_rows integer default 0,
   error_rows integer default 0,
   status text default 'PROCESSING',
@@ -819,6 +798,10 @@ alter table public.wms_stock_import_batches add column if not exists imported_by
 alter table public.wms_stock_import_batches add column if not exists imported_by_name text default '';
 alter table public.wms_stock_import_batches add column if not exists total_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists imported_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists inserted_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists updated_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists unchanged_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists deactivated_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists ignored_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists error_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists status text default 'PROCESSING';
@@ -842,7 +825,9 @@ create table if not exists public.wms_stock_positions (
   coluna text default '',
   codigo_endereco text default '',
   active boolean default true,
-  is_sellable boolean default false
+  is_sellable boolean default false,
+  record_hash text default '',
+  last_seen_batch_id text default ''
 );
 
 alter table public.wms_stock_positions add column if not exists created_at timestamptz default now();
@@ -862,23 +847,40 @@ alter table public.wms_stock_positions add column if not exists coluna text defa
 alter table public.wms_stock_positions add column if not exists codigo_endereco text default '';
 alter table public.wms_stock_positions add column if not exists active boolean default true;
 alter table public.wms_stock_positions add column if not exists is_sellable boolean default false;
+alter table public.wms_stock_positions add column if not exists record_hash text default '';
+alter table public.wms_stock_positions add column if not exists last_seen_batch_id text default '';
 
 create index if not exists wms_stock_batches_warehouse_source_created_idx
 on public.wms_stock_import_batches (warehouse_code, source_type, created_at desc);
 
+create index if not exists idx_stock_batches_warehouse_source
+on public.wms_stock_import_batches (warehouse_code, source_type, created_at);
+
 create index if not exists wms_stock_positions_warehouse_source_active_idx
+on public.wms_stock_positions (warehouse_code, source_type, active);
+
+create index if not exists idx_stock_positions_source_active
 on public.wms_stock_positions (warehouse_code, source_type, active);
 
 create index if not exists wms_stock_positions_warehouse_sku_active_idx
 on public.wms_stock_positions (warehouse_code, codigo_material, active);
 
+create index if not exists idx_stock_positions_warehouse_codigo
+on public.wms_stock_positions (warehouse_code, codigo_material, active);
+
 create index if not exists wms_stock_positions_warehouse_source_sku_idx
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material);
+
+create index if not exists idx_stock_positions_warehouse_source_codigo
+on public.wms_stock_positions (warehouse_code, source_type, codigo_material, active);
 
 create index if not exists wms_stock_positions_batch_idx
 on public.wms_stock_positions (batch_id);
 
 create index if not exists idx_stock_positions_replenishment
+on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, active);
+
+create index if not exists idx_stock_positions_available
 on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, active);
 
 create index if not exists idx_stock_positions_codigo_active
