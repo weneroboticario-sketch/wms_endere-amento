@@ -3944,8 +3944,24 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.replenishment-queue-panel {
+  margin: 14px 0;
+  border-color: rgba(0, 95, 124, 0.22);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+}
+
+.replenishment-queue-panel .panel-header {
+  align-items: flex-start;
+}
+
 .replenishment-suggestions-panel {
   margin-bottom: 14px;
+  background: #fbfdff;
+}
+
+.replenishment-suggestions-panel .panel-header {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .replenishment-suggestion-filters {
@@ -3962,9 +3978,9 @@ tbody tr:hover td {
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-left: 4px solid var(--accent);
+  border-left: 3px solid var(--accent);
   border-radius: 8px;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.74);
   min-width: 0;
 }
 

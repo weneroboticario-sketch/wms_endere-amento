@@ -585,10 +585,22 @@
           </section>
         </div>
 
+        <section class="panel replenishment-queue-panel">
+          <div class="panel-header">
+            <div>
+              <h3>Pedidos em andamento</h3>
+              <p class="muted">Fila operacional do estoque atual, separada das sugestoes automaticas.</p>
+            </div>
+            <button class="secondary-button" id="loadMoreReplenishmentButton" type="button">Carregar mais</button>
+          </div>
+          <div id="replenishmentList" class="replenishment-list"></div>
+          <div id="replenishmentQueueStatus" class="inline-status"></div>
+        </section>
+
         <section class="panel replenishment-suggestions-panel">
           <div class="panel-header">
             <div>
-              <h3>Sugestoes de Reposicao</h3>
+              <h3>Sugestoes de abastecimento</h3>
               <p class="muted">Produtos vendaveis com loja zerada ou negativa cruzados com captacao.</p>
             </div>
             <button class="secondary-button" id="refreshReplenishmentSuggestionsButton" type="button">Atualizar</button>
@@ -608,15 +620,6 @@
             <button class="secondary-button" id="loadMoreReplenishmentSuggestionsButton" type="button" hidden>Carregar mais sugestoes</button>
           </div>
           <div id="replenishmentSuggestionsStatus" class="inline-status"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h3>Fila de Reposicao</h3>
-            <button class="secondary-button" id="loadMoreReplenishmentButton" type="button">Carregar mais</button>
-          </div>
-          <div id="replenishmentList" class="replenishment-list"></div>
-          <div id="replenishmentQueueStatus" class="inline-status"></div>
         </section>
       </section>
 
