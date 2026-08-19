@@ -2911,7 +2911,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentSuggestionMatchesFilter(suggestion, filter) {
     if (!filter) return true;
-    if (filter !== "CAPTACAO_POSITIVA" && suggestion.suggestionType === "RUPTURA") return filter === "SEM_SALDO_CAPTACAO";
     if (filter === "LOJA_NEGATIVA") return Number(suggestion.storeAvailable || 0) < 0;
     if (filter === "LOJA_ZERADA") return Number(suggestion.storeAvailable || 0) === 0;
     if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
@@ -2947,6 +2946,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var suggestion = buildStockSuggestion(sku, 0, grouped[sku]);
       var classification = classifyReplenishmentSuggestion(suggestion);
       if (!classification || !suggestion.sellable) return null;
+      if (classification.type === "RUPTURA") return null;
       var openRequest = openRequests[sku] || null;
       return Object.assign({}, suggestion, {
         suggestionType: classification.type,
@@ -5964,6 +5964,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function replenishmentSuggestionCardHtml(item) {
     var location = item.captureLocation || "Sem localizacao";
     var official = item.officialLocation || "Sem WMS";
+    var isRupture = item.suggestionType === "RUPTURA";
     var tone = item.suggestionPriority === 1 ? "danger" : item.suggestionPriority === 2 ? "warning" : item.suggestionPriority === 3 ? "danger" : "info";
     return [
       "<article class=\"replenishment-suggestion-card tone-" + escapeHtml(tone) + "\" data-replenishment-suggestion-sku=\"" + escapeHtml(item.sku) + "\">",
@@ -5974,7 +5975,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Loja", formatQty(item.storeAvailable)),
       replenishmentMetricHtml("Captacao", formatQty(item.captureAvailable)),
-      replenishmentMetricHtml("Qtd sugerida", item.suggestedReplenishmentQty > 0 ? formatQty(item.suggestedReplenishmentQty) : "Analise"),
+      replenishmentMetricHtml("Qtd sugerida", isRupture ? "Sem sugestao" : item.suggestedReplenishmentQty > 0 ? formatQty(item.suggestedReplenishmentQty) : "Analise"),
       replenishmentMetricHtml("Pedido aberto", item.hasOpenRequest ? "Sim" : "Nao"),
       "</div>",
       "<div class=\"replenishment-suggestion-locations\">",
@@ -5982,7 +5983,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<span><small>Localizacao WMS</small><b>" + escapeHtml(official) + "</b></span>",
       item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(item.openRequestStatus + (item.openRequestResponsible ? " - " + item.openRequestResponsible : "")) + "</b></span>" : "",
       "</div>",
-      "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
+      isRupture ? "" : "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
       "</article>"
     ].join("");
   }
