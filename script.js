@@ -2190,14 +2190,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (response.error) throw response.error;
   }
 
+  async function insertTransferItemRow(row) {
+    var payload = Object.assign({}, row);
+    var attemptedMissingColumns = {};
+    var response = await supabaseDb.from("wms_transfer_items").insert(payload);
+    while (response.error && isMissingColumnError(response.error)) {
+      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfer_items", response.error);
+      var missingColumn = getMissingColumnName(response.error);
+      if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
+      attemptedMissingColumns[missingColumn] = true;
+      delete payload[missingColumn];
+      response = await supabaseDb.from("wms_transfer_items").insert(payload);
+    }
+    if (response.error) throw response.error;
+  }
+
   async function upsertTransferItemRows(rows) {
-    try {
-      await upsertInChunks("wms_transfer_items", rows, "id");
-    } catch (error) {
-      if (!isMissingColumnError(error)) throw error;
-      if (isMissingWarehouseColumnError(error)) assertWarehouseFallbackAllowed("wms_transfer_items", error);
-      if (activeWarehouseCode() !== DEFAULT_WAREHOUSE_CODE) throw error;
-      await upsertInChunks("wms_transfer_items", rows.map(stripOptionalTransferItemColumns), "id");
+    var payload = rows.map(function (row) { return Object.assign({}, row); });
+    var attemptedMissingColumns = {};
+    while (true) {
+      try {
+        await upsertInChunks("wms_transfer_items", payload, "id");
+        return;
+      } catch (error) {
+        if (!isMissingColumnError(error)) throw error;
+        if (isMissingWarehouseColumnError(error)) assertWarehouseFallbackAllowed("wms_transfer_items", error);
+        var missingColumn = getMissingColumnName(error);
+        if (!missingColumn || attemptedMissingColumns[missingColumn]) throw error;
+        attemptedMissingColumns[missingColumn] = true;
+        payload.forEach(function (row) { delete row[missingColumn]; });
+      }
     }
   }
 
@@ -9891,15 +9913,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         divergence_type: item.divergenceType || "",
         status: item.status
       }, transferItemAuditDbFields(item));
-      var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
-      if (response.error && isMissingColumnError(response.error)) {
-        response = await supabaseDb.from("wms_transfer_items").update({
-          quantidade_separada: item.separatedQty,
-          quantidade_lacrada: item.packedQty,
-          status: item.status,
-          updated_at: now
-        }).eq("id", item.id);
-      }
+      var response = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, update);
       if (response.error) throw response.error;
       invalidateTransferStatsCache();
       await persistTransferLightSummary(transfer, mode === "MONTAGEM" ? "ITEM_PACKED" : "ITEM_SEPARATED", { sku: item.sku });
@@ -10935,8 +10949,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         observacao_pendencia: item.pendingObservation || "",
         updated_at: new Date().toISOString()
       }, transferItemAuditDbFields(item));
-      var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
-      if (response.error && isMissingColumnError(response.error)) response = { error: null };
+      var response = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, update);
       if (response.error) throw response.error;
       await registerTransferDivergence(transfer, item, "FALTA_DE_ITEM", expected, informed, -missing, inputType, "Finalizado com item pendente em " + mode + ".");
     }
@@ -12873,8 +12886,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createdAt: now,
       updatedAt: now
     };
-    var response = await supabaseDb.from("wms_transfer_items").insert(Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item)));
-    if (response.error) throw response.error;
+    await insertTransferItemRow(Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item)));
     await registerTransferDivergence(transfer, item, "ITEM_EXTRA", 0, qty, qty, inputType, observation);
     await recordTransferEvent(transfer.id, item.id, "ITEM_EXTRA_ADDED", sku, qty, "Item extra registrado.", {
       inputType: inputType,
@@ -12911,10 +12923,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       existing.extraQty = Number(existing.extraQty || 0) + qty;
       existing.excessQty = Number(existing.excessQty || 0) + qty;
       existing.updatedAt = now;
-      var updateResponse = await supabaseDb.from("wms_transfer_items").update(Object.assign({
+      var updateResponse = await updateRowWithSchemaFallback("wms_transfer_items", "id", existing.id, Object.assign({
         quantidade_separada: existing.separatedQty,
         updated_at: now
-      }, transferItemAuditDbFields(existing))).eq("id", existing.id);
+      }, transferItemAuditDbFields(existing)));
       if (updateResponse.error) throw updateResponse.error;
       await recordTransferEvent(transfer.id, existing.id, "CONFERENCE_EXTRA_SCANNED", sku, qty, "SKU fora do XML somado para decisão final.", {
         inputType: inputType,
@@ -12957,8 +12969,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       createdAt: now,
       updatedAt: now
     };
-    var response = await supabaseDb.from("wms_transfer_items").insert(Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item)));
-    if (response.error) throw response.error;
+    await insertTransferItemRow(Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item)));
     await recordTransferEvent(transfer.id, item.id, "CONFERENCE_EXTRA_SCANNED", sku, qty, "SKU fora do XML registrado para decisão final.", {
       inputType: inputType,
       divergenceType: "SKU_NAO_CONSTA_XML"
@@ -13383,7 +13394,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       status: item.status,
       updated_at: now
     }, transferItemAuditDbFields(item));
-    var response = await supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id);
+    var response = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, update);
     if (response.error) throw response.error;
     var diff = qty - expectedQty;
     await recordTransferEvent(transfer.id, item.id, "CONFERENCE_ITEM_ADJUSTED", item.sku, qty, "Quantidade ajustada pelo líder após envio da conferência.", {
