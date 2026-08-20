@@ -7772,7 +7772,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       reassignControl,
       "<button class=\"edit-small\" data-transfer-view=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
-      isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "",
+      isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "",
       "</div>",
       "</article>"
     ].join("");
@@ -8520,7 +8520,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
       "<td>" + formatDateTime(report.finishedAt) + "</td>",
-      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (isAdmin() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir teste</button>" : "") + "</div></td>",
+      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
       "</tr>"
     ].join("");
   }
@@ -13521,12 +13521,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function deleteTransferPermanently(id) {
-    if (!isAdmin()) {
-      showToast("Somente administrador pode excluir transferencia de teste.", "error");
+    if (!isAdminOrSupervisor()) {
+      showToast("Somente administrador ou supervisor pode excluir transferencia.", "error");
       return false;
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
+    if (!transferBelongsToActiveWarehouse(transfer)) {
+      showToast("Esta transferencia pertence a outro estoque.", "error");
+      return false;
+    }
     var confirmed = await requestTransferDeleteConfirmation(transfer);
     if (!confirmed) {
       showToast("Exclusão cancelada.", "warning");
@@ -13553,7 +13557,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       maintenanceState.lastReport = null;
       renderTransfers();
       renderMaintenance();
-      showToast("Transferencia de teste excluida.", "success");
+      showToast("Transferencia excluida.", "success");
       return true;
     } finally {
       endTransferAction(actionButton);
