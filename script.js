@@ -3773,6 +3773,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "TRANSFER_FINALIZED",
       "TRANSFER_FINALIZED_WITH_DIVERGENCE",
       "TRANSFER_REVALIDATION_REQUESTED",
+      "TRANSFER_REVALIDATION_STARTED",
+      "TRANSFER_REVALIDATION_FINISHED",
       "TRANSFER_CANCELLED",
       "TRANSFER_DELETED_TEST"
     ];
@@ -10478,6 +10480,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       ITEM_PACKED: "SKU colocado na caixa",
       PACKING_FINISHED: "Transferencia enviada",
       TRANSFER_REVALIDATION_REQUESTED: "Revalidacao solicitada",
+      TRANSFER_REVALIDATION_STARTED: "Revalidacao iniciada",
+      TRANSFER_REVALIDATION_FINISHED: "Revalidacao concluida",
       TRANSFER_FINALIZED: "Transferencia finalizada",
       TRANSFER_FINALIZED_WITH_DIVERGENCE: "Finalizada com divergencia"
     };
@@ -12697,6 +12701,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
     }
+    if (!options.viewOnly && transfer.status === "CORRECAO_SOLICITADA") {
+      var revalidationStartedAt = new Date().toISOString();
+      try {
+        await updateTransferStatus(transfer, "EM_CORRECAO", {
+          lacre_iniciado_em: transfer.packingStartedAt || revalidationStartedAt,
+          packing_started_at: transfer.packingStartedAt || revalidationStartedAt,
+          last_action_at: revalidationStartedAt,
+          last_action_label: "Revalidacao iniciada"
+        }, "TRANSFER_REVALIDATION_STARTED", {
+          startedById: (authState.currentUser || {}).id || "",
+          startedByName: (authState.currentUser || {}).name || "",
+          startedAt: revalidationStartedAt
+        }, {
+          observation: "Operador iniciou a revalidacao da montagem."
+        });
+        transferState.activeWorkMode = getTransferWorkMode(transfer);
+      } catch (error) {
+        console.error("Erro ao iniciar revalidacao:", error);
+        showToast("Erro ao iniciar revalidacao: " + formatSupabaseError(error), "error");
+        return;
+      }
+    }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
     setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");
@@ -13371,6 +13397,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var packingFinishedAt = new Date().toISOString();
     var finalStats = getTransferStats(transfer.id);
+    var wasRevalidation = ["CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(transfer.status) >= 0;
     await updateTransferStatus(transfer, hasDivergence ? "PRONTA_PARA_NOTA_COM_DIVERGENCIA" : "PRONTA_PARA_NOTA", {
       lacre_concluido_em: packingFinishedAt,
       duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
@@ -13384,16 +13411,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       packing_duration_seconds: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
       total_finished_at: packingFinishedAt,
       total_duration_seconds: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
-    }, "PACKING_FINISHED", {
+    }, wasRevalidation ? "TRANSFER_REVALIDATION_FINISHED" : "PACKING_FINISHED", {
       finalBoxCount: finalBoxCount,
       finalizedById: (authState.currentUser || {}).id || "",
       finalizedByName: (authState.currentUser || {}).name || "",
       finalizedAt: packingFinishedAt,
-      hasDivergence: hasDivergence
+      hasDivergence: hasDivergence,
+      revalidated: wasRevalidation
     }, {
       quantity: finalBoxCount,
       quantityInformed: finalBoxCount,
-      observation: "Quantidade final de caixas: " + finalBoxCount
+      observation: (wasRevalidation ? "Revalidacao concluida. " : "") + "Quantidade final de caixas: " + finalBoxCount
     });
     await loadTransferData();
     transferState.activeTransferId = transfer.id;
