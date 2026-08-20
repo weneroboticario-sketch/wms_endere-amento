@@ -3764,6 +3764,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "PACKING_FINISHED",
       "TRANSFER_FINALIZED",
       "TRANSFER_FINALIZED_WITH_DIVERGENCE",
+      "TRANSFER_REVALIDATION_REQUESTED",
       "TRANSFER_CANCELLED",
       "TRANSFER_DELETED_TEST"
     ];
@@ -5371,6 +5372,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("transferMergePreview")) $("transferMergePreview").addEventListener("change", handleTransferMergeResolutionChange);
     if ($("transferMergePreview")) $("transferMergePreview").addEventListener("input", handleTransferMergeResolutionChange);
     $("finalizedTransferRows").addEventListener("click", handleTransferActionClick);
+    $("transferFinalReportSummary").addEventListener("click", handleTransferActionClick);
     $("transferFinalReportDetails").addEventListener("click", handleTransferActionClick);
     $("myTransfersList").addEventListener("click", handleTransferActionClick);
     $("completedTransfersList").addEventListener("click", handleTransferActionClick);
@@ -6455,6 +6457,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (task.type === "CONFERENCIA") return "Você recebeu uma conferência para realizar.";
     if (task.type === "REPOSICAO") return "Você recebeu um pedido de reposição para atender.";
     var transfer = task.source || task;
+    if (transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO") return "Sua transferência voltou para revalidação. Confira a montagem da caixa.";
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA") return "Separação concluída. Faça a montagem da caixa.";
     if (transfer.status === "EM_SEPARACAO") return "Você possui uma transferência em andamento.";
     return "Você recebeu uma transferência para separar.";
@@ -7779,7 +7782,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function transferPanelStageInfo(status) {
-    if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(status) >= 0) {
+    if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(status) >= 0) {
       return { label: "Caixa", className: "stage-box" };
     }
     if (status === "PRONTA_PARA_NOTA" || status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA") {
@@ -8470,7 +8473,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function myTransferCardHtml(transfer) {
     var stats = getTransferStats(transfer.id);
-    var action = isFinalTransferStatus(transfer.status) ? "Ver resultado" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
+    var action = isFinalTransferStatus(transfer.status) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
       "<article class=\"transfer-card\">",
       "<span class=\"eyebrow\">Transferência</span>",
@@ -8520,7 +8523,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
       "<td>" + formatDateTime(report.finishedAt) + "</td>",
-      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
+      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (canRequestTransferRevalidation(transfer) ? "<button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar</button>" : "") + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
       "</tr>"
     ].join("");
   }
@@ -9514,7 +9517,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function getTransferWorkMode(transfer) {
     if (!transfer) return "SEPARACAO";
     if (isFinalTransferStatus(transfer.status) || ["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(transfer.status) >= 0) return "FINALIZACAO";
-    if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA"].indexOf(transfer.status) >= 0) return "MONTAGEM";
+    if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(transfer.status) >= 0) return "MONTAGEM";
     return "SEPARACAO";
   }
 
@@ -9571,6 +9574,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       SEPARACAO_CONCLUIDA: "Separação concluída",
       EM_LACRE: "Em montagem",
       EM_MONTAGEM_CAIXA: "Em montagem",
+      CORRECAO_SOLICITADA: "Revalidar montagem",
+      EM_CORRECAO: "Em revalidação",
+      CORRECAO_CONCLUIDA: "Revalidada",
       LACRE_CONCLUIDO: "Montagem concluída",
       MONTAGEM_CAIXA_CONCLUIDA: "Montagem concluída",
       PRONTA_PARA_NOTA: "Pronta para nota",
@@ -10163,7 +10169,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Produtos corretos", correctItems, "result-ok"),
       summaryChip("Produtos com diferenca", divergentItems, divergentItems ? "result-changed" : "result-ok"),
       summaryChip("Produtos faltantes", missingItems, missingItems ? "result-missing" : "result-ok"),
-      summaryChip("Extras", report.extraItems.length, report.extraItems.length ? "result-extra" : "result-ok")
+      summaryChip("Extras", report.extraItems.length, report.extraItems.length ? "result-extra" : "result-ok"),
+      canRequestTransferRevalidation(transfer) ? "<div><span>Ação</span><button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar com operador</button></div>" : ""
     ].join("");
     var itemRows = report.items.map(function (item) {
       var checkedQty = getTransferCheckedQty(item, transfer);
@@ -10462,6 +10469,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       PACKING_STARTED: "Montagem iniciada",
       ITEM_PACKED: "SKU colocado na caixa",
       PACKING_FINISHED: "Transferencia enviada",
+      TRANSFER_REVALIDATION_REQUESTED: "Revalidacao solicitada",
       TRANSFER_FINALIZED: "Transferencia finalizada",
       TRANSFER_FINALIZED_WITH_DIVERGENCE: "Finalizada com divergencia"
     };
@@ -10623,6 +10631,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (isFinalTransferStatus(transfer.status)) return false;
     if (!isAdmin()) return ["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA", "PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA"].indexOf(transfer.status) < 0;
     return transfer.status !== "CANCELADA";
+  }
+
+  function canRequestTransferRevalidation(transfer) {
+    if (!isAdminOrSupervisor() || !transfer || !transferBelongsToActiveWarehouse(transfer)) return false;
+    if (!transfer.responsibleId) return false;
+    return [
+      "LACRE_CONCLUIDO",
+      "MONTAGEM_CAIXA_CONCLUIDA",
+      "PRONTA_PARA_NOTA",
+      "PRONTA_PARA_NOTA_COM_DIVERGENCIA",
+      "FINALIZADA",
+      "FINALIZADA_PARA_ANALISE",
+      "CONCLUIDA_SEM_DIVERGENCIA",
+      "CONCLUIDA_COM_DIVERGENCIA"
+    ].indexOf(transfer.status) >= 0;
   }
 
   function getLatestTransferConferenceAssignment(transferId) {
@@ -13574,6 +13597,48 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     showToast("Transferência cancelada.", "success");
   }
 
+  async function requestTransferRevalidation(id) {
+    var transfer = getTransferById(id);
+    if (!transfer || !canRequestTransferRevalidation(transfer)) {
+      showToast("Não foi possível devolver esta transferência para revalidação.", "error");
+      return;
+    }
+    var responsible = transfer.responsibleName || "operador responsável";
+    if (!window.confirm("Devolver " + transferDisplayName(transfer) + " para " + responsible + " revalidar a montagem?")) return;
+    var actionButton = document.querySelector("[data-transfer-revalidate=\"" + id + "\"]");
+    if (!beginTransferAction("revalidate:" + id, actionButton, "Enviando...")) return;
+    try {
+      var now = new Date().toISOString();
+      await updateTransferStatus(transfer, "CORRECAO_SOLICITADA", {
+        finalizado_em: null,
+        final_result: "",
+        total_finished_at: null,
+        updated_at: now,
+        last_action_at: now,
+        last_action_label: "Revalidacao solicitada"
+      }, "TRANSFER_REVALIDATION_REQUESTED", {
+        requestedById: (authState.currentUser || {}).id || "",
+        requestedByName: (authState.currentUser || {}).name || "",
+        responsibleId: transfer.responsibleId || "",
+        responsibleName: responsible,
+        requestedAt: now
+      }, {
+        observation: "Transferencia devolvida para revalidacao da montagem."
+      });
+      await loadTransferData();
+      transferState.activeTransferId = id;
+      transferState.activeWorkMode = "MONTAGEM";
+      renderTransfers();
+      renderOperatorTasksAlert();
+      showToast("Transferência devolvida para revalidação.", "success");
+    } catch (error) {
+      console.error("Erro ao devolver transferência para revalidação:", error);
+      showToast("Erro ao devolver para revalidação: " + formatSupabaseError(error), "error");
+    } finally {
+      endTransferAction(actionButton);
+    }
+  }
+
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
@@ -13582,6 +13647,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (button.dataset.transferExportXml) await exportTransferConferenceXml(button.dataset.transferExportXml);
     if (button.dataset.transferAssignConference) await assignTransferConference(button.dataset.transferAssignConference);
     if (button.dataset.transferCancel) await cancelTransfer(button.dataset.transferCancel);
+    if (button.dataset.transferRevalidate) await requestTransferRevalidation(button.dataset.transferRevalidate);
     if (button.dataset.transferDeletePermanent) await deleteTransferPermanently(button.dataset.transferDeletePermanent);
     if (button.dataset.transferAdjustItem) await adjustConferenceItemQuantity(button.dataset.transferAdjustItem);
     if (button.dataset.transferDeleteExtra) await deleteConferenceExtraItem(button.dataset.transferDeleteExtra);
