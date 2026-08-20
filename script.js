@@ -800,6 +800,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return rowWarehouseCode(row) === activeWarehouseCode();
   }
 
+  function processRowMatchesActiveWarehouse(row) {
+    if (!row) return false;
+    var code = rowWarehouseCode(row);
+    if (code) return code === activeWarehouseCode();
+    return !isMultiWarehouseMode();
+  }
+
   function ensureActiveWarehouse() {
     if (activeWarehouseCode()) {
       if (authState.currentUser && !authState.currentUser.warehouseAccessConfirmed && !isGlobalAdminUser(authState.currentUser)) {
@@ -1114,7 +1121,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return [];
       }
       assertWarehouseFallbackAllowed(tableName, error);
-      return (await fetchAllRows(tableName, orderColumn, ascending)).filter(rowMatchesActiveWarehouse);
+      return (await fetchAllRows(tableName, orderColumn, ascending)).filter(processRowMatchesActiveWarehouse);
     }
   }
 
@@ -1160,7 +1167,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isMultiWarehouseMode()) return [];
       assertWarehouseFallbackAllowed("wms_transfer_events", error);
       return (await fetchAllRows("wms_transfer_events", "created_at", false)).filter(function (row) {
-        return rowMatchesActiveWarehouse(row) && uiEventTypes.indexOf(row.event_type) >= 0;
+        return processRowMatchesActiveWarehouse(row) && uiEventTypes.indexOf(row.event_type) >= 0;
       });
     }
     return allRows;
@@ -1195,7 +1202,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           }
           throw fallbackResponse.error;
         }
-        return (fallbackResponse.data || []).filter(rowMatchesActiveWarehouse);
+        return (fallbackResponse.data || []).filter(processRowMatchesActiveWarehouse);
       }
       if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
         recordPerformanceError("live-optional-" + tableName, error);
@@ -1516,11 +1523,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var loadedFromCache = false;
     if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
       transferState.establishments = cachedTransfers.establishments || [];
-      transferState.transfers = (cachedTransfers.transfers || []).filter(isOperationalTransferRecord);
+      transferState.transfers = (cachedTransfers.transfers || []).filter(function (transfer) {
+        return isOperationalTransferRecord(transfer) && transferBelongsToActiveWarehouse(transfer);
+      });
       var cachedTransferIds = {};
       transferState.transfers.forEach(function (transfer) { cachedTransferIds[transfer.id] = true; });
-      transferState.items = (cachedTransfers.items || []).filter(function (item) { return item && item.transferId && cachedTransferIds[item.transferId]; });
-      transferState.events = (cachedTransfers.events || []).filter(function (event) { return event && (!event.transfer_id || cachedTransferIds[event.transfer_id]); });
+      transferState.items = (cachedTransfers.items || []).filter(function (item) {
+        return processRowMatchesActiveWarehouse(item) && item.transferId && cachedTransferIds[item.transferId];
+      });
+      transferState.events = (cachedTransfers.events || []).filter(function (event) {
+        return processRowMatchesActiveWarehouse(event) && (!event.transfer_id || cachedTransferIds[event.transfer_id]);
+      });
       transferState.productPackaging = cachedTransfers.productPackaging || {};
       transferState.tablesAvailable = true;
       invalidateTransferStatsCache();
@@ -1539,10 +1552,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
       itemRows = itemRows.filter(function (row) {
-        return rowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
+        return processRowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
       });
       eventRows = eventRows.filter(function (row) {
-        return rowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
+        return processRowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
       });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
       transferState.transfers = transferRows.map(fromDbTransfer).filter(isOperationalTransferRecord);
@@ -1628,7 +1641,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function applyLocalTransferItemUpdate(item) {
-    if (!item || !item.id || normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()) !== activeWarehouseCode()) return;
+    if (!item || !item.id || !processRowMatchesActiveWarehouse(item)) return;
     if (item.transferId && !getTransferById(item.transferId)) {
       scheduleTransferRealtimeRefresh("item-without-transfer", 250);
       return;
@@ -1667,9 +1680,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var cachedConferences = await readModuleCache("conferenceData");
     var loadedFromCache = false;
     if (cachedConferences && Array.isArray(cachedConferences.conferences)) {
-      conferenceState.conferences = cachedConferences.conferences || [];
-      conferenceState.items = cachedConferences.items || [];
-      conferenceState.events = cachedConferences.events || [];
+      conferenceState.conferences = (cachedConferences.conferences || []).filter(function (conference) {
+        return processRowMatchesActiveWarehouse(conference);
+      });
+      var cachedConferenceIds = {};
+      conferenceState.conferences.forEach(function (conference) { cachedConferenceIds[conference.id] = true; });
+      conferenceState.items = (cachedConferences.items || []).filter(function (item) {
+        return processRowMatchesActiveWarehouse(item) && (!item.conferenceId || cachedConferenceIds[item.conferenceId]);
+      });
+      conferenceState.events = (cachedConferences.events || []).filter(function (event) {
+        return processRowMatchesActiveWarehouse(event) && (!event.conference_id || cachedConferenceIds[event.conference_id]);
+      });
       conferenceState.tablesAvailable = true;
       loadedFromCache = true;
     }
@@ -1684,10 +1705,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var conferenceIds = {};
       conferenceRows.forEach(function (row) { conferenceIds[row.id] = true; });
       itemRows = itemRows.filter(function (row) {
-        return rowMatchesActiveWarehouse(row) && (!row.conference_id || conferenceIds[row.conference_id]);
+        return processRowMatchesActiveWarehouse(row) && (!row.conference_id || conferenceIds[row.conference_id]);
       });
       eventRows = eventRows.filter(function (row) {
-        return rowMatchesActiveWarehouse(row) && (!row.conference_id || conferenceIds[row.conference_id]);
+        return processRowMatchesActiveWarehouse(row) && (!row.conference_id || conferenceIds[row.conference_id]);
       });
       conferenceState.conferences = conferenceRows.map(fromDbConference);
       conferenceState.items = itemRows.map(fromDbConferenceItem);
@@ -3598,7 +3619,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function getVisibleReplenishmentRequests() {
     return replenishmentState.requests.filter(function (request) {
       if (request.isDeleted) return false;
-      if (request.warehouseCode !== activeWarehouseCode()) return false;
+      if (!processRowMatchesActiveWarehouse(request)) return false;
       if (isAdminOrSupervisor()) return true;
       return isReplenishmentInCurrentUserQueue(request) || (authState.currentUser && request.solicitadoPorId === authState.currentUser.id);
     });
@@ -6648,11 +6669,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (typeof supabaseDb.channel === "function") {
         realtimeState.channel = supabaseDb
           .channel("wms-live-" + realtimeState.warehouseCode)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfers" }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_transfer_items" }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_task_notifications" }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_notifications" }, handleTransferRealtimeDelta)
-          .on("postgres_changes", { event: "*", schema: "public", table: "wms_replenishment_requests" }, handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_transfers"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_items"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_events"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_divergences"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_task_notifications"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_notifications"), handleTransferRealtimeDelta)
+          .on("postgres_changes", warehouseRealtimeConfig("wms_replenishment_requests"), handleTransferRealtimeDelta)
           .subscribe(function (status) {
             realtimeState.subscriptionStatus = status;
             if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
@@ -6666,6 +6689,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       scheduleTransferRealtimeRefresh("poll", 0);
     }, 12000);
     scheduleTransferRealtimeRefresh("start", 250);
+  }
+
+  function warehouseRealtimeConfig(tableName) {
+    return {
+      event: "*",
+      schema: "public",
+      table: tableName,
+      filter: "warehouse_code=eq." + activeWarehouseCode()
+    };
   }
 
   function stopLeaderLiveSync() {
@@ -6691,8 +6723,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function handleTransferRealtimeDelta(payload) {
     if (!realtimeState.active) return;
     var row = payload && (payload.new || payload.old) ? (payload.new || payload.old) : {};
-    if (row.warehouse_code && normalizeWarehouseCode(row.warehouse_code) !== activeWarehouseCode()) {
-      transferDebugLog("Evento ignorado por warehouse_code diferente", payload);
+    if (!processRowMatchesActiveWarehouse(row)) {
+      transferDebugLog("Evento ignorado por estoque diferente ou indefinido", payload);
+      if (!rowWarehouseCode(row) && isMultiWarehouseMode()) scheduleTransferRealtimeRefresh("realtime-warehouse-indefinido", 500);
       return;
     }
     realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
@@ -6855,8 +6888,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getVisibleConferences() {
     if (!authState.currentUser) return [];
-    if (isAdminOrSupervisor()) return conferenceState.conferences.slice();
-    return conferenceState.conferences.filter(function (conference) {
+    var activeConferences = conferenceState.conferences.filter(processRowMatchesActiveWarehouse);
+    if (isAdminOrSupervisor()) return activeConferences.slice();
+    return activeConferences.filter(function (conference) {
       return conference.assignedToId === authState.currentUser.id;
     });
   }
@@ -10268,6 +10302,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!transfer || !activeCode) return false;
     var transferWarehouse = normalizeWarehouseCode(transfer.warehouseCode);
     if (transferWarehouse) return transferWarehouse === activeCode;
+    if (isMultiWarehouseMode()) return false;
     var originTokens = [
       transfer.originName,
       transfer.originStoreCode,
