@@ -1625,7 +1625,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function isOperationalTransferRecord(transfer) {
-    return !!transfer && transfer.isDeleted !== true && !transfer.deletedAt;
+    return !!transfer && transfer.isDeleted !== true && !transfer.deletedAt && !isMergedSourceTransfer(transfer);
+  }
+
+  function isMergedSourceTransfer(transfer) {
+    if (!transfer) return false;
+    if (transfer.mergedIntoId) return true;
+    if (transfer.status === "ARQUIVADA_POR_UNIFICACAO") return true;
+    if (transfer.mergeStatus === "ARQUIVADA_POR_UNIFICACAO") return true;
+    return transfer.status === "UNIFICADA" && transfer.isMerged !== true;
   }
 
   function applyLocalTransferUpdate(transfer) {
