@@ -20,7 +20,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var WAREHOUSE_SEED = [
     { id: "warehouse-vdcg", code: "VDCG", name: "Estoque VDCG", active: true, notes: "Estoque principal existente" },
     { id: "warehouse-vdar", code: "VDAR", name: "Estoque VDAR", active: true, notes: "Segundo estoque operacional" },
-    { id: "warehouse-vdsi", code: "VDSI", name: "Estoque VDSI", active: true, notes: "Terceiro estoque operacional" }
+    { id: "warehouse-vdsi", code: "VDSI", name: "Estoque VDSI", active: true, notes: "Terceiro estoque operacional" },
+    { id: "warehouse-vdco", code: "VDCO", name: "Estoque VDCO", active: true, notes: "Quarto estoque operacional" }
   ];
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {

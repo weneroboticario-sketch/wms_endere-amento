@@ -45,7 +45,8 @@ insert into public.wms_warehouses (id, code, name, active, notes)
 values
   ('warehouse-vdcg', 'VDCG', 'Estoque VDCG', true, 'Estoque principal existente'),
   ('warehouse-vdar', 'VDAR', 'Estoque VDAR', true, 'Segundo estoque operacional'),
-  ('warehouse-vdsi', 'VDSI', 'Estoque VDSI', true, 'Terceiro estoque operacional')
+  ('warehouse-vdsi', 'VDSI', 'Estoque VDSI', true, 'Terceiro estoque operacional'),
+  ('warehouse-vdco', 'VDCO', 'Estoque VDCO', true, 'Quarto estoque operacional')
 on conflict (code) do update set
   name = excluded.name,
   active = excluded.active,
