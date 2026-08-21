@@ -730,6 +730,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return found ? found.id : "warehouse-" + code.toLowerCase();
   }
 
+  function warehouseCodeForId(id) {
+    var rawId = normalizeText(id);
+    if (!rawId) return "";
+    var found = (warehouseState.warehouses || WAREHOUSE_SEED).find(function (warehouse) {
+      return normalizeText(warehouse.id).toLowerCase() === rawId.toLowerCase();
+    });
+    if (found) return normalizeWarehouseCode(found.code);
+    var suffix = rawId.toLowerCase().match(/^warehouse-([a-z0-9_-]+)$/);
+    return suffix ? normalizeWarehouseCode(suffix[1]) : "";
+  }
+
   function warehouseNameForCode(code) {
     code = normalizeWarehouseCode(code);
     var found = (warehouseState.warehouses || WAREHOUSE_SEED).find(function (warehouse) {
@@ -816,11 +827,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function rowWarehouseCode(row) {
-    return normalizeWarehouseCode(row && (row.warehouse_code || row.warehouseCode || row.active_warehouse_code));
+    var rawCode = rawWarehouseCodeValue(row);
+    return rawCode ? normalizeWarehouseCode(rawCode) : DEFAULT_WAREHOUSE_CODE;
   }
 
   function rawWarehouseCodeValue(row) {
-    return normalizeText(row && (row.warehouse_code || row.warehouseCode || row.active_warehouse_code));
+    var explicitCode = normalizeText(row && (row.warehouse_code || row.warehouseCode || row.active_warehouse_code));
+    if (explicitCode) return explicitCode;
+    return warehouseCodeForId(row && (row.warehouse_id || row.warehouseId || row.active_warehouse_id || row.activeWarehouseId));
   }
 
   function rowMatchesActiveWarehouse(row) {
@@ -1133,26 +1147,41 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return allRows;
   }
 
-  async function fetchWarehouseRows(tableName, orderColumn, ascending) {
+  async function fetchWarehouseRowsWithFilter(tableName, orderColumn, ascending, includeWarehouseId) {
     var allRows = [];
     var from = 0;
     var pageSize = 1000;
+    var code = activeWarehouseCode();
+    var id = activeWarehouseId();
+    var warehouseFilter = "warehouse_code.eq." + code;
+    if (includeWarehouseId && id) warehouseFilter += ",warehouse_id.eq." + id;
+    while (true) {
+      var query = supabaseDb
+        .from(tableName)
+        .select("*")
+        .or(warehouseFilter);
+      if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+      var response = await query.range(from, from + pageSize - 1);
+      if (response.error) throw response.error;
+      var rows = response.data || [];
+      allRows = allRows.concat(rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return allRows;
+  }
+
+  async function fetchWarehouseRows(tableName, orderColumn, ascending) {
     try {
-      while (true) {
-        var query = supabaseDb
-          .from(tableName)
-          .select("*")
-          .eq("warehouse_code", activeWarehouseCode());
-        if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
-        var response = await query.range(from, from + pageSize - 1);
-        if (response.error) throw response.error;
-        var rows = response.data || [];
-        allRows = allRows.concat(rows);
-        if (rows.length < pageSize) break;
-        from += pageSize;
-      }
-      return allRows;
+      return await fetchWarehouseRowsWithFilter(tableName, orderColumn, ascending, true);
     } catch (error) {
+      if (isMissingWarehouseColumnError(error) && formatSupabaseError(error).toLowerCase().indexOf("warehouse_id") >= 0) {
+        try {
+          return await fetchWarehouseRowsWithFilter(tableName, orderColumn, ascending, false);
+        } catch (retryError) {
+          error = retryError;
+        }
+      }
       if (!isMissingWarehouseColumnError(error)) throw error;
       if (isOptionalRealtimeTable(tableName)) {
         recordPerformanceError("warehouse-optional-" + tableName, error);
