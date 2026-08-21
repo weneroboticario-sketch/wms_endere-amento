@@ -797,15 +797,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return normalizeWarehouseCode(row && (row.warehouse_code || row.warehouseCode || row.active_warehouse_code));
   }
 
+  function rawWarehouseCodeValue(row) {
+    return normalizeText(row && (row.warehouse_code || row.warehouseCode || row.active_warehouse_code));
+  }
+
   function rowMatchesActiveWarehouse(row) {
     return rowWarehouseCode(row) === activeWarehouseCode();
   }
 
   function processRowMatchesActiveWarehouse(row) {
     if (!row) return false;
-    var code = rowWarehouseCode(row);
-    if (code) return code === activeWarehouseCode();
+    var rawCode = rawWarehouseCodeValue(row);
+    if (rawCode) return normalizeWarehouseCode(rawCode) === activeWarehouseCode();
     return !isMultiWarehouseMode();
+  }
+
+  function bindingMatchesActiveWarehouse(binding) {
+    if (!binding) return false;
+    var rawCode = rawWarehouseCodeValue(binding);
+    if (rawCode) return normalizeWarehouseCode(rawCode) === activeWarehouseCode();
+    return !isMultiWarehouseMode();
+  }
+
+  function activeWarehouseBindings() {
+    return (state.bindings || []).filter(bindingMatchesActiveWarehouse);
   }
 
   function ensureActiveWarehouse() {
@@ -1374,7 +1389,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var cachedCore = await readModuleCache("coreData");
     var loadedFromCache = false;
     if (cachedCore && Array.isArray(cachedCore.bindings)) {
-      state.bindings = cachedCore.bindings || [];
+      state.bindings = (cachedCore.bindings || []).filter(bindingMatchesActiveWarehouse);
       state.history = cachedCore.history || [];
       state.products = cachedCore.products || {};
       loadedFromCache = true;
@@ -1387,7 +1402,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     try {
       var bindingRows = await fetchWarehouseRows("wms_bindings", "created_at", false);
-      state.bindings = expandDbBindingRows(bindingRows);
+      state.bindings = expandDbBindingRows(bindingRows).filter(bindingMatchesActiveWarehouse);
 
       var historyMessage = "";
       var statusType = "success";
@@ -3916,7 +3931,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       areaName: row.area_name || (getAreaByCode(row.area_code) || getAreaByCode(1)).name,
       productName: row.product_name || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
-      warehouseCode: rowWarehouseCode(row),
+      warehouseCode: rawWarehouseCodeValue(row) ? rowWarehouseCode(row) : "",
       createdAt: row.created_at || new Date().toISOString(),
       updatedAt: row.updated_at || row.created_at || new Date().toISOString()
     };
@@ -5875,11 +5890,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).length);
 
     $("areaTotals").innerHTML = AREAS.map(function (area) {
-      var total = state.bindings.filter(function (binding) { return binding.areaCode === area.code; }).length;
+      var total = activeWarehouseBindings().filter(function (binding) { return binding.areaCode === area.code; }).length;
       return "<div class=\"area-line\"><span>" + area.code + " - " + area.name + "</span><strong>" + total + "</strong></div>";
     }).join("");
 
-    var recent = state.bindings.slice().sort(sortByDateDesc).slice(0, 8);
+    var recent = activeWarehouseBindings().slice().sort(sortByDateDesc).slice(0, 8);
     $("recentBindings").innerHTML = recent.length ? recent.map(function (binding) {
       return "<tr><td>" + escapeHtml(binding.sku) + "</td><td>" + escapeHtml(binding.locationCode) + "</td><td>" + escapeHtml(binding.areaName) + "</td><td>" + formatDateTime(binding.createdAt) + "</td></tr>";
     }).join("") : "<tr><td colspan=\"4\">Nenhum endereco cadastrado.</td></tr>";
@@ -8713,7 +8728,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function resolveSkuLocationConflict(skuKey) {
-    var items = state.bindings.filter(function (binding) { return normalizeSkuKey(binding.sku) === skuKey; }).sort(sortByDateDesc);
+    var items = activeWarehouseBindings().filter(function (binding) { return normalizeSkuKey(binding.sku) === skuKey; }).sort(sortByDateDesc);
     if (items.length < 2) {
       setStatus("maintenanceStatus", "Conflito nao encontrado.", "warning");
       renderMaintenance();
@@ -8740,7 +8755,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function removeExactDuplicateRows(exactKey) {
-    var items = state.bindings.filter(function (binding) {
+    var items = activeWarehouseBindings().filter(function (binding) {
       return normalizeSkuKey(binding.sku) + "|" + locationKeyFromBinding(binding) === exactKey;
     }).sort(sortByDateDesc);
     if (items.length < 2) {
@@ -8938,7 +8953,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var cacheBytes = await estimateLocalCacheBytes();
     var openTransfers = transferState.transfers.filter(function (transfer) { return !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; }).length;
     var divergentTransfers = transferState.transfers.filter(function (transfer) { return transfer.hasDivergence || Number(transfer.divergenceCount || 0) > 0; }).length;
-    var noLocationItems = transferState.items.filter(function (item) { return !item.isExtra && item.hasLocation !== true; }).length;
+    var noLocationItems = transferState.items.filter(function (item) { return !item.isExtra && !transferLocationStatus(item).hasLocation; }).length;
     var recentErrors = performanceState.recentErrors.slice(0, 5).map(function (entry) {
       return formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message;
     });
@@ -9112,7 +9127,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function assistantSkuLocationAnswer(sku) {
-    var rows = state.bindings.filter(function (binding) { return isSameSku(binding.sku, sku); });
+    var rows = activeWarehouseBindings().filter(function (binding) { return isSameSku(binding.sku, sku); });
     var product = rows[0] && rows[0].productName ? rows[0].productName : state.products[sku] || state.products[normalizeSkuKey(sku)] || "";
     return {
       title: "Localizacao do SKU " + sku,
@@ -9124,7 +9139,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function assistantMissingLocationAnswer() {
-    var missing = transferState.items.filter(function (item) { return !item.isExtra && item.hasLocation !== true; });
+    var missing = transferState.items.filter(function (item) { return !item.isExtra && !transferLocationStatus(item).hasLocation; });
     var uniqueSkus = unique(missing.map(function (item) { return item.sku; })).slice(0, 12);
     return {
       title: "Produtos sem localizacao",
@@ -12533,46 +12548,49 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function applyTransferItemLocation(item) {
     var location = findTransferLocationForSku(item.sku);
     if (location) {
-      item.addressRua = "R" + pad2(location.rua);
-      item.addressRack = "RK" + pad2(location.rack);
-      item.addressLinha = "L" + pad2(location.linha);
-      item.addressLetra = location.letra || "";
-      item.addressCode = location.locationCode || "";
-      item.hasLocation = true;
-      item.locationWarning = "";
+      applyLocationToTransferItem(item, location);
     } else {
-      item.addressRua = "";
-      item.addressRack = "";
-      item.addressLinha = "";
-      item.addressLetra = "";
-      item.addressCode = "";
-      item.hasLocation = false;
-      item.locationWarning = "Sem localização cadastrada.";
+      clearTransferItemLocation(item);
     }
     return item;
   }
 
+  function bindingHasUsableLocation(binding) {
+    return !!(binding && normalizeText(binding.locationCode) && normalizeText(binding.rua) && normalizeText(binding.rack) && normalizeText(binding.linha) && normalizeText(binding.letra));
+  }
+
+  function applyLocationToTransferItem(item, location) {
+    item.addressRua = "R" + pad2(location.rua);
+    item.addressRack = "RK" + pad2(location.rack);
+    item.addressLinha = "L" + pad2(location.linha);
+    item.addressLetra = location.letra || "";
+    item.addressCode = location.locationCode || "";
+    item.hasLocation = true;
+    item.locationWarning = "";
+    return item;
+  }
+
+  function clearTransferItemLocation(item) {
+    item.addressRua = "";
+    item.addressRack = "";
+    item.addressLinha = "";
+    item.addressLetra = "";
+    item.addressCode = "";
+    item.hasLocation = false;
+    item.locationWarning = "Sem localização cadastrada.";
+    return item;
+  }
+
   function findTransferLocationForSku(sku) {
-    return state.bindings.filter(function (binding) {
-      return isSameSku(binding.sku, sku);
+    return activeWarehouseBindings().filter(function (binding) {
+      return bindingHasUsableLocation(binding) && isSameSku(binding.sku, sku);
     }).sort(sortByDateDesc)[0] || null;
   }
 
   function transferLocationStatus(item) {
-    var code = item.addressCode || "";
-    if (!code && item.hasLocation !== true) {
-      var location = findTransferLocationForSku(item.sku);
-      if (location) {
-        item.addressRua = "R" + pad2(location.rua);
-        item.addressRack = "RK" + pad2(location.rack);
-        item.addressLinha = "L" + pad2(location.linha);
-        item.addressLetra = location.letra || "";
-        item.addressCode = location.locationCode || "";
-        item.hasLocation = true;
-        item.locationWarning = "";
-      }
-    }
-    if (item.hasLocation || item.addressCode) {
+    var location = findTransferLocationForSku(item.sku);
+    if (location) {
+      applyLocationToTransferItem(item, location);
       return {
         hasLocation: true,
         rua: item.addressRua || "",
@@ -12582,6 +12600,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         code: item.addressCode || ""
       };
     }
+    clearTransferItemLocation(item);
     return { hasLocation: false, warning: item.locationWarning || "Sem localização cadastrada." };
   }
 
@@ -14324,7 +14343,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function findBySku(sku) {
     var targets = skuCandidateKeys(sku);
-    return state.bindings.filter(function (binding) {
+    return activeWarehouseBindings().filter(function (binding) {
       return skuCandidateKeys(binding.sku).some(function (candidate) {
         return targets.indexOf(candidate) >= 0;
       });
@@ -14340,7 +14359,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function findByLocation(locationCode) {
-    return state.bindings.filter(function (binding) { return binding.locationCode === locationCode; }).sort(sortByDateDesc);
+    return activeWarehouseBindings().filter(function (binding) { return binding.locationCode === locationCode; }).sort(sortByDateDesc);
   }
 
   function locationKeyFromCode(locationCode) {
@@ -14354,7 +14373,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function locationExistsInMaster(locationCode) {
     var key = locationKeyFromCode(locationCode);
-    if (state.bindings.some(function (binding) { return locationKeyFromBinding(binding) === key; })) return true;
+    if (activeWarehouseBindings().some(function (binding) { return locationKeyFromBinding(binding) === key; })) return true;
     return buildLinhaSeparacaoTemplateRows().some(function (row) { return locationKeyFromCode(row.locationCode) === key; });
   }
 
