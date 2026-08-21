@@ -657,6 +657,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return code || DEFAULT_WAREHOUSE_CODE;
   }
 
+  function normalizeWarehouseCodeOrBlank(value) {
+    var raw = normalizeText(value);
+    if (!raw) return "";
+    return normalizeWarehouseCode(raw);
+  }
+
   function normalizeTransferStatus(value) {
     var status = normalizeText(value)
       .normalize("NFD")
@@ -760,11 +766,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!user) return [DEFAULT_WAREHOUSE_CODE];
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return activeCodes.length ? activeCodes : WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; });
     var allowed = parseWarehouseCodes(user.allowedWarehouseCodes);
-    if (!allowed.length && user.defaultWarehouseCode) allowed = [normalizeWarehouseCode(user.defaultWarehouseCode)];
+    var defaultCode = normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode || user.warehouseCode);
+    var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, false);
+    defaultCode = repaired.defaultCode;
+    allowed = repaired.allowed;
+    if (!allowed.length && defaultCode) allowed = [defaultCode];
     if (!allowed.length) allowed = [DEFAULT_WAREHOUSE_CODE];
     return allowed.filter(function (code) {
       return activeCodes.indexOf(code) >= 0 || !warehouseState.tableAvailable;
     });
+  }
+
+  function removeAccidentalDefaultWarehouse(defaultCode, allowed, isGlobal) {
+    allowed = unique((allowed || []).map(normalizeWarehouseCode));
+    if (isGlobal || defaultCode !== DEFAULT_WAREHOUSE_CODE || allowed.indexOf(DEFAULT_WAREHOUSE_CODE) < 0 || allowed.length < 2) {
+      return { defaultCode: defaultCode, allowed: allowed };
+    }
+    var nonDefault = allowed.filter(function (code) { return code !== DEFAULT_WAREHOUSE_CODE; });
+    if (allowed[0] !== DEFAULT_WAREHOUSE_CODE || nonDefault.length === 1) {
+      return { defaultCode: nonDefault[0] || "", allowed: nonDefault };
+    }
+    return { defaultCode: defaultCode, allowed: allowed };
   }
 
   function userCanAccessWarehouse(user, code) {
@@ -4093,11 +4115,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function canonicalUserWarehousePatch(user) {
     var activeCodes = activeWarehouseCodes();
-    var defaultCode = normalizeWarehouseCode(user.defaultWarehouseCode || user.warehouseCode || DEFAULT_WAREHOUSE_CODE);
-    if (activeCodes.length && activeCodes.indexOf(defaultCode) < 0) defaultCode = activeCodes[0];
     var role = ROLES.indexOf(user.role) >= 0 ? user.role : "OPERADOR";
     var isGlobal = role === "ADMINISTRADOR";
     var allowed = isGlobal ? activeCodes.slice() : parseWarehouseCodes(user.allowedWarehouseCodes);
+    var defaultCode = normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode || user.warehouseCode);
+
+    var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, isGlobal);
+    defaultCode = repaired.defaultCode;
+    allowed = repaired.allowed;
+
+    if (!defaultCode && allowed.length) defaultCode = allowed[0];
+    if (!defaultCode) defaultCode = DEFAULT_WAREHOUSE_CODE;
+    if (activeCodes.length && activeCodes.indexOf(defaultCode) < 0) defaultCode = allowed.find(function (code) { return activeCodes.indexOf(code) >= 0; }) || activeCodes[0];
 
     if (!allowed.length) allowed = [defaultCode || DEFAULT_WAREHOUSE_CODE];
     if (allowed.indexOf(defaultCode) < 0) allowed.push(defaultCode);
@@ -4127,7 +4156,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var currentAllowed = unique(parseWarehouseCodes(user.allowedWarehouseCodes)).join(",");
       if (
         user.role !== patch.role ||
-        normalizeWarehouseCode(user.defaultWarehouseCode) !== patch.default_warehouse_code ||
+        normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) !== patch.default_warehouse_code ||
         currentAllowed !== patch.allowed_warehouse_codes ||
         Boolean(user.isGlobalAdmin) !== Boolean(patch.is_global_admin)
       ) {
@@ -4575,8 +4604,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function fromDbUser(row) {
     var role = ROLES.indexOf(row.role) >= 0 ? row.role : "OPERADOR";
     var hasStoredWarehouse = Boolean(row.default_warehouse_code || row.warehouse_code || row.allowed_warehouse_codes);
-    var defaultWarehouse = normalizeWarehouseCode(row.default_warehouse_code || row.warehouse_code || DEFAULT_WAREHOUSE_CODE);
     var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes || row.warehouse_code);
+    var defaultWarehouse = normalizeWarehouseCodeOrBlank(row.default_warehouse_code || row.warehouse_code) || allowedWarehouses[0] || DEFAULT_WAREHOUSE_CODE;
+    var repairedWarehouse = removeAccidentalDefaultWarehouse(defaultWarehouse, allowedWarehouses, role === "ADMINISTRADOR");
+    defaultWarehouse = repairedWarehouse.defaultCode || defaultWarehouse;
+    allowedWarehouses = repairedWarehouse.allowed;
     if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }) : [defaultWarehouse];
     var user = {
       id: row.id,
@@ -7726,7 +7758,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!user || !user.active || !user.availableForTasks) return false;
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return false;
     if (["OPERADOR", "ESTOQUISTA", "SUPERVISOR", "LIDER"].indexOf(user.role) < 0) return false;
-    return normalizeWarehouseCode(user.defaultWarehouseCode) === warehouseCode;
+    return normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === warehouseCode;
   }
 
   function getAssignableUsersByWarehouse(warehouseCode) {
@@ -10358,7 +10390,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function userBelongsToWarehouse(user, code) {
     code = normalizeWarehouseCode(code);
-    return normalizeWarehouseCode(user && user.defaultWarehouseCode) === code || allowedWarehouseCodesForUser(user).indexOf(code) >= 0;
+    return normalizeWarehouseCodeOrBlank(user && user.defaultWarehouseCode) === code || allowedWarehouseCodesForUser(user).indexOf(code) >= 0;
   }
 
   function canManageUserRecord(user) {
