@@ -7982,7 +7982,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function selectedMergeTransfers() {
-    return Object.keys(transferState.mergeSelection || {}).map(getTransferById).filter(Boolean);
+    return selectedMergeTransferIds().map(getTransferById).filter(Boolean);
+  }
+
+  function selectedMergeTransferIds() {
+    return unique(Object.keys(transferState.mergeSelection || {}).filter(Boolean));
   }
 
   function canSelectTransferForMerge(transfer) {
@@ -8013,15 +8017,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function buildTransferMergePreview() {
-    var transfers = selectedMergeTransfers();
+    var selectedIds = selectedMergeTransferIds();
+    var transfers = selectedIds.map(getTransferById).filter(Boolean);
     var errors = [];
+    if (!Array.isArray(selectedIds) || !selectedIds.length) errors.push("Selecione transferencias no painel para unificar.");
+    if (transfers.length !== selectedIds.length) errors.push("A selecao contem transferencia nao carregada. Atualize o painel e selecione novamente.");
     if (transfers.length < 2) errors.push("Selecione duas ou mais transferencias.");
     transfers.forEach(function (transfer) {
       if (!canSelectTransferForMerge(transfer)) errors.push(mergeBlockedMessage(transfer) + " " + transferDisplayName(transfer));
+      if (normalizeWarehouseCode(transfer.warehouseCode || activeWarehouseCode()) !== activeWarehouseCode()) errors.push("Nao e permitido unificar transferencias de outro estoque.");
     });
     var firstKey = transfers[0] ? transferMergeRouteKey(transfers[0]) : "";
     if (transfers.some(function (transfer) { return transferMergeRouteKey(transfer) !== firstKey; })) {
-      errors.push("Selecione somente transferencias da mesma origem, destino e estoque.");
+      errors.push("As transferências selecionadas pertencem a destinos diferentes. Selecione apenas transferências da mesma VD para unificar.");
     }
     var transferIds = {};
     transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
@@ -8060,7 +8068,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     var repeatedCount = items.filter(function (item) { return item.repeated; }).length;
     var totalQty = items.reduce(function (sum, item) { return sum + Number(item.finalQty || 0); }, 0);
-    return { transfers: transfers, items: items, errors: unique(errors), repeatedCount: repeatedCount, totalQty: totalQty };
+    return { selectedTransferIds: selectedIds, transfers: transfers, items: items, errors: unique(errors), repeatedCount: repeatedCount, totalQty: totalQty };
   }
 
   function resolveMergeFinalQty(entries, resolution) {
@@ -8095,8 +8103,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferMergePreviewHtml(preview) {
     var first = preview.transfers[0] || {};
     var responsible = preview.transfers.map(function (transfer) { return transfer.responsibleName || "-"; }).filter(Boolean)[0] || "-";
+    var selectedCodes = preview.transfers.map(function (transfer) { return transfer.code || transfer.name || transfer.id; }).join(", ");
     return [
       "<div class=\"transfer-merge-summary\">",
+      summaryChip("Estoque", activeWarehouseCode()),
       summaryChip("Origem", transferRouteOriginLabel(first)),
       summaryChip("Destino", transferRouteDestinationLabel(first)),
       summaryChip("Transferencias", preview.transfers.length),
@@ -8105,6 +8115,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Qtd prevista", formatQty(preview.totalQty)),
       summaryChip("Responsavel", responsible),
       "</div>",
+      "<div class=\"inline-status warning\">Somente as transferências selecionadas serão unificadas. Transferências de outras VDs ou não selecionadas continuarão disponíveis.<br><strong>Selecionadas:</strong> " + escapeHtml(selectedCodes || "-") + "</div>",
       preview.errors.length ? "<div class=\"inline-status error\">" + escapeHtml(preview.errors.join(" ")) + "</div>" : "",
       "<div class=\"table-wrap\"><table><thead><tr><th>SKU</th><th>Produto</th><th>Quantidades originais</th><th>Qtd final</th><th>Unidade</th><th>Status</th><th>Tratamento</th></tr></thead><tbody>",
       preview.items.map(transferMergeItemRowHtml).join(""),
@@ -8160,7 +8171,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferMergeStatus", preview.errors[0], "error");
       return;
     }
-    if (!window.confirm("Unificar " + preview.transfers.length + " transferencias em uma unica tarefa?")) return;
+    if (!window.confirm(transferMergeConfirmationMessage(preview))) return;
     var actionButton = $("confirmTransferMergeButton");
     if (!beginTransferAction("merge-transfer", actionButton, "Unificando...")) return;
     try {
@@ -8180,7 +8191,57 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  function transferMergeConfirmationMessage(preview) {
+    var first = preview.transfers[0] || {};
+    var totalSkus = preview.items.length;
+    var totalItems = preview.items.reduce(function (sum, item) { return sum + Number(item.finalQty || 0); }, 0);
+    var selected = preview.transfers.map(function (transfer) {
+      return "- " + (transfer.code || transfer.name || transfer.id) + " [" + transfer.id + "]";
+    }).join("\n");
+    return [
+      "Confirmar unificacao de transferencias?",
+      "",
+      "Somente as transferências selecionadas serão unificadas. Transferências de outras VDs ou não selecionadas continuarão disponíveis.",
+      "",
+      "Transferencias selecionadas: " + preview.transfers.length,
+      "Origem: " + transferRouteOriginLabel(first),
+      "Destino/VD: " + transferRouteDestinationLabel(first),
+      "Estoque: " + activeWarehouseCode(),
+      "SKUs: " + totalSkus,
+      "Quantidade total: " + formatQty(totalItems),
+      "",
+      "IDs/codigos selecionados:",
+      selected || "-"
+    ].join("\n");
+  }
+
+  function assertTransferMergePreviewSafe(preview) {
+    if (!preview || !Array.isArray(preview.selectedTransferIds) || !preview.selectedTransferIds.length) {
+      throw new Error("Unificacao bloqueada: selected_transfer_ids vazio ou invalido.");
+    }
+    var selectedIds = unique(preview.selectedTransferIds.filter(Boolean));
+    if (selectedIds.length !== preview.selectedTransferIds.length) {
+      throw new Error("Unificacao bloqueada: existem IDs duplicados na selecao.");
+    }
+    if (!Array.isArray(preview.transfers) || preview.transfers.length !== selectedIds.length) {
+      throw new Error("Unificacao bloqueada: quantidade de transferencias carregadas diferente da selecao.");
+    }
+    var selectedSet = {};
+    selectedIds.forEach(function (id) { selectedSet[id] = true; });
+    preview.transfers.forEach(function (transfer) {
+      if (!transfer || !selectedSet[transfer.id]) throw new Error("Unificacao bloqueada: transferencia fora de selected_transfer_ids.");
+      if (normalizeWarehouseCode(transfer.warehouseCode || activeWarehouseCode()) !== activeWarehouseCode()) throw new Error("Unificacao bloqueada: transferencia de outro estoque.");
+      if (!canSelectTransferForMerge(transfer)) throw new Error("Unificacao bloqueada: transferencia nao permitida para unificacao.");
+    });
+    var firstKey = preview.transfers[0] ? transferMergeRouteKey(preview.transfers[0]) : "";
+    if (preview.transfers.some(function (transfer) { return transferMergeRouteKey(transfer) !== firstKey; })) {
+      throw new Error("As transferências selecionadas pertencem a destinos diferentes. Selecione apenas transferências da mesma VD para unificar.");
+    }
+    return selectedIds;
+  }
+
   async function createMergedTransfer(preview) {
+    var selectedIds = assertTransferMergePreviewSafe(preview);
     var now = new Date().toISOString();
     var first = preview.transfers[0];
     var responsibleId = first.responsibleId || "";
@@ -8209,7 +8270,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       packingFinishedAt: "",
       packingDurationSeconds: 0,
       isMerged: true,
-      mergedFromIds: preview.transfers.map(function (item) { return item.id; }),
+      mergedFromIds: selectedIds,
       mergedIntoId: "",
       mergeStatus: "TRANSFERENCIA_UNIFICADA",
       mergedById: authState.currentUser.id,
@@ -8257,7 +8318,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item));
     }));
     await insertTransferMergeItemRows(preview, transferId);
-    await archiveMergedSourceTransfers(preview.transfers, transferId, now);
+    try {
+      await archiveMergedSourceTransfers(preview.transfers, selectedIds, transferId, now);
+    } catch (archiveError) {
+      await rollbackMergedTransferCreation(transferId);
+      throw archiveError;
+    }
     await recordTransferEvent(transferId, "", "TRANSFER_MERGED", "", preview.items.length, "Transferencias unificadas.", {
       sourceTransferIds: transfer.mergedFromIds,
       repeatedSkus: preview.repeatedCount,
@@ -8270,6 +8336,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     }
     return transfer;
+  }
+
+  async function rollbackMergedTransferCreation(transferId) {
+    if (!transferId || !isSupabaseReady()) return;
+    await rollbackSupabaseDelete("wms_transfer_items", "transfer_id", transferId);
+    await rollbackSupabaseDelete("wms_transfer_merge_items", "merged_transfer_id", transferId);
+    await rollbackSupabaseDelete("wms_transfers", "id", transferId);
+  }
+
+  async function rollbackSupabaseDelete(tableName, columnName, value) {
+    try {
+      var response = await supabaseDb.from(tableName).delete().eq(columnName, value);
+      if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+    } catch (rollbackError) {
+      console.warn("Nao foi possivel limpar " + tableName + " durante reversao da unificacao:", rollbackError);
+      recordPerformanceError("rollback-unificacao-" + tableName, rollbackError);
+    }
   }
 
   async function insertTransferMergeItemRows(preview, mergedTransferId) {
@@ -8298,24 +8381,49 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
   }
 
-  async function archiveMergedSourceTransfers(transfers, mergedTransferId, now) {
+  async function archiveMergedSourceTransfers(transfers, selectedIds, mergedTransferId, now) {
+    if (!Array.isArray(selectedIds) || !selectedIds.length) throw new Error("Unificacao bloqueada: selected_transfer_ids vazio.");
+    selectedIds = unique(selectedIds.filter(Boolean));
+    var selectedSet = {};
+    selectedIds.forEach(function (id) { selectedSet[id] = true; });
+    if (!Array.isArray(transfers) || transfers.length !== selectedIds.length) throw new Error("Unificacao bloqueada: selecao inconsistente ao arquivar origens.");
+    transfers.forEach(function (transfer) {
+      if (!transfer || !selectedSet[transfer.id]) throw new Error("Unificacao bloqueada: tentativa de arquivar transferencia nao selecionada.");
+    });
+
+    var row = {
+      status: "ARQUIVADA_POR_UNIFICACAO",
+      merged_into_id: mergedTransferId,
+      merge_status: "ARQUIVADA_POR_UNIFICACAO",
+      merged_by_id: authState.currentUser.id,
+      merged_by_name: authState.currentUser.name,
+      merged_at: now,
+      updated_at: now
+    };
+    var response = await supabaseDb
+      .from("wms_transfers")
+      .update(row)
+      .in("id", selectedIds)
+      .eq("warehouse_code", activeWarehouseCode())
+      .select("id");
+    if (response.error && isMissingColumnError(response.error) && formatSupabaseError(response.error).toLowerCase().indexOf("warehouse_code") < 0) {
+      response = await supabaseDb
+        .from("wms_transfers")
+        .update({ status: "ARQUIVADA_POR_UNIFICACAO", updated_at: now })
+        .in("id", selectedIds)
+        .eq("warehouse_code", activeWarehouseCode())
+        .select("id");
+    }
+    if (response.error) throw response.error;
+    var updatedIds = (response.data || []).map(function (rowData) { return rowData.id; }).filter(Boolean);
+    if (updatedIds.length > selectedIds.length) throw new Error("Unificacao bloqueada: Supabase alterou mais registros que selected_transfer_ids.");
+    if (updatedIds.length !== selectedIds.length) throw new Error("Unificacao incompleta: Supabase alterou " + updatedIds.length + " de " + selectedIds.length + " transferencias selecionadas.");
+    updatedIds.forEach(function (id) {
+      if (!selectedSet[id]) throw new Error("Unificacao bloqueada: Supabase retornou transferencia fora de selected_transfer_ids.");
+    });
+
     for (var i = 0; i < transfers.length; i += 1) {
-      var transfer = transfers[i];
-      var row = {
-        status: "ARQUIVADA_POR_UNIFICACAO",
-        merged_into_id: mergedTransferId,
-        merge_status: "ARQUIVADA_POR_UNIFICACAO",
-        merged_by_id: authState.currentUser.id,
-        merged_by_name: authState.currentUser.name,
-        merged_at: now,
-        updated_at: now
-      };
-      var response = await supabaseDb.from("wms_transfers").update(row).eq("id", transfer.id);
-      if (response.error && isMissingColumnError(response.error)) {
-        response = await supabaseDb.from("wms_transfers").update({ status: "ARQUIVADA_POR_UNIFICACAO", updated_at: now }).eq("id", transfer.id);
-      }
-      if (response.error) throw response.error;
-      await recordTransferEvent(transfer.id, "", "TRANSFER_ARCHIVED_BY_MERGE", "", 0, "Transferencia arquivada por unificacao.", {
+      await recordTransferEvent(transfers[i].id, "", "TRANSFER_ARCHIVED_BY_MERGE", "", 0, "Transferencia arquivada por unificacao.", {
         mergedIntoId: mergedTransferId
       });
     }
