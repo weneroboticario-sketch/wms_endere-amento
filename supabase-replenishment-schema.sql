@@ -68,6 +68,9 @@ alter table public.wms_replenishment_requests add column if not exists is_delete
 alter table public.wms_replenishment_requests add column if not exists deleted_at timestamptz;
 alter table public.wms_replenishment_requests add column if not exists deleted_by_id text;
 alter table public.wms_replenishment_requests add column if not exists deleted_by_name text;
+alter table public.wms_replenishment_requests add column if not exists idempotency_key text default '';
+alter table public.wms_replenishment_requests add column if not exists request_id text default '';
+alter table public.wms_replenishment_requests add column if not exists created_by_id text default '';
 
 update public.wms_replenishment_requests
 set quantidade_pendente = greatest(0, coalesce(quantidade_solicitada, 0) - coalesce(quantidade_atendida, 0))
@@ -84,6 +87,16 @@ on public.wms_replenishment_requests (warehouse_code, solicitado_por_id, status)
 
 create index if not exists wms_replenishment_sku_idx
 on public.wms_replenishment_requests (warehouse_code, codigo_material);
+
+create unique index if not exists wms_replenishment_idempotency_uidx
+on public.wms_replenishment_requests (warehouse_code, idempotency_key)
+where idempotency_key is not null and idempotency_key <> '';
+
+create index if not exists idx_replenishment_sync
+on public.wms_replenishment_requests (warehouse_code, updated_at desc, id);
+
+create index if not exists idx_replenishment_open
+on public.wms_replenishment_requests (warehouse_code, is_deleted, status, codigo_material);
 
 alter table public.wms_replenishment_requests enable row level security;
 

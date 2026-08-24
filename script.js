@@ -210,6 +210,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     selectedItemId: "",
     manualSeparationQty: false,
     savingActionKey: "",
+    actionLocks: {},
     scanInputStartedAt: 0,
     lastScanInputAt: 0,
     cacheWriteTimer: null,
@@ -1931,6 +1932,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       deletedAt: deletedAt,
       deletedById: row.deleted_by_id || "",
       deletedByName: row.deleted_by_name || "",
+      idempotencyKey: row.idempotency_key || "",
+      requestId: row.request_id || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
       warehouseCode: rowWarehouseCode(row),
       createdAt: row.created_at || new Date().toISOString(),
@@ -2021,6 +2024,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       inputType: row.input_type || "",
       observation: row.observation || "",
       status: normalizeText(row.status || "PENDENTE").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "PENDENTE",
+      idempotencyKey: row.idempotency_key || "",
+      requestId: row.request_id || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
       warehouseCode: rowWarehouseCode(row),
       createdAt: row.created_at || new Date().toISOString(),
@@ -2109,6 +2114,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       deleted_at: item.deletedAt || null,
       deleted_by_id: item.deletedById || "",
       deleted_by_name: item.deletedByName || "",
+      idempotency_key: item.idempotencyKey || "",
+      request_id: item.requestId || item.idempotencyKey || "",
       warehouse_id: item.warehouseId || activeWarehouseId(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
       created_at: item.createdAt || new Date().toISOString(),
@@ -2161,6 +2168,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       observacao_pendencia: item.pendingObservation || "",
       has_divergence: Boolean(item.divergenceType || Number(item.missingQty || 0) > 0 || Number(item.excessQty || 0) > 0),
       status: item.status || "PENDENTE",
+      idempotency_key: item.idempotencyKey || "",
+      request_id: item.requestId || item.idempotencyKey || "",
       warehouse_id: item.warehouseId || activeWarehouseId(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
       created_at: item.createdAt || new Date().toISOString(),
@@ -2283,7 +2292,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       payload.forEach(function (row) { delete row[missingColumn]; });
       response = await supabaseDb.from("wms_transfers").insert(payload);
     }
+    if (response.error && isDuplicateKeyError(response.error) && await transferRowsAlreadyPersisted(payload)) return;
     if (response.error) throw response.error;
+  }
+
+  async function transferRowsAlreadyPersisted(rows) {
+    var keys = unique((rows || []).map(function (row) { return row.idempotency_key || ""; }).filter(Boolean));
+    if (!keys.length) return false;
+    var response = await supabaseDb
+      .from("wms_transfers")
+      .select("id,idempotency_key")
+      .eq("warehouse_code", normalizeWarehouseCode(rows[0].warehouse_code || activeWarehouseCode()))
+      .in("idempotency_key", keys);
+    if (response.error) return false;
+    return (response.data || []).length >= keys.length;
   }
 
   async function insertTransferItemRow(row) {
@@ -2309,6 +2331,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         await upsertInChunks("wms_transfer_items", payload, "id");
         return;
       } catch (error) {
+        if (isDuplicateKeyError(error) && await transferItemRowsAlreadyPersisted(payload)) return;
         if (!isMissingColumnError(error)) throw error;
         if (isMissingWarehouseColumnError(error)) assertWarehouseFallbackAllowed("wms_transfer_items", error);
         var missingColumn = getMissingColumnName(error);
@@ -2317,6 +2340,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         payload.forEach(function (row) { delete row[missingColumn]; });
       }
     }
+  }
+
+  async function transferItemRowsAlreadyPersisted(rows) {
+    var keys = unique((rows || []).map(function (row) { return row.idempotency_key || ""; }).filter(Boolean));
+    if (!keys.length) return false;
+    var response = await supabaseDb
+      .from("wms_transfer_items")
+      .select("id,idempotency_key")
+      .eq("warehouse_code", normalizeWarehouseCode(rows[0].warehouse_code || activeWarehouseCode()))
+      .in("idempotency_key", keys);
+    if (response.error) return false;
+    return (response.data || []).length >= keys.length;
   }
 
   async function loadStockOperationalData() {
@@ -2512,6 +2547,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var batchId = "stock-batch-" + Date.now() + "-" + Math.random().toString(16).slice(2);
     var now = nowIso();
     var warehouseCode = activeWarehouseCode();
+    var requestId = createIdempotencyKey([warehouseCode, "BASE-ESTOQUE", sourceType, fileName || "", parsed.rows.length, parsed.ignored]);
     var batch = {
       id: batchId,
       created_at: now,
@@ -2525,9 +2561,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       ignored_rows: parsed.ignored,
       error_rows: parsed.errors.length,
       status: "PROCESSING",
-      notes: ""
+      notes: "",
+      idempotency_key: requestId,
+      request_id: requestId
     };
     var batchResponse = await supabaseDb.from("wms_stock_import_batches").insert(batch);
+    if (batchResponse.error && isMissingIdempotencyColumnError(batchResponse.error)) {
+      var fallbackBatch = Object.assign({}, batch);
+      delete fallbackBatch.idempotency_key;
+      delete fallbackBatch.request_id;
+      batchResponse = await supabaseDb.from("wms_stock_import_batches").insert(fallbackBatch);
+    }
     if (batchResponse.error) throw batchResponse.error;
     try {
       var currentRows = await fetchActiveStockPositions(sourceType);
@@ -3402,6 +3446,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock", error);
     }
     var now = nowIso();
+    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty]);
+    var existingByKey = await findReplenishmentByIdempotencyKey(idempotencyKey);
+    if (existingByKey) return existingByKey;
     var request = {
       id: "rep-" + Date.now() + "-" + Math.random().toString(16).slice(2),
       createdAt: now,
@@ -3435,13 +3482,31 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       returnReason: "",
       status: "PENDENTE",
       prioridade: "NORMAL",
-      observacao: normalizeText(data.observation)
+      observacao: normalizeText(data.observation),
+      idempotencyKey: idempotencyKey,
+      requestId: idempotencyKey
     };
+    var payload = Object.assign(toDbReplenishmentRequest(request), {
+      idempotency_key: idempotencyKey,
+      request_id: idempotencyKey,
+      created_by_id: authState.currentUser.id
+    });
     var response = await supabaseDb
       .from("wms_replenishment_requests")
-      .insert(toDbReplenishmentRequest(request))
+      .insert(payload)
       .select(replenishmentRequestSelectColumns())
       .single();
+    if (response.error && isMissingIdempotencyColumnError(response.error)) {
+      response = await supabaseDb
+        .from("wms_replenishment_requests")
+        .insert(toDbReplenishmentRequest(request))
+        .select(replenishmentRequestSelectColumns())
+        .single();
+    }
+    if (response.error && isDuplicateKeyError(response.error)) {
+      var duplicated = await findReplenishmentByIdempotencyKey(idempotencyKey);
+      if (duplicated) return duplicated;
+    }
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
     upsertById(replenishmentState.requests, saved);
@@ -3449,6 +3514,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     replenishmentState.lastCreatedAt = Date.now();
     createReplenishmentNotification(saved, "created");
     return saved;
+  }
+
+  async function findReplenishmentByIdempotencyKey(idempotencyKey) {
+    if (!idempotencyKey || !isSupabaseReady()) return null;
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .select(replenishmentRequestSelectColumns())
+      .eq("warehouse_code", activeWarehouseCode())
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+    if (response.error) {
+      if (isMissingIdempotencyColumnError(response.error)) return null;
+      throw response.error;
+    }
+    return response.data ? fromDbReplenishmentRequest(response.data) : null;
   }
 
   function lookupReplenishmentProduct(sku) {
@@ -6258,12 +6338,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         button.textContent = "Criando pedido...";
       }
       handleReplenishmentSkuInput();
+      var idempotencyKey = button && button.dataset.idempotencyKey
+        ? button.dataset.idempotencyKey
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value]);
+      if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: $("replenishmentSkuInput").value,
         storeQty: $("replenishmentStoreQtyInput").value,
         requestedQty: $("replenishmentRequestQtyInput").value,
         observation: $("replenishmentObservationInput").value,
-        productInfo: replenishmentState.currentProduct
+        productInfo: replenishmentState.currentProduct,
+        idempotencyKey: idempotencyKey
       });
       if (!created) return;
       if ($("replenishmentForm")) $("replenishmentForm").reset();
@@ -6282,6 +6367,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (button) {
         button.disabled = false;
         button.textContent = originalText || "Criar pedido";
+        delete button.dataset.idempotencyKey;
       }
     }
   }
@@ -6291,8 +6377,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!target) return;
     var id = target.dataset.replenishmentClaim || target.dataset.replenishmentReturn || target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
     if (!id) return;
+    var actionKey = "reposicao:" + id + ":" + Object.keys(target.dataset).sort().join("-");
+    if (!beginTransferAction(actionKey, target, "Salvando...")) return;
     try {
-      target.disabled = true;
       if (target.dataset.replenishmentClaim) await claimReplenishmentRequest(id);
       if (target.dataset.replenishmentReturn) {
         var returnReason = window.prompt("Motivo para devolver para a fila:", "");
@@ -6328,13 +6415,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atualizar pedido: " + formatSupabaseError(error), "error");
     } finally {
-      target.disabled = false;
+      endTransferAction(target);
     }
   }
 
   async function handleReplenishmentActionChange(event) {
     var select = event.target.closest("[data-replenishment-assign]");
     if (!select || !select.value) return;
+    var actionKey = "reposicao-atribuir:" + select.dataset.replenishmentAssign + ":" + select.value;
+    if (!beginTransferAction(actionKey, null, "Salvando...")) return;
+    select.disabled = true;
     try {
       await assignReplenishmentRequest(select.dataset.replenishmentAssign, select.value);
       await refreshReplenishmentData();
@@ -6342,6 +6432,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atribuir responsavel: " + formatSupabaseError(error), "error");
       renderReplenishment();
+    } finally {
+      select.disabled = false;
+      endTransferAction(null);
     }
   }
 
@@ -6398,6 +6491,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         button.disabled = true;
         button.textContent = "Criando...";
       }
+      var idempotencyKey = button && button.dataset.idempotencyKey
+        ? button.dataset.idempotencyKey
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty]);
+      if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: suggestion.sku,
         storeQty: suggestion.storeAvailable,
@@ -6413,7 +6510,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           captureRack: suggestion.captureRack,
           captureLine: suggestion.captureLine,
           captureColumn: suggestion.captureColumn
-        }
+        },
+        idempotencyKey: idempotencyKey
       });
       if (!created) return;
       closeReplenishmentSuggestionModal();
@@ -6430,6 +6528,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (button) {
         button.disabled = false;
         button.textContent = originalText || "Confirmar pedido";
+        delete button.dataset.idempotencyKey;
       }
     }
   }
@@ -12486,7 +12585,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return;
     }
     var actionButton = $("createTransferButton");
-    if (!beginTransferAction("create-transfer", actionButton, "Salvando...")) return;
+    var creationRequestId = actionButton && actionButton.dataset.idempotencyKey
+      ? actionButton.dataset.idempotencyKey
+      : createIdempotencyKey([activeWarehouseCode(), "TRANSFERENCIA", transferState.previewSource || $("transferImportModeInput").value, transferState.previewFileName || "manual", groups.length]);
+    if (actionButton) actionButton.dataset.idempotencyKey = creationRequestId;
+    if (!beginTransferAction("create-transfer:" + creationRequestId, actionButton, "Salvando...")) return;
     var now = new Date().toISOString();
     var transfers = [];
     var items = [];
@@ -12494,15 +12597,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var responsible = authState.users.find(function (user) { return user.id === group.responsibleId; });
       var transferId = "trf-" + Date.now() + "-" + groupIndex + "-" + Math.random().toString(16).slice(2);
       var transfer = buildImportedTransferRecord(group, responsible, transferId, buildTransferCode(group, groupIndex), buildTransferName(group), now);
+      transfer.requestId = creationRequestId;
+      transfer.idempotencyKey = creationRequestId + ":GRUPO-" + (groupIndex + 1);
       transfers.push(transfer);
-      group.items.forEach(function (item) {
-        items.push(buildImportedTransferItem(item, transferId, now));
+      consolidateTransferGroupItems(group.items).forEach(function (item, itemIndex) {
+        var transferItem = buildImportedTransferItem(item, transferId, now);
+        transferItem.requestId = creationRequestId;
+        transferItem.idempotencyKey = transfer.idempotencyKey + ":SKU-" + normalizeSkuKey(transferItem.sku) + ":ITEM-" + (itemIndex + 1);
+        items.push(transferItem);
       });
     });
     var duplicateLabels = findDuplicateTransferImportGroups(groups);
     if (duplicateLabels.length && !window.confirm("Ja existe transferencia ativa parecida neste estoque:\n" + duplicateLabels.join("\n") + "\n\nDeseja importar mesmo assim?")) {
       setStatus("transferImportStatus", "Importacao cancelada para evitar duplicidade.", "warning");
       endTransferAction(actionButton);
+      if (actionButton) delete actionButton.dataset.idempotencyKey;
       return;
     }
     try {
@@ -12527,6 +12636,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       setStatus("transferImportStatus", missingTransferImportSchemaMessage(error), "error");
       endTransferAction(actionButton);
+      if (actionButton) delete actionButton.dataset.idempotencyKey;
       return;
     }
     clearTransferPreview();
@@ -12536,6 +12646,36 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderTransfers();
     setStatus("transferImportStatus", "Transferencias criadas com sucesso.", "success");
     endTransferAction(actionButton);
+    if (actionButton) delete actionButton.dataset.idempotencyKey;
+  }
+
+  function consolidateTransferGroupItems(groupItems) {
+    var byKey = {};
+    var ordered = [];
+    (groupItems || []).forEach(function (item) {
+      var normalized = applyTransferQuantityType(Object.assign({}, item));
+      var key = [
+        normalizeSkuKey(normalized.sku),
+        normalizeText(normalized.description).toUpperCase(),
+        normalizeTransferUnit(normalized.unit),
+        normalized.quantityType || "UNIDADE",
+        normalized.sourceCode || "",
+        normalized.destinationCode || "",
+        normalized.movementType || ""
+      ].join("\u0001");
+      var existing = byKey[key];
+      if (!existing) {
+        byKey[key] = normalized;
+        ordered.push(normalized);
+        return;
+      }
+      existing.requestedQty = Number(existing.requestedQty || 0) + Number(normalized.requestedQty || 0);
+      existing.boxQty = Number(existing.boxQty || 0) + Number(normalized.boxQty || 0);
+      existing.totalUnits = Number(existing.totalUnits || 0) + Number(normalized.totalUnits || 0);
+      existing.errors = unique((existing.errors || []).concat(normalized.errors || []));
+      existing.sourceLine = [existing.sourceLine, normalized.sourceLine].filter(Boolean).join(", ");
+    });
+    return ordered.map(applyTransferQuantityType);
   }
 
   function buildTransferName(group) {
@@ -12837,10 +12977,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function beginTransferAction(key, button, savingText) {
-    if (transferState.savingActionKey) return false;
-    transferState.savingActionKey = key || "transfer-action";
+    key = key || "transfer-action";
+    transferState.actionLocks = transferState.actionLocks || {};
+    if (transferState.actionLocks[key]) return false;
+    transferState.actionLocks[key] = true;
+    transferState.savingActionKey = key;
     if (button) {
       button.dataset.originalText = button.dataset.originalText || button.textContent;
+      button.dataset.actionLockKey = key;
       button.textContent = savingText || "Salvando...";
       button.disabled = true;
     }
@@ -12848,11 +12992,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function endTransferAction(button) {
+    var key = button && button.dataset.actionLockKey ? button.dataset.actionLockKey : transferState.savingActionKey || "";
     if (button) {
       button.disabled = false;
       if (button.dataset.originalText) button.textContent = button.dataset.originalText;
+      delete button.dataset.actionLockKey;
     }
-    transferState.savingActionKey = "";
+    if (key && transferState.actionLocks) delete transferState.actionLocks[key];
+    if (transferState.savingActionKey === key) transferState.savingActionKey = "";
+  }
+
+  function createIdempotencyKey(parts) {
+    return unique((parts || []).map(function (part) {
+      return normalizeText(part).toUpperCase().replace(/[^A-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    }).filter(Boolean)).join(":") + ":" + Date.now().toString(36) + "-" + Math.random().toString(16).slice(2, 10);
+  }
+
+  function isMissingIdempotencyColumnError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return isMissingColumnError(error) && (message.indexOf("idempotency_key") >= 0 || message.indexOf("request_id") >= 0);
+  }
+
+  function isDuplicateKeyError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("duplicate key value") >= 0 || message.indexOf("23505") >= 0 || message.indexOf("unique constraint") >= 0;
   }
 
   async function openTransferWork(transferId, options) {
