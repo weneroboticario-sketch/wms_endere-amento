@@ -2,77 +2,102 @@
 
 ## Problema identificado
 
-A rotina de unificacao precisava de protecoes explicitas para garantir que somente as transferencias marcadas pelo usuario fossem arquivadas como origem da unificacao.
+A unificacao de transferencias precisava garantir, de forma estrutural, que somente as transferencias marcadas pelo usuario fossem alteradas. O risco principal era qualquer operacao de arquivamento baseada em filtros amplos, como origem, destino, data, responsavel ou estoque, afetar transferencias que nao foram selecionadas.
 
-Mesmo com a selecao visual por checkbox, o fluxo anterior nao guardava uma lista formal `selected_transfer_ids` na previa e nao conferia a quantidade de registros alterados no Supabase apos o arquivamento das origens.
+Tambem havia risco operacional em itens de caixa: quando a quantidade principal estava gravada em `boxQty` ou `totalUnits`, a previa da unificacao podia interpretar o item como quantidade zero.
 
 ## Onde foi corrigido
 
-Arquivo alterado:
+Arquivos alterados:
 
 - `script.js`
+- `supabase-schema.sql`
+- `docs/RELATORIO_CORRECAO_UNIFICACAO_TRANSFERENCIAS.md`
 
-Funcoes principais ajustadas:
+Funcoes principais revisadas:
 
 - `selectedMergeTransferIds`
 - `buildTransferMergePreview`
+- `transferMergeOriginalQty`
 - `transferMergeConfirmationMessage`
 - `assertTransferMergePreviewSafe`
 - `createMergedTransfer`
 - `archiveMergedSourceTransfers`
 - `rollbackMergedTransferCreation`
 
-## Alteracao aplicada
+## Correcao aplicada
 
-A unificacao agora usa obrigatoriamente a lista de IDs selecionados pelo usuario.
+A unificacao agora opera obrigatoriamente com `selected_transfer_ids`, derivado dos checkboxes marcados na tela.
 
-Regras implementadas:
+Antes de criar a transferencia unificada, o sistema valida:
 
-- `selected_transfer_ids` precisa existir e ser array valido.
-- IDs duplicados bloqueiam a unificacao.
-- Todas as transferencias carregadas precisam estar dentro de `selected_transfer_ids`.
-- Todas precisam pertencer ao estoque ativo.
-- Todas precisam ter a mesma origem e o mesmo destino.
-- Transferencias finalizadas, canceladas, ja unificadas ou fora do status permitido sao bloqueadas.
+- a selecao nao pode estar vazia;
+- a selecao precisa ter pelo menos duas transferencias;
+- todos os IDs selecionados precisam estar carregados;
+- todos os registros processados precisam estar dentro de `selected_transfer_ids`;
+- todos precisam pertencer ao estoque ativo;
+- todos precisam ter mesma origem e mesmo destino/VD;
+- transferencias finalizadas, canceladas ou ja unificadas sao bloqueadas.
 
 ## Protecao contra update amplo
 
-O arquivamento das origens passou a ser feito com filtro por IDs:
+O arquivamento das origens selecionadas usa somente:
 
 - `id IN selected_transfer_ids`
 - `warehouse_code = estoque ativo`
 
-Nao e usado update por origem, destino, data, responsavel ou status como criterio unico para arquivar transferencias.
+Nao existe update/delete amplo por origem, destino, data, responsavel ou status para decidir quais transferencias serao arquivadas.
 
-Depois do update, o sistema valida:
+Apos o update, o sistema confere:
 
-- se o Supabase alterou mais registros do que a quantidade selecionada, a operacao falha;
-- se alterou menos registros do que a quantidade selecionada, a operacao falha;
-- se retornou algum ID fora da lista selecionada, a operacao falha.
+- se o Supabase alterou mais registros que a quantidade selecionada, bloqueia;
+- se alterou menos registros que a quantidade selecionada, bloqueia;
+- se retornou algum ID fora da selecao, bloqueia.
+
+## Marcacao das origens
+
+As transferencias originais selecionadas nao sao apagadas fisicamente.
+
+Elas passam a ser marcadas como:
+
+- `status = UNIFICADA`
+- `merged_into_id = id_da_nova_transferencia`
+- `unified_into_transfer_id = id_da_nova_transferencia`
+- `archived_by_unification = true`
+- `merge_status = UNIFICADA`
+- `updated_at = now()`
+
+As colunas `merged_into_id` e `merge_status` foram mantidas por compatibilidade com o historico do sistema.
 
 ## Garantia para outras VDs
 
-Transferencias de outras VDs, outros destinos, outros estoques ou nao selecionadas nao entram na lista `selected_transfer_ids`, portanto nao sao alteradas pelo arquivamento.
+Transferencias de outras VDs, outros destinos, outros estoques ou nao selecionadas nao entram em `selected_transfer_ids`, portanto nao sao alteradas.
 
 Exemplos protegidos:
 
-- VDCG > VDSI nao e alterada ao unificar VDCG > VDAR.
-- VDCG > VDMO nao e alterada ao unificar VDCG > VDAR.
-- Uma terceira VDCG > VDAR nao selecionada continua operacional.
+- Unificar VDCG > VDAR nao altera VDCG > VDSI.
+- Unificar VDCG > VDAR nao altera VDCG > VDMO.
+- Uma terceira VDCG > VDAR nao selecionada continua disponivel.
 - Transferencia de outro `warehouse_code` nao passa na validacao.
 
 ## Itens da transferencia unificada
 
-A regra de itens foi mantida e validada no fluxo:
+A quantidade final da unificacao foi corrigida para considerar:
 
-- SKU repetido em transferencias selecionadas soma quantidades.
-- SKU que existe em apenas uma transferencia mantem a quantidade original.
-- SKU nao e zerado por nao existir em outra transferencia selecionada.
+- `requestedQty`, quando preenchido;
+- `boxQty`, quando o item e de caixa;
+- `totalUnits`, como fallback operacional.
+
+Regras mantidas:
+
+- SKU repetido nas transferencias selecionadas soma quantidades.
+- SKU existente em apenas uma transferencia mantem a quantidade original.
+- Item unico nao e zerado por nao existir nas outras transferencias.
 - SKU com unidade diferente exige tratamento manual.
 
 ## Tela de confirmacao
 
-A confirmacao agora mostra:
+A confirmacao informa:
 
 - quantidade de transferencias selecionadas;
 - origem;
@@ -83,29 +108,25 @@ A confirmacao agora mostra:
 - IDs/codigos selecionados;
 - aviso de que somente transferencias selecionadas serao unificadas.
 
-## Reversao segura
+## Realtime e cache
 
-Se a nova transferencia unificada for criada, mas o arquivamento das origens selecionadas falhar, o sistema tenta remover somente a transferencia unificada recem-criada e seus itens, usando IDs exatos.
+Depois da unificacao, o carregamento e o realtime removem da fila somente as transferencias que foram marcadas como origem unificada.
 
-Essa reversao nao altera transferencias de outras VDs nem transferencias nao selecionadas.
+Transferencias de outras VDs ou nao selecionadas continuam no cache do estoque correspondente e nao sao removidas globalmente.
 
 ## Testes realizados
 
-Validacao automatica executada:
+Validacao automatica:
 
 - `npm run build`
 
-Resultado:
+Testes logicos cobertos:
 
-- Build Vite concluido com sucesso.
-
-Testes logicos cobertos pela alteracao:
-
-- Bloqueio de selecao vazia.
-- Bloqueio de selecao com destino diferente.
-- Bloqueio de transferencia de outro estoque.
-- Arquivamento somente por `selected_transfer_ids`.
-- Conferencia da quantidade de registros retornados pelo Supabase.
-- Soma de quantidades para SKU repetido.
-- Preservacao de quantidade para SKU unico.
-
+- bloqueio de selecao vazia;
+- bloqueio de destino/VD diferente;
+- bloqueio de outro estoque;
+- arquivamento somente por `selected_transfer_ids`;
+- conferencia da quantidade de registros retornados pelo Supabase;
+- soma de quantidades para SKU repetido;
+- preservacao de quantidade para SKU unico;
+- leitura correta de quantidade em caixa para nao zerar item.

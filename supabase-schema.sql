@@ -478,6 +478,8 @@ alter table public.wms_transfers add column if not exists final_result text defa
 alter table public.wms_transfers add column if not exists is_merged boolean default false;
 alter table public.wms_transfers add column if not exists merged_from_ids jsonb default '[]'::jsonb;
 alter table public.wms_transfers add column if not exists merged_into_id text default '';
+alter table public.wms_transfers add column if not exists unified_into_transfer_id text default '';
+alter table public.wms_transfers add column if not exists archived_by_unification boolean default false;
 alter table public.wms_transfers add column if not exists merge_status text default '';
 alter table public.wms_transfers add column if not exists merged_by_id text default '';
 alter table public.wms_transfers add column if not exists merged_by_name text default '';

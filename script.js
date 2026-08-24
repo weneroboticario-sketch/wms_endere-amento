@@ -1923,11 +1923,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       finalResult: row.final_result || "",
       isMerged: row.is_merged === true,
       mergedFromIds: normalizeJsonArray(row.merged_from_ids),
-      mergedIntoId: row.merged_into_id || "",
+      mergedIntoId: row.unified_into_transfer_id || row.merged_into_id || "",
       mergeStatus: row.merge_status || "",
       mergedById: row.merged_by_id || "",
       mergedByName: row.merged_by_name || "",
       mergedAt: row.merged_at || "",
+      archivedByUnification: row.archived_by_unification === true,
       isDeleted: row.is_deleted === true || !!deletedAt,
       deletedAt: deletedAt,
       deletedById: row.deleted_by_id || "",
@@ -2106,10 +2107,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       is_merged: item.isMerged === true,
       merged_from_ids: item.mergedFromIds || [],
       merged_into_id: item.mergedIntoId || "",
+      unified_into_transfer_id: item.mergedIntoId || "",
       merge_status: item.mergeStatus || "",
       merged_by_id: item.mergedById || "",
       merged_by_name: item.mergedByName || "",
       merged_at: item.mergedAt || null,
+      archived_by_unification: item.archivedByUnification === true,
       is_deleted: item.isDeleted === true,
       deleted_at: item.deletedAt || null,
       deleted_by_id: item.deletedById || "",
@@ -8137,7 +8140,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!transferIds[item.transferId] || item.isExtra) return;
       var key = normalizeSkuKey(item.sku);
       if (!grouped[key]) grouped[key] = { sku: item.sku, description: item.description, entries: [] };
-      grouped[key].entries.push({ transfer: getTransferById(item.transferId), item: item, qty: Number(item.requestedQty || 0), unit: item.unit || "UN" });
+      grouped[key].entries.push({ transfer: getTransferById(item.transferId), item: item, qty: transferMergeOriginalQty(item), unit: item.unit || "UN" });
       if (!grouped[key].description && item.description) grouped[key].description = item.description;
     });
     var items = Object.keys(grouped).map(function (key) {
@@ -8168,6 +8171,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var repeatedCount = items.filter(function (item) { return item.repeated; }).length;
     var totalQty = items.reduce(function (sum, item) { return sum + Number(item.finalQty || 0); }, 0);
     return { selectedTransferIds: selectedIds, transfers: transfers, items: items, errors: unique(errors), repeatedCount: repeatedCount, totalQty: totalQty };
+  }
+
+  function transferMergeOriginalQty(item) {
+    var requested = Number(item && item.requestedQty || 0);
+    if (requested > 0) return requested;
+    if (isBoxQuantityItem(item)) {
+      var boxes = Number(item.boxQty || 0);
+      if (boxes > 0) return boxes;
+      var unitsPerBox = Number(item.unitsPerBox || 0);
+      var totalUnits = Number(item.totalUnits || 0);
+      if (unitsPerBox > 0 && totalUnits > 0) return totalUnits / unitsPerBox;
+      if (totalUnits > 0) return totalUnits;
+    }
+    var fallbackUnits = Number(item && item.totalUnits || 0);
+    return fallbackUnits > 0 ? fallbackUnits : 0;
   }
 
   function resolveMergeFinalQty(entries, resolution) {
@@ -8490,28 +8508,32 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!transfer || !selectedSet[transfer.id]) throw new Error("Unificacao bloqueada: tentativa de arquivar transferencia nao selecionada.");
     });
 
-    var row = {
-      status: "ARQUIVADA_POR_UNIFICACAO",
+    var payload = {
+      status: "UNIFICADA",
       merged_into_id: mergedTransferId,
-      merge_status: "ARQUIVADA_POR_UNIFICACAO",
+      unified_into_transfer_id: mergedTransferId,
+      archived_by_unification: true,
+      merge_status: "UNIFICADA",
       merged_by_id: authState.currentUser.id,
       merged_by_name: authState.currentUser.name,
       merged_at: now,
       updated_at: now
     };
-    var response = await supabaseDb
-      .from("wms_transfers")
-      .update(row)
-      .in("id", selectedIds)
-      .eq("warehouse_code", activeWarehouseCode())
-      .select("id");
-    if (response.error && isMissingColumnError(response.error) && formatSupabaseError(response.error).toLowerCase().indexOf("warehouse_code") < 0) {
+    var attemptedMissingColumns = {};
+    var response;
+    while (true) {
       response = await supabaseDb
         .from("wms_transfers")
-        .update({ status: "ARQUIVADA_POR_UNIFICACAO", updated_at: now })
+        .update(payload)
         .in("id", selectedIds)
         .eq("warehouse_code", activeWarehouseCode())
         .select("id");
+      if (!response.error || !isMissingColumnError(response.error)) break;
+      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfers", response.error);
+      var missingColumn = getMissingColumnName(response.error);
+      if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
+      attemptedMissingColumns[missingColumn] = true;
+      delete payload[missingColumn];
     }
     if (response.error) throw response.error;
     var updatedIds = (response.data || []).map(function (rowData) { return rowData.id; }).filter(Boolean);
