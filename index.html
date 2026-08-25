@@ -451,6 +451,11 @@
             <div class="panel-header">
               <h3>Importar base operacional</h3>
             </div>
+            <label for="stockImportModeInput">Tipo de carga</label>
+            <select id="stockImportModeInput">
+              <option value="CARGA_COMPLETA">Carga completa</option>
+              <option value="CARGA_PARCIAL">Carga parcial</option>
+            </select>
             <label for="captureStockFileInput">Estoque / Captacao</label>
             <input id="captureStockFileInput" type="file" accept=".xlsx,.xls">
             <button class="primary-button wide-button" id="importCaptureStockButton" type="button">Importar Estoque/Captacao</button>

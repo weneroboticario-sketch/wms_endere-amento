@@ -815,10 +815,13 @@ create table if not exists public.wms_stock_import_batches (
   updated_rows integer default 0,
   unchanged_rows integer default 0,
   deactivated_rows integer default 0,
+  negative_rows integer default 0,
+  alert_rows integer default 0,
   ignored_rows integer default 0,
   error_rows integer default 0,
   status text default 'PROCESSING',
-  notes text default ''
+  notes text default '',
+  import_mode text default 'CARGA_COMPLETA'
 );
 
 alter table public.wms_stock_import_batches add column if not exists created_at timestamptz default now();
@@ -833,10 +836,13 @@ alter table public.wms_stock_import_batches add column if not exists inserted_ro
 alter table public.wms_stock_import_batches add column if not exists updated_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists unchanged_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists deactivated_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists negative_rows integer default 0;
+alter table public.wms_stock_import_batches add column if not exists alert_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists ignored_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists error_rows integer default 0;
 alter table public.wms_stock_import_batches add column if not exists status text default 'PROCESSING';
 alter table public.wms_stock_import_batches add column if not exists notes text default '';
+alter table public.wms_stock_import_batches add column if not exists import_mode text default 'CARGA_COMPLETA';
 alter table public.wms_stock_import_batches add column if not exists idempotency_key text default '';
 alter table public.wms_stock_import_batches add column if not exists request_id text default '';
 
@@ -911,8 +917,20 @@ on public.wms_stock_positions (warehouse_code, codigo_material, active);
 create index if not exists wms_stock_positions_warehouse_source_sku_idx
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material);
 
+create index if not exists idx_stock_positions_import_key
+on public.wms_stock_positions (warehouse_code, source_type, codigo_material, active);
+
 create index if not exists idx_stock_positions_warehouse_source_codigo
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material, active);
+
+create index if not exists idx_stock_positions_hash
+on public.wms_stock_positions (warehouse_code, source_type, codigo_material, record_hash);
+
+create index if not exists idx_stock_positions_negative
+on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, active);
+
+create index if not exists idx_stock_positions_capture_location
+on public.wms_stock_positions (warehouse_code, source_type, codigo_material, estacao, rack, linha, coluna, active);
 
 create index if not exists wms_stock_positions_batch_idx
 on public.wms_stock_positions (batch_id);
@@ -926,8 +944,49 @@ on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, ac
 create index if not exists idx_stock_positions_codigo_active
 on public.wms_stock_positions (warehouse_code, codigo_material, active);
 
+create index if not exists idx_stock_batches_status
+on public.wms_stock_import_batches (warehouse_code, source_type, status, created_at);
+
+create table if not exists public.wms_stock_alerts (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  resolved_at timestamptz,
+  warehouse_code text not null default 'VDCG',
+  source_type text default '',
+  alert_type text not null default '',
+  codigo_material text not null default '',
+  nome_material text default '',
+  saldo_loja numeric default 0,
+  saldo_captacao numeric default 0,
+  localizacao_captacao text default '',
+  batch_id text default '',
+  active boolean default true
+);
+
+alter table public.wms_stock_alerts add column if not exists created_at timestamptz default now();
+alter table public.wms_stock_alerts add column if not exists updated_at timestamptz default now();
+alter table public.wms_stock_alerts add column if not exists resolved_at timestamptz;
+alter table public.wms_stock_alerts add column if not exists warehouse_code text not null default 'VDCG';
+alter table public.wms_stock_alerts add column if not exists source_type text default '';
+alter table public.wms_stock_alerts add column if not exists alert_type text not null default '';
+alter table public.wms_stock_alerts add column if not exists codigo_material text not null default '';
+alter table public.wms_stock_alerts add column if not exists nome_material text default '';
+alter table public.wms_stock_alerts add column if not exists saldo_loja numeric default 0;
+alter table public.wms_stock_alerts add column if not exists saldo_captacao numeric default 0;
+alter table public.wms_stock_alerts add column if not exists localizacao_captacao text default '';
+alter table public.wms_stock_alerts add column if not exists batch_id text default '';
+alter table public.wms_stock_alerts add column if not exists active boolean default true;
+
+create unique index if not exists wms_stock_alerts_warehouse_sku_uidx
+on public.wms_stock_alerts (warehouse_code, codigo_material);
+
+create index if not exists wms_stock_alerts_active_idx
+on public.wms_stock_alerts (warehouse_code, active, alert_type, updated_at desc);
+
 alter table public.wms_stock_import_batches enable row level security;
 alter table public.wms_stock_positions enable row level security;
+alter table public.wms_stock_alerts enable row level security;
 
 drop policy if exists "wms_stock_import_batches_public_all" on public.wms_stock_import_batches;
 create policy "wms_stock_import_batches_public_all" on public.wms_stock_import_batches
@@ -935,6 +994,10 @@ for all using (true) with check (true);
 
 drop policy if exists "wms_stock_positions_public_all" on public.wms_stock_positions;
 create policy "wms_stock_positions_public_all" on public.wms_stock_positions
+for all using (true) with check (true);
+
+drop policy if exists "wms_stock_alerts_public_all" on public.wms_stock_alerts;
+create policy "wms_stock_alerts_public_all" on public.wms_stock_alerts
 for all using (true) with check (true);
 
 create index if not exists wms_transfer_events_warehouse_idx
