@@ -729,12 +729,11 @@
                 <table>
                   <thead>
                     <tr>
-                      <th>Origem</th>
-                      <th>Destino</th>
                       <th>Código</th>
                       <th>Descrição</th>
                       <th>Qtd</th>
-                      <th>Tipo movimentação</th>
+                      <th>Base de estoque</th>
+                      <th>Origem sugerida</th>
                       <th>Localização</th>
                       <th>Status</th>
                     </tr>
@@ -789,7 +788,10 @@
           <section class="panel transfer-execution-panel">
             <div class="panel-header">
               <h3 id="transferWorkTitle">Separação</h3>
-              <button class="secondary-button" id="backToTransfersButton" type="button">Voltar</button>
+              <div class="panel-actions">
+                <button class="secondary-button" id="refreshTransferStockButton" type="button">Atualizar sugestão de saldo</button>
+                <button class="secondary-button" id="backToTransfersButton" type="button">Voltar</button>
+              </div>
             </div>
             <div id="transferWorkSummary" class="transfer-work-summary transfer-execution-summary"></div>
             <div id="transferStepSummary" class="transfer-step-summary"></div>

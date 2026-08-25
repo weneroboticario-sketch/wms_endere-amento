@@ -819,6 +819,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return (state.bindings || []).filter(bindingMatchesActiveWarehouse);
   }
 
+  function bindingsForWarehouse(warehouseCode) {
+    var wanted = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    return (state.bindings || []).filter(function (binding) {
+      var rawCode = rawWarehouseCodeValue(binding);
+      if (rawCode) return normalizeWarehouseCode(rawCode) === wanted;
+      return wanted === activeWarehouseCode() && !isMultiWarehouseMode();
+    });
+  }
+
   function ensureActiveWarehouse() {
     if (activeWarehouseCode()) {
       if (authState.currentUser && !authState.currentUser.warehouseAccessConfirmed && !isGlobalAdminUser(authState.currentUser)) {
@@ -1849,6 +1858,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       suggestedStoreQty: Number(row.quantidade_sugerida_loja || 0),
       stockAlert: row.alerta_saldo === true,
       stockAlertMessage: row.alerta_saldo_mensagem || "",
+      operationalMessage: row.alerta_saldo_mensagem || "",
+      stockBaseFound: normalizeText(row.alerta_saldo_mensagem || "") !== "SKU ausente na Base de Estoque.",
       suggestedLocation: row.localizacao_sugerida || "",
       quantityType: row.tipo_envio || row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
@@ -2595,28 +2606,30 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
-  async function getStockPositionsForSkus(skus) {
+  async function getStockPositionsForSkus(skus, warehouseCode) {
+    var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
-    var missing = cleanSkus.filter(function (sku) { return !stockState.positionCache[activeWarehouseCode() + ":" + sku]; });
+    var missing = cleanSkus.filter(function (sku) { return !stockState.positionCache[warehouse + ":" + sku]; });
     if (missing.length) {
       var response = await supabaseDb
         .from("wms_stock_positions")
         .select("id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at")
-        .eq("warehouse_code", activeWarehouseCode())
+        .eq("warehouse_code", warehouse)
         .eq("active", true)
+        .in("source_type", ["LOJA", "CAPTACAO"])
         .in("codigo_material", missing)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error) throw response.error;
-      missing.forEach(function (sku) { stockState.positionCache[activeWarehouseCode() + ":" + sku] = []; });
+      missing.forEach(function (sku) { stockState.positionCache[warehouse + ":" + sku] = []; });
       (response.data || []).map(fromDbStockPosition).forEach(function (position) {
-        var key = activeWarehouseCode() + ":" + position.codigoMaterial;
+        var key = warehouse + ":" + position.codigoMaterial;
         if (!stockState.positionCache[key]) stockState.positionCache[key] = [];
         stockState.positionCache[key].push(position);
       });
     }
     return cleanSkus.reduce(function (all, sku) {
-      return all.concat(stockState.positionCache[activeWarehouseCode() + ":" + sku] || []);
+      return all.concat(stockState.positionCache[warehouse + ":" + sku] || []);
     }, []);
   }
 
@@ -2625,12 +2638,35 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return buildStockSuggestion(sku, requestedQty, positions);
   }
 
+  async function getTransferStockSuggestion(args) {
+    args = args || {};
+    var warehouse = normalizeWarehouseCode(args.warehouse_code || args.warehouseCode || activeWarehouseCode());
+    var items = args.items || [];
+    var skus = unique(items.map(function (item) {
+      return normalizeSku(item.codigo_material || item.codigoMaterial || item.sku || "");
+    }).filter(Boolean));
+    if (!skus.length || !isSupabaseReady()) return [];
+    var positions = await getStockPositionsForSkus(skus, warehouse);
+    var grouped = {};
+    positions.forEach(function (position) {
+      var key = position.codigoMaterial || "";
+      if (!key) return;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(position);
+    });
+    return items.map(function (item) {
+      var sku = normalizeSku(item.codigo_material || item.codigoMaterial || item.sku || "");
+      var requested = Number(item.quantidade_solicitada !== undefined ? item.quantidade_solicitada : item.requestedQty || item.quantity || 0);
+      return buildStockSuggestion(sku, requested, grouped[sku] || [], warehouse);
+    });
+  }
+
   async function getReplenishmentSuggestion(sku, warehouseCode) {
     if (warehouseCode && normalizeWarehouseCode(warehouseCode) !== activeWarehouseCode()) throw new Error("Estoque da consulta diferente do estoque ativo.");
     return getStockSuggestion(sku, 0);
   }
 
-  function buildStockSuggestion(sku, requestedQty, positions) {
+  function buildStockSuggestion(sku, requestedQty, positions, warehouseCode) {
     sku = normalizeSku(sku);
     var loja = aggregateStockPositions((positions || []).filter(function (item) { return item.sourceType === "LOJA"; }));
     var captacaoPositions = (positions || []).filter(function (item) { return item.sourceType === "CAPTACAO"; });
@@ -2638,37 +2674,64 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var captureLocation = captacaoPositions.filter(function (item) { return item.codigoEndereco || stockPositionLocation(item); }).sort(function (a, b) {
       return Number(b.totalDisponivel || 0) - Number(a.totalDisponivel || 0);
     })[0] || null;
-    var official = findTransferLocationForSku(sku);
+    var official = findTransferLocationForSku(sku, warehouseCode);
     var needed = Number(requestedQty || 0);
+    if (!(positions || []).length) {
+      return {
+        sku: sku,
+        name: "Não encontrado na Base de Estoque",
+        baseFound: false,
+        storePhysical: null,
+        storeAllocated: null,
+        storeAvailable: null,
+        capturePhysical: null,
+        captureAllocated: null,
+        captureAvailable: null,
+        operationalTotal: null,
+        rupture: false,
+        captureLocation: "",
+        officialLocation: official ? official.locationCode : "",
+        originSuggested: "VERIFICAR",
+        suggestedCaptureQty: 0,
+        suggestedStoreQty: 0,
+        quantityShortage: Math.max(0, needed),
+        suggestedReplenishmentQty: 0,
+        stockAlert: true,
+        alertMessage: "SKU ausente na Base de Estoque.",
+        operationalMessage: "SKU ausente na Base de Estoque.",
+        sellable: false
+      };
+    }
     var captureAvailable = Number(captacao.totalDisponivel || 0);
     var storeAvailable = Number(loja.totalDisponivel || 0);
     var operationalTotal = captureAvailable + storeAvailable;
-    var rupture = operationalTotal < 3;
+    var captureUsable = Math.max(0, captureAvailable);
+    var storeUsable = Math.max(0, storeAvailable);
     var originSuggested = "SEM_SALDO";
-    var captureQty = 0;
-    var storeQty = 0;
-    if (needed > 0 && captureAvailable >= needed) {
+    var captureQty = Math.min(needed, captureUsable);
+    var remaining = Math.max(0, needed - captureQty);
+    var storeQty = Math.min(remaining, storeUsable);
+    var shortage = Math.max(0, needed - captureQty - storeQty);
+    if (needed > 0 && captureUsable >= needed) {
       originSuggested = "CAPTACAO";
-      captureQty = needed;
-    } else if (needed > 0 && captureAvailable > 0 && storeAvailable > 0) {
-      originSuggested = "LOJA_E_CAPTACAO";
-      captureQty = Math.min(captureAvailable, needed);
-      storeQty = Math.min(storeAvailable, Math.max(0, needed - captureQty));
-    } else if (needed > 0 && captureAvailable > 0) {
-      originSuggested = captureAvailable >= needed ? "CAPTACAO" : "VERIFICAR";
-      captureQty = Math.min(captureAvailable, needed);
-    } else if (storeAvailable > 0) {
+    } else if (needed > 0 && captureUsable > 0 && storeUsable > 0) {
+      originSuggested = "CAPTACAO_E_LOJA";
+    } else if (needed > 0 && captureUsable > 0) {
+      originSuggested = "CAPTACAO";
+    } else if (storeUsable > 0) {
       originSuggested = "LOJA";
-      storeQty = needed > 0 ? Math.min(storeAvailable, needed) : storeAvailable;
+      storeQty = needed > 0 ? Math.min(storeUsable, needed) : storeUsable;
+      shortage = Math.max(0, needed - storeQty);
     }
     var location = captureLocation ? stockPositionLocation(captureLocation) : "";
     var officialCode = official ? official.locationCode : "";
     var hasDivergence = Boolean(location && officialCode && location !== officialCode);
     var hasNegative = captureAvailable < 0 || storeAvailable < 0;
-    var suggestionQty = !rupture && storeAvailable < 0 && captureAvailable > 0 ? Math.min(Math.abs(storeAvailable), captureAvailable) : 0;
-    var alertMessage = rupture ? "Ruptura operacional: saldo loja + captacao menor que 3." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : originSuggested === "VERIFICAR" ? "Saldo parcial. Lider deve decidir origem complementar." : "";
+    var suggestionQty = storeAvailable < 0 && captureUsable > 0 ? Math.min(Math.abs(storeAvailable), captureUsable) : 0;
+    var alertMessage = shortage > 0 ? "Saldo insuficiente. Faltam " + formatQty(shortage) + " un." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "CAPTACAO_E_LOJA" ? "Retirar parte na captacao e completar na loja." : originSuggested === "LOJA" ? "Captacao sem saldo suficiente. Retirar da loja." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : "";
     return {
       sku: sku,
+      baseFound: true,
       name: (captacao.nomeMaterial || loja.nomeMaterial || (official && official.productName) || findProductName(sku) || ""),
       storePhysical: loja.totalFisico,
       storeAllocated: loja.totalAlocado,
@@ -2677,7 +2740,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       captureAllocated: captacao.totalAlocado,
       captureAvailable: captacao.totalDisponivel,
       operationalTotal: operationalTotal,
-      rupture: rupture,
+      rupture: shortage > 0,
       captureLocation: location,
       captureStation: captureLocation ? captureLocation.estacao : "",
       captureRack: captureLocation ? captureLocation.rack : "",
@@ -2687,9 +2750,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       originSuggested: originSuggested,
       suggestedCaptureQty: captureQty,
       suggestedStoreQty: storeQty,
+      quantityShortage: shortage,
       suggestedReplenishmentQty: suggestionQty,
-      stockAlert: rupture || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "VERIFICAR",
+      stockAlert: shortage > 0 || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "CAPTACAO_E_LOJA" || originSuggested === "LOJA",
       alertMessage: alertMessage,
+      operationalMessage: alertMessage || "Retirar da captacao.",
       sellable: captacao.isSellable || loja.isSellable
     };
   }
@@ -3106,7 +3171,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       exportStockTemplate: exportStockTemplate,
       getReplenishmentSuggestions: getReplenishmentSuggestions,
       getReplenishmentSuggestion: getReplenishmentSuggestion,
-      getTransferStockSuggestion: getStockSuggestion,
+      getTransferStockSuggestion: getTransferStockSuggestion,
       getReplenishmentStockSuggestion: getStockSuggestion
     };
   }
@@ -5287,6 +5352,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
       renderTransfers();
     });
+    $("refreshTransferStockButton").addEventListener("click", function (event) {
+      refreshTransferStockSuggestion(transferState.activeTransferId, { persist: true, button: event.currentTarget });
+    });
     $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
     $("transferScanInput").addEventListener("input", markTransferScanInput);
     $("transferScanInput").addEventListener("keydown", function (event) {
@@ -7384,6 +7452,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       return applyTransferItemLocation(item);
     });
+    await enrichTransferItemsWithStock(items, transfer.warehouseCode || activeWarehouseCode());
     await insertTransferRows([toDbTransfer(transfer)]);
     await upsertTransferItemRows(items.map(function (item) {
       return Object.assign(toDbTransferItem(item), transferItemAuditDbFields(item));
@@ -8249,9 +8318,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     if ($("transferPreviewGroups")) $("transferPreviewGroups").innerHTML = groups.length ? groups.map(transferPreviewGroupHtml).join("") : "";
     $("transferPreviewRows").innerHTML = transferState.previewItems.length ? transferState.previewItems.map(function (item) {
-      var status = item.errors && item.errors.length ? item.errors.join("; ") : "OK";
-      return "<tr><td>" + escapeHtml(transferPreviewStoreLabel(item.sourceCode)) + "</td><td>" + escapeHtml(transferPreviewStoreLabel(item.destinationCode)) + "</td><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + escapeHtml(item.movementType || "-") + "</td><td>" + escapeHtml(transferLocationLabel(item)) + "</td><td>" + escapeHtml(status) + "</td></tr>";
-    }).join("") : "<tr><td colspan=\"8\">Nenhuma previa carregada.</td></tr>";
+      var status = item.errors && item.errors.length ? item.errors.join("; ") : (item.stockAlertMessage || "OK");
+      return "<tr><td>" + escapeHtml(item.sku) + "</td><td>" + escapeHtml(item.description) + "</td><td>" + formatQty(item.requestedQty) + " " + escapeHtml(item.unit || "UN") + "</td><td>" + transferStockSnapshotCell(item) + "</td><td>" + escapeHtml(transferOriginSuggestionLabel(item.originSuggested)) + "</td><td>" + escapeHtml(transferLocationLabel(item)) + "</td><td>" + escapeHtml(status) + "</td></tr>";
+    }).join("") : "<tr><td colspan=\"7\">Nenhuma previa carregada.</td></tr>";
   }
 
   function transferPreviewGroupHtml(group) {
@@ -8358,6 +8427,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("transferFinalReportPanel")) $("transferFinalReportPanel").hidden = true;
       if ($("transferBoxFields")) $("transferBoxFields").hidden = true;
       if ($("transferFinalBoxesBox")) $("transferFinalBoxesBox").hidden = true;
+      if ($("refreshTransferStockButton")) $("refreshTransferStockButton").hidden = true;
       clearXmlConferencePanel();
       return;
     }
@@ -8369,6 +8439,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferWorkSection").classList.toggle("transfer-mode-separacao", mode === "SEPARACAO");
     $("transferWorkSection").classList.toggle("transfer-mode-finalizacao", mode === "FINALIZACAO");
     var finalized = isFinalTransferStatus(transfer.status);
+    if ($("refreshTransferStockButton")) $("refreshTransferStockButton").hidden = !isAdminOrSupervisor();
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
     var activeItem = getTransferActiveItem(items, mode);
     var selectedCandidate = items.find(function (item) { return item.id === transferState.selectedItemId; });
@@ -8707,6 +8778,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var itemClass = "transfer-work-item status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
     var productName = shortProductName(item.description || "");
     var boxInfo = isBoxQuantityItem(item) ? "<span>Un/CX <b>" + (Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</b></span><span>Total UN <b>" + (Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-") + "</b></span>" : "";
+    var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item, "compact");
     var qtyRows = mode === "MONTAGEM" ? [
       "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
@@ -8727,8 +8799,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       qtyRows,
       "</div>",
       mode === "MONTAGEM" ? "" : "<small>" + escapeHtml(transferCompactLocationLabel(item)) + "</small>",
+      stockGuidance,
       transferWorkItemActionsHtml(item, mode),
       "</article>"
+    ].join("");
+  }
+
+  function transferStockGuidanceHtml(item, variant) {
+    if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
+    var origin = transferOriginSuggestionLabel(item.originSuggested);
+    var tone = item.originSuggested === "CAPTACAO" && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
+    return [
+      "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
+      "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
+      "<span>Captação " + formatQty(item.suggestedCaptureQty || 0) + " | Loja " + formatQty(item.suggestedStoreQty || 0) + "</span>",
+      item.suggestedLocation ? "<span>Local: " + escapeHtml(item.suggestedLocation) + "</span>" : "",
+      item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "",
+      "</div>"
     ].join("");
   }
 
@@ -9204,6 +9291,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var locationLine = transferCompactLocationLabel(item);
     var productName = normalizeText(item.description || "");
     var isBox = isBoxQuantityItem(item);
+    var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item);
     var highlight = mode === "MONTAGEM"
       ? "<div class=\"current-qty-highlight packing\"><span>Restante para caixa</span><strong>" + formatQty(qty.pendingPacking) + " " + escapeHtml(item.unit || "UN") + "</strong></div>"
       : "<div class=\"current-qty-highlight\"><span>Quantidade para coletar</span><strong>" + formatQty(qty.pendingSeparation || qty.requested) + " " + escapeHtml(item.unit || "UN") + "</strong></div>";
@@ -9232,7 +9320,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "</div>",
       "<div class=\"transfer-qty-row current-item-meta\">",
       meta,
-      "</div>"
+      "</div>",
+      stockGuidance
     ].join("");
   }
 
@@ -10866,7 +10955,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var filterMessage = parsed.filteredOutGroups ? " " + parsed.filteredOutGroups + " transferencia(s) de outro estoque foram ocultadas." : "";
       setStatus("transferImportStatus", parsed.errors.length ? "Previa carregada com " + parsed.errors.length + " erro(s). Corrija antes de criar." : "Previa carregada: " + activeGroups.length + " transferencia(s), " + parsed.items.length + " item(ns)." + filterMessage, parsed.errors.length ? "error" : "success");
     } catch (error) {
-      setStatus("transferImportStatus", "Falha ao ler importacao: " + formatSupabaseError(error), "error");
+      var message = isMissingStockTableError(error) || isMissingColumnError(error) ? missingStockSchemaMessage(error) : "Falha ao ler importacao: " + formatSupabaseError(error);
+      setStatus("transferImportStatus", message, "error");
     }
   }
 
@@ -11287,7 +11377,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       transferDebugLog("Transferencia criada", { transfers: transfers.map(function (transfer) { return transfer.id; }) });
     } catch (error) {
-      setStatus("transferImportStatus", missingTransferImportSchemaMessage(error), "error");
+      var errorText = formatSupabaseError(error);
+      setStatus("transferImportStatus", isMissingStockTableError(error) || errorText.indexOf("wms_stock_positions") >= 0 ? missingStockSchemaMessage(error) : missingTransferImportSchemaMessage(error), "error");
       endTransferAction(actionButton);
       if (actionButton) delete actionButton.dataset.idempotencyKey;
       return;
@@ -11428,43 +11519,81 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
   }
 
-  async function enrichTransferItemsWithStock(items) {
+  async function enrichTransferItemsWithStock(items, warehouseCode) {
     if (!items || !items.length || !isSupabaseReady()) return;
-    var skus = unique(items.map(function (item) { return normalizeSku(item.sku); }).filter(Boolean));
-    if (!skus.length) return;
+    var warehouse = normalizeWarehouseCode(warehouseCode || (items[0] && items[0].warehouseCode) || activeWarehouseCode());
     try {
-      var positions = await getStockPositionsForSkus(skus);
-      var grouped = {};
-      positions.forEach(function (position) {
-        var key = position.codigoMaterial || "";
-        if (!key) return;
-        if (!grouped[key]) grouped[key] = [];
-        grouped[key].push(position);
+      var suggestions = await stockService().getTransferStockSuggestion({
+        warehouse_code: warehouse,
+        items: items.map(function (item) {
+          return {
+            codigo_material: item.sku,
+            quantidade_solicitada: getTransferExpectedUnits(item) || item.requestedQty || 0
+          };
+        })
       });
-      items.forEach(function (item) {
-        var suggestion = buildStockSuggestion(item.sku, getTransferExpectedUnits(item) || item.requestedQty || 0, grouped[normalizeSku(item.sku)] || []);
+      items.forEach(function (item, index) {
+        var suggestion = suggestions[index];
         applyTransferItemStockSuggestion(item, suggestion);
       });
     } catch (error) {
       if (isMissingStockTableError(error) || isMissingColumnError(error)) {
         recordPerformanceError("transfer-stock-schema", error);
-        return;
       }
       throw error;
     }
   }
 
+  async function refreshTransferStockSuggestion(transferId, options) {
+    options = options || {};
+    var button = options.button || null;
+    var transfer = getTransferById(transferId);
+    if (!transfer) {
+      setStatus("transferWorkStatus", "Transferencia nao encontrada para atualizar sugestao.", "error");
+      return;
+    }
+    if (!isSupabaseReady()) {
+      setStatus("transferWorkStatus", "Supabase nao conectado. Nao foi possivel atualizar sugestao.", "error");
+      return;
+    }
+    var items = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra; });
+    if (!items.length) return;
+    var actionKey = "refresh-transfer-stock:" + transfer.id;
+    if (options.persist && !beginTransferAction(actionKey, button, "Atualizando...")) return;
+    try {
+      await enrichTransferItemsWithStock(items, transfer.warehouseCode || activeWarehouseCode());
+      if (options.persist) {
+        var now = new Date().toISOString();
+        items.forEach(function (item) { item.updatedAt = now; });
+        await upsertTransferItemRows(items.map(toDbTransferItem));
+        await recordTransferEvent(transfer.id, "", "TRANSFER_STOCK_SUGGESTION_REFRESHED", "", items.length, "Sugestao de saldo atualizada pela Base de Estoque.", {
+          warehouseCode: transfer.warehouseCode || activeWarehouseCode()
+        });
+        setStatus("transferWorkStatus", "Sugestao de saldo atualizada pela Base de Estoque.", "success");
+      }
+      if (options.render !== false) renderTransferWork();
+    } catch (error) {
+      console.error("Erro ao atualizar sugestao de saldo:", error);
+      setStatus("transferWorkStatus", "Erro ao atualizar sugestao de saldo: " + missingStockSchemaMessage(error), "error");
+    } finally {
+      if (options.persist) endTransferAction(button);
+    }
+  }
+
   function applyTransferItemStockSuggestion(item, suggestion) {
     if (!item || !suggestion) return item;
-    item.storeAvailable = Number(suggestion.storeAvailable || 0);
-    item.captureAvailable = Number(suggestion.captureAvailable || 0);
+    item.storeAvailable = suggestion.storeAvailable === null ? null : Number(suggestion.storeAvailable || 0);
+    item.captureAvailable = suggestion.captureAvailable === null ? null : Number(suggestion.captureAvailable || 0);
     item.originSuggested = suggestion.originSuggested || "";
     item.suggestedCaptureQty = Number(suggestion.suggestedCaptureQty || 0);
     item.suggestedStoreQty = Number(suggestion.suggestedStoreQty || 0);
+    item.quantityShortage = Number(suggestion.quantityShortage || 0);
+    item.stockBaseFound = suggestion.baseFound !== false;
     item.stockAlert = suggestion.stockAlert === true;
-    item.stockAlertMessage = suggestion.alertMessage || "";
+    item.stockAlertMessage = suggestion.alertMessage || suggestion.operationalMessage || "";
+    item.operationalMessage = suggestion.operationalMessage || suggestion.alertMessage || "";
     item.suggestedLocation = suggestion.captureLocation || suggestion.officialLocation || "";
-    if (!item.description && suggestion.name) item.description = suggestion.name;
+    if (suggestion.name) item.description = suggestion.name;
     return item;
   }
 
@@ -11543,14 +11672,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return item;
   }
 
-  function findTransferLocationForSku(sku) {
-    return activeWarehouseBindings().filter(function (binding) {
+  function findTransferLocationForSku(sku, warehouseCode) {
+    return bindingsForWarehouse(warehouseCode || activeWarehouseCode()).filter(function (binding) {
       return bindingHasUsableLocation(binding) && isSameSku(binding.sku, sku);
     }).sort(sortByDateDesc)[0] || null;
   }
 
   function transferLocationStatus(item) {
-    var location = findTransferLocationForSku(item.sku);
+    var location = findTransferLocationForSku(item.sku, item && item.warehouseCode);
     if (location) {
       applyLocationToTransferItem(item, location);
       return {
@@ -11575,20 +11704,45 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return stock ? base + " | " + stock : base;
   }
 
-  function transferStockLabel(item) {
-    if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
-    var origin = {
-      CAPTACAO: "Captacao",
+  function transferOriginSuggestionLabel(origin) {
+    return {
+      CAPTACAO: "Captação",
       LOJA: "Loja",
-      LOJA_E_CAPTACAO: "Loja + Captacao",
-      CAPTACAO_E_LOJA: "Captacao + Loja",
+      LOJA_E_CAPTACAO: "Captação + Loja",
+      CAPTACAO_E_LOJA: "Captação + Loja",
       SEM_SALDO: "Sem saldo",
       VERIFICAR: "Verificar"
-    }[item.originSuggested] || item.originSuggested || "";
+    }[origin] || origin || "-";
+  }
+
+  function transferStockValueLabel(value, item) {
+    if (item && item.stockBaseFound === false) return "não encontrado";
+    if (value === null || value === undefined || value === "") return "não encontrado";
+    return formatQty(value);
+  }
+
+  function transferStockSnapshotCell(item) {
+    var pieces = [
+      "<div class=\"transfer-stock-snapshot" + (item.stockAlert ? " alert" : "") + "\">",
+      "<span>Saldo captação <b>" + escapeHtml(transferStockValueLabel(item.captureAvailable, item)) + "</b></span>",
+      "<span>Saldo loja <b>" + escapeHtml(transferStockValueLabel(item.storeAvailable, item)) + "</b></span>",
+      "<span>Retirar captação <b>" + formatQty(item.suggestedCaptureQty || 0) + "</b></span>",
+      "<span>Retirar loja <b>" + formatQty(item.suggestedStoreQty || 0) + "</b></span>"
+    ];
+    if (Number(item.quantityShortage || 0) > 0) pieces.push("<span class=\"danger-text\">Faltante <b>" + formatQty(item.quantityShortage) + "</b></span>");
+    pieces.push("</div>");
+    return pieces.join("");
+  }
+
+  function transferStockLabel(item) {
+    if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
+    var origin = transferOriginSuggestionLabel(item.originSuggested);
     var parts = [];
-    if (origin) parts.push("Pegar: " + origin);
-    if (item.suggestedLocation) parts.push("Base: " + item.suggestedLocation);
-    if (item.captureAvailable || item.storeAvailable) parts.push("Captacao " + formatQty(item.captureAvailable || 0) + " / Loja " + formatQty(item.storeAvailable || 0));
+    if (origin && origin !== "-") parts.push("Pegar: " + origin);
+    parts.push("Retirar captacao " + formatQty(item.suggestedCaptureQty || 0) + " / loja " + formatQty(item.suggestedStoreQty || 0));
+    if (item.suggestedLocation) parts.push("Local retirada: " + item.suggestedLocation);
+    parts.push("Saldo captacao " + transferStockValueLabel(item.captureAvailable, item) + " / loja " + transferStockValueLabel(item.storeAvailable, item));
+    if (Number(item.quantityShortage || 0) > 0) parts.push("Faltante " + formatQty(item.quantityShortage));
     if (item.stockAlertMessage) parts.push(item.stockAlertMessage);
     return parts.join(" | ");
   }
@@ -11728,6 +11882,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
     }
+    await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
     activateTransferTab("transferWorkSection");
     renderTransferWork();
     setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");

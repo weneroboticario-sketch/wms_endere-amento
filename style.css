@@ -1542,6 +1542,40 @@ tbody tr:hover td {
   align-content: start;
 }
 
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.transfer-stock-snapshot {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(96px, 1fr));
+  gap: 5px;
+  min-width: 220px;
+}
+
+.transfer-stock-snapshot span {
+  display: grid;
+  gap: 2px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #eef8fb;
+  color: #3d4b5f;
+  font-size: 0.72rem;
+  line-height: 1.1;
+}
+
+.transfer-stock-snapshot b {
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.transfer-stock-snapshot.alert span {
+  background: #fff7e6;
+}
+
 .danger-text {
   color: var(--danger) !important;
   font-weight: 700;
@@ -2102,6 +2136,50 @@ tbody tr:hover td {
   color: #0b5e73;
   font-weight: 800;
   line-height: 1.25;
+}
+
+.transfer-stock-guidance {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(120px, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #b7d8cf;
+  border-radius: 8px;
+  background: #effbf5;
+  color: #0f5132;
+  font-size: 0.8rem;
+}
+
+.transfer-stock-guidance.warning {
+  border-color: #f3d28a;
+  background: #fff8e6;
+  color: #7a5200;
+}
+
+.transfer-stock-guidance.danger {
+  border-color: #f1a8a8;
+  background: #fff0f0;
+  color: #9b1c1c;
+}
+
+.transfer-stock-guidance strong,
+.transfer-stock-guidance span,
+.transfer-stock-guidance em {
+  min-width: 0;
+}
+
+.transfer-stock-guidance em {
+  grid-column: 1 / -1;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.transfer-stock-guidance.compact {
+  grid-template-columns: 1fr;
+  gap: 3px;
+  padding: 6px 8px;
+  font-size: 0.76rem;
 }
 
 .transfer-conference-select {
@@ -3021,6 +3099,12 @@ tbody tr:hover td {
     margin-bottom: 0;
   }
 
+  #transferWorkSection .panel-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
   #transferWorkTitle {
     font-size: 1.05rem;
     line-height: 1.2;
@@ -3181,6 +3265,12 @@ tbody tr:hover td {
 
   .transfer-preview-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .transfer-stock-snapshot,
+  .transfer-stock-guidance {
+    grid-template-columns: 1fr;
+    min-width: 0;
   }
 
   .metric-grid {
