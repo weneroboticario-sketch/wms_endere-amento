@@ -508,6 +508,47 @@ button {
   font-size: 1.75rem;
 }
 
+.dashboard-quick-panel {
+  margin: 16px 0;
+}
+
+.dashboard-quick-result {
+  margin-top: 10px;
+}
+
+.dashboard-sku-result {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.5fr) minmax(180px, 1.4fr) minmax(160px, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.dashboard-sku-result div {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f8fbfd;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.dashboard-sku-result span,
+.dashboard-sku-result small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.dashboard-sku-result strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.dashboard-sku-result small {
+  grid-column: 1 / -1;
+}
+
 .dashboard-layout,
 .scan-grid {
   display: grid;
@@ -2725,22 +2766,6 @@ tbody tr:hover td {
   margin-top: 6px;
 }
 
-.conference-section[hidden] {
-  display: none;
-}
-
-.conference-final-summary {
-  margin-top: 12px;
-}
-
-.conference-section .leader-report-section {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-
 .toast {
   position: fixed;
   right: 22px;
@@ -2852,6 +2877,10 @@ tbody tr:hover td {
 }
 
 @media (max-width: 760px) {
+  .dashboard-sku-result {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
     display: block;
   }
@@ -3672,24 +3701,6 @@ tbody tr:hover td {
   }
 }
 
-.assistant-panel {
-  max-width: 920px;
-}
-
-.assistant-suggestions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 10px 0 14px;
-}
-
-.assistant-answer {
-  margin-top: 14px;
-  display: grid;
-  gap: 10px;
-}
-
-.assistant-answer-card,
 .diagnostics-list {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -3697,33 +3708,11 @@ tbody tr:hover td {
   padding: 14px;
 }
 
-.ai-diagnostics-card {
-  border-color: #b7d8e4;
-  background: #f4fbfd;
-}
-
-.ai-diagnostics-card h4 {
-  margin: 0 0 8px;
-  font-size: 1rem;
-}
-
-.assistant-answer-card h3 {
-  margin: 0 0 8px;
-  font-size: 1rem;
-}
-
-.assistant-answer-card p,
-.assistant-answer-card li,
 .diagnostics-list p {
   color: #243244;
   line-height: 1.45;
 }
 
-.assistant-answer-card p {
-  white-space: pre-line;
-}
-
-.assistant-answer-card ul,
 .diagnostics-list ul {
   margin: 8px 0 0;
   padding-left: 18px;
