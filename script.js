@@ -1319,51 +1319,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
-  async function fetchTransferUiEvents() {
-    if (isOptionalRealtimeTableDisabled("wms_transfer_events")) return [];
-    var allRows = [];
-    var from = 0;
-    var pageSize = 1000;
-    var uiEventTypes = [
-      "TRANSFER_CREATED",
-      "TRANSFER_ASSIGNED",
-      "SEPARATION_STARTED",
-      "SEPARATION_FINISHED",
-      "PACKING_STARTED",
-      "PACKING_FINISHED",
-      "TRANSFER_FINALIZED",
-      "TRANSFER_FINALIZED_WITH_DIVERGENCE",
-      "TRANSFER_DELETED_TEST"
-    ];
-    try {
-      while (true) {
-        var response = await supabaseDb
-          .from("wms_transfer_events")
-          .select("*")
-          .eq("warehouse_code", activeWarehouseCode())
-          .in("event_type", uiEventTypes)
-          .order("created_at", { ascending: false })
-          .range(from, from + pageSize - 1);
-        if (response.error) throw response.error;
-        var rows = response.data || [];
-        allRows = allRows.concat(rows);
-        if (rows.length < pageSize) break;
-        from += pageSize;
-      }
-    } catch (error) {
-      if (!isMissingWarehouseColumnError(error)) {
-        if (isMissingTransferTableError(error) || isMissingColumnError(error)) {
-          disableOptionalRealtimeTable("wms_transfer_events", error, "transfer-events-optional");
-          return [];
-        }
-        throw error;
-      }
-      disableOptionalRealtimeTable("wms_transfer_events", error, "transfer-events-warehouse");
-      return [];
-    }
-    return allRows;
-  }
-
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
     if (isOptionalRealtimeTableDisabled(tableName)) return [];
     try {
@@ -1406,7 +1361,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isOptionalRealtimeTable(tableName) {
     return [
-      "wms_transfer_events",
       "wms_transfer_divergences",
       "wms_task_notifications",
       "wms_notifications",
@@ -1722,9 +1676,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transferState.items = (cachedTransfers.items || []).filter(function (item) {
         return processRowMatchesActiveWarehouse(item) && item.transferId && cachedTransferIds[item.transferId];
       });
-      transferState.events = (cachedTransfers.events || []).filter(function (event) {
-        return processRowMatchesActiveWarehouse(event) && (!event.transfer_id || cachedTransferIds[event.transfer_id]);
-      });
+      transferState.events = [];
       transferState.productPackaging = cachedTransfers.productPackaging || {};
       transferState.tablesAvailable = true;
       invalidateTransferStatsCache();
@@ -1738,14 +1690,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
       var transferRows = await fetchWarehouseRows("wms_transfers", "created_at", false);
       var itemRows = await fetchWarehouseRows("wms_transfer_items", "created_at", true);
-      var eventRows = await fetchTransferUiEvents();
       var packagingRows = await fetchProductPackagingRows();
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
       itemRows = itemRows.filter(function (row) {
-        return processRowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
-      });
-      eventRows = eventRows.filter(function (row) {
         return processRowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
       });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
@@ -1754,8 +1702,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       transferState.transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
       transferState.items = itemRows.map(fromDbTransferItem);
       transferState.items = transferState.items.filter(function (item) { return item.transferId && transferIds[item.transferId]; });
-      transferState.events = eventRows;
-      transferState.events = transferState.events.filter(function (event) { return !event.transfer_id || transferIds[event.transfer_id]; });
+      transferState.events = [];
       invalidateTransferStatsCache();
       packagingRows.forEach(function (row) {
         var pattern = fromDbProductPackaging(row);
@@ -1766,7 +1713,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         establishments: transferState.establishments,
         transfers: transferState.transfers,
         items: transferState.items,
-        events: transferState.events,
         productPackaging: transferState.productPackaging
       });
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
@@ -1795,7 +1741,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         establishments: transferState.establishments,
         transfers: transferState.transfers,
         items: transferState.items,
-        events: transferState.events,
         productPackaging: transferState.productPackaging
       }).catch(function (error) {
         recordPerformanceError("transfer-cache-write", error);
@@ -4100,64 +4045,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function recordTransferEvent(transferId, itemId, eventType, sku, quantity, details, payload, meta) {
-    if (!isSupabaseReady()) return;
-    if (isOptionalRealtimeTableDisabled("wms_transfer_events")) return;
-    var allowedTransferEvents = [
-      "TRANSFER_CREATED",
-      "TRANSFER_ASSIGNED",
-      "SEPARATION_STARTED",
-      "SEPARATION_FINISHED",
-      "PACKING_STARTED",
-      "PACKING_FINISHED",
-      "TRANSFER_FINALIZED",
-      "TRANSFER_FINALIZED_WITH_DIVERGENCE",
-      "TRANSFER_REVALIDATION_REQUESTED",
-      "TRANSFER_REVALIDATION_STARTED",
-      "TRANSFER_REVALIDATION_FINISHED",
-      "TRANSFER_CANCELLED",
-      "TRANSFER_DELETED_TEST"
-    ];
-    if (allowedTransferEvents.indexOf(eventType) < 0) return;
-    var user = authState.currentUser || {};
-    meta = meta || {};
-    var row = {
-      id: "tevt-" + Date.now() + "-" + Math.random().toString(16).slice(2),
-      created_at: new Date().toISOString(),
-      transfer_id: transferId || "",
-      item_id: itemId || "",
-      user_id: user.id || "",
-      user_name: user.name || "",
-      event_type: eventType,
-      sku: sku || "",
-      quantity: Number(quantity || 0),
-      details: details || "",
-      payload: payload || {}
-    };
-    var extendedRow = Object.assign({}, row, {
-      input_type: meta.inputType || "",
-      divergence_type: meta.divergenceType || "",
-      quantity_expected: Number(meta.quantityExpected || 0),
-      quantity_informed: Number(meta.quantityInformed || quantity || 0),
-      quantity_difference: Number(meta.quantityDifference || 0),
-      observation: meta.observation || "",
-      warehouse_id: activeWarehouseId(),
-      warehouse_code: activeWarehouseCode()
-    });
-    var response = await supabaseDb.from("wms_transfer_events").insert(extendedRow);
-    if (response.error && isMissingWarehouseColumnError(response.error)) {
-      disableOptionalRealtimeTable("wms_transfer_events", response.error, "transfer-events-write");
-      return;
-    }
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb.from("wms_transfer_events").insert(row);
-    }
-    if (response.error && (isMissingTransferTableError(response.error) || isMissingColumnError(response.error))) {
-      disableOptionalRealtimeTable("wms_transfer_events", response.error, "transfer-events-write");
-      return;
-    }
-    if (response.error) {
-      console.warn("Evento de transferencia nao salvo:", response.error);
-    }
+    return;
   }
 
   async function upsertInChunks(tableName, rows, onConflict) {
@@ -7019,6 +6907,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         [
           { name: "wms_transfers", optional: false },
           { name: "wms_transfer_items", optional: false },
+          { name: "wms_stock_positions", optional: false },
           { name: "wms_transfer_divergences", optional: true },
           { name: "wms_task_notifications", optional: true },
           { name: "wms_notifications", optional: true },
@@ -7130,8 +7019,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } else if (table === "wms_transfer_items") {
       if (eventType === "DELETE") removeById(transferState.items, oldRow.id);
       else applyLocalTransferItemUpdate(fromDbTransferItem(row));
-    } else if (table === "wms_transfer_events") {
-      if (eventType !== "DELETE" && row && row.id) upsertById(transferState.events, row);
+    } else if (table === "wms_stock_positions") {
+      stockState.positionCache = {};
+      if (getActiveScreenId() === "baseEstoque") refreshStockOperationalData().catch(function (error) {
+        recordPerformanceError("stock-realtime-refresh", error);
+      });
     } else if (table === "wms_transfer_divergences") {
       var transferId = (row && row.transfer_id) || (oldRow && oldRow.transfer_id) || "";
       var transfer = getTransferById(transferId);
@@ -8549,7 +8441,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       { name: "wms_transfer_boxes", column: "transfer_id" },
       { name: "wms_transfer_packages", column: "transfer_id" },
       { name: "wms_transfer_divergences", column: "transfer_id" },
-      { name: "wms_transfer_events", column: "transfer_id" },
       { name: "wms_transfer_items", column: "transfer_id" }
     ];
   }
@@ -13165,7 +13056,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       { name: "wms_transfer_divergences", column: "transfer_id" },
       { name: "wms_transfer_merge_items", column: "merged_transfer_id" },
       { name: "wms_transfer_merge_items", column: "original_transfer_id" },
-      { name: "wms_transfer_events", column: "transfer_id" },
       { name: "wms_transfer_items", column: "transfer_id" }
     ];
     for (var i = 0; i < tables.length; i += 1) {
@@ -13734,7 +13624,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_establishments") >= 0 ||
       message.indexOf("wms_transfers") >= 0 ||
       message.indexOf("wms_transfer_items") >= 0 ||
-      message.indexOf("wms_transfer_events") >= 0 ||
       message.indexOf("wms_transfer_divergences") >= 0 ||
       message.indexOf("wms_transfer_merge_items") >= 0 ||
       message.indexOf("wms_transfer_boxes") >= 0 ||
@@ -13764,7 +13653,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ) && (
       message.indexOf("wms_transfers") >= 0 ||
       message.indexOf("wms_transfer_items") >= 0 ||
-      message.indexOf("wms_transfer_events") >= 0 ||
       message.indexOf("wms_transfer_divergences") >= 0 ||
       message.indexOf("wms_bindings") >= 0 ||
       message.indexOf("wms_history") >= 0 ||
