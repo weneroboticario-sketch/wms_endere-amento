@@ -101,7 +101,6 @@
           <p class="menu-label">Gestao</p>
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
-          <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
           <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
           <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button">Etiquetas</button>
         </div>
@@ -239,7 +238,6 @@
           <button class="secondary-button" data-screen-target="reposicao" type="button">Pedidos de reposicao</button>
           <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas tarefas</button>
           <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
-          <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
         </div>
 
         <section class="transfer-alert" id="transferDashboardAlert" hidden></section>
@@ -398,29 +396,6 @@
         </section>
 
         <section class="labels-area" id="labelsPreview"></section>
-      </section>
-
-      <section class="screen" id="exportar">
-        <div class="page-title">
-          <div>
-            <p class="eyebrow">Planilha</p>
-            <h2>Exportar Excel</h2>
-          </div>
-        </div>
-        <section class="panel narrow-panel">
-          <p class="muted">A exportação usa o mesmo modelo importado: abas <strong>LinhaSeparacao</strong> e <strong>Legenda</strong>, preservando o SKU como texto.</p>
-          <button class="primary-button wide-button" id="exportExcelButton" type="button">Exportar LinhaSeparacao</button>
-          <div id="exportStatus" class="inline-status"></div>
-          <div class="excel-columns">
-            <span>Nome estacao</span>
-            <span>Nr Rack</span>
-            <span>Area Linha Separaçao</span>
-            <span>Linha</span>
-            <span>Coluna</span>
-            <span>Codigo Material</span>
-            <span>Conferencia Obrigatoria</span>
-          </div>
-        </section>
       </section>
 
       <section class="screen" id="importar">

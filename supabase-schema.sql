@@ -1610,6 +1610,7 @@ alter table public.wms_replenishment_requests add column if not exists deleted_b
 alter table public.wms_replenishment_requests add column if not exists deleted_by_name text;
 alter table public.wms_replenishment_requests add column if not exists idempotency_key text default '';
 alter table public.wms_replenishment_requests add column if not exists request_id text default '';
+alter table public.wms_replenishment_requests add column if not exists client_action_id text default '';
 alter table public.wms_replenishment_requests add column if not exists created_by_id text default '';
 
 update public.wms_replenishment_requests
@@ -1644,6 +1645,13 @@ create index if not exists idx_replenishment_updated
 on public.wms_replenishment_requests (warehouse_code, updated_at);
 
 create unique index if not exists wms_replenishment_idempotency_uidx
+on public.wms_replenishment_requests (warehouse_code, idempotency_key)
+where idempotency_key is not null and idempotency_key <> '';
+
+create index if not exists idx_replenishment_idempotency
+on public.wms_replenishment_requests (warehouse_code, idempotency_key);
+
+create unique index if not exists uq_replenishment_idempotency
 on public.wms_replenishment_requests (warehouse_code, idempotency_key)
 where idempotency_key is not null and idempotency_key <> '';
 
