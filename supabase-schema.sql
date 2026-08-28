@@ -176,6 +176,12 @@ alter table public.wms_users add column if not exists allowed_warehouse_codes te
 alter table public.wms_users add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table public.wms_users add column if not exists warehouse_code text default 'VDCG';
 alter table public.wms_users add column if not exists is_global_admin boolean not null default false;
+alter table public.wms_users add column if not exists supervisor_id text default '';
+alter table public.wms_users add column if not exists supervisor_name text default '';
+alter table public.wms_users add column if not exists archived boolean not null default false;
+alter table public.wms_users add column if not exists archived_at timestamptz;
+alter table public.wms_users add column if not exists archived_by_id text default '';
+alter table public.wms_users add column if not exists archived_by_name text default '';
 
 update public.wms_users
 set default_warehouse_id = coalesce(nullif(default_warehouse_id, ''), 'warehouse-vdcg'),
@@ -243,6 +249,12 @@ on public.wms_users (default_warehouse_code);
 
 create index if not exists idx_users_warehouse_active
 on public.wms_users (default_warehouse_code, active);
+
+create index if not exists idx_users_warehouse_supervisor
+on public.wms_users (default_warehouse_code, supervisor_id);
+
+create index if not exists idx_users_warehouse_archived
+on public.wms_users (default_warehouse_code, archived, active);
 
 create table if not exists public.wms_access_requests (
   id text primary key,
@@ -1444,6 +1456,8 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'role') then execute 'create index if not exists wms_users_role_idx on public.wms_users (role)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') then execute 'create index if not exists wms_users_default_warehouse_idx on public.wms_users (default_warehouse_code)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'active') then execute 'create index if not exists wms_users_warehouse_active_idx on public.wms_users (default_warehouse_code, active)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'supervisor_id') then execute 'create index if not exists idx_users_warehouse_supervisor on public.wms_users (default_warehouse_code, supervisor_id)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'default_warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'archived') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_users' and column_name = 'active') then execute 'create index if not exists idx_users_warehouse_archived on public.wms_users (default_warehouse_code, archived, active)'; end if;
   end if;
 
   if to_regclass('public.wms_establishments') is not null then

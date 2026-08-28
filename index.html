@@ -963,6 +963,8 @@
               </select>
               <label for="userDefaultWarehouseInput">Estoque vinculado</label>
               <select id="userDefaultWarehouseInput"></select>
+              <label for="userSupervisorInput">Supervisor responsável</label>
+              <select id="userSupervisorInput"></select>
               <label>Estoques permitidos</label>
               <div id="userAllowedWarehousesInput" class="warehouse-check-list"></div>
               <label class="checkbox-label admin-only">
@@ -987,21 +989,48 @@
 
           <section class="panel">
             <div class="panel-header">
-              <h3>Usuários ativos</h3>
+              <h3>Gestão de usuários</h3>
             </div>
-            <div class="table-wrap">
+            <div class="user-management-toolbar">
+              <div class="user-tab-row" role="tablist" aria-label="Filtro de usuários">
+                <button class="user-tab active" data-user-tab="ativos" type="button">Ativos</button>
+                <button class="user-tab" data-user-tab="inativos" type="button">Inativos</button>
+                <button class="user-tab" data-user-tab="arquivados" type="button">Arquivados</button>
+                <button class="user-tab" data-user-tab="todos" type="button">Todos</button>
+              </div>
+              <div class="user-filter-grid">
+                <label>Buscar<input id="userSearchInput" type="search" placeholder="Nome, usuário ou matrícula"></label>
+                <label>Estoque/VD<select id="userWarehouseFilter"></select></label>
+                <label>Perfil<select id="userRoleFilter"></select></label>
+                <label>Supervisor<select id="userSupervisorFilter"></select></label>
+                <label>Status<select id="userStatusFilter">
+                  <option value="">Todos</option>
+                  <option value="active">Ativos</option>
+                  <option value="inactive">Inativos</option>
+                  <option value="archived">Arquivados</option>
+                </select></label>
+                <label>Tarefas<select id="userAvailabilityFilter">
+                  <option value="">Todos</option>
+                  <option value="available">Disponível</option>
+                  <option value="unavailable">Indisponível</option>
+                </select></label>
+              </div>
+              <div class="user-bulk-bar">
+                <span id="userSelectionCount">0 selecionado(s)</span>
+                <select id="bulkUserSupervisorSelect"></select>
+                <select id="bulkUserWarehouseSelect"></select>
+                <button class="secondary-button" id="bulkUserDisableButton" type="button">Desativar</button>
+                <button class="secondary-button" id="bulkUserArchiveButton" type="button">Arquivar</button>
+                <button class="secondary-button" id="bulkUserAvailableButton" type="button">Tarefas: sim</button>
+                <button class="secondary-button" id="bulkUserUnavailableButton" type="button">Tarefas: não</button>
+                <button class="secondary-button admin-only" id="bulkUserWarehouseButton" type="button">Alterar estoque</button>
+                <button class="secondary-button" id="bulkUserSupervisorButton" type="button">Vincular supervisor</button>
+              </div>
+            </div>
+            <div id="userDiagnostics" class="user-diagnostics"></div>
+            <div id="userGroups" class="user-groups"></div>
+            <div class="table-wrap users-legacy-table" hidden>
               <table>
-                <thead>
-                  <tr>
-                    <th>Usuário</th>
-                    <th>Perfil</th>
-                    <th>Estoque</th>
-                    <th>Último login</th>
-                    <th>Status</th>
-                    <th>Tarefas</th>
-                    <th>Ações</th>
-                  </tr>
-                </thead>
                 <tbody id="usersRows"></tbody>
               </table>
             </div>
