@@ -10040,13 +10040,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       totalDurationSeconds: totalDurationSeconds,
       separationDurationSeconds: separationDurationSeconds,
       packingDurationSeconds: packingDurationSeconds,
-      finalBoxCount: getTransferFinalBoxCount(transfer.id),
+      finalBoxCount: getTransferFinalBoxCount(transfer),
       scannedEvents: 0,
       manualEvents: 0
     };
   }
 
-  function getTransferFinalBoxCount(transferId) {
+  function getTransferFinalBoxCount(transferOrId) {
+    var transfer = typeof transferOrId === "object" && transferOrId ? transferOrId : getTransferById(transferOrId);
+    var persistedQty = transfer ? Number(transfer.totalBoxes || transfer.finalBoxCount || 0) : 0;
+    if (Number.isFinite(persistedQty) && persistedQty > 0) return persistedQty;
+    var transferId = transfer ? transfer.id : transferOrId;
     var events = transferState.events.filter(function (event) {
       return event.transfer_id === transferId && event.event_type === "PACKING_FINISHED";
     }).sort(function (a, b) {
@@ -12340,6 +12344,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (update.duracao_segundos !== undefined) transfer.durationSeconds = Number(update.duracao_segundos || 0);
     if (update.duracao_separacao_segundos !== undefined) transfer.separationDurationSeconds = Number(update.duracao_separacao_segundos || 0);
     if (update.duracao_lacre_segundos !== undefined) transfer.packingDurationSeconds = Number(update.duracao_lacre_segundos || 0);
+    if (update.total_caixas !== undefined) transfer.totalBoxes = Number(update.total_caixas || 0);
     transfer.totalPreviewQuantity = Number(update.total_previsto || transfer.totalPreviewQuantity || 0);
     transfer.totalSentQuantity = Number(update.total_enviado || transfer.totalSentQuantity || 0);
     transfer.totalDifference = Number(update.diferenca_total || transfer.totalDifference || 0);
