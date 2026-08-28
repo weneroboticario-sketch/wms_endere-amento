@@ -251,7 +251,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var localCacheState = {
     db: null,
     available: false,
-    warned: false
+    warned: false,
+    opening: null,
+    closing: false,
+    writeQueue: Promise.resolve(),
+    writesPending: 0,
+    lastError: "",
+    lastErrorAt: "",
+    lastCleanupAt: "",
+    disabled: false
   };
   var performanceState = {
     syncStatus: "Inicializando",
@@ -263,10 +271,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastStockLoadMs: 0,
     lastSkuQueryMs: 0,
     lastTransferQueryMs: 0,
-    recentErrors: []
+    recentErrors: [],
+    errorThrottle: {}
   };
   var realtimeState = {
     channel: null,
+    channels: [],
     pollTimer: null,
     refreshTimer: null,
     refreshRunning: false,
@@ -275,6 +285,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     subscriptionStatus: "",
     lastLiveUpdateAt: "",
     recentEvents: [],
+    disabledOptionalTables: {},
+    lastOptionalFailure: null,
     active: false
   };
 
@@ -325,6 +337,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   document.addEventListener("DOMContentLoaded", async function () {
     await initLocalCache();
+    bindLocalCacheShutdownEvents();
     registerServiceWorker();
     bindConnectivityEvents();
     await loadSupabaseConfig();
@@ -349,7 +362,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       localCacheState.available = false;
       return Promise.resolve(false);
     }
-    return new Promise(function (resolve) {
+    if (localCacheState.opening) return localCacheState.opening;
+    localCacheState.opening = new Promise(function (resolve) {
       var request = indexedDB.open(LOCAL_CACHE_DB_NAME, 1);
       request.onupgradeneeded = function () {
         var db = request.result;
@@ -360,44 +374,177 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       request.onsuccess = function () {
         localCacheState.db = request.result;
         localCacheState.available = true;
+        localCacheState.closing = false;
+        localCacheState.disabled = false;
+        attachLocalCacheLifecycle(localCacheState.db);
+        localCacheState.opening = null;
         resolve(true);
       };
       request.onerror = function () {
         localCacheState.available = false;
-        console.warn("Cache local IndexedDB indisponivel:", request.error);
+        markLocalCacheError("cache-open", request.error);
+        localCacheState.opening = null;
         resolve(false);
       };
+      request.onblocked = function () {
+        markLocalCacheError("cache-open-blocked", new Error("IndexedDB bloqueado por outra aba."));
+      };
     });
+    return localCacheState.opening;
   }
 
   function cacheKey(moduleName) {
     return moduleName + ":" + activeWarehouseCode();
   }
 
+  function delay(ms) {
+    return new Promise(function (resolve) { window.setTimeout(resolve, ms); });
+  }
+
+  function bindLocalCacheShutdownEvents() {
+    window.addEventListener("pageshow", function () {
+      localCacheState.disabled = false;
+      localCacheState.closing = false;
+      initLocalCache();
+    });
+    window.addEventListener("pagehide", function () {
+      localCacheState.disabled = true;
+      closeLocalCache("pagehide");
+    });
+    window.addEventListener("beforeunload", function () {
+      localCacheState.disabled = true;
+      closeLocalCache("beforeunload");
+    });
+  }
+
+  function attachLocalCacheLifecycle(db) {
+    if (!db) return;
+    db.onversionchange = function () {
+      closeLocalCache("versionchange");
+    };
+    db.onclose = function () {
+      localCacheState.db = null;
+      localCacheState.available = false;
+      localCacheState.closing = true;
+      localCacheState.lastCleanupAt = nowIso();
+    };
+    db.onerror = function (event) {
+      markLocalCacheError("cache-db", event && event.target ? event.target.error : event);
+    };
+  }
+
+  function closeLocalCache(reason) {
+    localCacheState.closing = true;
+    localCacheState.available = false;
+    localCacheState.lastCleanupAt = nowIso();
+    if (localCacheState.db) {
+      try { localCacheState.db.close(); } catch (error) { markLocalCacheError("cache-close-" + reason, error); }
+    }
+    localCacheState.db = null;
+  }
+
+  async function getLocalCacheDb(forceReopen) {
+    if (!("indexedDB" in window) || localCacheState.disabled) return null;
+    if (forceReopen) closeLocalCache("reopen");
+    if (localCacheState.db && localCacheState.available && !localCacheState.closing) return localCacheState.db;
+    await initLocalCache();
+    return localCacheState.db && localCacheState.available && !localCacheState.closing ? localCacheState.db : null;
+  }
+
+  function isIndexedDbClosingError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("connection is closing") >= 0 ||
+      message.indexOf("database connection is closing") >= 0 ||
+      message.indexOf("the database connection is closing") >= 0 ||
+      message.indexOf("database is closing") >= 0 ||
+      message.indexOf("invalidstateerror") >= 0 ||
+      message.indexOf("transaction") >= 0 && message.indexOf("closing") >= 0;
+  }
+
+  function markLocalCacheError(label, error) {
+    localCacheState.lastError = formatSupabaseError(error);
+    localCacheState.lastErrorAt = nowIso();
+    recordPerformanceError(label || "cache", error);
+  }
+
+  async function runCacheOperation(label, fallback, operation) {
+    var waits = [0, 300];
+    for (var attempt = 0; attempt < waits.length + 1; attempt += 1) {
+      try {
+        if (waits[attempt]) await delay(waits[attempt]);
+        var db = await getLocalCacheDb(attempt > 0);
+        if (!db) return fallback;
+        return await operation(db);
+      } catch (error) {
+        if (attempt < waits.length && isIndexedDbClosingError(error)) {
+          closeLocalCache("retry");
+          continue;
+        }
+        markLocalCacheError(label, error);
+        return fallback;
+      }
+    }
+    return fallback;
+  }
+
   function cacheGet(key) {
-    if (!localCacheState.available || !localCacheState.db) return Promise.resolve(null);
-    return new Promise(function (resolve) {
-      var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readonly");
-      var request = tx.objectStore(LOCAL_CACHE_STORE).get(key);
-      request.onsuccess = function () { resolve(request.result || null); };
-      request.onerror = function () {
-        console.warn("Falha ao ler cache local:", request.error);
-        resolve(null);
-      };
+    return runCacheOperation("cache-read", null, function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var tx = db.transaction(LOCAL_CACHE_STORE, "readonly");
+          var request = tx.objectStore(LOCAL_CACHE_STORE).get(key);
+          request.onsuccess = function () { resolve(request.result || null); };
+          request.onerror = function () {
+            markLocalCacheError("cache-read", request.error);
+            resolve(null);
+          };
+        } catch (error) {
+          resolve(Promise.reject(error));
+        }
+      });
     });
   }
 
   function cacheSet(key, value) {
-    if (!localCacheState.available || !localCacheState.db) return Promise.resolve(false);
-    return new Promise(function (resolve) {
-      var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readwrite");
-      tx.objectStore(LOCAL_CACHE_STORE).put({ key: key, value: value, updatedAt: new Date().toISOString() });
-      tx.oncomplete = function () { resolve(true); };
-      tx.onerror = function () {
-        console.warn("Falha ao gravar cache local:", tx.error);
-        resolve(false);
-      };
+    localCacheState.writesPending += 1;
+    localCacheState.writeQueue = localCacheState.writeQueue.catch(function () { return false; }).then(function () {
+      if (localCacheState.disabled || localCacheState.closing) return false;
+      return runCacheOperation("cache-write", false, function (db) {
+        return new Promise(function (resolve, reject) {
+          try {
+            var tx = db.transaction(LOCAL_CACHE_STORE, "readwrite");
+            tx.objectStore(LOCAL_CACHE_STORE).put({ key: key, value: value, updatedAt: new Date().toISOString() });
+            tx.oncomplete = function () { resolve(true); };
+            tx.onerror = function () { reject(tx.error); };
+            tx.onabort = function () { reject(tx.error || new Error("Escrita IndexedDB abortada.")); };
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    }).finally(function () {
+      localCacheState.writesPending = Math.max(0, localCacheState.writesPending - 1);
     });
+    return localCacheState.writeQueue;
+  }
+
+  async function pauseLocalCacheForContextChange(reason) {
+    localCacheState.disabled = true;
+    try {
+      await Promise.race([
+        localCacheState.writeQueue.catch(function () { return false; }),
+        delay(1200)
+      ]);
+    } catch (error) {
+      markLocalCacheError("cache-pause-" + reason, error);
+    }
+    if (localCacheState.writesPending > 0) {
+      markLocalCacheError("cache-pause-" + reason, new Error("Escrita IndexedDB pendente; fechamento adiado."));
+    } else {
+      closeLocalCache(reason || "context-change");
+    }
+    localCacheState.disabled = false;
+    localCacheState.closing = false;
   }
 
   async function readModuleCache(moduleName) {
@@ -570,9 +717,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function recordPerformanceError(label, error) {
+    var message = formatSupabaseError(error);
+    var key = label + ":" + message;
+    var nowTime = Date.now();
+    if (performanceState.errorThrottle[key] && nowTime - performanceState.errorThrottle[key] < 60000) return;
+    performanceState.errorThrottle[key] = nowTime;
     performanceState.recentErrors.unshift({
       label: label,
-      message: formatSupabaseError(error),
+      message: message,
       at: nowIso()
     });
     performanceState.recentErrors = performanceState.recentErrors.slice(0, 8);
@@ -581,18 +733,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function estimateLocalCacheBytes() {
     var bytes = 0;
     try {
-      if (localCacheState.available && localCacheState.db) {
-        bytes += await new Promise(function (resolve) {
-          var total = 0;
-          var tx = localCacheState.db.transaction(LOCAL_CACHE_STORE, "readonly");
-          var request = tx.objectStore(LOCAL_CACHE_STORE).openCursor();
-          request.onsuccess = function () {
-            var cursor = request.result;
-            if (!cursor) return resolve(total);
-            try { total += JSON.stringify(cursor.value || {}).length * 2; } catch (error) { total += 0; }
-            cursor.continue();
-          };
-          request.onerror = function () { resolve(total); };
+      if (localCacheState.available || localCacheState.db) {
+        bytes += await runCacheOperation("cache-estimate", 0, function (db) {
+          return new Promise(function (resolve, reject) {
+            var total = 0;
+            try {
+              var tx = db.transaction(LOCAL_CACHE_STORE, "readonly");
+              var request = tx.objectStore(LOCAL_CACHE_STORE).openCursor();
+              request.onsuccess = function () {
+                var cursor = request.result;
+                if (!cursor) return resolve(total);
+                try { total += JSON.stringify(cursor.value || {}).length * 2; } catch (error) { total += 0; }
+                cursor.continue();
+              };
+              request.onerror = function () { reject(request.error); };
+            } catch (error) {
+              reject(error);
+            }
+          });
         });
       }
       Object.keys(localStorage).forEach(function (key) {
@@ -1162,6 +1320,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function fetchTransferUiEvents() {
+    if (isOptionalRealtimeTableDisabled("wms_transfer_events")) return [];
     var allRows = [];
     var from = 0;
     var pageSize = 1000;
@@ -1194,22 +1353,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       if (!isMissingWarehouseColumnError(error)) {
         if (isMissingTransferTableError(error) || isMissingColumnError(error)) {
-          recordPerformanceError("transfer-events-optional", error);
+          disableOptionalRealtimeTable("wms_transfer_events", error, "transfer-events-optional");
           return [];
         }
         throw error;
       }
-      recordPerformanceError("transfer-events-warehouse", error);
-      if (isMultiWarehouseMode()) return [];
-      assertWarehouseFallbackAllowed("wms_transfer_events", error);
-      return (await fetchAllRows("wms_transfer_events", "created_at", false)).filter(function (row) {
-        return processRowMatchesActiveWarehouse(row) && uiEventTypes.indexOf(row.event_type) >= 0;
-      });
+      disableOptionalRealtimeTable("wms_transfer_events", error, "transfer-events-warehouse");
+      return [];
     }
     return allRows;
   }
 
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
+    if (isOptionalRealtimeTableDisabled(tableName)) return [];
     try {
       var query = supabaseDb
         .from(tableName)
@@ -1223,7 +1379,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     } catch (error) {
       if (isMissingWarehouseColumnError(error)) {
         if (isOptionalRealtimeTable(tableName)) {
-          recordPerformanceError("live-optional-" + tableName, error);
+          disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
           return [];
         }
         assertWarehouseFallbackAllowed(tableName, error);
@@ -1233,7 +1389,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var fallbackResponse = await fallbackQuery;
         if (fallbackResponse.error) {
           if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(fallbackResponse.error) || isMissingColumnError(fallbackResponse.error))) {
-            recordPerformanceError("live-optional-" + tableName, fallbackResponse.error);
+            disableOptionalRealtimeTable(tableName, fallbackResponse.error, "live-optional-" + tableName);
             return [];
           }
           throw fallbackResponse.error;
@@ -1241,7 +1397,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return (fallbackResponse.data || []).filter(processRowMatchesActiveWarehouse);
       }
       if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
-        recordPerformanceError("live-optional-" + tableName, error);
+        disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
         return [];
       }
       throw error;
@@ -1256,6 +1412,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "wms_notifications",
       "wms_replenishment_requests"
     ].indexOf(tableName) >= 0;
+  }
+
+  function isOptionalRealtimeTableDisabled(tableName) {
+    return Boolean(realtimeState.disabledOptionalTables && realtimeState.disabledOptionalTables[tableName]);
+  }
+
+  function disableOptionalRealtimeTable(tableName, error, label) {
+    if (!tableName) return;
+    if (!realtimeState.disabledOptionalTables) realtimeState.disabledOptionalTables = {};
+    if (realtimeState.disabledOptionalTables[tableName]) return;
+    var reason = formatSupabaseError(error);
+    realtimeState.disabledOptionalTables[tableName] = {
+      table: tableName,
+      reason: reason,
+      disabledAt: nowIso()
+    };
+    realtimeState.lastOptionalFailure = realtimeState.disabledOptionalTables[tableName];
+    recordPerformanceError(label || "live-optional-" + tableName, error);
   }
 
   async function fetchActiveWarehouseTransferIds() {
@@ -1332,7 +1506,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       { name: "wms_bindings", code: "warehouse_code", id: "warehouse_id" },
       { name: "wms_transfers", code: "warehouse_code", id: "warehouse_id" },
       { name: "wms_transfer_items", code: "warehouse_code", id: "warehouse_id" },
-      { name: "wms_transfer_events", code: "warehouse_code", id: "warehouse_id" },
       { name: "wms_transfer_divergences", code: "warehouse_code", id: "warehouse_id" },
       { name: "wms_notifications", code: "warehouse_code", id: "warehouse_id" },
       { name: "wms_task_notifications", code: "warehouse_code", id: "warehouse_id" }
@@ -3928,6 +4101,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function recordTransferEvent(transferId, itemId, eventType, sku, quantity, details, payload, meta) {
     if (!isSupabaseReady()) return;
+    if (isOptionalRealtimeTableDisabled("wms_transfer_events")) return;
     var allowedTransferEvents = [
       "TRANSFER_CREATED",
       "TRANSFER_ASSIGNED",
@@ -3970,11 +4144,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       warehouse_code: activeWarehouseCode()
     });
     var response = await supabaseDb.from("wms_transfer_events").insert(extendedRow);
+    if (response.error && isMissingWarehouseColumnError(response.error)) {
+      disableOptionalRealtimeTable("wms_transfer_events", response.error, "transfer-events-write");
+      return;
+    }
     if (response.error && isMissingColumnError(response.error)) {
-      if (isMissingWarehouseColumnError(response.error)) assertWarehouseFallbackAllowed("wms_transfer_events", response.error);
       response = await supabaseDb.from("wms_transfer_events").insert(row);
     }
-    if (response.error && !isMissingTransferTableError(response.error)) {
+    if (response.error && (isMissingTransferTableError(response.error) || isMissingColumnError(response.error))) {
+      disableOptionalRealtimeTable("wms_transfer_events", response.error, "transfer-events-write");
+      return;
+    }
+    if (response.error) {
       console.warn("Evento de transferencia nao salvo:", response.error);
     }
   }
@@ -4535,6 +4716,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function logout() {
     stopTaskPolling();
+    stopLeaderLiveSync();
+    await pauseLocalCacheForContextChange("logout");
     if (authState.currentSession && authState.currentSession.sessionId && isSupabaseReady()) {
       await supabaseDb
         .from("wms_sessions")
@@ -4615,6 +4798,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     if (code === activeWarehouseCode()) return;
     stopLeaderLiveSync();
+    await pauseLocalCacheForContextChange("warehouse-switch");
     setActiveWarehouse(code);
     resetLazyModuleState(true);
     await ensureCoreDataLoaded();
@@ -6832,20 +7016,29 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!moduleLoadState.transfers) realtimeState.lastLiveUpdateAt = "";
     try {
       if (typeof supabaseDb.channel === "function") {
-        realtimeState.channel = supabaseDb
-          .channel("wms-live-" + realtimeState.warehouseCode)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_transfers"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_items"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_events"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_transfer_divergences"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_task_notifications"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_notifications"), handleTransferRealtimeDelta)
-          .on("postgres_changes", warehouseRealtimeConfig("wms_replenishment_requests"), handleTransferRealtimeDelta)
-          .subscribe(function (status) {
-            realtimeState.subscriptionStatus = status;
-            if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
-            if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncStatus("Tempo real reconectando", "warning");
-          });
+        [
+          { name: "wms_transfers", optional: false },
+          { name: "wms_transfer_items", optional: false },
+          { name: "wms_transfer_divergences", optional: true },
+          { name: "wms_task_notifications", optional: true },
+          { name: "wms_notifications", optional: true },
+          { name: "wms_replenishment_requests", optional: false }
+        ].forEach(function (entry) {
+          if (entry.optional && isOptionalRealtimeTableDisabled(entry.name)) return;
+          var channel = supabaseDb
+            .channel("wms-live-" + realtimeState.warehouseCode + "-" + entry.name)
+            .on("postgres_changes", warehouseRealtimeConfig(entry.name), handleTransferRealtimeDelta)
+            .subscribe(function (status) {
+              realtimeState.subscriptionStatus = entry.name + ":" + status;
+              if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
+              if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+                if (entry.optional) disableOptionalRealtimeTable(entry.name, new Error("Assinatura realtime " + status), "live-optional-" + entry.name);
+                else setSyncStatus("Tempo real reconectando", "warning");
+              }
+            });
+          realtimeState.channels.push(channel);
+          if (!realtimeState.channel) realtimeState.channel = channel;
+        });
       }
     } catch (error) {
       recordPerformanceError("realtime", error);
@@ -6879,10 +7072,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       window.clearInterval(realtimeState.pollTimer);
       realtimeState.pollTimer = null;
     }
-    if (realtimeState.channel && supabaseDb && typeof supabaseDb.removeChannel === "function") {
-      try { supabaseDb.removeChannel(realtimeState.channel); } catch (error) { recordPerformanceError("realtime-stop", error); }
+    if (supabaseDb && typeof supabaseDb.removeChannel === "function") {
+      (realtimeState.channels || []).forEach(function (channel) {
+        try { supabaseDb.removeChannel(channel); } catch (error) { recordPerformanceError("realtime-stop", error); }
+      });
+      if (!realtimeState.channels.length && realtimeState.channel) {
+        try { supabaseDb.removeChannel(realtimeState.channel); } catch (error) { recordPerformanceError("realtime-stop", error); }
+      }
     }
     realtimeState.channel = null;
+    realtimeState.channels = [];
   }
 
   async function handleTransferRealtimeDelta(payload) {
@@ -7014,16 +7213,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       } else {
         var transferRows = await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since);
         var itemRows = await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since);
-        var eventRows = await fetchWarehouseUpdatedRows("wms_transfer_events", "created_at", since, "created_at");
         var activeTransferIds = await fetchActiveWarehouseTransferIds();
         transferState.transfers.slice().forEach(function (transfer) {
           if (transferBelongsToActiveWarehouse(transfer) && !activeTransferIds[transfer.id]) removeLocalTransferEverywhere(transfer.id);
         });
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
-        eventRows.forEach(function (row) { if (row.id) upsertById(transferState.events, row); });
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
-        var newest = [since].concat(transferRows.map(function (row) { return row.updated_at || row.created_at || ""; }), itemRows.map(function (row) { return row.updated_at || row.created_at || ""; }), eventRows.map(function (row) { return row.created_at || ""; })).sort().pop();
+        var newest = [since].concat(transferRows.map(function (row) { return row.updated_at || row.created_at || ""; }), itemRows.map(function (row) { return row.updated_at || row.created_at || ""; })).sort().pop();
         realtimeState.lastLiveUpdateAt = newest || nowIso();
         writeTransferCacheSoon();
       }
@@ -8414,10 +8611,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var key = LOCAL_SYNC_PREFIX + moduleName + ":" + warehouse;
       return { moduleName: moduleName, value: localStorage.getItem(key) || "" };
     });
+    var disabledRealtimeTables = Object.keys(realtimeState.disabledOptionalTables || {}).map(function (tableName) {
+      var entry = realtimeState.disabledOptionalTables[tableName] || {};
+      return tableName + ": " + (entry.reason || "desativada");
+    });
     $("systemDiagnosticsSummary").innerHTML = [
       summaryChip("Estoque ativo", warehouse),
       summaryChip("Supabase", isSupabaseReady() ? "Conectado" : "Nao configurado", isSupabaseReady() ? "result-ok" : "result-missing"),
       summaryChip("Cache local", localCacheState.available ? "IndexedDB OK" : "Indisponivel", localCacheState.available ? "result-ok" : "result-missing"),
+      summaryChip("Fila cache", localCacheState.writesPending + " pendente(s)", localCacheState.writesPending ? "result-missing" : "result-ok"),
       summaryChip("PWA", serviceWorkerStatus, serviceWorkerStatus === "Ativo" ? "result-ok" : ""),
       summaryChip("Tamanho cache", formatBytes(cacheBytes)),
       summaryChip("Ultima sync", performanceState.lastSyncAt ? formatDateTime(performanceState.lastSyncAt) : "-"),
@@ -8428,6 +8630,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("systemDiagnosticsDetails").innerHTML = [
       "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
       "<p><strong>Tempo real das transferencias:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + " | Canal: " + escapeHtml(realtimeState.warehouseCode ? "wms-live-" + realtimeState.warehouseCode : "-") + " | Status: " + escapeHtml(realtimeState.subscriptionStatus || "-") + (realtimeState.lastLiveUpdateAt ? " | Ultima mensagem: " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
+      "<p><strong>Cache IndexedDB:</strong> " + escapeHtml(localCacheState.available ? "ativo" : "inativo") + " | escritas pendentes: " + escapeHtml(String(localCacheState.writesPending || 0)) + " | ultimo erro: " + escapeHtml(localCacheState.lastError || "-") + " | ultima limpeza: " + escapeHtml(localCacheState.lastCleanupAt ? formatDateTime(localCacheState.lastCleanupAt) : "-") + ".</p>",
+      "<p><strong>Tabelas realtime opcionais desativadas:</strong> " + escapeHtml(disabledRealtimeTables.length ? disabledRealtimeTables.join(" | ") : "nenhuma") + ".</p>",
       "<p><strong>Sessao:</strong> usuario " + escapeHtml((authState.currentUser || {}).name || "-") + " | perfil " + escapeHtml((authState.currentUser || {}).role || "-") + " | id " + escapeHtml((authState.currentUser || {}).id || "-") + " | responsavel em tarefas: " + escapeHtml((authState.currentUser || {}).availableForTasks ? "sim" : "nao") + ".</p>",
       "<p><strong>Consulta transferencias:</strong> ultima " + performanceState.lastTransferQueryMs + " ms | carregamento " + performanceState.lastTransferLoadMs + " ms | pendente refresh: " + escapeHtml(realtimeState.refreshPending ? "sim" : "nao") + " | executando: " + escapeHtml(realtimeState.refreshRunning ? "sim" : "nao") + ".</p>",
       "<p><strong>Ultimos eventos realtime:</strong></p>",
