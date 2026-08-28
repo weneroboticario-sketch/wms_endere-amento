@@ -270,6 +270,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastStockLoadMs: 0,
     lastSkuQueryMs: 0,
     lastTransferQueryMs: 0,
+    lastReplenishmentCreateError: "",
+    lastReplenishmentCreateErrorAt: "",
     recentErrors: [],
     errorThrottle: {}
   };
@@ -725,6 +727,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var nowTime = Date.now();
     if (performanceState.errorThrottle[key] && nowTime - performanceState.errorThrottle[key] < 60000) return;
     performanceState.errorThrottle[key] = nowTime;
+    if (label === "reposicao-create") {
+      performanceState.lastReplenishmentCreateError = message;
+      performanceState.lastReplenishmentCreateErrorAt = nowIso();
+    }
     performanceState.recentErrors.unshift({
       label: label,
       message: message,
@@ -3506,6 +3512,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "Erro na Base de Estoque: " + formatSupabaseError(error);
   }
 
+  function isMissingReplenishmentTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("wms_replenishment_requests") >= 0 && (
+      message.indexOf("not found") >= 0 ||
+      message.indexOf("schema cache") >= 0 ||
+      message.indexOf("does not exist") >= 0 ||
+      message.indexOf("pgrst") >= 0 ||
+      message.indexOf("404") >= 0 ||
+      message.indexOf("could not find") >= 0
+    );
+  }
+
   function stockService() {
     return {
       importStoreStock: function () { return importStockFromInput("LOJA"); },
@@ -3711,7 +3729,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock", error);
     }
     var now = nowIso();
-    var idempotencyKey = data.idempotencyKey || createStableIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty]);
+    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty]);
     var clientActionId = data.clientActionId || idempotencyKey;
     var existingByKey = await findReplenishmentByIdempotencyKey(idempotencyKey);
     if (existingByKey) return existingByKey;
@@ -6990,7 +7008,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       handleReplenishmentSkuInput();
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
-        : createStableIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value]);
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value]);
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: $("replenishmentSkuInput").value,
@@ -7011,6 +7029,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
     } catch (error) {
       var message = formatSupabaseError(error);
+      recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentCreateStatus", "Erro ao criar pedido: " + message, "error");
       showToast("Erro ao criar pedido de reposicao.", "error");
     } finally {
@@ -7144,7 +7163,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
-        : createStableIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty]);
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty]);
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: suggestion.sku,
@@ -7175,6 +7194,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         setStatus("skuSearchStatus", "Pedido de reposicao criado para SKU " + created.codigoMaterial + ".", "success");
       }
     } catch (error) {
+      recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentSuggestionModalStatus", "Erro ao criar pedido: " + formatSupabaseError(error), "error");
     } finally {
       if (button) {
@@ -9097,9 +9117,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var entry = realtimeState.disabledOptionalTables[tableName] || {};
       return tableName + ": " + (entry.reason || "desativada");
     });
+    var replenishmentSchema = await getReplenishmentSchemaDiagnostics();
     $("systemDiagnosticsSummary").innerHTML = [
       summaryChip("Estoque ativo", warehouse),
       summaryChip("Supabase", isSupabaseReady() ? "Conectado" : "Nao configurado", isSupabaseReady() ? "result-ok" : "result-missing"),
+      summaryChip("Reposicao schema", replenishmentSchema.ready ? "OK" : "Pendente", replenishmentSchema.ready ? "result-ok" : "result-missing"),
       summaryChip("Cache local", localCacheState.available ? "IndexedDB OK" : "Indisponivel", localCacheState.available ? "result-ok" : "result-missing"),
       summaryChip("Fila cache", localCacheState.writesPending + " pendente(s)", localCacheState.writesPending ? "result-missing" : "result-ok"),
       summaryChip("PWA", serviceWorkerStatus, serviceWorkerStatus === "Ativo" ? "result-ok" : ""),
@@ -9110,6 +9132,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Consulta SKU", performanceState.lastSkuQueryMs + " ms")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
+      "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
+      "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",
+      "<p><strong>Indices de idempotencia da reposicao:</strong> idx_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.idx_replenishment_requests_idempotency) + " | uq_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.uq_replenishment_requests_idempotency) + ".</p>",
+      "<p><strong>Ultimo erro de criacao de pedido:</strong> " + escapeHtml(performanceState.lastReplenishmentCreateError || "-") + (performanceState.lastReplenishmentCreateErrorAt ? " em " + escapeHtml(formatDateTime(performanceState.lastReplenishmentCreateErrorAt)) : "") + ".</p>",
+      replenishmentSchema.error ? "<p><strong>Diagnostico reposicao:</strong> " + escapeHtml(replenishmentSchema.error) + "</p>" : "",
       "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
       "<p><strong>Tempo real das transferencias:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + " | Canal: " + escapeHtml(realtimeState.warehouseCode ? "wms-live-" + realtimeState.warehouseCode : "-") + " | Status: " + escapeHtml(realtimeState.subscriptionStatus || "-") + (realtimeState.lastLiveUpdateAt ? " | Ultima mensagem: " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
       "<p><strong>Cache IndexedDB:</strong> " + escapeHtml(localCacheState.available ? "ativo" : "inativo") + " | escritas pendentes: " + escapeHtml(String(localCacheState.writesPending || 0)) + " | ultimo erro: " + escapeHtml(localCacheState.lastError || "-") + " | ultima limpeza: " + escapeHtml(localCacheState.lastCleanupAt ? formatDateTime(localCacheState.lastCleanupAt) : "-") + ".</p>",
@@ -9123,6 +9150,71 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Erros recentes:</strong></p>",
       performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
     ].join("");
+  }
+
+  async function getReplenishmentSchemaDiagnostics() {
+    var result = {
+      ready: false,
+      columns: {
+        idempotency_key: null,
+        warehouse_code: null,
+        client_action_id: null,
+        created_by_id: null,
+        updated_at: null
+      },
+      indexes: {
+        idx_replenishment_requests_idempotency: null,
+        uq_replenishment_requests_idempotency: null
+      },
+      error: ""
+    };
+    if (!isSupabaseReady()) return result;
+    var rpcResponse = await supabaseDb.rpc("wms_replenishment_schema_diagnostics");
+    if (!rpcResponse.error && rpcResponse.data) {
+      var data = Array.isArray(rpcResponse.data) ? rpcResponse.data[0] : rpcResponse.data;
+      result.columns = Object.assign(result.columns, (data && data.columns) || {});
+      result.indexes = Object.assign(result.indexes, (data && data.indexes) || {});
+      result.ready = result.columns.idempotency_key === true &&
+        result.columns.warehouse_code === true &&
+        result.indexes.uq_replenishment_requests_idempotency === true;
+      return result;
+    }
+    if (rpcResponse.error && !isMissingRpcFunctionError(rpcResponse.error)) {
+      result.error = "Falha ao executar diagnostico SQL: " + formatSupabaseError(rpcResponse.error);
+      return result;
+    }
+    var columnNames = Object.keys(result.columns);
+    for (var index = 0; index < columnNames.length; index += 1) {
+      result.columns[columnNames[index]] = await probeReplenishmentColumn(columnNames[index]);
+    }
+    result.ready = false;
+    result.error = result.columns.idempotency_key === false
+      ? "Coluna idempotency_key ausente em wms_replenishment_requests. Execute a migration no Supabase correto."
+      : "Funcao wms_replenishment_schema_diagnostics ausente; indices nao verificados pelo app. Execute supabase-schema.sql no Supabase correto.";
+    return result;
+  }
+
+  async function probeReplenishmentColumn(columnName) {
+    var response = await supabaseDb
+      .from("wms_replenishment_requests")
+      .select("id," + columnName)
+      .limit(1);
+    if (!response.error) return true;
+    if (isMissingColumnError(response.error) || isMissingReplenishmentTableError(response.error)) return false;
+    return null;
+  }
+
+  function isMissingRpcFunctionError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("could not find the function") >= 0 ||
+      (message.indexOf("function") >= 0 && message.indexOf("schema cache") >= 0) ||
+      message.indexOf("pgrst202") >= 0;
+  }
+
+  function yesNoDiagnostic(value) {
+    if (value === true) return "Sim";
+    if (value === false) return "Nao";
+    return "Nao verificado";
   }
 
   async function readMaintenanceTable(table) {
@@ -12731,12 +12823,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).filter(Boolean)).join(":") + ":" + Date.now().toString(36) + "-" + Math.random().toString(16).slice(2, 10);
   }
 
-  function createStableIdempotencyKey(parts) {
-    return unique((parts || []).map(function (part) {
-      return normalizeText(part).toUpperCase().replace(/[^A-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
-    }).filter(Boolean)).join(":");
-  }
-
   function isMissingIdempotencyColumnError(error) {
     return !!getMissingReplenishmentIdempotencyColumn(error);
   }
@@ -14267,6 +14353,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_sessions") >= 0 ||
       message.indexOf("wms_task_notifications") >= 0 ||
       message.indexOf("wms_notifications") >= 0 ||
+      message.indexOf("wms_replenishment_requests") >= 0 ||
       message.indexOf("wms_stock_positions") >= 0 ||
       message.indexOf("wms_stock_import_batches") >= 0 ||
       message.indexOf("wms_stock_alerts") >= 0
