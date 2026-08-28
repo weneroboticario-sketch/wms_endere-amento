@@ -11547,8 +11547,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var parsed = normalizeLocation(code);
     return [
       "<article class=\"label-card\">",
-      "<svg class=\"barcode\" data-label-index=\"" + index + "\" data-code=\"" + parsed.code + "\" aria-label=\"" + parsed.code + "\"></svg>",
       "<h3>" + parsed.code + "</h3>",
+      "<svg class=\"barcode\" data-label-index=\"" + index + "\" data-code=\"" + parsed.code + "\" aria-label=\"" + parsed.code + "\"></svg>",
       "</article>"
     ].join("");
   }
