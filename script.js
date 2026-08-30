@@ -34,6 +34,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
+    saudeSistema: ["ADMINISTRADOR"],
     manutencao: ["ADMINISTRADOR"],
     estoques: ["ADMINISTRADOR"],
     baseEstoque: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -221,6 +222,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastReport: null,
     checking: false,
     cleaning: false
+  };
+  var healthState = {
+    lastReport: null,
+    loading: false,
+    warehouseFilter: "ALL"
   };
   var replenishmentState = {
     requests: [],
@@ -650,6 +656,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return loaded;
   }
 
+  async function ensureHealthDataLoaded() {
+    await ensureWarehousesLoaded();
+    await ensureUsersLoaded({ repair: false });
+    await ensureCoreDataLoaded();
+    await ensureTransferDataLoaded();
+    await ensureReplenishmentDataLoaded();
+    await ensureStockDataLoaded();
+    return true;
+  }
+
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
     if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
@@ -664,6 +680,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       await ensureAccessRequestsLoaded();
     }
     if (screenId === "estoques") await ensureWarehousesLoaded();
+    if (screenId === "saudeSistema") await ensureHealthDataLoaded();
     return true;
   }
 
@@ -1961,7 +1978,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return applyTransferQuantityType({
       id: row.id,
       transferId: row.transfer_id || "",
-      sku: row.sku || "",
+      sku: row.sku || row.codigo_material || "",
       description: row.descricao || "",
       requestedQty: Number(row.quantidade_solicitada || 0),
       unit: row.unidade_medida || "UN",
@@ -2114,6 +2131,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       id: item.id,
       transfer_id: item.transferId,
       sku: item.sku,
+      codigo_material: normalizeSku(item.sku || item.codigoMaterial || ""),
       descricao: item.description,
       quantidade_solicitada: Number(item.requestedQty || 0),
       unidade_medida: item.unit || "UN",
@@ -5987,6 +6005,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderAll();
     if (screenId === "usuarios") renderUsers();
     if (screenId === "manutencao") renderMaintenance();
+    if (screenId === "saudeSistema") renderSystemHealth(true);
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
@@ -6000,7 +6019,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base de Estoque" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base de Estoque" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
@@ -6296,6 +6315,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
     if ($("maintenanceAddressRows")) $("maintenanceAddressRows").addEventListener("click", handleAddressMaintenanceAction);
     if ($("refreshDiagnosticsButton")) $("refreshDiagnosticsButton").addEventListener("click", renderSystemDiagnostics);
+    if ($("refreshHealthButton")) $("refreshHealthButton").addEventListener("click", function () { renderSystemHealth(true); });
+    if ($("healthWarehouseFilter")) $("healthWarehouseFilter").addEventListener("change", function (event) {
+      healthState.warehouseFilter = event.target.value || "ALL";
+      renderSystemHealth(true);
+    });
+    if ($("generateHealthSqlButton")) $("generateHealthSqlButton").addEventListener("click", generateHealthCorrectionSql);
+    if ($("verifyHealthDuplicatesButton")) $("verifyHealthDuplicatesButton").addEventListener("click", function () { renderSystemHealth(true); });
+    if ($("verifyHealthOrphansButton")) $("verifyHealthOrphansButton").addEventListener("click", function () { renderSystemHealth(true); });
+    if ($("clearHealthCacheButton")) $("clearHealthCacheButton").addEventListener("click", clearHealthLocalCache);
+    if ($("rebuildHealthCacheButton")) $("rebuildHealthCacheButton").addEventListener("click", rebuildHealthLocalCache);
+    if ($("flushHealthPendingButton")) $("flushHealthPendingButton").addEventListener("click", flushHealthPendingWrites);
+    if ($("archiveHealthNotificationsButton")) $("archiveHealthNotificationsButton").addEventListener("click", archiveHealthOldNotifications);
+    if ($("archiveHealthInactiveUsersButton")) $("archiveHealthInactiveUsersButton").addEventListener("click", archiveHealthInactiveUsers);
+    if ($("generateHealthReportButton")) $("generateHealthReportButton").addEventListener("click", downloadSystemHealthReport);
     $("maintenanceTestRows").addEventListener("click", handleTransferActionClick);
     $("resetSampleButton").addEventListener("click", restoreSamples);
     $("clearAllButton").addEventListener("click", clearAllData);
@@ -6654,6 +6687,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (activeScreen === "reposicao") renderReplenishment();
     if (activeScreen === "baseEstoque") renderStockBase();
     if (activeScreen === "manutencao") renderMaintenance();
+    if (activeScreen === "saudeSistema") renderSystemHealth(false);
     if (activeScreen === "estoques") renderWarehouses();
     renderOperatorTasksAlert();
   }
@@ -9150,6 +9184,536 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Erros recentes:</strong></p>",
       performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
     ].join("");
+  }
+
+  function healthRequiredColumns() {
+    return {
+      wms_replenishment_requests: ["id", "warehouse_code", "codigo_material", "quantidade_solicitada", "status", "created_at", "updated_at", "idempotency_key", "client_action_id", "created_by_id"],
+      wms_transfers: ["id", "warehouse_code", "status", "created_at", "updated_at"],
+      wms_transfer_items: ["id", "transfer_id", "codigo_material", "quantidade_solicitada", "created_at", "updated_at"],
+      wms_stock_positions: ["id", "warehouse_code", "source_type", "codigo_material", "total_disponivel", "active", "batch_id", "record_hash"],
+      wms_users: ["id", "username", "role", "default_warehouse_code", "active", "archived"]
+    };
+  }
+
+  async function renderSystemHealth(forceRefresh) {
+    if (!$("healthSummary")) return;
+    renderHealthWarehouseFilter();
+    if (forceRefresh || !healthState.lastReport) {
+      await refreshSystemHealth();
+      return;
+    }
+    renderHealthReport(healthState.lastReport);
+  }
+
+  function renderHealthWarehouseFilter() {
+    var select = $("healthWarehouseFilter");
+    if (!select) return;
+    var current = healthState.warehouseFilter || "ALL";
+    var warehouses = (warehouseState.warehouses && warehouseState.warehouses.length ? warehouseState.warehouses : WAREHOUSE_SEED).filter(function (warehouse) {
+      return warehouse.active !== false;
+    });
+    select.innerHTML = "<option value=\"ALL\">Todos os estoques</option>" + warehouses.map(function (warehouse) {
+      var code = normalizeWarehouseCode(warehouse.code);
+      return "<option value=\"" + escapeHtml(code) + "\">" + escapeHtml(code + " - " + (warehouse.name || "Estoque " + code)) + "</option>";
+    }).join("");
+    select.value = warehouses.some(function (warehouse) { return normalizeWarehouseCode(warehouse.code) === current; }) ? current : "ALL";
+    healthState.warehouseFilter = select.value;
+  }
+
+  async function refreshSystemHealth() {
+    if (healthState.loading) return;
+    healthState.loading = true;
+    setStatus("healthStatus", "Gerando diagnóstico técnico do WMS...", "warning");
+    try {
+      var report = await buildSystemHealthReport();
+      healthState.lastReport = report;
+      renderHealthReport(report);
+      setStatus("healthStatus", report.summary.criticalIssues ? "Diagnóstico concluído com pontos críticos para revisar." : "Diagnóstico concluído. Nada foi alterado no banco.", report.summary.criticalIssues ? "warning" : "success");
+    } catch (error) {
+      recordPerformanceError("saude-sistema", error);
+      setStatus("healthStatus", "Erro ao gerar diagnóstico: " + formatSupabaseError(error), "error");
+    } finally {
+      healthState.loading = false;
+    }
+  }
+
+  async function buildSystemHealthReport() {
+    var startedAt = performance.now();
+    var selectedCodes = healthSelectedWarehouseCodes();
+    var schema = await checkSystemHealthColumns();
+    var stockRowsResult = await readHealthRows("wms_stock_positions", "id,warehouse_code,source_type,codigo_material,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,created_at,updated_at", "updated_at", 1800);
+    var batchesResult = await readHealthRows("wms_stock_import_batches", "*", "created_at", 240);
+    var notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,entity_id,event_type,transfer_id,read,seen,archived,created_at", "created_at", 1000);
+    if (notificationRowsResult.error && isMissingColumnError(notificationRowsResult.error)) {
+      notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,transfer_id,created_at", "created_at", 1000);
+    }
+    var stockRows = (stockRowsResult.rows || []).filter(function (row) { return healthRowMatchesWarehouse(row, selectedCodes, true); });
+    var batches = (batchesResult.rows || stockState.batches || []).filter(function (row) { return healthRowMatchesWarehouse(row, selectedCodes, true); });
+    var notificationRows = (notificationRowsResult.rows || []).filter(function (row) { return healthRowMatchesWarehouse(row, selectedCodes, true); });
+    var transfers = transferState.transfers.filter(function (transfer) { return healthRowMatchesWarehouse(transfer, selectedCodes, true); });
+    var transferItems = transferState.items.filter(function (item) { return healthRowMatchesWarehouse(item, selectedCodes, true); });
+    var requests = replenishmentState.requests.filter(function (request) { return healthRowMatchesWarehouse(request, selectedCodes, true); });
+    var users = authState.users.filter(function (user) {
+      if (healthState.warehouseFilter === "ALL") return true;
+      return userBelongsToWarehouse(user, selectedCodes[0]);
+    });
+    var duplicates = buildHealthDuplicateReport(stockRows, transfers, transferItems, requests, notificationRows, users);
+    var orphans = buildHealthOrphanReport(stockRows, batches, transfers, transferItems, requests, users);
+    var imports = buildHealthImportReport(batches);
+    var runtime = buildHealthRuntimeReport(startedAt);
+    var openTransfers = transfers.filter(function (transfer) { return !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; });
+    var openRequests = requests.filter(function (request) {
+      return !request.isDeleted && ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"].indexOf(request.status) >= 0;
+    });
+    var inactiveUsers = users.filter(function (user) { return user.active === false || user.archived === true; });
+    var noWarehouseRecords = orphans.items.filter(function (item) { return item.kind === "warehouse"; }).reduce(function (sum, item) { return sum + item.count; }, 0);
+    return {
+      generatedAt: nowIso(),
+      warehouseLabel: healthState.warehouseFilter === "ALL" ? "Todos" : selectedCodes[0],
+      schema: schema,
+      duplicates: duplicates,
+      orphans: orphans,
+      imports: imports,
+      runtime: runtime,
+      openTransfers: openTransfers.length,
+      openRequests: openRequests.length,
+      inactiveUsers: inactiveUsers.length,
+      noWarehouseRecords: noWarehouseRecords,
+      summary: {
+        missingColumns: schema.missing.length,
+        duplicateGroups: duplicates.total,
+        orphanGroups: orphans.total,
+        recentErrors: performanceState.recentErrors.length,
+        criticalIssues: schema.missing.length + duplicates.total + noWarehouseRecords
+      }
+    };
+  }
+
+  async function checkSystemHealthColumns() {
+    var required = healthRequiredColumns();
+    var result = { checked: [], missing: [], errors: [] };
+    var tables = Object.keys(required);
+    for (var tableIndex = 0; tableIndex < tables.length; tableIndex += 1) {
+      var table = tables[tableIndex];
+      for (var columnIndex = 0; columnIndex < required[table].length; columnIndex += 1) {
+        var column = required[table][columnIndex];
+        var probe = await probeHealthColumn(table, column);
+        var item = { table: table, column: column, ok: probe.ok, error: probe.error || "" };
+        result.checked.push(item);
+        if (probe.ok === false) result.missing.push(item);
+        if (probe.ok === null && probe.error) result.errors.push(item);
+      }
+    }
+    return result;
+  }
+
+  async function probeHealthColumn(tableName, columnName) {
+    if (!isSupabaseReady()) return { ok: null, error: "Supabase não configurado." };
+    try {
+      var response = await supabaseDb.from(tableName).select(columnName).limit(1);
+      if (response.error) {
+        if (isMissingColumnError(response.error) || isMissingHealthTableError(response.error)) return { ok: false, error: formatSupabaseError(response.error) };
+        return { ok: null, error: formatSupabaseError(response.error) };
+      }
+      return { ok: true };
+    } catch (error) {
+      if (isMissingColumnError(error) || isMissingHealthTableError(error)) return { ok: false, error: formatSupabaseError(error) };
+      return { ok: null, error: formatSupabaseError(error) };
+    }
+  }
+
+  function isMissingHealthTableError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("could not find the table") >= 0 ||
+      message.indexOf("does not exist") >= 0 && message.indexOf("relation") >= 0 ||
+      message.indexOf("schema cache") >= 0 && message.indexOf("table") >= 0;
+  }
+
+  async function readHealthRows(tableName, selectColumns, orderColumn, limit) {
+    if (!isSupabaseReady()) return { rows: [], error: null };
+    try {
+      var query = supabaseDb.from(tableName).select(selectColumns || "*");
+      if (orderColumn) query = query.order(orderColumn, { ascending: false });
+      if (limit) query = query.limit(limit);
+      var response = await query;
+      if (response.error) return { rows: [], error: response.error };
+      return { rows: response.data || [], error: null };
+    } catch (error) {
+      return { rows: [], error: error };
+    }
+  }
+
+  function healthSelectedWarehouseCodes() {
+    if (healthState.warehouseFilter && healthState.warehouseFilter !== "ALL") return [normalizeWarehouseCode(healthState.warehouseFilter)];
+    return activeWarehouseCodes();
+  }
+
+  function healthRowMatchesWarehouse(row, selectedCodes, includeBlankWhenAll) {
+    var rawCode = rawWarehouseCodeValue(row);
+    if (!rawCode) return healthState.warehouseFilter === "ALL" && includeBlankWhenAll;
+    return selectedCodes.indexOf(normalizeWarehouseCode(rawCode)) >= 0;
+  }
+
+  function buildHealthDuplicateReport(stockRows, transfers, transferItems, requests, notifications, users) {
+    var results = [];
+    pushHealthDuplicateGroups(results, stockRows.filter(function (row) { return row.active === true; }), function (row) {
+      return [rowWarehouseCode(row), row.source_type || "", normalizeSku(row.codigo_material), row.codigo_endereco || row.localizacao_wms || row.estacao || "", row.rack || "", row.linha || "", row.coluna || ""].join("|");
+    }, "Base de Estoque", "Mesmo estoque, origem, SKU e localização ativos.");
+    pushHealthDuplicateGroups(results, requests.filter(function (request) {
+      return ["PENDENTE", "EM_SEPARACAO", "ATENDIDO_PARCIAL"].indexOf(request.status) >= 0;
+    }), function (request) {
+      return [request.warehouseCode || rowWarehouseCode(request), request.codigoMaterial].join("|");
+    }, "Reposição", "Pedido aberto repetido para o mesmo SKU.");
+    pushHealthDuplicateGroups(results, transferItems, function (item) {
+      return [item.transferId, item.sku || item.codigo_material || ""].join("|");
+    }, "Transferência", "Mesmo SKU duplicado dentro da mesma transferência.");
+    pushHealthDuplicateGroups(results, notifications.filter(function (row) {
+      return row.archived !== true && row.read !== true && row.seen !== true;
+    }), function (row) {
+      return [rowWarehouseCode(row), row.user_id || "", row.entity_id || row.transfer_id || "", row.event_type || ""].join("|");
+    }, "Notificações", "Notificação não vista repetida para o mesmo evento.");
+    pushHealthDuplicateGroups(results, users, function (user) {
+      return normalizeText(user.username || user.matricula || "").toLowerCase();
+    }, "Usuários", "Login ou matrícula repetidos.");
+    return { total: results.reduce(function (sum, item) { return sum + item.count; }, 0), items: results };
+  }
+
+  function pushHealthDuplicateGroups(results, rows, keyBuilder, title, detail) {
+    var map = {};
+    (rows || []).forEach(function (row) {
+      var key = keyBuilder(row);
+      if (!key || key.replace(/\|/g, "") === "") return;
+      if (!map[key]) map[key] = 0;
+      map[key] += 1;
+    });
+    Object.keys(map).forEach(function (key) {
+      if (map[key] > 1) results.push({ title: title, detail: detail + " Chave: " + key, count: map[key] });
+    });
+  }
+
+  function buildHealthOrphanReport(stockRows, batches, transfers, transferItems, requests, users) {
+    var results = [];
+    var transferIds = {};
+    transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
+    pushHealthCount(results, "Itens de transferência sem pai", transferItems.filter(function (item) { return item.transferId && !transferIds[item.transferId]; }).length, "Transferência", "Itens apontam para transferência inexistente.");
+    pushHealthCount(results, "Pedidos sem warehouse_code", requests.filter(function (request) { return !rawWarehouseCodeValue(request); }).length, "warehouse", "Reposição precisa pertencer a um estoque.");
+    pushHealthCount(results, "Transferências sem warehouse_code", transfers.filter(function (transfer) { return !rawWarehouseCodeValue(transfer); }).length, "warehouse", "Transferência precisa pertencer a um estoque.");
+    pushHealthCount(results, "Itens sem código material", transferItems.filter(function (item) { return !normalizeSku(item.sku || item.codigo_material || ""); }).length, "Transferência", "Itens precisam de SKU/código.");
+    pushHealthCount(results, "Usuários sem estoque", users.filter(function (user) { return !normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) && !allowedWarehouseCodesForUser(user).length; }).length, "warehouse", "Usuário precisa de estoque padrão ou permitido.");
+    pushHealthCount(results, "Base sem warehouse_code", stockRows.filter(function (row) { return !rawWarehouseCodeValue(row); }).length, "warehouse", "Registro de estoque precisa pertencer a um estoque.");
+    pushHealthCount(results, "Base sem codigo_material", stockRows.filter(function (row) { return !normalizeSku(row.codigo_material || ""); }).length, "Base de Estoque", "Registro de estoque sem SKU.");
+    pushHealthCount(results, "Importações travadas", (batches || []).filter(function (batch) {
+      return normalizeText(batch.status).toUpperCase() === "PROCESSING" && healthDateOlderThanHours(batch.created_at, 2);
+    }).length, "Importação", "Lote ficou PROCESSING por mais de 2 horas.");
+    return { total: results.reduce(function (sum, item) { return sum + item.count; }, 0), items: results };
+  }
+
+  function pushHealthCount(results, title, count, kind, detail) {
+    if (count > 0) results.push({ title: title, count: count, kind: kind || "", detail: detail || "" });
+  }
+
+  function buildHealthImportReport(batches) {
+    var groups = {};
+    (batches || []).forEach(function (batch) {
+      var key = [rowWarehouseCode(batch), normalizeText(batch.source_type || "-").toUpperCase()].join("|");
+      if (!groups[key] || new Date(batch.created_at || 0) > new Date(groups[key].created_at || 0)) groups[key] = batch;
+    });
+    return Object.keys(groups).sort().map(function (key) {
+      var batch = groups[key];
+      return {
+        title: rowWarehouseCode(batch) + " - " + (batch.source_type || "-"),
+        status: batch.status || "-",
+        createdAt: batch.created_at || "",
+        user: batch.imported_by_name || "-",
+        detail: "Linhas: " + formatQty(batch.total_rows || 0) + " | importadas: " + formatQty(batch.imported_rows || 0) + " | ignoradas: " + formatQty(batch.ignored_rows || 0) + " | negativas: " + formatQty(batch.negative_rows || 0) + " | erros: " + formatQty(batch.error_rows || 0)
+      };
+    }).slice(0, 12);
+  }
+
+  function buildHealthRuntimeReport(startedAt) {
+    var serviceWorkerStatus = "Indisponível";
+    if ("serviceWorker" in navigator) serviceWorkerStatus = navigator.serviceWorker.controller ? "Ativo" : "Registrado/pendente";
+    return {
+      generatedMs: Math.round(performance.now() - startedAt),
+      cacheBytes: 0,
+      serviceWorkerStatus: serviceWorkerStatus,
+      cacheKeys: ["coreData", "transferData", "stockData", "replenishmentData"].map(function (moduleName) {
+        return { moduleName: moduleName, value: localStorage.getItem(LOCAL_SYNC_PREFIX + cacheKey(moduleName)) || "" };
+      })
+    };
+  }
+
+  function renderHealthReport(report) {
+    if (!$("healthSummary")) return;
+    $("healthSummary").innerHTML = [
+      summaryChip("Supabase", isSupabaseReady() ? "Online" : "Não configurado", isSupabaseReady() ? "result-ok" : "result-missing"),
+      summaryChip("Realtime", realtimeState.active ? "Conectado" : (realtimeState.subscriptionStatus || "Desconectado"), realtimeState.active ? "result-ok" : "result-missing"),
+      summaryChip("Cache local", localCacheState.disabled ? "Desativado" : localCacheState.lastError ? "Erro" : localCacheState.available ? "OK" : "Indisponível", localCacheState.lastError ? "result-missing" : localCacheState.available ? "result-ok" : "result-changed"),
+      summaryChip("Sincronização", localCacheState.writesPending ? localCacheState.writesPending + " pendência(s)" : performanceState.syncStatus || "OK", localCacheState.writesPending ? "result-changed" : performanceState.syncType === "error" ? "result-missing" : "result-ok"),
+      summaryChip("Última importação Loja", healthLastImportLabel(report.imports, "LOJA"), healthLastImportClass(report.imports, "LOJA")),
+      summaryChip("Última importação Captação", healthLastImportLabel(report.imports, "CAPTACAO"), healthLastImportClass(report.imports, "CAPTACAO")),
+      summaryChip("Pedidos abertos", report.openRequests, report.openRequests ? "result-changed" : "result-ok"),
+      summaryChip("Transferências abertas", report.openTransfers, report.openTransfers ? "result-changed" : "result-ok"),
+      summaryChip("Erros recentes", report.summary.recentErrors, report.summary.recentErrors ? "result-missing" : "result-ok"),
+      summaryChip("Duplicidades", report.summary.duplicateGroups, report.summary.duplicateGroups ? "result-missing" : "result-ok"),
+      summaryChip("Sem warehouse_code", report.noWarehouseRecords, report.noWarehouseRecords ? "result-missing" : "result-ok"),
+      summaryChip("Usuários inativos/arquivados", report.inactiveUsers, report.inactiveUsers ? "result-changed" : "result-ok")
+    ].join("");
+    renderHealthRows("healthSchemaRows", report.schema.missing.length ? report.schema.missing.map(function (item) {
+      return { title: "Coluna ausente: " + item.table + "." + item.column, detail: item.error || "Campo obrigatório não encontrado.", count: "Corrigir", level: "error" };
+    }) : [{ title: "Estrutura obrigatória OK", detail: report.schema.checked.length + " coluna(s) verificadas.", count: "OK", level: "ok" }]);
+    renderHealthRows("healthDuplicateRows", report.duplicates.items.length ? report.duplicates.items.map(function (item) {
+      return { title: item.title, detail: item.detail, count: item.count, level: "warning" };
+    }) : [{ title: "Nenhuma duplicidade crítica", detail: "Amostra operacional verificada para o estoque selecionado.", count: "OK", level: "ok" }]);
+    renderHealthRows("healthOrphanRows", report.orphans.items.length ? report.orphans.items.map(function (item) {
+      return { title: item.title, detail: item.detail, count: item.count, level: item.kind === "warehouse" ? "error" : "warning" };
+    }) : [{ title: "Nenhum órfão crítico", detail: "Não foram encontrados registros soltos na amostra operacional.", count: "OK", level: "ok" }]);
+    renderHealthRows("healthImportRows", report.imports.length ? report.imports.map(function (item) {
+      return { title: item.title, detail: (item.createdAt ? formatDateTime(item.createdAt) + " | " : "") + item.detail + " | Usuário: " + item.user, count: item.status, level: item.status === "COMPLETED" ? "ok" : item.status === "FAILED" ? "error" : "warning" };
+    }) : [{ title: "Sem importação recente", detail: "Nenhum lote de Base de Estoque encontrado para o filtro atual.", count: "-", level: "muted" }]);
+    renderHealthRows("healthCacheDetails", [
+      { title: "IndexedDB", detail: "Último erro: " + (localCacheState.lastError || "-"), count: localCacheState.available ? "OK" : "Indisponível", level: localCacheState.lastError ? "error" : localCacheState.available ? "ok" : "warning" },
+      { title: "Escritas pendentes", detail: "Fila local do navegador.", count: localCacheState.writesPending || 0, level: localCacheState.writesPending ? "warning" : "ok" },
+      { title: "Última limpeza", detail: localCacheState.lastCleanupAt ? formatDateTime(localCacheState.lastCleanupAt) : "-", count: "Info", level: "muted" }
+    ]);
+    renderHealthRows("healthRealtimeDetails", [
+      { title: "Canal ativo", detail: realtimeState.warehouseCode ? "wms-live-" + realtimeState.warehouseCode : "-", count: realtimeState.active ? "Ativo" : "Parado", level: realtimeState.active ? "ok" : "warning" },
+      { title: "Status assinatura", detail: realtimeState.subscriptionStatus || "-", count: realtimeState.refreshRunning ? "Atualizando" : "Estável", level: realtimeState.active ? "ok" : "warning" },
+      { title: "Tabelas operacionais", detail: "wms_transfers, wms_transfer_items, wms_replenishment_requests, wms_stock_positions e wms_notifications quando usada.", count: "OK", level: "ok" }
+    ]);
+    renderHealthRows("healthPerformanceDetails", [
+      { title: "Diagnóstico", detail: "Tempo para montar este relatório.", count: report.runtime.generatedMs + " ms", level: report.runtime.generatedMs > 2500 ? "warning" : "ok" },
+      { title: "Login/carregamento inicial", detail: "O diagnóstico só carrega ao abrir esta tela.", count: "Sob demanda", level: "ok" },
+      { title: "Módulos", detail: "Endereçamento " + performanceState.lastCoreLoadMs + " ms | Transferências " + performanceState.lastTransferLoadMs + " ms | Reposição " + performanceState.lastReplenishmentLoadMs + " ms | Base " + performanceState.lastStockLoadMs + " ms", count: "Info", level: "muted" }
+    ]);
+    renderHealthRows("healthProcessRows", buildHealthStuckProcessRows(report));
+  }
+
+  function renderHealthRows(targetId, rows) {
+    var target = $(targetId);
+    if (!target) return;
+    target.innerHTML = rows.map(function (row) {
+      return "<div class=\"health-row is-" + escapeHtml(row.level || "muted") + "\"><span><strong>" + escapeHtml(row.title) + "</strong><small>" + escapeHtml(row.detail || "") + "</small></span><em class=\"health-pill\">" + escapeHtml(String(row.count === undefined ? "-" : row.count)) + "</em></div>";
+    }).join("");
+  }
+
+  function healthLastImportLabel(imports, sourceType) {
+    var normalized = normalizeText(sourceType).toUpperCase();
+    var item = (imports || []).find(function (entry) { return normalizeText(entry.title).toUpperCase().indexOf(normalized) >= 0; });
+    return item && item.createdAt ? formatDateTime(item.createdAt) : "-";
+  }
+
+  function healthLastImportClass(imports, sourceType) {
+    var normalized = normalizeText(sourceType).toUpperCase();
+    var item = (imports || []).find(function (entry) { return normalizeText(entry.title).toUpperCase().indexOf(normalized) >= 0; });
+    if (!item) return "result-changed";
+    return item.status === "COMPLETED" ? "result-ok" : item.status === "FAILED" ? "result-missing" : "result-changed";
+  }
+
+  function buildHealthStuckProcessRows() {
+    var selectedCodes = healthSelectedWarehouseCodes();
+    var rows = [];
+    transferState.transfers.filter(function (transfer) {
+      return healthRowMatchesWarehouse(transfer, selectedCodes, true) && !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && healthDateOlderThanHours(transfer.lastActionAt || transfer.updatedAt || transfer.createdAt, 8);
+    }).slice(0, 5).forEach(function (transfer) {
+      rows.push({ title: "Transferência parada", detail: (transfer.name || transfer.code || transfer.id) + " | Status: " + transfer.status, count: "Atenção", level: "warning" });
+    });
+    replenishmentState.requests.filter(function (request) {
+      return healthRowMatchesWarehouse(request, selectedCodes, true) && !request.isDeleted && ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"].indexOf(request.status) >= 0 && healthDateOlderThanHours(request.updatedAt || request.createdAt, 8);
+    }).slice(0, 5).forEach(function (request) {
+      rows.push({ title: "Reposição parada", detail: "SKU " + request.codigoMaterial + " | Status: " + request.status, count: "Atenção", level: "warning" });
+    });
+    return rows.length ? rows : [{ title: "Nenhum processo travado", detail: "Transferências e reposições abertas não ultrapassaram o limite operacional.", count: "OK", level: "ok" }];
+  }
+
+  function healthDateOlderThanHours(value, hours) {
+    if (!value) return false;
+    var time = new Date(value).getTime();
+    if (!time) return false;
+    return Date.now() - time > hours * 60 * 60 * 1000;
+  }
+
+  async function generateHealthCorrectionSql() {
+    if (!healthState.lastReport) await refreshSystemHealth();
+    var sql = buildHealthCorrectionSql(healthState.lastReport);
+    $("healthSqlOutput").textContent = sql || "-- Nenhuma coluna obrigatória ausente no diagnóstico atual.";
+  }
+
+  function buildHealthCorrectionSql(report) {
+    if (!report || !report.schema || !report.schema.missing.length) return "";
+    return report.schema.missing.map(function (item) {
+      return "alter table public." + item.table + "\nadd column if not exists " + item.column + " " + healthSqlTypeForColumn(item.table, item.column) + ";";
+    }).join("\n\n");
+  }
+
+  function healthSqlTypeForColumn(tableName, columnName) {
+    if (columnName === "id") return "text";
+    if (columnName === "active") return "boolean default true";
+    if (columnName === "archived") return "boolean default false";
+    if (columnName === "quantidade_solicitada" || columnName === "total_disponivel") return "numeric default 0";
+    if (columnName === "created_at" || columnName === "updated_at") return "timestamptz default now()";
+    if (columnName === "record_hash" || columnName === "idempotency_key" || columnName === "client_action_id" || columnName === "created_by_id") return "text default ''";
+    return "text default ''";
+  }
+
+  async function clearHealthLocalCache() {
+    if (!confirmHealthDanger("limpar o cache local deste navegador")) return;
+    await performHealthLocalCacheClear();
+    setStatus("healthStatus", "Cache local limpo neste dispositivo. O Supabase não foi alterado.", "success");
+    await refreshSystemHealth();
+  }
+
+  async function performHealthLocalCacheClear() {
+    await waitForLocalCacheQueue();
+    closeLocalCache("health-clear");
+    await deleteIndexedDb(LOCAL_CACHE_DB_NAME);
+    Object.keys(localStorage).forEach(function (key) {
+      if (key.indexOf(LOCAL_SYNC_PREFIX) === 0) localStorage.removeItem(key);
+    });
+    localCacheState.lastCleanupAt = nowIso();
+  }
+
+  async function rebuildHealthLocalCache() {
+    if (!confirmHealthDanger("recriar o cache local do estoque atual")) return;
+    await performHealthLocalCacheClear();
+    resetLazyModuleState(true);
+    await ensureHealthDataLoaded();
+    setStatus("healthStatus", "Cache local recriado com os dados atuais.", "success");
+    await refreshSystemHealth();
+  }
+
+  async function flushHealthPendingWrites() {
+    await waitForLocalCacheQueue();
+    setStatus("healthStatus", "Fila local sincronizada. Pendências atuais: " + localCacheState.writesPending + ".", localCacheState.writesPending ? "warning" : "success");
+    await refreshSystemHealth();
+  }
+
+  async function waitForLocalCacheQueue() {
+    try {
+      await Promise.race([localCacheState.writeQueue.catch(function () { return false; }), delay(1800)]);
+    } catch (error) {
+      markLocalCacheError("health-cache-wait", error);
+    }
+  }
+
+  function deleteIndexedDb(dbName) {
+    return new Promise(function (resolve) {
+      if (!("indexedDB" in window)) {
+        resolve(false);
+        return;
+      }
+      var request = indexedDB.deleteDatabase(dbName);
+      request.onsuccess = function () { resolve(true); };
+      request.onerror = function () {
+        markLocalCacheError("health-cache-delete", request.error);
+        resolve(false);
+      };
+      request.onblocked = function () { resolve(false); };
+    });
+  }
+
+  async function archiveHealthOldNotifications() {
+    if (!isSupabaseReady()) {
+      setStatus("healthStatus", "Supabase não conectado.", "error");
+      return;
+    }
+    if (!confirmHealthDanger("arquivar notificações antigas já vistas")) return;
+    var cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    var payload = { archived: true, archived_at: nowIso() };
+    var query = supabaseDb.from("wms_notifications").update(payload).lt("created_at", cutoff).eq("read", true);
+    if (healthState.warehouseFilter !== "ALL") query = query.eq("warehouse_code", healthState.warehouseFilter);
+    var response = await query;
+    if (response.error) {
+      $("healthSqlOutput").textContent = [
+        "alter table if exists public.wms_notifications",
+        "add column if not exists archived boolean default false;",
+        "",
+        "alter table if exists public.wms_notifications",
+        "add column if not exists archived_at timestamptz;"
+      ].join("\n");
+      setStatus("healthStatus", "Não foi possível arquivar notificações. Gere o SQL de correção se faltar coluna: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    setStatus("healthStatus", "Notificações antigas arquivadas com segurança.", "success");
+    await refreshSystemHealth();
+  }
+
+  async function archiveHealthInactiveUsers() {
+    if (!isAdmin()) return;
+    if (!isSupabaseReady()) {
+      setStatus("healthStatus", "Supabase não conectado.", "error");
+      return;
+    }
+    if (!confirmHealthDanger("arquivar usuários inativos do filtro atual")) return;
+    var inactiveUsers = authState.users.filter(function (user) {
+      if (user.archived === true || user.active !== false) return false;
+      if (healthState.warehouseFilter === "ALL") return true;
+      return userBelongsToWarehouse(user, healthState.warehouseFilter);
+    });
+    if (!inactiveUsers.length) {
+      setStatus("healthStatus", "Nenhum usuário inativo para arquivar.", "success");
+      return;
+    }
+    try {
+      var now = nowIso();
+      for (var i = 0; i < inactiveUsers.length; i += 1) {
+        var user = inactiveUsers[i];
+        var response = await supabaseDb.from("wms_users").update({
+          archived: true,
+          archived_at: now,
+          archived_by_id: (authState.currentUser || {}).id || "",
+          archived_by_name: (authState.currentUser || {}).name || ""
+        }).eq("id", user.id);
+        if (response.error) throw response.error;
+        user.archived = true;
+        user.archivedAt = now;
+      }
+    } catch (error) {
+      setStatus("healthStatus", "Erro ao arquivar usuários inativos: " + formatSupabaseError(error), "error");
+      return;
+    }
+    setStatus("healthStatus", inactiveUsers.length + " usuário(s) inativo(s) arquivado(s).", "success");
+    await refreshSystemHealth();
+  }
+
+  async function downloadSystemHealthReport() {
+    if (!healthState.lastReport) await refreshSystemHealth();
+    var report = healthState.lastReport;
+    var lines = [
+      "# Relatório técnico - Saúde do Sistema WMS",
+      "",
+      "Gerado em: " + formatDateTime(report.generatedAt),
+      "Filtro de estoque: " + report.warehouseLabel,
+      "",
+      "Resumo:",
+      "- Colunas ausentes: " + report.summary.missingColumns,
+      "- Duplicidades encontradas: " + report.summary.duplicateGroups,
+      "- Registros órfãos: " + report.summary.orphanGroups,
+      "- Registros sem warehouse_code: " + report.noWarehouseRecords,
+      "- Transferências abertas: " + report.openTransfers,
+      "- Pedidos de reposição abertos: " + report.openRequests,
+      "- Erros recentes: " + report.summary.recentErrors,
+      "",
+      "Colunas ausentes:",
+      report.schema.missing.length ? report.schema.missing.map(function (item) { return "- Coluna ausente: " + item.table + "." + item.column; }).join("\n") : "- Nenhuma",
+      "",
+      "Duplicidades:",
+      report.duplicates.items.length ? report.duplicates.items.map(function (item) { return "- " + item.title + ": " + item.count + " | " + item.detail; }).join("\n") : "- Nenhuma",
+      "",
+      "Registros órfãos:",
+      report.orphans.items.length ? report.orphans.items.map(function (item) { return "- " + item.title + ": " + item.count + " | " + item.detail; }).join("\n") : "- Nenhum",
+      "",
+      "SQL sugerido:",
+      buildHealthCorrectionSql(report) || "-- Nenhuma correção estrutural necessária no diagnóstico atual."
+    ];
+    var content = lines.join("\n");
+    $("healthSqlOutput").textContent = content;
+    downloadTextFile("relatorio-saude-sistema-wms-" + new Date().toISOString().slice(0, 10) + ".md", content, "text/markdown;charset=utf-8");
+  }
+
+  function confirmHealthDanger(actionLabel) {
+    return window.prompt("Digite CONFIRMAR para " + actionLabel + ".") === "CONFIRMAR";
   }
 
   async function getReplenishmentSchemaDiagnostics() {

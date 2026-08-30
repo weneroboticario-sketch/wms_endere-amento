@@ -534,6 +534,7 @@ alter table public.wms_transfer_items add column if not exists created_at timest
 alter table public.wms_transfer_items add column if not exists updated_at timestamptz default now();
 alter table public.wms_transfer_items add column if not exists transfer_id text default '';
 alter table public.wms_transfer_items add column if not exists sku text default '';
+alter table public.wms_transfer_items add column if not exists codigo_material text default '';
 alter table public.wms_transfer_items add column if not exists descricao text default '';
 alter table public.wms_transfer_items add column if not exists quantidade_solicitada numeric default 0;
 alter table public.wms_transfer_items add column if not exists unidade_medida text default '';
@@ -592,6 +593,10 @@ update public.wms_transfer_items
 set warehouse_id = coalesce(nullif(warehouse_id, ''), 'warehouse-vdcg'),
     warehouse_code = coalesce(nullif(warehouse_code, ''), 'VDCG')
 where warehouse_code is null or warehouse_code = '' or warehouse_id is null or warehouse_id = '';
+
+update public.wms_transfer_items
+set codigo_material = coalesce(nullif(codigo_material, ''), sku)
+where codigo_material is null or codigo_material = '';
 
 create table if not exists public.wms_product_packaging (
   id text primary key,
@@ -694,6 +699,8 @@ alter table if exists public.wms_notifications add column if not exists warehous
 alter table if exists public.wms_notifications add column if not exists warehouse_code text default 'VDCG';
 alter table if exists public.wms_notifications add column if not exists idempotency_key text default '';
 alter table if exists public.wms_notifications add column if not exists request_id text default '';
+alter table if exists public.wms_notifications add column if not exists archived boolean default false;
+alter table if exists public.wms_notifications add column if not exists archived_at timestamptz;
 
 create table if not exists public.wms_transfer_merge_items (
   id text primary key,
@@ -790,6 +797,9 @@ on public.wms_transfer_items (transfer_id);
 
 create index if not exists wms_transfer_items_sku_idx
 on public.wms_transfer_items (sku);
+
+create index if not exists wms_transfer_items_codigo_material_idx
+on public.wms_transfer_items (codigo_material);
 
 create index if not exists idx_wms_transfer_items_sku
 on public.wms_transfer_items (warehouse_code, sku);

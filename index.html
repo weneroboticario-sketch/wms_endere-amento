@@ -108,6 +108,7 @@
           <p class="menu-label">Administracao</p>
           <button class="menu-item admin-only global-admin-only" data-icon="EST" data-screen="estoques" type="button">Estoques</button>
           <button class="menu-item" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
+          <button class="menu-item" data-icon="SAU" data-screen="saudeSistema" type="button">Saúde do Sistema</button>
           <button class="menu-item" data-icon="MAN" data-screen="manutencao" type="button">Manutenção</button>
           <button class="menu-item" data-icon="CFG" data-screen="configuracoes" type="button">Configuracoes</button>
         </div>
@@ -1061,6 +1062,103 @@
               </table>
             </div>
             <div id="warehouseStatus" class="inline-status"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen" id="saudeSistema">
+        <div class="page-title health-title">
+          <div>
+            <p class="eyebrow">Gestão técnica</p>
+            <h2>Saúde do Sistema</h2>
+          </div>
+          <div class="health-actions">
+            <label for="healthWarehouseFilter">Estoque</label>
+            <select id="healthWarehouseFilter">
+              <option value="ALL">Todos os estoques</option>
+            </select>
+            <button class="secondary-button" id="refreshHealthButton" type="button">Atualizar diagnóstico</button>
+            <button class="primary-button" id="generateHealthSqlButton" type="button">Gerar SQL de correção</button>
+          </div>
+        </div>
+
+        <div id="healthStatus" class="inline-status"></div>
+        <div id="healthSummary" class="transfer-summary-grid health-summary"></div>
+
+        <div class="health-layout">
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Colunas obrigatórias</h3>
+            </div>
+            <div id="healthSchemaRows" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Duplicidades</h3>
+              <button class="secondary-button small-button" id="verifyHealthDuplicatesButton" type="button">Verificar</button>
+            </div>
+            <div id="healthDuplicateRows" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Registros órfãos</h3>
+              <button class="secondary-button small-button" id="verifyHealthOrphansButton" type="button">Verificar</button>
+            </div>
+            <div id="healthOrphanRows" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Importações de estoque</h3>
+            </div>
+            <div id="healthImportRows" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Cache local</h3>
+            </div>
+            <div id="healthCacheDetails" class="health-list"></div>
+            <div class="button-row compact-actions">
+              <button class="secondary-button" id="clearHealthCacheButton" type="button">Limpar cache local</button>
+              <button class="secondary-button" id="rebuildHealthCacheButton" type="button">Recriar cache do estoque</button>
+              <button class="secondary-button" id="flushHealthPendingButton" type="button">Sincronizar pendências</button>
+            </div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Realtime e sincronização</h3>
+            </div>
+            <div id="healthRealtimeDetails" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Performance</h3>
+            </div>
+            <div id="healthPerformanceDetails" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel">
+            <div class="panel-header">
+              <h3>Processos travados</h3>
+            </div>
+            <div id="healthProcessRows" class="health-list"></div>
+          </section>
+
+          <section class="panel health-panel wide-panel">
+            <div class="panel-header">
+              <h3>Manutenção segura</h3>
+              <button class="secondary-button small-button" id="generateHealthReportButton" type="button">Gerar relatório técnico</button>
+            </div>
+            <div class="button-row compact-actions">
+              <button class="secondary-button" id="archiveHealthNotificationsButton" type="button">Arquivar notificações antigas</button>
+              <button class="secondary-button" id="archiveHealthInactiveUsersButton" type="button">Arquivar usuários inativos</button>
+            </div>
+            <pre id="healthSqlOutput" class="health-sql-output" aria-live="polite"></pre>
           </section>
         </div>
       </section>

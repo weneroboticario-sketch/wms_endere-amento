@@ -4021,6 +4021,162 @@ tbody tr:hover td {
   font-weight: 700;
 }
 
+.health-title {
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.health-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.health-actions label {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.health-actions select {
+  min-width: 190px;
+  min-height: 40px;
+}
+
+.health-summary {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+#saudeSistema .summary-chip {
+  min-height: 78px;
+}
+
+.health-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.health-panel {
+  min-width: 0;
+  align-content: start;
+}
+
+.health-panel.wide-panel {
+  grid-column: 1 / -1;
+}
+
+.health-list {
+  display: grid;
+  gap: 8px;
+}
+
+.health-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fbfd;
+}
+
+.health-row strong,
+.health-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.health-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.health-row.is-ok {
+  background: #ecfdf3;
+  border-color: #a7e0bd;
+}
+
+.health-row.is-warning {
+  background: #fff8e6;
+  border-color: #f4cf7a;
+}
+
+.health-row.is-error {
+  background: #fff1f0;
+  border-color: #ffb4ad;
+}
+
+.health-row.is-muted {
+  background: #f1f5f8;
+  color: var(--muted);
+}
+
+.health-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e7eff5;
+  color: #243244;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.health-row.is-ok .health-pill {
+  background: #d5f5e3;
+  color: #047446;
+}
+
+.health-row.is-warning .health-pill {
+  background: #ffedbd;
+  color: #8a5b00;
+}
+
+.health-row.is-error .health-pill {
+  background: #ffd9d5;
+  color: #a92823;
+}
+
+.compact-actions {
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.compact-actions button,
+.small-button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 0.88rem;
+  white-space: normal;
+}
+
+.health-sql-output {
+  min-height: 120px;
+  max-height: 320px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #0d2230;
+  color: #e8f3f7;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 1280px) and (min-width: 761px) {
   :root {
     --sidebar-width: 236px;
@@ -4555,6 +4711,38 @@ tbody tr:hover td {
     min-width: 0;
     overflow-wrap: anywhere;
     white-space: normal;
+  }
+
+  .health-title {
+    align-items: stretch;
+  }
+
+  .health-actions {
+    justify-content: stretch;
+  }
+
+  .health-actions label {
+    text-align: left;
+  }
+
+  .health-actions select,
+  .health-actions button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .health-summary,
+  .health-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .health-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .health-pill {
+    width: fit-content;
   }
 
   .replenishment-layout,
