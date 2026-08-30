@@ -559,6 +559,14 @@ alter table public.wms_transfer_items add column if not exists quantidade_sugeri
 alter table public.wms_transfer_items add column if not exists alerta_saldo boolean default false;
 alter table public.wms_transfer_items add column if not exists alerta_saldo_mensagem text default '';
 alter table public.wms_transfer_items add column if not exists localizacao_sugerida text default '';
+alter table public.wms_transfer_items add column if not exists nome_material_snapshot text default '';
+alter table public.wms_transfer_items add column if not exists saldo_captacao_snapshot numeric default 0;
+alter table public.wms_transfer_items add column if not exists saldo_loja_snapshot numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_retirar_captacao numeric default 0;
+alter table public.wms_transfer_items add column if not exists quantidade_retirar_loja numeric default 0;
+alter table public.wms_transfer_items add column if not exists localizacao_captacao_snapshot text default '';
+alter table public.wms_transfer_items add column if not exists localizacao_wms_snapshot text default '';
+alter table public.wms_transfer_items add column if not exists stock_snapshot_at timestamptz;
 alter table public.wms_transfer_items add column if not exists tipo_quantidade text default 'UNIDADE';
 alter table public.wms_transfer_items add column if not exists tipo_envio text default 'UNIDADE';
 alter table public.wms_transfer_items add column if not exists quantidade_caixas numeric default 0;
@@ -755,6 +763,12 @@ on public.wms_transfers (warehouse_code, is_deleted);
 create index if not exists wms_transfers_warehouse_status_updated_idx
 on public.wms_transfers (warehouse_code, status, updated_at desc);
 
+create index if not exists idx_wms_transfers_warehouse_status_updated
+on public.wms_transfers (warehouse_code, status, updated_at desc);
+
+create index if not exists idx_wms_transfers_warehouse_created
+on public.wms_transfers (warehouse_code, created_at desc);
+
 create index if not exists wms_transfers_warehouse_responsavel_status_idx
 on public.wms_transfers (warehouse_code, responsavel_id, status);
 
@@ -786,6 +800,9 @@ on public.wms_transfers (warehouse_code, status, is_deleted, updated_at desc);
 create index if not exists wms_transfer_items_transfer_sku_idx
 on public.wms_transfer_items (transfer_id, sku);
 
+create index if not exists idx_wms_transfer_items_transfer_codigo
+on public.wms_transfer_items (transfer_id, codigo_material);
+
 create index if not exists wms_transfer_items_transfer_idx
 on public.wms_transfer_items (transfer_id);
 
@@ -813,6 +830,9 @@ on public.wms_transfer_items (warehouse_code, transfer_id, sku);
 create index if not exists wms_transfer_items_updated_at_idx
 on public.wms_transfer_items (updated_at desc);
 
+create index if not exists idx_wms_transfer_items_updated
+on public.wms_transfer_items (warehouse_code, updated_at desc);
+
 create unique index if not exists wms_transfer_items_idempotency_uidx
 on public.wms_transfer_items (warehouse_code, idempotency_key)
 where idempotency_key is not null and idempotency_key <> '';
@@ -822,6 +842,17 @@ on public.wms_transfer_items (warehouse_code, transfer_id, updated_at desc);
 
 create index if not exists idx_transfer_items_open
 on public.wms_transfer_items (warehouse_code, transfer_id, status, sku);
+
+do $$
+begin
+  begin
+    create unique index if not exists uq_wms_transfer_items_transfer_codigo
+    on public.wms_transfer_items (warehouse_code, transfer_id, codigo_material)
+    where coalesce(codigo_material, '') <> '' and coalesce(is_extra, false) = false;
+  exception when others then
+    raise notice 'uq_wms_transfer_items_transfer_codigo nao criado: existem duplicidades antigas ou schema incompleto. O app continuara consolidando novos itens.';
+  end;
+end $$;
 
 create table if not exists public.wms_stock_import_batches (
   id text primary key,
@@ -944,6 +975,9 @@ on public.wms_stock_positions (warehouse_code, source_type, codigo_material, act
 
 create index if not exists idx_stock_positions_warehouse_source_codigo
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material, active);
+
+create index if not exists idx_wms_stock_positions_transfer_lookup
+on public.wms_stock_positions (warehouse_code, codigo_material, source_type, active);
 
 create index if not exists idx_stock_positions_hash
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material, record_hash);
@@ -1497,6 +1531,8 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') then execute 'create index if not exists wms_transfers_warehouse_responsavel_status_idx on public.wms_transfers (warehouse_code, responsavel_id, status)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'last_action_at') then execute 'create index if not exists wms_transfers_warehouse_last_action_idx on public.wms_transfers (warehouse_code, last_action_at desc)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'updated_at') then execute 'create index if not exists idx_transfer_sync on public.wms_transfers (warehouse_code, updated_at desc, id)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'status') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'updated_at') then execute 'create index if not exists idx_wms_transfers_warehouse_status_updated on public.wms_transfers (warehouse_code, status, updated_at desc)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfers' and column_name = 'created_at') then execute 'create index if not exists idx_wms_transfers_warehouse_created on public.wms_transfers (warehouse_code, created_at desc)'; end if;
   end if;
 
   if to_regclass('public.wms_transfer_items') is not null then
@@ -1505,6 +1541,8 @@ begin
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'status') then execute 'create index if not exists wms_transfer_items_warehouse_status_idx on public.wms_transfer_items (warehouse_code, status)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'transfer_id') then execute 'create index if not exists wms_transfer_items_warehouse_transfer_idx on public.wms_transfer_items (warehouse_code, transfer_id)'; end if;
     if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'updated_at') then execute 'create index if not exists idx_transfer_items_sync on public.wms_transfer_items (warehouse_code, transfer_id, updated_at desc)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'transfer_id') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'codigo_material') then execute 'create index if not exists idx_wms_transfer_items_transfer_codigo on public.wms_transfer_items (transfer_id, codigo_material)'; end if;
+    if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'warehouse_code') and exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'wms_transfer_items' and column_name = 'updated_at') then execute 'create index if not exists idx_wms_transfer_items_updated on public.wms_transfer_items (warehouse_code, updated_at desc)'; end if;
   end if;
 
   if to_regclass('public.wms_notifications') is not null then

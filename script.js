@@ -112,7 +112,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var historySchemaAvailable = true;
   var skuSearchTimer = null;
   var HISTORY_RENDER_LIMIT = 200;
-  var TRANSFER_PANEL_RENDER_LIMIT = 80;
+  var TRANSFER_PANEL_PAGE_SIZE = 40;
+  var TRANSFER_PANEL_RENDER_LIMIT = TRANSFER_PANEL_PAGE_SIZE;
   var TRANSFER_FINALIZED_RENDER_LIMIT = 50;
   var TRANSFER_TASK_RENDER_LIMIT = 80;
   var AREAS = [
@@ -204,6 +205,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     mergeResolutions: {},
     productPackaging: {},
     packagingPromptedSkus: {},
+    loadedItemTransferIds: {},
+    loadingTransferItems: {},
+    panelRenderLimit: TRANSFER_PANEL_PAGE_SIZE,
     selectedItemId: "",
     manualSeparationQty: false,
     savingActionKey: "",
@@ -276,6 +280,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     lastStockLoadMs: 0,
     lastSkuQueryMs: 0,
     lastTransferQueryMs: 0,
+    lastTransferListMs: 0,
+    lastTransferDetailMs: 0,
+    lastTransferItemsMs: 0,
+    lastTransferStockMs: 0,
+    lastTransferQueryCount: 0,
+    lastTransferLoadedItems: 0,
+    transferEventsUsage: "removido",
     lastReplenishmentCreateError: "",
     lastReplenishmentCreateErrorAt: "",
     recentErrors: [],
@@ -1345,12 +1356,264 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  function transferSummarySelectColumns() {
+    return [
+      "id",
+      "codigo_transferencia",
+      "nome_transferencia",
+      "estabelecimento_id",
+      "estabelecimento_codigo",
+      "estabelecimento_nome",
+      "estabelecimento_cnpj",
+      "import_source",
+      "origem_id",
+      "origem_nome",
+      "origem_cnpj",
+      "origem_codigo_loja",
+      "origem_codigo_interno",
+      "origem_canal",
+      "destino_id",
+      "destino_nome",
+      "destino_cnpj",
+      "destino_codigo_loja",
+      "destino_codigo_interno",
+      "destino_canal",
+      "responsavel_id",
+      "responsavel_nome",
+      "status",
+      "observacao",
+      "tipo_fluxo",
+      "flow_type",
+      "tipo_transferencia",
+      "criado_por_id",
+      "criado_por_nome",
+      "iniciado_em",
+      "finalizado_em",
+      "duracao_segundos",
+      "separacao_iniciada_em",
+      "separacao_concluida_em",
+      "duracao_separacao_segundos",
+      "lacre_iniciado_em",
+      "lacre_concluido_em",
+      "duracao_lacre_segundos",
+      "separation_started_at",
+      "separation_finished_at",
+      "separation_duration_seconds",
+      "packing_started_at",
+      "packing_finished_at",
+      "packing_duration_seconds",
+      "total_started_at",
+      "total_finished_at",
+      "total_duration_seconds",
+      "total_items",
+      "total_skus",
+      "total_expected_quantity",
+      "total_separated_quantity",
+      "total_packed_quantity",
+      "total_previsto",
+      "total_enviado",
+      "diferenca_total",
+      "total_caixas",
+      "current_step",
+      "last_action_at",
+      "last_action_label",
+      "itens_pendentes",
+      "itens_separados",
+      "itens_divergentes",
+      "has_divergence",
+      "divergence_count",
+      "final_result",
+      "is_merged",
+      "merged_from_ids",
+      "merged_into_id",
+      "unified_into_transfer_id",
+      "merge_status",
+      "merged_by_id",
+      "merged_by_name",
+      "merged_at",
+      "archived_by_unification",
+      "is_deleted",
+      "deleted_at",
+      "deleted_by_id",
+      "deleted_by_name",
+      "idempotency_key",
+      "request_id",
+      "warehouse_id",
+      "warehouse_code",
+      "created_at",
+      "updated_at"
+    ].join(",");
+  }
+
+  function transferItemDetailSelectColumns() {
+    return [
+      "id",
+      "created_at",
+      "updated_at",
+      "transfer_id",
+      "sku",
+      "codigo_material",
+      "descricao",
+      "nome_material_snapshot",
+      "quantidade_solicitada",
+      "unidade_medida",
+      "tipo_movimentacao",
+      "loja_origem",
+      "loja_destino",
+      "razao_social_origem",
+      "razao_social_destino",
+      "agrupamento_razao_social",
+      "endereco_rua",
+      "endereco_rack",
+      "endereco_linha",
+      "endereco_letra",
+      "endereco_codigo",
+      "has_location",
+      "location_warning",
+      "saldo_loja_disponivel",
+      "saldo_captacao_disponivel",
+      "saldo_loja_snapshot",
+      "saldo_captacao_snapshot",
+      "origem_sugerida",
+      "quantidade_sugerida_captacao",
+      "quantidade_sugerida_loja",
+      "quantidade_retirar_captacao",
+      "quantidade_retirar_loja",
+      "quantidade_faltante",
+      "alerta_saldo",
+      "alerta_saldo_mensagem",
+      "localizacao_sugerida",
+      "localizacao_captacao_snapshot",
+      "localizacao_wms_snapshot",
+      "stock_snapshot_at",
+      "tipo_quantidade",
+      "tipo_envio",
+      "quantidade_caixas",
+      "unidades_por_caixa",
+      "quantidade_total_unidades",
+      "quantidade_lacrada_unidades",
+      "embalagem_observacao",
+      "quantidade_separada",
+      "quantidade_lacrada",
+      "quantidade_enviada",
+      "quantidade_extra",
+      "quantidade_excedente",
+      "total_unidades_caixa",
+      "diferenca",
+      "motivo_pendencia",
+      "observacao_pendencia",
+      "has_divergence",
+      "is_extra",
+      "divergence_type",
+      "added_by_id",
+      "added_by_name",
+      "input_type",
+      "observation",
+      "status",
+      "idempotency_key",
+      "request_id",
+      "warehouse_id",
+      "warehouse_code"
+    ].join(",");
+  }
+
+  function establishmentSelectColumns() {
+    return "id,codigo,codigo_loja,codigo_interno,canal,nome,cnpj,ativo,created_at,updated_at";
+  }
+
+  async function fetchTransferSummaryRows(limit) {
+    var startedAt = performance.now();
+    var query = supabaseDb
+      .from("wms_transfers")
+      .select(transferSummarySelectColumns())
+      .eq("warehouse_code", activeWarehouseCode())
+      .order("updated_at", { ascending: false })
+      .limit(limit || 200);
+    var response = await query;
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb
+        .from("wms_transfers")
+        .select("id,codigo_transferencia,nome_transferencia,estabelecimento_id,estabelecimento_codigo,estabelecimento_nome,estabelecimento_cnpj,origem_nome,origem_cnpj,origem_codigo_loja,destino_nome,destino_cnpj,destino_codigo_loja,responsavel_id,responsavel_nome,status,observacao,total_items,total_skus,total_expected_quantity,total_separated_quantity,total_packed_quantity,total_previsto,total_enviado,diferenca_total,itens_total,itens_separados,itens_pendentes,itens_divergentes,total_caixas,is_deleted,deleted_at,warehouse_id,warehouse_code,created_at,updated_at")
+        .eq("warehouse_code", activeWarehouseCode())
+        .order("updated_at", { ascending: false })
+        .limit(limit || 200);
+    }
+    if (response.error) throw response.error;
+    recordPerformanceMetric("lastTransferListMs", startedAt);
+    performanceState.lastTransferQueryCount += 1;
+    return response.data || [];
+  }
+
+  async function fetchTransferItemsForTransfer(transferId, warehouseCode) {
+    var startedAt = performance.now();
+    var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var response = await supabaseDb
+      .from("wms_transfer_items")
+      .select(transferItemDetailSelectColumns())
+      .eq("transfer_id", transferId)
+      .eq("warehouse_code", warehouse)
+      .order("created_at", { ascending: true })
+      .limit(2000);
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await supabaseDb
+        .from("wms_transfer_items")
+        .select(stripTransferItemSelectColumns())
+        .eq("transfer_id", transferId)
+        .eq("warehouse_code", warehouse)
+        .order("created_at", { ascending: true })
+        .limit(2000);
+    }
+    if (response.error && isMissingWarehouseColumnError(response.error)) {
+      assertWarehouseFallbackAllowed("wms_transfer_items", response.error);
+      response = await supabaseDb
+        .from("wms_transfer_items")
+        .select(stripTransferItemSelectColumns())
+        .eq("transfer_id", transferId)
+        .order("created_at", { ascending: true })
+        .limit(2000);
+    }
+    if (response.error) throw response.error;
+    recordPerformanceMetric("lastTransferItemsMs", startedAt);
+    performanceState.lastTransferQueryCount += 1;
+    return response.data || [];
+  }
+
+  function stripTransferItemSelectColumns() {
+    return [
+      "id",
+      "created_at",
+      "updated_at",
+      "transfer_id",
+      "sku",
+      "codigo_material",
+      "descricao",
+      "nome_material_snapshot",
+      "quantidade_solicitada",
+      "unidade_medida",
+      "tipo_quantidade",
+      "tipo_envio",
+      "quantidade_caixas",
+      "unidades_por_caixa",
+      "quantidade_total_unidades",
+      "quantidade_separada",
+      "quantidade_lacrada",
+      "quantidade_lacrada_unidades",
+      "quantidade_extra",
+      "quantidade_faltante",
+      "quantidade_excedente",
+      "status",
+      "warehouse_id",
+      "warehouse_code"
+    ].join(",");
+  }
+
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
     if (isOptionalRealtimeTableDisabled(tableName)) return [];
+    var selectColumns = tableName === "wms_transfers" ? transferSummarySelectColumns() : tableName === "wms_transfer_items" ? transferItemDetailSelectColumns() : "*";
     try {
       var query = supabaseDb
         .from(tableName)
-        .select("*")
+        .select(selectColumns)
         .eq("warehouse_code", activeWarehouseCode());
       if (sinceIso) query = query.gt(timeColumn, sinceIso);
       query = query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
@@ -1364,7 +1627,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           return [];
         }
         assertWarehouseFallbackAllowed(tableName, error);
-        var fallbackQuery = supabaseDb.from(tableName).select("*");
+        var fallbackQuery = supabaseDb.from(tableName).select(tableName === "wms_transfer_items" ? stripTransferItemSelectColumns() : selectColumns);
         if (sinceIso) fallbackQuery = fallbackQuery.gt(timeColumn, sinceIso);
         fallbackQuery = fallbackQuery.order(orderColumn || timeColumn, { ascending: true }).limit(500);
         var fallbackResponse = await fallbackQuery;
@@ -1380,6 +1643,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
         disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
         return [];
+      }
+      if (isMissingColumnError(error) && (tableName === "wms_transfer_items" || tableName === "wms_transfers")) {
+        var safeColumns = tableName === "wms_transfer_items"
+          ? stripTransferItemSelectColumns()
+          : "id,codigo_transferencia,nome_transferencia,estabelecimento_id,estabelecimento_codigo,estabelecimento_nome,estabelecimento_cnpj,origem_nome,origem_cnpj,origem_codigo_loja,destino_nome,destino_cnpj,destino_codigo_loja,responsavel_id,responsavel_nome,status,observacao,total_items,total_skus,total_expected_quantity,total_separated_quantity,total_packed_quantity,total_previsto,total_enviado,diferenca_total,itens_total,itens_separados,itens_pendentes,itens_divergentes,total_caixas,is_deleted,deleted_at,warehouse_id,warehouse_code,created_at,updated_at";
+        var safeQuery = supabaseDb
+          .from(tableName)
+          .select(safeColumns)
+          .eq("warehouse_code", activeWarehouseCode());
+        if (sinceIso) safeQuery = safeQuery.gt(timeColumn, sinceIso);
+        safeQuery = safeQuery.order(orderColumn || timeColumn, { ascending: true }).limit(500);
+        var safeResponse = await safeQuery;
+        if (!safeResponse.error) return safeResponse.data || [];
       }
       throw error;
     }
@@ -1685,11 +1961,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function loadTransferData() {
     var loadStartedAt = performance.now();
+    var currentWarehouse = activeWarehouseCode();
+    var previousItems = transferState.items.filter(function (item) {
+      return processRowMatchesActiveWarehouse(item) && item.transferId && transferState.loadedItemTransferIds[item.transferId];
+    });
+    var previousLoaded = Object.assign({}, transferState.loadedItemTransferIds || {});
     transferState.establishments = [];
     transferState.transfers = [];
-    transferState.items = [];
+    transferState.items = previousItems;
     transferState.events = [];
     transferState.productPackaging = {};
+    transferState.loadedItemTransferIds = previousLoaded;
+    performanceState.lastTransferQueryCount = 0;
     var cachedTransfers = await readModuleCache("transferData");
     var loadedFromCache = false;
     if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
@@ -1699,8 +1982,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       var cachedTransferIds = {};
       transferState.transfers.forEach(function (transfer) { cachedTransferIds[transfer.id] = true; });
-      transferState.items = (cachedTransfers.items || []).filter(function (item) {
-        return processRowMatchesActiveWarehouse(item) && item.transferId && cachedTransferIds[item.transferId];
+      transferState.items = transferState.items.filter(function (item) { return cachedTransferIds[item.transferId]; });
+      Object.keys(transferState.loadedItemTransferIds || {}).forEach(function (transferId) {
+        if (!cachedTransferIds[transferId]) delete transferState.loadedItemTransferIds[transferId];
       });
       transferState.events = [];
       transferState.productPackaging = cachedTransfers.productPackaging || {};
@@ -1713,21 +1997,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return loadedFromCache;
     }
     try {
-      var establishmentRows = await fetchAllRows("wms_establishments", "codigo", true);
-      var transferRows = await fetchWarehouseRows("wms_transfers", "created_at", false);
-      var itemRows = await fetchWarehouseRows("wms_transfer_items", "created_at", true);
+      var establishmentResponse = await supabaseDb
+        .from("wms_establishments")
+        .select(establishmentSelectColumns())
+        .order("codigo", { ascending: true })
+        .limit(1000);
+      if (establishmentResponse.error) throw establishmentResponse.error;
+      performanceState.lastTransferQueryCount += 1;
+      var establishmentRows = establishmentResponse.data || [];
+      var transferRows = await fetchTransferSummaryRows(220);
       var packagingRows = await fetchProductPackagingRows();
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
-      itemRows = itemRows.filter(function (row) {
-        return processRowMatchesActiveWarehouse(row) && (!row.transfer_id || transferIds[row.transfer_id]);
-      });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
       transferState.transfers = transferRows.map(fromDbTransfer).filter(isOperationalTransferRecord);
       transferIds = {};
       transferState.transfers.forEach(function (transfer) { transferIds[transfer.id] = true; });
-      transferState.items = itemRows.map(fromDbTransferItem);
-      transferState.items = transferState.items.filter(function (item) { return item.transferId && transferIds[item.transferId]; });
+      transferState.items = transferState.items.filter(function (item) { return item.transferId && transferIds[item.transferId] && transferBelongsToActiveWarehouse({ warehouseCode: item.warehouseCode || currentWarehouse }); });
+      Object.keys(transferState.loadedItemTransferIds || {}).forEach(function (transferId) {
+        if (!transferIds[transferId]) delete transferState.loadedItemTransferIds[transferId];
+      });
       transferState.events = [];
       invalidateTransferStatsCache();
       packagingRows.forEach(function (row) {
@@ -1738,9 +2027,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       await writeModuleCache("transferData", {
         establishments: transferState.establishments,
         transfers: transferState.transfers,
-        items: transferState.items,
         productPackaging: transferState.productPackaging
       });
+      performanceState.lastTransferLoadedItems = transferState.items.length;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       setSyncStatus("Sincronizado", "success");
       moduleLoadState.transfers = true;
@@ -1759,6 +2048,42 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  async function loadTransferItemsForTransfer(transferId, options) {
+    options = options || {};
+    if (!transferId) return [];
+    var transfer = getTransferById(transferId);
+    if (!transfer && options.requireTransfer !== false) return [];
+    if (!options.force && transferState.loadedItemTransferIds[transferId]) return getTransferItems(transferId);
+    if (transferState.loadingTransferItems[transferId]) return transferState.loadingTransferItems[transferId];
+    if (!isSupabaseReady() || !canUseNetwork()) return getTransferItems(transferId);
+    var loadPromise = (async function () {
+      var startedAt = performance.now();
+      try {
+        var rows = await fetchTransferItemsForTransfer(transferId, (transfer && transfer.warehouseCode) || activeWarehouseCode());
+        var loadedItems = rows.map(fromDbTransferItem).filter(function (item) {
+          return item.transferId === transferId && processRowMatchesActiveWarehouse(item);
+        });
+        transferState.items = transferState.items.filter(function (item) { return item.transferId !== transferId; }).concat(loadedItems);
+        transferState.loadedItemTransferIds[transferId] = true;
+        transferState.events = [];
+        performanceState.lastTransferLoadedItems = loadedItems.length;
+        recordPerformanceMetric("lastTransferDetailMs", startedAt);
+        invalidateTransferStatsCache();
+        writeTransferCacheSoon();
+        return loadedItems;
+      } catch (error) {
+        recordPerformanceMetric("lastTransferDetailMs", startedAt);
+        recordPerformanceError("transfer-detail", error);
+        showToast("Nao foi possivel carregar itens da transferencia: " + formatSupabaseError(error), "error");
+        return getTransferItems(transferId);
+      } finally {
+        delete transferState.loadingTransferItems[transferId];
+      }
+    })();
+    transferState.loadingTransferItems[transferId] = loadPromise;
+    return loadPromise;
+  }
+
   function writeTransferCacheSoon() {
     if (transferState.cacheWriteTimer) window.clearTimeout(transferState.cacheWriteTimer);
     transferState.cacheWriteTimer = window.setTimeout(function () {
@@ -1766,7 +2091,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       writeModuleCache("transferData", {
         establishments: transferState.establishments,
         transfers: transferState.transfers,
-        items: transferState.items,
         productPackaging: transferState.productPackaging
       }).catch(function (error) {
         recordPerformanceError("transfer-cache-write", error);
@@ -1816,7 +2140,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       scheduleTransferRealtimeRefresh("item-without-transfer", 250);
       return;
     }
+    if (item.transferId && !transferState.loadedItemTransferIds[item.transferId] && transferState.activeTransferId !== item.transferId) {
+      invalidateTransferStatsCache();
+      return;
+    }
     upsertById(transferState.items, item);
+    if (item.transferId) transferState.loadedItemTransferIds[item.transferId] = true;
     invalidateTransferStatsCache();
     writeTransferCacheSoon();
   }
@@ -1967,7 +2296,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       id: row.id || "",
       sku: row.sku || "",
-      description: row.descricao || "",
+      description: row.descricao || row.nome_material_snapshot || "",
       unitsPerBox: Number(row.unidades_por_caixa || 0),
       updatedAt: row.updated_at || "",
       updatedBy: row.updated_by || ""
@@ -1979,7 +2308,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       id: row.id,
       transferId: row.transfer_id || "",
       sku: row.sku || row.codigo_material || "",
-      description: row.descricao || "",
+      description: row.descricao || row.nome_material_snapshot || "",
       requestedQty: Number(row.quantidade_solicitada || 0),
       unit: row.unidade_medida || "UN",
       movementType: row.tipo_movimentacao || "",
@@ -1995,16 +2324,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: row.endereco_codigo || "",
       hasLocation: row.has_location === true,
       locationWarning: row.location_warning || "",
-      storeAvailable: Number(row.saldo_loja_disponivel || 0),
-      captureAvailable: Number(row.saldo_captacao_disponivel || 0),
+      storeAvailable: Number(row.saldo_loja_snapshot !== undefined && row.saldo_loja_snapshot !== null ? row.saldo_loja_snapshot : row.saldo_loja_disponivel || 0),
+      captureAvailable: Number(row.saldo_captacao_snapshot !== undefined && row.saldo_captacao_snapshot !== null ? row.saldo_captacao_snapshot : row.saldo_captacao_disponivel || 0),
       originSuggested: row.origem_sugerida || "",
-      suggestedCaptureQty: Number(row.quantidade_sugerida_captacao || 0),
-      suggestedStoreQty: Number(row.quantidade_sugerida_loja || 0),
-      stockAlert: row.alerta_saldo === true,
-      stockAlertMessage: row.alerta_saldo_mensagem || "",
-      operationalMessage: row.alerta_saldo_mensagem || "",
-      stockBaseFound: normalizeText(row.alerta_saldo_mensagem || "") !== "SKU ausente na Base de Estoque.",
-      suggestedLocation: row.localizacao_sugerida || "",
+      suggestedCaptureQty: Number(row.quantidade_retirar_captacao !== undefined && row.quantidade_retirar_captacao !== null ? row.quantidade_retirar_captacao : row.quantidade_sugerida_captacao || 0),
+      suggestedStoreQty: Number(row.quantidade_retirar_loja !== undefined && row.quantidade_retirar_loja !== null ? row.quantidade_retirar_loja : row.quantidade_sugerida_loja || 0),
+      quantityShortage: Number(row.quantidade_faltante || 0),
+      stockAlert: row.alerta_saldo === true || Boolean(row.alerta_saldo && typeof row.alerta_saldo === "string"),
+      stockAlertMessage: row.alerta_saldo_mensagem || row.alerta_saldo || "",
+      operationalMessage: row.alerta_saldo_mensagem || row.alerta_saldo || "",
+      stockBaseFound: normalizeText(row.alerta_saldo_mensagem || row.alerta_saldo || "") !== "SKU ausente na Base de Estoque.",
+      suggestedLocation: row.localizacao_sugerida || row.localizacao_captacao_snapshot || row.localizacao_wms_snapshot || "",
+      captureLocationSnapshot: row.localizacao_captacao_snapshot || "",
+      wmsLocationSnapshot: row.localizacao_wms_snapshot || "",
+      stockSnapshotAt: row.stock_snapshot_at || "",
       quantityType: row.tipo_envio || row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
       unitsPerBox: Number(row.unidades_por_caixa || 0),
@@ -2150,12 +2483,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       location_warning: item.locationWarning || "",
       saldo_loja_disponivel: Number(item.storeAvailable || 0),
       saldo_captacao_disponivel: Number(item.captureAvailable || 0),
+      nome_material_snapshot: item.description || "",
+      saldo_loja_snapshot: Number(item.storeAvailable || 0),
+      saldo_captacao_snapshot: Number(item.captureAvailable || 0),
       origem_sugerida: item.originSuggested || "",
       quantidade_sugerida_captacao: Number(item.suggestedCaptureQty || 0),
       quantidade_sugerida_loja: Number(item.suggestedStoreQty || 0),
+      quantidade_retirar_captacao: Number(item.suggestedCaptureQty || 0),
+      quantidade_retirar_loja: Number(item.suggestedStoreQty || 0),
+      quantidade_faltante: Number(item.quantityShortage || item.missingQty || 0),
       alerta_saldo: item.stockAlert === true,
       alerta_saldo_mensagem: item.stockAlertMessage || "",
       localizacao_sugerida: item.suggestedLocation || "",
+      localizacao_captacao_snapshot: item.captureLocationSnapshot || item.suggestedLocation || "",
+      localizacao_wms_snapshot: item.wmsLocationSnapshot || item.addressCode || "",
+      stock_snapshot_at: item.stockSnapshotAt || null,
       tipo_quantidade: item.quantityType || "UNIDADE",
       tipo_envio: item.quantityType || "UNIDADE",
       quantidade_caixas: Number(item.boxQty || 0),
@@ -2184,7 +2526,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferItemAuditDbFields(item) {
     return {
       quantidade_extra: Number(item.extraQty || 0),
-      quantidade_faltante: Number(item.missingQty || 0),
+      quantidade_faltante: Number(item.missingQty || item.quantityShortage || 0),
       quantidade_excedente: Number(item.excessQty || 0),
       is_extra: item.isExtra === true,
       divergence_type: item.divergenceType || "",
@@ -2239,12 +2581,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "quantidade_lacrada",
       "saldo_loja_disponivel",
       "saldo_captacao_disponivel",
+      "saldo_loja_snapshot",
+      "saldo_captacao_snapshot",
       "origem_sugerida",
       "quantidade_sugerida_captacao",
       "quantidade_sugerida_loja",
+      "quantidade_retirar_captacao",
+      "quantidade_retirar_loja",
       "alerta_saldo",
       "alerta_saldo_mensagem",
       "localizacao_sugerida",
+      "localizacao_captacao_snapshot",
+      "localizacao_wms_snapshot",
+      "stock_snapshot_at",
       "status"
     ]);
   }
@@ -3046,23 +3395,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var remaining = Math.max(0, needed - captureQty);
     var storeQty = Math.min(remaining, storeUsable);
     var shortage = Math.max(0, needed - captureQty - storeQty);
-    if (needed > 0 && captureUsable >= needed) {
-      originSuggested = "CAPTACAO";
-    } else if (needed > 0 && captureUsable > 0 && storeUsable > 0) {
+    if (needed <= 0) {
+      originSuggested = operationalTotal > 0 ? "VERIFICAR" : "SEM_SALDO";
+    } else if (shortage > 0) {
+      originSuggested = "SEM_SALDO";
+    } else if (captureQty > 0 && storeQty > 0) {
       originSuggested = "CAPTACAO_E_LOJA";
-    } else if (needed > 0 && captureUsable > 0) {
+    } else if (captureUsable >= needed) {
       originSuggested = "CAPTACAO";
     } else if (storeUsable > 0) {
       originSuggested = "LOJA";
-      storeQty = needed > 0 ? Math.min(storeUsable, needed) : storeUsable;
-      shortage = Math.max(0, needed - storeQty);
     }
     var location = captureLocation ? stockPositionLocation(captureLocation) : "";
     var officialCode = official ? official.locationCode : "";
     var hasDivergence = Boolean(location && officialCode && location !== officialCode);
     var hasNegative = captureAvailable < 0 || storeAvailable < 0;
     var suggestionQty = storeAvailable < 0 && captureUsable > 0 ? Math.min(Math.abs(storeAvailable), captureUsable) : 0;
-    var alertMessage = shortage > 0 ? "Saldo insuficiente. Faltam " + formatQty(shortage) + " un." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "CAPTACAO_E_LOJA" ? "Retirar parte na captacao e completar na loja." : originSuggested === "LOJA" ? "Captacao sem saldo suficiente. Retirar da loja." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : "";
+    var alertMessage = shortage > 0 ? "Saldo insuficiente. Faltam " + formatQty(shortage) + " un." : needed <= 0 ? "Quantidade solicitada zerada. Verificar pedido." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "CAPTACAO_E_LOJA" ? "Retirar parte na captacao e completar na loja." : originSuggested === "LOJA" ? "Captacao sem saldo suficiente. Retirar da loja." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : "";
     return {
       sku: sku,
       baseFound: true,
@@ -3086,7 +3435,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       suggestedStoreQty: storeQty,
       quantityShortage: shortage,
       suggestedReplenishmentQty: suggestionQty,
-      stockAlert: shortage > 0 || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "CAPTACAO_E_LOJA" || originSuggested === "LOJA",
+      stockAlert: shortage > 0 || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "CAPTACAO_E_LOJA" || originSuggested === "LOJA" || originSuggested === "VERIFICAR",
       alertMessage: alertMessage,
       operationalMessage: alertMessage || "Retirar da captacao.",
       sellable: captacao.isSellable || loja.isSellable
@@ -6252,7 +6601,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferPanelRows").addEventListener("click", handleTransferActionClick);
     $("transferPanelRows").addEventListener("change", handleTransferMergeSelectionChange);
     if ($("clearTransferMergeButton")) $("clearTransferMergeButton").addEventListener("click", clearTransferMergeSelection);
-    if ($("previewTransferMergeButton")) $("previewTransferMergeButton").addEventListener("click", function () {
+    if ($("previewTransferMergeButton")) $("previewTransferMergeButton").addEventListener("click", async function () {
+      await ensureSelectedMergeItemsLoaded();
       renderTransferMergePreview(true);
     });
     if ($("confirmTransferMergeButton")) $("confirmTransferMergeButton").addEventListener("click", confirmTransferMerge);
@@ -7749,7 +8099,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         })) || nowIso();
       } else {
         var transferRows = await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since);
-        var itemRows = await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since);
+        var shouldFetchItemRows = transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0;
+        var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
         var activeTransferIds = await fetchActiveWarehouseTransferIds();
         transferState.transfers.slice().forEach(function (transfer) {
           if (transferBelongsToActiveWarehouse(transfer) && !activeTransferIds[transfer.id]) removeLocalTransferEverywhere(transfer.id);
@@ -7907,9 +8258,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA" || item.status === "LACRE_CONCLUIDO" || item.status === "MONTAGEM_CAIXA_CONCLUIDA"; }).length;
-    var visibleTransfers = transfers.slice(0, TRANSFER_PANEL_RENDER_LIMIT);
+    var renderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_RENDER_LIMIT);
+    var visibleTransfers = transfers.slice(0, renderLimit);
     $("transferPanelRows").innerHTML = visibleTransfers.length
-      ? visibleTransfers.map(transferPanelRowHtml).join("") + renderListLimitNotice(transfers.length, visibleTransfers.length, "transferências")
+      ? visibleTransfers.map(transferPanelRowHtml).join("") + renderTransferPanelLimitNotice(transfers.length, visibleTransfers.length)
       : "<div class=\"empty-state compact\">Nenhuma transferência encontrada.</div>";
   }
 
@@ -8198,6 +8550,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("transferMergePreview").innerHTML = transferMergePreviewHtml(preview);
   }
 
+  async function ensureSelectedMergeItemsLoaded() {
+    var transfers = selectedMergeTransfers();
+    if (!transfers.length) return;
+    setStatus("transferMergeStatus", "Carregando itens das transferencias selecionadas...", "warning");
+    for (var index = 0; index < transfers.length; index += 1) {
+      await loadTransferItemsForTransfer(transfers[index].id);
+    }
+  }
+
   function transferMergePreviewHtml(preview) {
     var first = preview.transfers[0] || {};
     var responsible = preview.transfers.map(function (transfer) { return transfer.responsibleName || "-"; }).filter(Boolean)[0] || "-";
@@ -8262,6 +8623,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("transferMergeStatus", "Supabase nao conectado.", "error");
       return;
     }
+    await ensureSelectedMergeItemsLoaded();
     var preview = buildTransferMergePreview();
     transferState.mergePreview = preview;
     if (preview.errors.length) {
@@ -8804,6 +9166,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "<div class=\"empty-state compact\">Mostrando " + shown + " de " + total + " " + escapeHtml(label) + ". Use os filtros para refinar.</div>";
   }
 
+  function renderTransferPanelLimitNotice(total, shown) {
+    if (total <= shown) return "";
+    return [
+      "<div class=\"empty-state compact transfer-load-more-row\">",
+      "<span>Mostrando " + shown + " de " + total + " transferências.</span>",
+      "<button class=\"secondary-button\" data-transfer-load-more type=\"button\">Carregar mais</button>",
+      "</div>"
+    ].join("");
+  }
+
   function renderTableLimitNotice(total, shown, colspan, label) {
     if (total <= shown) return "";
     return "<tr><td colspan=\"" + colspan + "\" class=\"muted\">Mostrando " + shown + " de " + total + " " + escapeHtml(label) + ". Use os filtros para refinar.</td></tr>";
@@ -9177,6 +9549,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Tabelas realtime opcionais desativadas:</strong> " + escapeHtml(disabledRealtimeTables.length ? disabledRealtimeTables.join(" | ") : "nenhuma") + ".</p>",
       "<p><strong>Sessao:</strong> usuario " + escapeHtml((authState.currentUser || {}).name || "-") + " | perfil " + escapeHtml((authState.currentUser || {}).role || "-") + " | id " + escapeHtml((authState.currentUser || {}).id || "-") + " | responsavel em tarefas: " + escapeHtml((authState.currentUser || {}).availableForTasks ? "sim" : "nao") + ".</p>",
       "<p><strong>Consulta transferencias:</strong> ultima " + performanceState.lastTransferQueryMs + " ms | carregamento " + performanceState.lastTransferLoadMs + " ms | pendente refresh: " + escapeHtml(realtimeState.refreshPending ? "sim" : "nao") + " | executando: " + escapeHtml(realtimeState.refreshRunning ? "sim" : "nao") + ".</p>",
+      "<p><strong>Performance transferencias:</strong> lista " + performanceState.lastTransferListMs + " ms | detalhe " + performanceState.lastTransferDetailMs + " ms | itens " + performanceState.lastTransferItemsMs + " ms | saldo " + performanceState.lastTransferStockMs + " ms | consultas " + performanceState.lastTransferQueryCount + " | itens carregados no detalhe " + performanceState.lastTransferLoadedItems + " | wms_transfer_events " + escapeHtml(performanceState.transferEventsUsage || "removido") + ".</p>",
       "<p><strong>Ultimos eventos realtime:</strong></p>",
       realtimeState.recentEvents.length ? "<ul>" + realtimeState.recentEvents.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.table + " " + entry.event + " - " + (entry.transferId || entry.id || "-") + " - " + (entry.warehouseCode || "-")) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum evento realtime recebido nesta sessao.</p>",
       "<p><strong>Sincronizacao por modulo:</strong></p>",
@@ -9190,7 +9563,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       wms_replenishment_requests: ["id", "warehouse_code", "codigo_material", "quantidade_solicitada", "status", "created_at", "updated_at", "idempotency_key", "client_action_id", "created_by_id"],
       wms_transfers: ["id", "warehouse_code", "status", "created_at", "updated_at"],
-      wms_transfer_items: ["id", "transfer_id", "codigo_material", "quantidade_solicitada", "created_at", "updated_at"],
+      wms_transfer_items: ["id", "transfer_id", "warehouse_code", "codigo_material", "quantidade_solicitada", "nome_material_snapshot", "saldo_captacao_snapshot", "saldo_loja_snapshot", "quantidade_retirar_captacao", "quantidade_retirar_loja", "quantidade_faltante", "origem_sugerida", "localizacao_captacao_snapshot", "localizacao_wms_snapshot", "stock_snapshot_at", "created_at", "updated_at"],
       wms_stock_positions: ["id", "warehouse_code", "source_type", "codigo_material", "total_disponivel", "active", "batch_id", "record_hash"],
       wms_users: ["id", "username", "role", "default_warehouse_code", "active", "archived"]
     };
@@ -9485,7 +9858,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderHealthRows("healthPerformanceDetails", [
       { title: "Diagnóstico", detail: "Tempo para montar este relatório.", count: report.runtime.generatedMs + " ms", level: report.runtime.generatedMs > 2500 ? "warning" : "ok" },
       { title: "Login/carregamento inicial", detail: "O diagnóstico só carrega ao abrir esta tela.", count: "Sob demanda", level: "ok" },
-      { title: "Módulos", detail: "Endereçamento " + performanceState.lastCoreLoadMs + " ms | Transferências " + performanceState.lastTransferLoadMs + " ms | Reposição " + performanceState.lastReplenishmentLoadMs + " ms | Base " + performanceState.lastStockLoadMs + " ms", count: "Info", level: "muted" }
+      { title: "Módulos", detail: "Endereçamento " + performanceState.lastCoreLoadMs + " ms | Transferências " + performanceState.lastTransferLoadMs + " ms | Reposição " + performanceState.lastReplenishmentLoadMs + " ms | Base " + performanceState.lastStockLoadMs + " ms", count: "Info", level: "muted" },
+      { title: "Transferências - lista", detail: "Painel carrega resumo sem itens/eventos/base completa.", count: performanceState.lastTransferListMs + " ms", level: performanceState.lastTransferListMs > 1800 ? "warning" : "ok" },
+      { title: "Transferências - detalhe", detail: "Itens carregados sob demanda por transfer_id + warehouse_code.", count: performanceState.lastTransferItemsMs + " ms", level: performanceState.lastTransferItemsMs > 1800 ? "warning" : "ok" },
+      { title: "Transferências - estoque", detail: "Consulta apenas SKUs da transferência aberta.", count: performanceState.lastTransferStockMs + " ms", level: performanceState.lastTransferStockMs > 1800 ? "warning" : "ok" },
+      { title: "Eventos antigos", detail: "wms_transfer_events removida do fluxo vivo.", count: performanceState.transferEventsUsage || "removido", level: "ok" }
     ]);
     renderHealthRows("healthProcessRows", buildHealthStuckProcessRows(report));
   }
@@ -10376,11 +10753,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
     var tone = item.originSuggested === "CAPTACAO" && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
+    var captureLocation = item.captureLocationSnapshot || item.suggestedLocation || "-";
+    var wmsLocation = item.wmsLocationSnapshot || item.addressCode || transferCompactLocationLabel(item).replace(/^EndereÃ§o: |^Endereço: /, "") || "-";
     return [
       "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
       "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
-      "<span>Captação " + formatQty(item.suggestedCaptureQty || 0) + " | Loja " + formatQty(item.suggestedStoreQty || 0) + "</span>",
-      item.suggestedLocation ? "<span>Local: " + escapeHtml(item.suggestedLocation) + "</span>" : "",
+      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | retirar loja " + formatQty(item.suggestedStoreQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
+      "<span>Saldo captação " + formatQty(item.captureAvailable || 0) + " | saldo loja " + formatQty(item.storeAvailable || 0) + "</span>",
+      "<span>Local captação: " + escapeHtml(captureLocation) + "</span>",
+      "<span>Local WMS: " + escapeHtml(wmsLocation) + "</span>",
       item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "",
       "</div>"
     ].join("");
@@ -11000,6 +11381,37 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function getTransferStats(transferId) {
     if (transferStatsCache.statsByTransferId[transferId]) return transferStatsCache.statsByTransferId[transferId];
     var items = getTransferItems(transferId);
+    if (!items.length && transferId && !transferState.loadedItemTransferIds[transferId]) {
+      var transfer = getTransferById(transferId);
+      if (transfer) {
+        var requestedSummary = Number(transfer.totalPreviewQuantity || transfer.totalExpectedQuantity || 0);
+        var separatedSummary = Number(transfer.totalSeparatedQuantity || 0);
+        var packedSummary = Number(transfer.totalSentQuantity || transfer.totalPackedQuantity || 0);
+        var handledSummary = Math.max(separatedSummary, packedSummary);
+        var progressSummary = requestedSummary ? Math.round((handledSummary / requestedSummary) * 100) : 0;
+        var totalItemsSummary = Number(transfer.totalItems || transfer.totalSkus || 0);
+        var statsSummary = {
+          totalItems: totalItemsSummary,
+          totalSkus: totalItemsSummary,
+          pendingSeparation: Number(transfer.pendingItems || 0),
+          pendingPacking: Number(transfer.pendingItems || 0),
+          separatedItems: Number(transfer.separatedItems || 0),
+          packedItems: Number(transfer.separatedItems || 0),
+          noLocationItems: 0,
+          requested: requestedSummary,
+          separated: separatedSummary,
+          packed: packedSummary,
+          extraItems: 0,
+          extraQty: 0,
+          missingQty: Math.max(0, requestedSummary - handledSummary),
+          excessQty: Math.max(0, Number(transfer.totalDifference || 0)),
+          divergenceCount: Number(transfer.divergenceCount || transfer.divergentItems || 0),
+          progress: Math.max(0, Math.min(100, progressSummary))
+        };
+        transferStatsCache.statsByTransferId[transferId] = statsSummary;
+        return statsSummary;
+      }
+    }
     var originalItems = items.filter(function (item) { return !item.isExtra; });
     var extraItems = items.filter(function (item) { return item.isExtra; });
     var totalItems = originalItems.length;
@@ -12943,6 +13355,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       for (var i = 0; i < transfers.length; i += 1) {
         applyLocalTransferUpdate(transfers[i]);
+        transferState.loadedItemTransferIds[transfers[i].id] = true;
         getPreparedTransferItems(items, transfers[i].id).forEach(applyLocalTransferItemUpdate);
         await recordTransferEvent(transfers[i].id, "", "TRANSFER_CREATED", "", 0, "Transferencia criada por importacao inteligente.", { itemCount: getPreparedTransferItems(items, transfers[i].id).length, importSource: transfers[i].importSource });
         if (transfers[i].responsibleId) await recordTransferEvent(transfers[i].id, "", "TRANSFER_ASSIGNED", "", 0, "Responsavel atribuido.", { responsibleId: transfers[i].responsibleId });
@@ -13133,7 +13546,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var actionKey = "refresh-transfer-stock:" + transfer.id;
     if (options.persist && !beginTransferAction(actionKey, button, "Atualizando...")) return;
     try {
+      var startedAt = performance.now();
       await enrichTransferItemsWithStock(items, transfer.warehouseCode || activeWarehouseCode());
+      recordPerformanceMetric("lastTransferStockMs", startedAt);
       if (options.persist) {
         var now = new Date().toISOString();
         items.forEach(function (item) { item.updatedAt = now; });
@@ -13152,6 +13567,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
   }
 
+  function transferItemsNeedStockSnapshot(items) {
+    return (items || []).some(function (item) {
+      return !item.isExtra && (!item.stockSnapshotAt || !item.originSuggested);
+    });
+  }
+
   function applyTransferItemStockSuggestion(item, suggestion) {
     if (!item || !suggestion) return item;
     item.storeAvailable = suggestion.storeAvailable === null ? null : Number(suggestion.storeAvailable || 0);
@@ -13165,6 +13586,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     item.stockAlertMessage = suggestion.alertMessage || suggestion.operationalMessage || "";
     item.operationalMessage = suggestion.operationalMessage || suggestion.alertMessage || "";
     item.suggestedLocation = suggestion.captureLocation || suggestion.officialLocation || "";
+    item.captureLocationSnapshot = suggestion.captureLocation || "";
+    item.wmsLocationSnapshot = suggestion.officialLocation || item.addressCode || "";
+    item.stockSnapshotAt = nowIso();
     if (suggestion.name) item.description = suggestion.name;
     return item;
   }
@@ -13425,6 +13849,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       showToast("Esta transferencia pertence a outro estoque.", "error");
       return;
     }
+    setStatus("transferWorkStatus", "Carregando itens da transferencia...", "warning");
+    var loadedItems = await loadTransferItemsForTransfer(transferId, { force: options.forceItems === true });
+    if (!loadedItems.length) {
+      showToast("Transferencia sem itens carregados. Atualize e tente novamente.", "warning");
+    }
     transferState.activeTransferId = transferId;
     transferState.selectedItemId = "";
     transferState.manualSeparationQty = false;
@@ -13463,7 +13892,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return;
       }
     }
-    await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
+    if (transferItemsNeedStockSnapshot(getTransferItems(transferId))) {
+      await refreshTransferStockSuggestion(transferId, { persist: true, render: false });
+    } else {
+      await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
+    }
     activateTransferTab("transferWorkSection");
     renderTransferWork();
     setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");
@@ -14419,6 +14852,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferLoadMore !== undefined) {
+      transferState.panelRenderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_PAGE_SIZE) + TRANSFER_PANEL_PAGE_SIZE;
+      renderTransferPanel();
+      return;
+    }
     if (button.dataset.transferView) await openTransferWork(button.dataset.transferView, { viewOnly: true });
     if (button.dataset.transferOpen) await openTransferWork(button.dataset.transferOpen);
     if (button.dataset.transferExportXml) await exportTransferConferenceXml(button.dataset.transferExportXml);
