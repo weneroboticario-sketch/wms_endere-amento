@@ -1509,6 +1509,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "added_by_name",
       "input_type",
       "observation",
+      "status_operacional",
+      "status_divergencia",
       "status",
       "idempotency_key",
       "request_id",
@@ -1523,20 +1525,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function fetchTransferSummaryRows(limit) {
     var startedAt = performance.now();
-    var query = supabaseDb
-      .from("wms_transfers")
-      .select(transferSummarySelectColumns())
-      .eq("warehouse_code", activeWarehouseCode())
-      .order("updated_at", { ascending: false })
-      .limit(limit || 200);
-    var response = await query;
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb
-        .from("wms_transfers")
-        .select("id,codigo_transferencia,nome_transferencia,estabelecimento_id,estabelecimento_codigo,estabelecimento_nome,estabelecimento_cnpj,origem_nome,origem_cnpj,origem_codigo_loja,destino_nome,destino_cnpj,destino_codigo_loja,responsavel_id,responsavel_nome,status,observacao,total_items,total_skus,total_expected_quantity,total_separated_quantity,total_packed_quantity,total_previsto,total_enviado,diferenca_total,itens_total,itens_separados,itens_pendentes,itens_divergentes,total_caixas,is_deleted,deleted_at,warehouse_id,warehouse_code,created_at,updated_at")
-        .eq("warehouse_code", activeWarehouseCode())
-        .order("updated_at", { ascending: false })
-        .limit(limit || 200);
+    var response = await selectRowsWithMissingColumnFallback("wms_transfers", transferSummarySelectColumns(), function (query) {
+      return query.eq("warehouse_code", activeWarehouseCode()).order("updated_at", { ascending: false }).limit(limit || 200);
+    });
+    if (response.error && isMissingWarehouseColumnError(response.error)) {
+      assertWarehouseFallbackAllowed("wms_transfers", response.error);
+      response = await selectRowsWithMissingColumnFallback("wms_transfers", transferSummarySelectColumns(), function (query) {
+        return query.order("updated_at", { ascending: false }).limit(limit || 200);
+      });
     }
     if (response.error) throw response.error;
     recordPerformanceMetric("lastTransferListMs", startedAt);
@@ -1547,30 +1543,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function fetchTransferItemsForTransfer(transferId, warehouseCode) {
     var startedAt = performance.now();
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
-    var response = await supabaseDb
-      .from("wms_transfer_items")
-      .select(transferItemDetailSelectColumns())
-      .eq("transfer_id", transferId)
-      .eq("warehouse_code", warehouse)
-      .order("created_at", { ascending: true })
-      .limit(2000);
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb
-        .from("wms_transfer_items")
-        .select(stripTransferItemSelectColumns())
-        .eq("transfer_id", transferId)
-        .eq("warehouse_code", warehouse)
-        .order("created_at", { ascending: true })
-        .limit(2000);
-    }
+    var response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
+      return query.eq("transfer_id", transferId).eq("warehouse_code", warehouse).order("created_at", { ascending: true }).limit(2000);
+    });
     if (response.error && isMissingWarehouseColumnError(response.error)) {
       assertWarehouseFallbackAllowed("wms_transfer_items", response.error);
-      response = await supabaseDb
-        .from("wms_transfer_items")
-        .select(stripTransferItemSelectColumns())
-        .eq("transfer_id", transferId)
-        .order("created_at", { ascending: true })
-        .limit(2000);
+      response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
+        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
+      });
     }
     if (response.error) throw response.error;
     recordPerformanceMetric("lastTransferItemsMs", startedAt);
@@ -1607,17 +1587,44 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join(",");
   }
 
+  function selectColumnsToArray(columns) {
+    return String(columns || "*").split(",").map(function (column) { return column.trim(); }).filter(Boolean);
+  }
+
+  function normalizedSelectColumnName(expression) {
+    var value = String(expression || "").trim();
+    var colonIndex = value.indexOf(":");
+    if (colonIndex >= 0) value = value.slice(colonIndex + 1);
+    var parenthesisIndex = value.indexOf("(");
+    if (parenthesisIndex >= 0) value = value.slice(0, parenthesisIndex);
+    return value.trim().toLowerCase();
+  }
+
+  async function selectRowsWithMissingColumnFallback(tableName, selectColumns, configureQuery) {
+    var columns = selectColumnsToArray(selectColumns);
+    var removedColumns = {};
+    while (true) {
+      var query = supabaseDb.from(tableName).select(columns.join(","));
+      query = configureQuery(query);
+      var response = await query;
+      if (!response.error || !isMissingColumnError(response.error)) return response;
+      var missingColumn = getMissingColumnName(response.error).toLowerCase();
+      var nextColumns = columns.filter(function (column) { return normalizedSelectColumnName(column) !== missingColumn; });
+      if (!missingColumn || removedColumns[missingColumn] || nextColumns.length === columns.length || !nextColumns.length) return response;
+      removedColumns[missingColumn] = true;
+      columns = nextColumns;
+    }
+  }
+
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
     if (isOptionalRealtimeTableDisabled(tableName)) return [];
     var selectColumns = tableName === "wms_transfers" ? transferSummarySelectColumns() : tableName === "wms_transfer_items" ? transferItemDetailSelectColumns() : "*";
     try {
-      var query = supabaseDb
-        .from(tableName)
-        .select(selectColumns)
-        .eq("warehouse_code", activeWarehouseCode());
-      if (sinceIso) query = query.gt(timeColumn, sinceIso);
-      query = query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
-      var response = await query;
+      var response = await selectRowsWithMissingColumnFallback(tableName, selectColumns, function (query) {
+        query = query.eq("warehouse_code", activeWarehouseCode());
+        if (sinceIso) query = query.gt(timeColumn, sinceIso);
+        return query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
+      });
       if (response.error) throw response.error;
       return response.data || [];
     } catch (error) {
@@ -1627,35 +1634,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           return [];
         }
         assertWarehouseFallbackAllowed(tableName, error);
-        var fallbackQuery = supabaseDb.from(tableName).select(tableName === "wms_transfer_items" ? stripTransferItemSelectColumns() : selectColumns);
-        if (sinceIso) fallbackQuery = fallbackQuery.gt(timeColumn, sinceIso);
-        fallbackQuery = fallbackQuery.order(orderColumn || timeColumn, { ascending: true }).limit(500);
-        var fallbackResponse = await fallbackQuery;
-        if (fallbackResponse.error) {
-          if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(fallbackResponse.error) || isMissingColumnError(fallbackResponse.error))) {
-            disableOptionalRealtimeTable(tableName, fallbackResponse.error, "live-optional-" + tableName);
-            return [];
-          }
-          throw fallbackResponse.error;
-        }
+        var fallbackResponse = await selectRowsWithMissingColumnFallback(tableName, selectColumns, function (query) {
+          if (sinceIso) query = query.gt(timeColumn, sinceIso);
+          return query.order(orderColumn || timeColumn, { ascending: true }).limit(500);
+        });
+        if (fallbackResponse.error) throw fallbackResponse.error;
         return (fallbackResponse.data || []).filter(processRowMatchesActiveWarehouse);
       }
       if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
         disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
         return [];
-      }
-      if (isMissingColumnError(error) && (tableName === "wms_transfer_items" || tableName === "wms_transfers")) {
-        var safeColumns = tableName === "wms_transfer_items"
-          ? stripTransferItemSelectColumns()
-          : "id,codigo_transferencia,nome_transferencia,estabelecimento_id,estabelecimento_codigo,estabelecimento_nome,estabelecimento_cnpj,origem_nome,origem_cnpj,origem_codigo_loja,destino_nome,destino_cnpj,destino_codigo_loja,responsavel_id,responsavel_nome,status,observacao,total_items,total_skus,total_expected_quantity,total_separated_quantity,total_packed_quantity,total_previsto,total_enviado,diferenca_total,itens_total,itens_separados,itens_pendentes,itens_divergentes,total_caixas,is_deleted,deleted_at,warehouse_id,warehouse_code,created_at,updated_at";
-        var safeQuery = supabaseDb
-          .from(tableName)
-          .select(safeColumns)
-          .eq("warehouse_code", activeWarehouseCode());
-        if (sinceIso) safeQuery = safeQuery.gt(timeColumn, sinceIso);
-        safeQuery = safeQuery.order(orderColumn || timeColumn, { ascending: true }).limit(500);
-        var safeResponse = await safeQuery;
-        if (!safeResponse.error) return safeResponse.data || [];
       }
       throw error;
     }
@@ -2358,6 +2346,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       inputType: row.input_type || "",
       observation: row.observation || "",
       status: normalizeText(row.status || "PENDENTE").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "PENDENTE",
+      statusOperational: row.status_operacional || "",
+      statusDivergence: row.status_divergencia || "",
       idempotencyKey: row.idempotency_key || "",
       requestId: row.request_id || "",
       warehouseId: row.warehouse_id || warehouseIdForCode(row.warehouse_code),
@@ -2513,6 +2503,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       motivo_pendencia: item.pendingReason || "",
       observacao_pendencia: item.pendingObservation || "",
       has_divergence: Boolean(item.divergenceType || Number(item.missingQty || 0) > 0 || Number(item.excessQty || 0) > 0),
+      status_operacional: item.statusOperational || item.status || "PENDENTE",
+      status_divergencia: item.statusDivergence || (item.divergenceType ? "COM_DIVERGENCIA" : "SEM_DIVERGENCIA"),
       status: item.status || "PENDENTE",
       idempotency_key: item.idempotencyKey || "",
       request_id: item.requestId || item.idempotencyKey || "",
@@ -2594,7 +2586,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "localizacao_captacao_snapshot",
       "localizacao_wms_snapshot",
       "stock_snapshot_at",
-      "status"
+      "status",
+      "status_operacional",
+      "status_divergencia"
     ]);
   }
 
@@ -2742,21 +2736,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function loadStockImportBatchRows() {
-    var response = await supabaseDb
-      .from("wms_stock_import_batches")
-      .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,inserted_rows,updated_rows,unchanged_rows,deactivated_rows,negative_rows,alert_rows,ignored_rows,error_rows,status,notes,import_mode")
-      .eq("warehouse_code", activeWarehouseCode())
-      .order("created_at", { ascending: false })
-      .limit(10);
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb
-        .from("wms_stock_import_batches")
-        .select("id,created_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,ignored_rows,error_rows,status,notes")
-        .eq("warehouse_code", activeWarehouseCode())
-        .order("created_at", { ascending: false })
-        .limit(10);
-    }
-    return response;
+    return selectRowsWithMissingColumnFallback("wms_stock_import_batches", "id,created_at,updated_at,finished_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,inserted_rows,updated_rows,unchanged_rows,deactivated_rows,negative_rows,alert_rows,ignored_rows,error_rows,status,notes,error_message,import_mode", function (query) {
+      return query.eq("warehouse_code", activeWarehouseCode()).order("created_at", { ascending: false }).limit(10);
+    });
   }
 
   async function refreshStockOperationalData() {
@@ -2917,6 +2899,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       error_rows: parsed.errors.length,
       status: "PROCESSING",
       notes: "",
+      updated_at: now,
+      finished_at: null,
+      error_message: "",
       import_mode: importMode,
       negative_rows: 0,
       alert_rows: 0,
@@ -2982,7 +2967,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }));
       return metrics;
     } catch (error) {
-      await supabaseDb.from("wms_stock_import_batches").update({ status: "FAILED", notes: formatSupabaseError(error), imported_rows: 0 }).eq("id", batchId);
+      await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, {
+        status: "FAILED",
+        notes: formatSupabaseError(error),
+        error_message: formatSupabaseError(error),
+        finished_at: nowIso(),
+        updated_at: nowIso(),
+        imported_rows: 0
+      });
       throw error;
     }
   }
@@ -3131,7 +3123,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       error_rows: Number(metrics.errorRows || 0),
       status: metrics.status || "COMPLETED",
       notes: metrics.notes || "",
-      import_mode: metrics.importMode || ""
+      import_mode: metrics.importMode || "",
+      updated_at: nowIso(),
+      finished_at: metrics.status === "PROCESSING" ? null : nowIso(),
+      error_message: metrics.errorMessage || ""
     };
     var response = await supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
     var attemptedMissingColumns = {};
@@ -6673,6 +6668,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("generateHealthSqlButton")) $("generateHealthSqlButton").addEventListener("click", generateHealthCorrectionSql);
     if ($("verifyHealthDuplicatesButton")) $("verifyHealthDuplicatesButton").addEventListener("click", function () { renderSystemHealth(true); });
     if ($("verifyHealthOrphansButton")) $("verifyHealthOrphansButton").addEventListener("click", function () { renderSystemHealth(true); });
+    if ($("healthProcessRows")) $("healthProcessRows").addEventListener("click", handleHealthProcessAction);
     if ($("clearHealthCacheButton")) $("clearHealthCacheButton").addEventListener("click", clearHealthLocalCache);
     if ($("rebuildHealthCacheButton")) $("rebuildHealthCacheButton").addEventListener("click", rebuildHealthLocalCache);
     if ($("flushHealthPendingButton")) $("flushHealthPendingButton").addEventListener("click", flushHealthPendingWrites);
@@ -7903,8 +7899,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           { name: "wms_transfers", optional: false },
           { name: "wms_transfer_items", optional: false },
           { name: "wms_stock_positions", optional: false },
-          { name: "wms_transfer_divergences", optional: true },
-          { name: "wms_task_notifications", optional: true },
           { name: "wms_notifications", optional: true },
           { name: "wms_replenishment_requests", optional: false }
         ].forEach(function (entry) {
@@ -9563,8 +9557,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       wms_replenishment_requests: ["id", "warehouse_code", "codigo_material", "quantidade_solicitada", "status", "created_at", "updated_at", "idempotency_key", "client_action_id", "created_by_id"],
       wms_transfers: ["id", "warehouse_code", "status", "created_at", "updated_at"],
-      wms_transfer_items: ["id", "transfer_id", "warehouse_code", "codigo_material", "quantidade_solicitada", "nome_material_snapshot", "saldo_captacao_snapshot", "saldo_loja_snapshot", "quantidade_retirar_captacao", "quantidade_retirar_loja", "quantidade_faltante", "origem_sugerida", "localizacao_captacao_snapshot", "localizacao_wms_snapshot", "stock_snapshot_at", "created_at", "updated_at"],
-      wms_stock_positions: ["id", "warehouse_code", "source_type", "codigo_material", "total_disponivel", "active", "batch_id", "record_hash"],
+      wms_transfer_items: ["id", "transfer_id", "warehouse_code", "codigo_material", "quantidade_solicitada", "nome_material_snapshot", "saldo_captacao_snapshot", "saldo_loja_snapshot", "quantidade_retirar_captacao", "quantidade_retirar_loja", "quantidade_faltante", "origem_sugerida", "localizacao_captacao_snapshot", "localizacao_wms_snapshot", "stock_snapshot_at", "status_operacional", "status_divergencia", "created_at", "updated_at"],
+      wms_stock_positions: ["id", "warehouse_code", "source_type", "codigo_material", "total_disponivel", "active", "batch_id", "record_hash", "updated_at"],
+      wms_stock_import_batches: ["id", "warehouse_code", "source_type", "status", "created_at", "updated_at", "finished_at", "error_message"],
       wms_users: ["id", "username", "role", "default_warehouse_code", "active", "archived"]
     };
   }
@@ -9633,6 +9628,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
     var duplicates = buildHealthDuplicateReport(stockRows, transfers, transferItems, requests, notificationRows, users);
     var orphans = buildHealthOrphanReport(stockRows, batches, transfers, transferItems, requests, users);
+    var stuckBatches = batches.filter(function (batch) {
+      return normalizeText(batch.status).toUpperCase() === "PROCESSING" && healthDateOlderThanHours(batch.updated_at || batch.created_at, 2);
+    });
     var imports = buildHealthImportReport(batches);
     var runtime = buildHealthRuntimeReport(startedAt);
     var openTransfers = transfers.filter(function (transfer) { return !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; });
@@ -9648,6 +9646,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       duplicates: duplicates,
       orphans: orphans,
       imports: imports,
+      stuckBatches: stuckBatches,
       runtime: runtime,
       openTransfers: openTransfers.length,
       openRequests: openRequests.length,
@@ -9658,7 +9657,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         duplicateGroups: duplicates.total,
         orphanGroups: orphans.total,
         recentErrors: performanceState.recentErrors.length,
-        criticalIssues: schema.missing.length + duplicates.total + noWarehouseRecords
+        criticalIssues: schema.missing.length + duplicates.total + noWarehouseRecords + stuckBatches.length
       }
     };
   }
@@ -9706,10 +9705,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function readHealthRows(tableName, selectColumns, orderColumn, limit) {
     if (!isSupabaseReady()) return { rows: [], error: null };
     try {
-      var query = supabaseDb.from(tableName).select(selectColumns || "*");
-      if (orderColumn) query = query.order(orderColumn, { ascending: false });
-      if (limit) query = query.limit(limit);
-      var response = await query;
+      var response = await selectRowsWithMissingColumnFallback(tableName, selectColumns || "*", function (query) {
+        if (orderColumn) query = query.order(orderColumn, { ascending: false });
+        if (limit) query = query.limit(limit);
+        return query;
+      });
       if (response.error) return { rows: [], error: response.error };
       return { rows: response.data || [], error: null };
     } catch (error) {
@@ -9777,7 +9777,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     pushHealthCount(results, "Base sem warehouse_code", stockRows.filter(function (row) { return !rawWarehouseCodeValue(row); }).length, "warehouse", "Registro de estoque precisa pertencer a um estoque.");
     pushHealthCount(results, "Base sem codigo_material", stockRows.filter(function (row) { return !normalizeSku(row.codigo_material || ""); }).length, "Base de Estoque", "Registro de estoque sem SKU.");
     pushHealthCount(results, "Importações travadas", (batches || []).filter(function (batch) {
-      return normalizeText(batch.status).toUpperCase() === "PROCESSING" && healthDateOlderThanHours(batch.created_at, 2);
+      return normalizeText(batch.status).toUpperCase() === "PROCESSING" && healthDateOlderThanHours(batch.updated_at || batch.created_at, 2);
     }).length, "Importação", "Lote ficou PROCESSING por mais de 2 horas.");
     return { total: results.reduce(function (sum, item) { return sum + item.count; }, 0), items: results };
   }
@@ -9871,7 +9871,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var target = $(targetId);
     if (!target) return;
     target.innerHTML = rows.map(function (row) {
-      return "<div class=\"health-row is-" + escapeHtml(row.level || "muted") + "\"><span><strong>" + escapeHtml(row.title) + "</strong><small>" + escapeHtml(row.detail || "") + "</small></span><em class=\"health-pill\">" + escapeHtml(String(row.count === undefined ? "-" : row.count)) + "</em></div>";
+      return "<div class=\"health-row is-" + escapeHtml(row.level || "muted") + "\"><span><strong>" + escapeHtml(row.title) + "</strong><small>" + escapeHtml(row.detail || "") + "</small>" + (row.actionHtml || "") + "</span><em class=\"health-pill\">" + escapeHtml(String(row.count === undefined ? "-" : row.count)) + "</em></div>";
     }).join("");
   }
 
@@ -9888,9 +9888,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return item.status === "COMPLETED" ? "result-ok" : item.status === "FAILED" ? "result-missing" : "result-changed";
   }
 
-  function buildHealthStuckProcessRows() {
+  function buildHealthStuckProcessRows(report) {
     var selectedCodes = healthSelectedWarehouseCodes();
     var rows = [];
+    (report && report.stuckBatches || []).filter(function (batch) {
+      return healthRowMatchesWarehouse(batch, selectedCodes, true);
+    }).slice(0, 5).forEach(function (batch) {
+      rows.push({
+        title: "Lote de estoque travado",
+        detail: (batch.source_type || "Estoque") + " | " + (batch.file_name || batch.id) + " | PROCESSING há mais de 2 horas.",
+        count: "Corrigir",
+        level: "error",
+        actionHtml: "<button type=\"button\" class=\"secondary-button small-button health-fix-button\" data-health-fix-stock-batch=\"" + escapeHtml(batch.id) + "\">Corrigir lote travado</button>"
+      });
+    });
     transferState.transfers.filter(function (transfer) {
       return healthRowMatchesWarehouse(transfer, selectedCodes, true) && !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && healthDateOlderThanHours(transfer.lastActionAt || transfer.updatedAt || transfer.createdAt, 8);
     }).slice(0, 5).forEach(function (transfer) {
@@ -9901,7 +9912,43 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }).slice(0, 5).forEach(function (request) {
       rows.push({ title: "Reposição parada", detail: "SKU " + request.codigoMaterial + " | Status: " + request.status, count: "Atenção", level: "warning" });
     });
-    return rows.length ? rows : [{ title: "Nenhum processo travado", detail: "Transferências e reposições abertas não ultrapassaram o limite operacional.", count: "OK", level: "ok" }];
+    return rows.length ? rows : [{ title: "Nenhum processo travado", detail: "Transferências, reposições e lotes de estoque abertos não ultrapassaram o limite operacional.", count: "OK", level: "ok" }];
+  }
+
+  async function handleHealthProcessAction(event) {
+    var button = event.target.closest ? event.target.closest("[data-health-fix-stock-batch]") : null;
+    if (!button) return;
+    await fixStuckStockBatch(button.getAttribute("data-health-fix-stock-batch"), button);
+  }
+
+  async function fixStuckStockBatch(batchId, button) {
+    if (!isAdmin() || !batchId) return;
+    var originalLabel = button ? button.textContent : "Corrigir lote travado";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Corrigindo...";
+    }
+    var message = "Lote encerrado pelo diagnóstico após permanecer PROCESSING por mais de 2 horas.";
+    try {
+      var response = await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, {
+        status: "FAILED",
+        notes: message,
+        error_message: message,
+        finished_at: nowIso(),
+        updated_at: nowIso()
+      });
+      if (response.error) throw response.error;
+      setStatus("healthStatus", "Lote travado encerrado com segurança. A base anterior foi mantida.", "success");
+      moduleLoadState.stock = false;
+      await ensureStockDataLoaded();
+      await refreshSystemHealth();
+    } catch (error) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+      setStatus("healthStatus", "Não foi possível corrigir o lote: " + formatSupabaseError(error), "error");
+    }
   }
 
   function healthDateOlderThanHours(value, hours) {
@@ -9930,6 +9977,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (columnName === "archived") return "boolean default false";
     if (columnName === "quantidade_solicitada" || columnName === "total_disponivel") return "numeric default 0";
     if (columnName === "created_at" || columnName === "updated_at") return "timestamptz default now()";
+    if (columnName === "finished_at" || columnName === "archived_at" || columnName === "stock_snapshot_at") return "timestamptz";
+    if (columnName === "status_operacional") return "text default 'PENDENTE'";
+    if (columnName === "status_divergencia") return "text default 'SEM_DIVERGENCIA'";
     if (columnName === "record_hash" || columnName === "idempotency_key" || columnName === "client_action_id" || columnName === "created_by_id") return "text default ''";
     return "text default ''";
   }

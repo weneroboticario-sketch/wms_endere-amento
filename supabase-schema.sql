@@ -527,6 +527,8 @@ create table if not exists public.wms_transfer_items (
   embalagem_observacao text default '',
   quantidade_separada numeric default 0,
   quantidade_lacrada numeric default 0,
+  status_operacional text default 'PENDENTE',
+  status_divergencia text default 'SEM_DIVERGENCIA',
   status text default 'PENDENTE'
 );
 
@@ -591,6 +593,8 @@ alter table public.wms_transfer_items add column if not exists added_by_id text 
 alter table public.wms_transfer_items add column if not exists added_by_name text default '';
 alter table public.wms_transfer_items add column if not exists input_type text default '';
 alter table public.wms_transfer_items add column if not exists observation text default '';
+alter table public.wms_transfer_items add column if not exists status_operacional text default 'PENDENTE';
+alter table public.wms_transfer_items add column if not exists status_divergencia text default 'SEM_DIVERGENCIA';
 alter table public.wms_transfer_items add column if not exists status text default 'PENDENTE';
 alter table public.wms_transfer_items add column if not exists idempotency_key text default '';
 alter table public.wms_transfer_items add column if not exists request_id text default '';
@@ -605,6 +609,11 @@ where warehouse_code is null or warehouse_code = '' or warehouse_id is null or w
 update public.wms_transfer_items
 set codigo_material = coalesce(nullif(codigo_material, ''), sku)
 where codigo_material is null or codigo_material = '';
+
+update public.wms_transfer_items
+set status_operacional = coalesce(nullif(status_operacional, ''), nullif(status, ''), 'PENDENTE'),
+    status_divergencia = coalesce(nullif(status_divergencia, ''), 'SEM_DIVERGENCIA')
+where status_operacional is null or status_operacional = '' or status_divergencia is null or status_divergencia = '';
 
 create table if not exists public.wms_product_packaging (
   id text primary key,
@@ -830,8 +839,15 @@ on public.wms_transfer_items (warehouse_code, transfer_id, sku);
 create index if not exists wms_transfer_items_updated_at_idx
 on public.wms_transfer_items (updated_at desc);
 
+drop index if exists public.idx_wms_transfer_items_updated;
 create index if not exists idx_wms_transfer_items_updated
+on public.wms_transfer_items (transfer_id, updated_at desc);
+
+create index if not exists idx_wms_transfer_items_warehouse_updated
 on public.wms_transfer_items (warehouse_code, updated_at desc);
+
+create index if not exists idx_wms_transfer_items_status
+on public.wms_transfer_items (transfer_id, status_operacional, status_divergencia);
 
 create unique index if not exists wms_transfer_items_idempotency_uidx
 on public.wms_transfer_items (warehouse_code, idempotency_key)
@@ -874,7 +890,10 @@ create table if not exists public.wms_stock_import_batches (
   error_rows integer default 0,
   status text default 'PROCESSING',
   notes text default '',
-  import_mode text default 'CARGA_COMPLETA'
+  import_mode text default 'CARGA_COMPLETA',
+  updated_at timestamptz default now(),
+  finished_at timestamptz,
+  error_message text default ''
 );
 
 alter table public.wms_stock_import_batches add column if not exists created_at timestamptz default now();
@@ -896,6 +915,9 @@ alter table public.wms_stock_import_batches add column if not exists error_rows 
 alter table public.wms_stock_import_batches add column if not exists status text default 'PROCESSING';
 alter table public.wms_stock_import_batches add column if not exists notes text default '';
 alter table public.wms_stock_import_batches add column if not exists import_mode text default 'CARGA_COMPLETA';
+alter table public.wms_stock_import_batches add column if not exists updated_at timestamptz default now();
+alter table public.wms_stock_import_batches add column if not exists finished_at timestamptz;
+alter table public.wms_stock_import_batches add column if not exists error_message text default '';
 alter table public.wms_stock_import_batches add column if not exists idempotency_key text default '';
 alter table public.wms_stock_import_batches add column if not exists request_id text default '';
 
@@ -982,6 +1004,12 @@ on public.wms_stock_positions (warehouse_code, codigo_material, source_type, act
 create index if not exists idx_stock_positions_hash
 on public.wms_stock_positions (warehouse_code, source_type, codigo_material, record_hash);
 
+create index if not exists idx_wms_stock_positions_hash
+on public.wms_stock_positions (warehouse_code, source_type, codigo_material, record_hash);
+
+create index if not exists idx_wms_users_archived
+on public.wms_users (default_warehouse_code, active, archived);
+
 create index if not exists idx_stock_positions_negative
 on public.wms_stock_positions (warehouse_code, source_type, total_disponivel, active);
 
@@ -1002,6 +1030,18 @@ on public.wms_stock_positions (warehouse_code, codigo_material, active);
 
 create index if not exists idx_stock_batches_status
 on public.wms_stock_import_batches (warehouse_code, source_type, status, created_at);
+
+create index if not exists idx_wms_stock_batches_processing
+on public.wms_stock_import_batches (warehouse_code, source_type, status, created_at);
+
+update public.wms_stock_import_batches
+set status = 'FAILED',
+    notes = coalesce(nullif(notes, ''), 'Lote travado por mais de 2 horas. Encerrado pelo diagnóstico.'),
+    error_message = 'Lote travado por mais de 2 horas. Encerrado pelo diagnóstico.',
+    finished_at = coalesce(finished_at, now()),
+    updated_at = now()
+where status = 'PROCESSING'
+  and coalesce(updated_at, created_at) < now() - interval '2 hours';
 
 create table if not exists public.wms_stock_alerts (
   id text primary key,
