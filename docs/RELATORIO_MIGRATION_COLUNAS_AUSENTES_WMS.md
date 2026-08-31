@@ -18,11 +18,11 @@ A migration `supabase-wms-compatibility-migration.sql` acompanha o schema real u
 
 ## Supabase
 
-O projeto configurado no app e o projeto Supabase `bzqulgdtfpcmkyaldssy`. A chave anon nao e registrada neste relatorio. A migration foi preparada para execucao no SQL Editor desse projeto e ainda depende da confirmacao/execucao no ambiente remoto.
+O projeto configurado no app e o projeto Supabase `bzqulgdtfpcmkyaldssy`. A chave anon nao e registrada neste relatorio. A migration foi executada no SQL Editor desse projeto em 30/08/2026. A consulta final de verificacao retornou 21 linhas, confirmando a presenca das colunas esperadas.
 
 ## Compatibilidade no app
 
-O app remove colunas ausentes apenas da leitura afetada, usa cache/fallback controlado e nao consulta `wms_transfer_events` no fluxo vivo. Login, Transferencias, Reposicao, Base de Estoque e Usuarios continuam operacionais enquanto a migration nao for executada.
+O app remove colunas ausentes apenas da leitura afetada, usa cache/fallback controlado e nao consulta `wms_transfer_events` no fluxo vivo. Login, Transferencias, Reposicao, Base de Estoque e Usuarios continuam operacionais. A migration complementa essa compatibilidade no banco remoto.
 
 ## Testes locais
 
@@ -32,4 +32,4 @@ O app remove colunas ausentes apenas da leitura afetada, usa cache/fallback cont
 
 ## Riscos restantes
 
-Enquanto a migration nao for executada no Supabase real, o Diagnostico pode continuar listando colunas ausentes e recursos novos do banco permanecem indisponiveis. A execucao e idempotente e nao remove registros.
+A execucao foi concluida sem remover tabelas ou registros. Ela e idempotente e pode ser reaplicada com seguranca. O campo legado `alerta_saldo` permanece boolean para evitar alteracao destrutiva de tipo; mensagens textuais ficam em `alerta_saldo_mensagem`.
