@@ -1415,6 +1415,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "total_enviado",
       "diferenca_total",
       "total_caixas",
+      "final_box_count",
+      "total_boxes",
       "current_step",
       "last_action_at",
       "last_action_label",
@@ -2225,7 +2227,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       totalPreviewQuantity: Number(row.total_previsto || row.total_expected_quantity || 0),
       totalSentQuantity: Number(row.total_enviado || row.total_packed_quantity || 0),
       totalDifference: Number(row.diferenca_total || 0),
-      totalBoxes: Number(row.total_caixas || 0),
+      totalBoxes: Number(row.total_caixas || row.final_box_count || row.total_boxes || 0),
       currentStep: row.current_step || "",
       lastActionAt: row.last_action_at || "",
       lastActionLabel: row.last_action_label || "",
@@ -2423,6 +2425,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       itens_pendentes: Number(item.pendingItems || 0),
       itens_divergentes: Number(item.divergentItems || item.divergenceCount || 0),
       total_caixas: Number(item.totalBoxes || item.finalBoxCount || 0),
+      final_box_count: Number(item.totalBoxes || item.finalBoxCount || 0),
+      total_boxes: Number(item.totalBoxes || item.finalBoxCount || 0),
       current_step: item.currentStep || transferCurrentStepForStatus(item.status),
       last_action_at: item.lastActionAt || item.updatedAt || null,
       last_action_label: item.lastActionLabel || "",
@@ -11686,7 +11690,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function getTransferFinalBoxCount(transferOrId) {
     var transfer = typeof transferOrId === "object" && transferOrId ? transferOrId : getTransferById(transferOrId);
-    var persistedQty = transfer ? Number(transfer.totalBoxes || transfer.finalBoxCount || 0) : 0;
+    var persistedQty = transfer ? Number(transfer.totalBoxes || transfer.finalBoxCount || transfer.finalBoxes || 0) : 0;
     if (Number.isFinite(persistedQty) && persistedQty > 0) return persistedQty;
     var transferId = transfer ? transfer.id : transferOrId;
     var events = transferState.events.filter(function (event) {
