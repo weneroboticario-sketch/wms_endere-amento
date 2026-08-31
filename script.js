@@ -2022,7 +2022,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return true;
     } catch (error) {
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
-      recordPerformanceError("transferencias", error);
+      if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("transferencias", error);
       transferState.tablesAvailable = !isMissingTransferTableError(error);
       if (!transferState.tablesAvailable) {
         showToast("Tabelas de transferencias ausentes. Execute supabase-schema.sql.", "warning");
@@ -8108,7 +8108,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       renderTransferRealtimeViews();
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
-      recordPerformanceError("live-transfer", error);
+      if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("live-transfer", error);
       // A sincronização incremental é recuperável: um schema antigo ou uma resposta
       // interrompida não deve bloquear a operação nem deixar o status em erro permanente.
       try {
@@ -15423,6 +15423,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_stock_import_batches") >= 0 ||
       message.indexOf("wms_stock_alerts") >= 0
     );
+  }
+
+  function isExpectedLegacySchemaCompatibilityError(error) {
+    if (!isMissingColumnError(error)) return false;
+    var column = getMissingColumnName(error).toLowerCase();
+    return column === "import_source" || column === "codigo_loja";
   }
 
   function isMissingWarehouseColumnError(error) {
