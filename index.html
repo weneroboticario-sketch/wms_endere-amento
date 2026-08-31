@@ -1167,21 +1167,60 @@
         <div class="page-title">
           <div>
             <p class="eyebrow">Administração</p>
-            <h2>Manutenção do Sistema</h2>
+            <h2>Manutenção Segura do Banco</h2>
           </div>
         </div>
         <div class="maintenance-layout">
-          <section class="panel maintenance-panel">
+          <section class="panel maintenance-panel maintenance-wide-panel">
             <div class="panel-header">
-              <h3>Resumo do banco</h3>
+              <h3>Limpeza controlada</h3>
             </div>
-            <p class="muted">Área restrita ao administrador. Nenhuma limpeza remove usuários, lojas ou endereçamentos.</p>
+            <p class="muted">Área restrita ao administrador geral. Toda ação gera prévia, exige digitar LIMPAR e registra log antes de alterar o Supabase.</p>
+            <div class="maintenance-toolbar">
+              <label for="maintenanceWarehouseFilter">Estoque</label>
+              <select id="maintenanceWarehouseFilter">
+                <option value="CURRENT">Estoque atual</option>
+              </select>
+              <button class="secondary-button" data-maintenance-scope="duplicates" type="button">Verificar duplicidades</button>
+              <button class="secondary-button" data-maintenance-scope="stock" type="button">Verificar base antiga</button>
+              <button class="secondary-button" data-maintenance-scope="batches" type="button">Verificar lotes travados</button>
+              <button class="secondary-button" data-maintenance-scope="orphans" type="button">Verificar órfãos</button>
+              <button class="secondary-button" data-maintenance-scope="notifications" type="button">Verificar notificações</button>
+              <button class="secondary-button" data-maintenance-scope="users" type="button">Verificar usuários</button>
+              <button class="secondary-button" data-maintenance-scope="tests" type="button">Verificar testes</button>
+            </div>
             <div id="maintenanceSummary" class="transfer-summary-grid"></div>
             <div class="button-row">
-              <button class="primary-button" id="verifyMaintenanceButton" type="button">Verificar resíduos</button>
-              <button class="danger-button" id="cleanResiduesButton" type="button">Limpar resíduos de teste</button>
+              <button class="primary-button" id="verifyMaintenanceButton" type="button">Gerar prévia da limpeza</button>
+              <button class="secondary-button" id="exportMaintenanceReportButton" type="button">Exportar relatório da manutenção</button>
+            </div>
+            <div class="maintenance-confirm-row">
+              <label for="maintenanceConfirmInput">Confirmação</label>
+              <input id="maintenanceConfirmInput" type="text" placeholder="Digite LIMPAR para executar">
+              <button class="danger-button" id="cleanResiduesButton" type="button">Executar limpeza segura</button>
             </div>
             <div id="maintenanceStatus" class="inline-status"></div>
+          </section>
+          <section class="panel maintenance-panel maintenance-wide-panel">
+            <div class="panel-header">
+              <h3>Prévia da limpeza</h3>
+            </div>
+            <div class="table-wrap maintenance-table-wrap safe-maintenance-preview">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tabela</th>
+                    <th>Estoque</th>
+                    <th>Qtd</th>
+                    <th>Motivo</th>
+                    <th>Risco</th>
+                    <th>Ação proposta</th>
+                    <th>Período</th>
+                  </tr>
+                </thead>
+                <tbody id="maintenancePreviewRows"></tbody>
+              </table>
+            </div>
           </section>
           <section class="panel maintenance-panel">
             <div class="panel-header">

@@ -1782,6 +1782,57 @@ tbody tr:hover td {
   align-content: start;
 }
 
+.maintenance-wide-panel {
+  grid-column: 1 / -1;
+}
+
+.maintenance-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.maintenance-toolbar label,
+.maintenance-confirm-row label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.maintenance-toolbar select {
+  min-width: 220px;
+  min-height: 38px;
+}
+
+.maintenance-confirm-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 320px) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.maintenance-confirm-row input {
+  min-height: 38px;
+}
+
+.safe-maintenance-preview {
+  max-height: 320px;
+}
+
+.safe-maintenance-preview table {
+  min-width: 920px;
+}
+
+.maintenance-manual-row {
+  background: #fff7ed;
+}
+
 #manutencao .panel-header {
   margin-bottom: 10px;
 }
@@ -3233,6 +3284,22 @@ tbody tr:hover td {
   .transfer-route-flow,
   .transfer-board-meta {
     grid-template-columns: 1fr;
+  }
+
+  .maintenance-toolbar,
+  .maintenance-confirm-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .maintenance-toolbar {
+    display: grid;
+  }
+
+  .maintenance-toolbar select,
+  .maintenance-toolbar button,
+  .maintenance-confirm-row button {
+    width: 100%;
   }
 
   .transfer-board-card {

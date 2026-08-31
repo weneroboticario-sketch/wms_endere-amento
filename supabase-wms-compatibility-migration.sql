@@ -77,17 +77,72 @@ alter table public.wms_transfer_items add column if not exists updated_at timest
 
 alter table public.wms_stock_positions add column if not exists record_hash text;
 alter table public.wms_stock_positions add column if not exists updated_at timestamptz default now();
+alter table public.wms_stock_positions add column if not exists archived boolean default false;
+alter table public.wms_stock_positions add column if not exists archived_at timestamptz;
+alter table public.wms_stock_positions add column if not exists archived_by_id text default '';
+alter table public.wms_stock_positions add column if not exists archived_by_name text default '';
 
 alter table public.wms_stock_import_batches add column if not exists updated_at timestamptz default now();
 alter table public.wms_stock_import_batches add column if not exists finished_at timestamptz;
 alter table public.wms_stock_import_batches add column if not exists error_message text;
 alter table public.wms_stock_import_batches add column if not exists notes text;
 alter table public.wms_stock_import_batches add column if not exists import_mode text default 'CARGA_COMPLETA';
+alter table public.wms_stock_import_batches add column if not exists archived boolean default false;
+alter table public.wms_stock_import_batches add column if not exists archived_at timestamptz;
+alter table public.wms_stock_import_batches add column if not exists archived_by_id text default '';
+alter table public.wms_stock_import_batches add column if not exists archived_by_name text default '';
 
 alter table public.wms_users add column if not exists archived boolean default false;
 alter table public.wms_users add column if not exists archived_at timestamptz;
 alter table public.wms_users add column if not exists archived_by_id text;
 alter table public.wms_users add column if not exists archived_by_name text;
+
+alter table if exists public.wms_notifications add column if not exists archived boolean default false;
+alter table if exists public.wms_notifications add column if not exists archived_at timestamptz;
+alter table if exists public.wms_notifications add column if not exists archived_by_id text default '';
+alter table if exists public.wms_notifications add column if not exists archived_by_name text default '';
+
+alter table if exists public.wms_replenishment_requests add column if not exists archived boolean default false;
+alter table if exists public.wms_replenishment_requests add column if not exists archived_at timestamptz;
+alter table if exists public.wms_replenishment_requests add column if not exists archived_by_id text default '';
+alter table if exists public.wms_replenishment_requests add column if not exists archived_by_name text default '';
+alter table if exists public.wms_replenishment_requests add column if not exists is_test boolean default false;
+
+create table if not exists public.wms_maintenance_logs (
+  id text primary key,
+  created_at timestamptz default now(),
+  executed_by_id text default '',
+  executed_by_name text default '',
+  action_type text default '',
+  table_name text default '',
+  warehouse_code text default '',
+  preview_count numeric default 0,
+  affected_count numeric default 0,
+  criteria text default '',
+  status text default '',
+  notes text default ''
+);
+
+alter table public.wms_maintenance_logs add column if not exists created_at timestamptz default now();
+alter table public.wms_maintenance_logs add column if not exists executed_by_id text default '';
+alter table public.wms_maintenance_logs add column if not exists executed_by_name text default '';
+alter table public.wms_maintenance_logs add column if not exists action_type text default '';
+alter table public.wms_maintenance_logs add column if not exists table_name text default '';
+alter table public.wms_maintenance_logs add column if not exists warehouse_code text default '';
+alter table public.wms_maintenance_logs add column if not exists preview_count numeric default 0;
+alter table public.wms_maintenance_logs add column if not exists affected_count numeric default 0;
+alter table public.wms_maintenance_logs add column if not exists criteria text default '';
+alter table public.wms_maintenance_logs add column if not exists status text default '';
+alter table public.wms_maintenance_logs add column if not exists notes text default '';
+
+alter table public.wms_maintenance_logs enable row level security;
+
+drop policy if exists "wms_maintenance_logs_public_all" on public.wms_maintenance_logs;
+create policy "wms_maintenance_logs_public_all"
+on public.wms_maintenance_logs
+for all
+using (true)
+with check (true);
 
 -- alerta_saldo ja e boolean no schema atual; a mensagem textual fica em alerta_saldo_mensagem.
 alter table public.wms_transfer_items add column if not exists alerta_saldo_mensagem text default '';
@@ -113,6 +168,12 @@ create index if not exists idx_wms_stock_batches_processing
 on public.wms_stock_import_batches (warehouse_code, source_type, status, created_at);
 create index if not exists idx_wms_users_archived
 on public.wms_users (default_warehouse_code, active, archived);
+create index if not exists idx_wms_stock_positions_archived
+on public.wms_stock_positions (warehouse_code, active, archived, updated_at);
+create index if not exists idx_wms_stock_batches_archived
+on public.wms_stock_import_batches (warehouse_code, source_type, archived, created_at desc);
+create index if not exists idx_wms_maintenance_logs_created
+on public.wms_maintenance_logs (warehouse_code, created_at desc);
 
 update public.wms_stock_import_batches
 set status = 'FAILED',
@@ -132,7 +193,7 @@ create table if not exists public.wms_schema_version (
 );
 
 insert into public.wms_schema_version (id, version, description, applied_at, applied_by)
-values ('current', '2026.08.30.002', 'Estabilizacao de schema: rotas de transferencia, lotes, import_mode e compatibilidade de fallback', now(), 'migration')
+values ('current', '2026.08.31.001', 'Manutencao segura do banco: logs, arquivamento controlado e limpeza por estoque', now(), 'migration')
 on conflict (id) do update set
   version = excluded.version,
   description = excluded.description,
@@ -156,7 +217,7 @@ on public.wms_schema_version (id);
 select table_name, column_name
 from information_schema.columns
 where table_schema = 'public'
-  and table_name in ('wms_transfers', 'wms_transfer_items', 'wms_stock_positions', 'wms_stock_import_batches', 'wms_establishments', 'wms_users')
+  and table_name in ('wms_transfers', 'wms_transfer_items', 'wms_stock_positions', 'wms_stock_import_batches', 'wms_establishments', 'wms_users', 'wms_maintenance_logs', 'wms_replenishment_requests', 'wms_notifications')
   and column_name in (
     'import_source', 'import_batch_id', 'import_file_name', 'imported_by_id', 'imported_by_name',
     'raw_source_text', 'origem_id', 'origem_nome', 'origem_cnpj', 'origem_codigo_loja',
@@ -166,7 +227,9 @@ where table_schema = 'public'
     'quantidade_retirar_captacao', 'quantidade_retirar_loja', 'quantidade_faltante',
     'localizacao_captacao_snapshot', 'localizacao_wms_snapshot', 'stock_snapshot_at',
     'status_operacional', 'status_divergencia', 'record_hash', 'updated_at', 'finished_at',
-    'error_message', 'import_mode', 'archived'
+    'error_message', 'import_mode', 'archived', 'archived_at', 'archived_by_id', 'archived_by_name',
+    'executed_by_id', 'executed_by_name', 'action_type', 'preview_count', 'affected_count',
+    'criteria', 'notes', 'is_test'
   )
 order by table_name, column_name;
 

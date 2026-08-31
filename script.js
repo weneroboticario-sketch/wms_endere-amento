@@ -15,7 +15,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.08.30.002";
+  var EXPECTED_SCHEMA_VERSION = "2026.08.31.001";
   var DEFAULT_WAREHOUSE_CODE = "VDCG";
   var DEFAULT_WAREHOUSE_ID = "warehouse-vdcg";
   var WAREHOUSE_SEED = [
@@ -225,6 +225,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   };
   var maintenanceState = {
     lastReport: null,
+    warehouseFilter: "CURRENT",
+    activeScope: "all",
+    lastResult: null,
     checking: false,
     cleaning: false
   };
@@ -5312,12 +5315,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function isGlobalAdminUser(user) {
-    return !!(user && user.role === "ADMINISTRADOR" && (user.isGlobalAdmin === true || user.role === "ADMINISTRADOR"));
+    return !!(user && user.role === "ADMINISTRADOR" && user.isGlobalAdmin === true);
   }
 
   function canAccessScreen(screenId) {
     if (!authState.currentUser) return false;
-    if (screenId === "estoques") return isGlobalAdmin();
+    if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
   }
@@ -6691,6 +6694,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if ($("clearHistoryButton")) $("clearHistoryButton").addEventListener("click", clearHistory);
     $("verifyMaintenanceButton").addEventListener("click", verifyMaintenanceResidues);
     $("cleanResiduesButton").addEventListener("click", cleanMaintenanceResidues);
+    if ($("maintenanceWarehouseFilter")) $("maintenanceWarehouseFilter").addEventListener("change", function (event) {
+      maintenanceState.warehouseFilter = event.target.value || "CURRENT";
+      maintenanceState.lastReport = null;
+      renderMaintenance();
+    });
+    document.querySelectorAll("[data-maintenance-scope]").forEach(function (button) {
+      button.addEventListener("click", verifyMaintenanceResidues);
+    });
+    if ($("exportMaintenanceReportButton")) $("exportMaintenanceReportButton").addEventListener("click", downloadMaintenanceSafeReport);
     if ($("verifyAddressMaintenanceButton")) $("verifyAddressMaintenanceButton").addEventListener("click", verifyAddressMaintenance);
     if ($("cleanAddressDuplicatesButton")) $("cleanAddressDuplicatesButton").addEventListener("click", cleanAddressDuplicates);
     if ($("maintenanceAddressRows")) $("maintenanceAddressRows").addEventListener("click", handleAddressMaintenanceAction);
@@ -9238,48 +9250,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("");
   }
 
-  function renderMaintenance() {
-    if (!$("maintenanceSummary")) return;
-    if (!isAdminOrSupervisor()) {
-      $("maintenanceSummary").innerHTML = "";
-      $("maintenanceTestRows").innerHTML = "";
-      $("maintenanceResidueRows").innerHTML = "";
-      if ($("addressMaintenanceSummary")) $("addressMaintenanceSummary").innerHTML = "";
-      if ($("maintenanceAddressRows")) $("maintenanceAddressRows").innerHTML = "";
-      return;
-    }
-    var report = maintenanceState.lastReport || buildLocalMaintenanceReport();
-    var addressReport = buildAddressMaintenanceReport();
-    $("maintenanceSummary").innerHTML = [
-      summaryChip("Transferências", report.transferCount),
-      summaryChip("Testes encontrados", report.testTransfers.length, report.testTransfers.length ? "result-changed" : "result-ok"),
-      summaryChip("Resíduos órfãos", report.orphanTotal, report.orphanTotal ? "result-missing" : "result-ok"),
-      summaryChip("Tabelas avaliadas", report.tables.length)
-    ].join("");
-    $("maintenanceTestRows").innerHTML = report.testTransfers.length ? report.testTransfers.map(function (transfer) {
-      return [
-        "<tr>",
-        "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || transfer.id) + "</span></td>",
-        "<td><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
-        "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
-        "<td>" + formatDateTime(transfer.createdAt) + "</td>",
-        "<td><button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir transferência de teste</button></td>",
-        "</tr>"
-      ].join("");
-    }).join("") : "<tr><td colspan=\"5\">Nenhuma transferência marcada como teste.</td></tr>";
-    $("maintenanceResidueRows").innerHTML = report.tables.length ? report.tables.map(function (table) {
-      return [
-        "<tr>",
-        "<td>" + escapeHtml(table.name) + "</td>",
-        "<td>" + table.orphanCount + "</td>",
-        "<td>" + escapeHtml(table.missing ? "Tabela ausente" : table.orphanCount ? "Pode limpar" : "OK") + "</td>",
-        "</tr>"
-      ].join("");
-    }).join("") : "<tr><td colspan=\"3\">Clique em Verificar resíduos para avaliar o banco.</td></tr>";
-    renderAddressMaintenance(addressReport);
-    renderSystemDiagnostics();
-  }
-
   function renderAddressMaintenance(report) {
     if (!$("addressMaintenanceSummary") || !$("maintenanceAddressRows")) return;
     $("addressMaintenanceSummary").innerHTML = [
@@ -9468,85 +9438,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var removeSet = {};
     ids.forEach(function (id) { removeSet[id] = true; });
     state.bindings = state.bindings.filter(function (binding) { return !removeSet[binding.id]; });
-  }
-
-  function buildLocalMaintenanceReport() {
-    var testTransfers = transferState.transfers.filter(isLikelyTestTransfer);
-    return {
-      transferCount: transferState.transfers.length,
-      testTransfers: testTransfers,
-      orphanTotal: 0,
-      tables: []
-    };
-  }
-
-  function isLikelyTestTransfer(transfer) {
-    var haystack = normalizeText([
-      transfer.id,
-      transfer.code,
-      transfer.name,
-      transfer.observation,
-      transfer.createdByName
-    ].join(" ")).toLowerCase();
-    return haystack.indexOf("teste") >= 0 || haystack.indexOf("test") >= 0;
-  }
-
-  function maintenanceTransferTables() {
-    return [
-      { name: "wms_task_notifications", column: "transfer_id" },
-      { name: "wms_notifications", column: "transfer_id" },
-      { name: "wms_transfer_boxes", column: "transfer_id" },
-      { name: "wms_transfer_packages", column: "transfer_id" },
-      { name: "wms_transfer_divergences", column: "transfer_id" },
-      { name: "wms_transfer_items", column: "transfer_id" }
-    ];
-  }
-
-  async function verifyMaintenanceResidues() {
-    if (!isAdmin()) return;
-    if (!isSupabaseReady()) {
-      setStatus("maintenanceStatus", "Supabase não conectado.", "error");
-      return;
-    }
-    if (maintenanceState.checking) return;
-    maintenanceState.checking = true;
-    $("verifyMaintenanceButton").disabled = true;
-    $("verifyMaintenanceButton").textContent = "Verificando...";
-    try {
-      setStatus("maintenanceStatus", "Avaliando tabelas de transferência...", "warning");
-      var transferIds = new Set(transferState.transfers.map(function (transfer) { return transfer.id; }));
-      var tables = [];
-      var orphanTotal = 0;
-      for (var i = 0; i < maintenanceTransferTables().length; i += 1) {
-        var table = maintenanceTransferTables()[i];
-        var result = await readMaintenanceTable(table);
-        if (result.missing) {
-          tables.push({ name: table.name, orphanCount: 0, orphanRows: [], missing: true });
-          continue;
-        }
-        var orphanRows = result.rows.filter(function (row) {
-          var transferId = row[table.column];
-          return transferId && !transferIds.has(transferId);
-        });
-        orphanTotal += orphanRows.length;
-        tables.push({ name: table.name, column: table.column, orphanCount: orphanRows.length, orphanRows: orphanRows, missing: false });
-      }
-      maintenanceState.lastReport = {
-        transferCount: transferState.transfers.length,
-        testTransfers: transferState.transfers.filter(isLikelyTestTransfer),
-        orphanTotal: orphanTotal,
-        tables: tables
-      };
-      renderMaintenance();
-      setStatus("maintenanceStatus", "Relatório pronto. Nada foi apagado.", orphanTotal ? "warning" : "success");
-    } catch (error) {
-      console.error("Erro na manutenção:", error);
-      setStatus("maintenanceStatus", "Erro ao verificar resíduos: " + formatSupabaseError(error), "error");
-    } finally {
-      maintenanceState.checking = false;
-      $("verifyMaintenanceButton").disabled = false;
-      $("verifyMaintenanceButton").textContent = "Verificar resíduos";
-    }
   }
 
   async function renderSystemDiagnostics() {
@@ -10277,69 +10168,661 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "Nao verificado";
   }
 
-  async function readMaintenanceTable(table) {
-    var allRows = [];
-    var from = 0;
-    var pageSize = 1000;
-    while (true) {
-      var response = await supabaseDb
-        .from(table.name)
-        .select("id," + table.column)
-        .range(from, from + pageSize - 1);
-      if (response.error) {
-        if (isMissingTransferTableError(response.error)) return { rows: [], missing: true };
-        throw response.error;
-      }
-      var rows = response.data || [];
-      allRows = allRows.concat(rows);
-      if (rows.length < pageSize) break;
-      from += pageSize;
+  function renderMaintenance() {
+    if (!$("maintenanceSummary")) return;
+    renderMaintenanceWarehouseFilter();
+    if (!isGlobalAdmin()) {
+      $("maintenanceSummary").innerHTML = "<div class=\"empty-state\">Acesso restrito ao administrador geral.</div>";
+      if ($("maintenancePreviewRows")) $("maintenancePreviewRows").innerHTML = "<tr><td colspan=\"7\">Acesso restrito.</td></tr>";
+      if ($("maintenanceTestRows")) $("maintenanceTestRows").innerHTML = "";
+      if ($("maintenanceResidueRows")) $("maintenanceResidueRows").innerHTML = "";
+      if ($("addressMaintenanceSummary")) $("addressMaintenanceSummary").innerHTML = "";
+      if ($("maintenanceAddressRows")) $("maintenanceAddressRows").innerHTML = "";
+      return;
     }
-    return { rows: allRows, missing: false };
+    var report = maintenanceState.lastReport || buildLocalMaintenanceReport();
+    var addressReport = buildAddressMaintenanceReport();
+    var executable = (report.preview || []).filter(function (entry) { return entry.executable && entry.count > 0; });
+    var manual = (report.preview || []).filter(function (entry) { return !entry.executable && entry.count > 0; });
+    $("maintenanceSummary").innerHTML = [
+      summaryChip("Filtro", maintenanceWarehouseLabel()),
+      summaryChip("Ações seguras", executable.length, executable.length ? "result-changed" : "result-ok"),
+      summaryChip("Registros na prévia", report.previewCount || 0, report.previewCount ? "result-changed" : "result-ok"),
+      summaryChip("Revisão manual", manual.length, manual.length ? "result-missing" : "result-ok"),
+      summaryChip("Transferências teste", report.testTransfers.length, report.testTransfers.length ? "result-changed" : "result-ok"),
+      summaryChip("Órfãos", report.orphanTotal, report.orphanTotal ? "result-missing" : "result-ok"),
+      summaryChip("Última execução", maintenanceState.lastResult ? formatDateTime(maintenanceState.lastResult.executedAt) : "-")
+    ].join("");
+    renderMaintenancePreview(report);
+    $("maintenanceTestRows").innerHTML = report.testTransfers.length ? report.testTransfers.map(function (transfer) {
+      return [
+        "<tr>",
+        "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || transfer.id) + "</span></td>",
+        "<td><span class=\"status-badge pending\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></td>",
+        "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
+        "<td>" + formatDateTime(transfer.createdAt) + "</td>",
+        "<td><span class=\"status-badge pending\">Soft delete na limpeza segura</span></td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"5\">Nenhuma transferência marcada como teste.</td></tr>";
+    $("maintenanceResidueRows").innerHTML = report.tables.length ? report.tables.map(function (table) {
+      return [
+        "<tr>",
+        "<td>" + escapeHtml(table.name) + "</td>",
+        "<td>" + table.orphanCount + "</td>",
+        "<td>" + escapeHtml(table.missing ? "Tabela ausente" : table.orphanCount ? "Entra na prévia" : "OK") + "</td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"3\">Gere uma prévia para avaliar o banco.</td></tr>";
+    renderAddressMaintenance(addressReport);
+    renderSystemDiagnostics();
+  }
+
+  function renderMaintenanceWarehouseFilter() {
+    var select = $("maintenanceWarehouseFilter");
+    if (!select) return;
+    var current = maintenanceState.warehouseFilter || "CURRENT";
+    var warehouses = (warehouseState.warehouses && warehouseState.warehouses.length ? warehouseState.warehouses : WAREHOUSE_SEED).filter(function (warehouse) {
+      return warehouse.active !== false;
+    });
+    select.innerHTML = [
+      "<option value=\"CURRENT\">Estoque atual (" + escapeHtml(activeWarehouseCode()) + ")</option>",
+      "<option value=\"ALL\">Todos os estoques ativos</option>"
+    ].concat(warehouses.map(function (warehouse) {
+      var code = normalizeWarehouseCode(warehouse.code);
+      return "<option value=\"" + escapeHtml(code) + "\">" + escapeHtml(code + " - " + (warehouse.name || "Estoque " + code)) + "</option>";
+    })).join("");
+    select.value = current === "ALL" || current === "CURRENT" || warehouses.some(function (warehouse) { return normalizeWarehouseCode(warehouse.code) === current; }) ? current : "CURRENT";
+    maintenanceState.warehouseFilter = select.value;
+  }
+
+  function maintenanceSelectedWarehouseCodes() {
+    if (maintenanceState.warehouseFilter === "ALL") return activeWarehouseCodes();
+    if (maintenanceState.warehouseFilter && maintenanceState.warehouseFilter !== "CURRENT") return [normalizeWarehouseCode(maintenanceState.warehouseFilter)];
+    return [activeWarehouseCode()];
+  }
+
+  function maintenanceWarehouseLabel() {
+    if (maintenanceState.warehouseFilter === "ALL") return "Todos";
+    return maintenanceSelectedWarehouseCodes().join(", ");
+  }
+
+  function maintenanceRowMatchesWarehouse(row, includeBlankWhenAll) {
+    var rawCode = rawWarehouseCodeValue(row);
+    if (!rawCode) return maintenanceState.warehouseFilter === "ALL" && includeBlankWhenAll;
+    return maintenanceSelectedWarehouseCodes().indexOf(normalizeWarehouseCode(rawCode)) >= 0;
+  }
+
+  function buildLocalMaintenanceReport() {
+    var transfers = transferState.transfers.filter(function (transfer) {
+      return maintenanceRowMatchesWarehouse(transfer, false);
+    });
+    var testTransfers = transfers.filter(isLikelyTestTransfer).filter(function (transfer) { return !transfer.isDeleted; });
+    return {
+      generatedAt: nowIso(),
+      scope: maintenanceState.activeScope || "all",
+      warehouseLabel: maintenanceWarehouseLabel(),
+      transferCount: transfers.length,
+      testTransfers: testTransfers,
+      orphanTotal: 0,
+      previewCount: 0,
+      preview: [],
+      tables: []
+    };
+  }
+
+  function isLikelyTestTransfer(transfer) {
+    var haystack = normalizeText([
+      transfer.id,
+      transfer.code,
+      transfer.name,
+      transfer.observation,
+      transfer.createdByName,
+      transfer.importFileName
+    ].join(" ")).toLowerCase();
+    return transfer.isTest === true || haystack.indexOf("teste") >= 0 || haystack.indexOf("test") >= 0;
+  }
+
+  async function verifyMaintenanceResidues(eventOrScope) {
+    if (!isGlobalAdmin()) {
+      setStatus("maintenanceStatus", "Acesso restrito ao administrador geral.", "error");
+      return;
+    }
+    if (!isSupabaseReady()) {
+      setStatus("maintenanceStatus", "Supabase não conectado.", "error");
+      return;
+    }
+    if (maintenanceState.checking) return;
+    var scope = "all";
+    if (typeof eventOrScope === "string") scope = eventOrScope;
+    else if (eventOrScope && eventOrScope.currentTarget && eventOrScope.currentTarget.dataset.maintenanceScope) scope = eventOrScope.currentTarget.dataset.maintenanceScope;
+    maintenanceState.activeScope = scope;
+    maintenanceState.checking = true;
+    var button = eventOrScope && eventOrScope.currentTarget ? eventOrScope.currentTarget : $("verifyMaintenanceButton");
+    var originalLabel = button ? button.textContent : "";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Gerando prévia...";
+    }
+    try {
+      setStatus("maintenanceStatus", "Gerando prévia segura. Nada será alterado.", "warning");
+      maintenanceState.lastReport = await buildSafeMaintenanceReport(scope);
+      await recordMaintenanceLog("PREVIEW", "maintenance_preview", maintenanceState.lastReport.previewCount, "OK", "Prévia gerada para " + maintenanceState.lastReport.warehouseLabel + ".");
+      renderMaintenance();
+      setStatus("maintenanceStatus", maintenanceState.lastReport.previewCount ? "Prévia pronta. Revise e digite LIMPAR para executar apenas ações seguras." : "Prévia pronta. Nenhuma limpeza segura encontrada.", maintenanceState.lastReport.previewCount ? "warning" : "success");
+    } catch (error) {
+      recordPerformanceError("manutencao-segura-preview", error);
+      setStatus("maintenanceStatus", "Erro ao gerar prévia: " + formatSupabaseError(error), "error");
+    } finally {
+      maintenanceState.checking = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalLabel || "Gerar prévia da limpeza";
+      }
+    }
+  }
+
+  async function buildSafeMaintenanceReport(scope) {
+    var selectedCodes = maintenanceSelectedWarehouseCodes();
+    var stockRowsResult = await readHealthRows("wms_stock_positions", "id,warehouse_code,source_type,codigo_material,nome_material,total_disponivel,total_fisico,total_alocado,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,archived,created_at,updated_at", "updated_at", 2500);
+    var batchesResult = await readHealthRows("wms_stock_import_batches", "id,warehouse_code,source_type,file_name,status,created_at,updated_at,finished_at,error_message,notes,total_rows,imported_rows,archived", "created_at", 600);
+    var notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,entity_id,event_type,transfer_id,read,seen,archived,created_at", "created_at", 1200);
+    if (notificationRowsResult.error && isMissingColumnError(notificationRowsResult.error)) {
+      notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,transfer_id,created_at", "created_at", 1200);
+    }
+    var requestRowsResult = await readHealthRows("wms_replenishment_requests", "id,warehouse_code,codigo_material,nome_material,status,observacao,is_test,is_deleted,archived,created_at,updated_at", "created_at", 800);
+    var transferRowsResult = await readHealthRows("wms_transfers", transferSummarySelectColumns(), "created_at", 800);
+    var transferItemRowsResult = await readHealthRows("wms_transfer_items", "id,transfer_id,warehouse_code,codigo_material,sku,status,created_at,updated_at", "created_at", 1600);
+    var stockRows = (stockRowsResult.rows || []).filter(function (row) { return maintenanceRowMatchesWarehouse(row, true); });
+    var batches = (batchesResult.rows || []).filter(function (row) { return maintenanceRowMatchesWarehouse(row, true); });
+    var notifications = (notificationRowsResult.rows || []).filter(function (row) { return maintenanceRowMatchesWarehouse(row, true); });
+    var requests = (requestRowsResult.rows || []).filter(function (row) { return maintenanceRowMatchesWarehouse(row, true); });
+    var transfers = (transferRowsResult.rows || []).map(fromDbTransfer).filter(function (transfer) { return maintenanceRowMatchesWarehouse(transfer, true); });
+    if (!transfers.length) transfers = transferState.transfers.filter(function (transfer) { return maintenanceRowMatchesWarehouse(transfer, true); });
+    var transferRows = transfers.map(function (transfer) {
+      return {
+        id: transfer.id,
+        warehouse_code: transfer.warehouseCode,
+        status: transfer.status,
+        observacao: transfer.observation,
+        nome_transferencia: transfer.name,
+        codigo_transferencia: transfer.code,
+        created_at: transfer.createdAt,
+        updated_at: transfer.updatedAt,
+        is_deleted: transfer.isDeleted
+      };
+    });
+    var transferItems = (transferItemRowsResult.rows || []).filter(function (row) { return maintenanceRowMatchesWarehouse(row, true); });
+    var preview = [];
+    if (scope === "all" || scope === "batches") addMaintenanceBatchPreview(preview, batches, stockRows);
+    if (scope === "all" || scope === "stock") addMaintenanceStockPreview(preview, stockRows, batches);
+    if (scope === "all" || scope === "duplicates") addMaintenanceDuplicatePreview(preview, stockRows);
+    if (scope === "all" || scope === "notifications") addMaintenanceNotificationPreview(preview, notifications);
+    if (scope === "all" || scope === "users") addMaintenanceUserPreview(preview);
+    if (scope === "all" || scope === "tests") {
+      addMaintenanceTestTransferPreview(preview, transferRows);
+      addMaintenanceTestReplenishmentPreview(preview, requests);
+    }
+    var orphanTables = await buildMaintenanceOrphanPreview(preview, transferRows, transferItems, notifications, requests, scope);
+    preview = preview.filter(function (entry) { return entry.count > 0; });
+    var testTransferIds = {};
+    preview.forEach(function (entry) {
+      if (entry.type === "SOFT_DELETE_TEST_TRANSFER") (entry.ids || []).forEach(function (id) { testTransferIds[id] = true; });
+    });
+    return {
+      generatedAt: nowIso(),
+      scope: scope,
+      warehouseLabel: maintenanceWarehouseLabel(),
+      selectedWarehouses: selectedCodes,
+      transferCount: transferRows.length,
+      testTransfers: transfers.filter(function (transfer) { return testTransferIds[transfer.id]; }),
+      orphanTotal: orphanTables.reduce(function (sum, table) { return sum + table.orphanCount; }, 0),
+      previewCount: preview.reduce(function (sum, entry) { return sum + entry.count; }, 0),
+      preview: preview,
+      tables: orphanTables,
+      notes: [
+        stockRowsResult.error ? "Base de estoque: " + formatSupabaseError(stockRowsResult.error) : "",
+        batchesResult.error ? "Lotes: " + formatSupabaseError(batchesResult.error) : "",
+        notificationRowsResult.error ? "Notificações: " + formatSupabaseError(notificationRowsResult.error) : "",
+        requestRowsResult.error ? "Reposição: " + formatSupabaseError(requestRowsResult.error) : "",
+        transferRowsResult.error ? "Transferências: " + formatSupabaseError(transferRowsResult.error) : "",
+        transferItemRowsResult.error ? "Itens transferência: " + formatSupabaseError(transferItemRowsResult.error) : ""
+      ].filter(Boolean)
+    };
+  }
+
+  function addMaintenanceBatchPreview(preview, batches, stockRows) {
+    var activeBatchIds = {};
+    stockRows.forEach(function (row) { if (row.active === true && row.batch_id) activeBatchIds[row.batch_id] = true; });
+    var stuck = batches.filter(function (batch) {
+      return normalizeText(batch.status).toUpperCase() === "PROCESSING" && healthDateOlderThanHours(batch.updated_at || batch.created_at, 2) && rawWarehouseCodeValue(batch);
+    });
+    pushMaintenancePreview(preview, "FAIL_STUCK_BATCHES", "wms_stock_import_batches", stuck, "Lote PROCESSING travado há mais de 2 horas.", "Baixo", "Marcar como FAILED e manter a base anterior ativa.", "Atualizar");
+    var byGroup = {};
+    batches.forEach(function (batch) {
+      if (!rawWarehouseCodeValue(batch)) return;
+      var key = rowWarehouseCode(batch) + "|" + normalizeText(batch.source_type || "-").toUpperCase();
+      if (!byGroup[key]) byGroup[key] = [];
+      byGroup[key].push(batch);
+    });
+    var oldBatches = [];
+    Object.keys(byGroup).forEach(function (key) {
+      byGroup[key].sort(sortDbRowsByDateDesc);
+      byGroup[key].slice(5).forEach(function (batch) {
+        var status = normalizeText(batch.status).toUpperCase();
+        if (status === "PROCESSING" || activeBatchIds[batch.id] || batch.archived === true) return;
+        oldBatches.push(batch);
+      });
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_OLD_BATCHES", "wms_stock_import_batches", oldBatches, "Lotes antigos fora dos últimos 5 por estoque e origem.", "Baixo", "Arquivar lote antigo, sem tocar nos registros ativos.", "Arquivar");
+    var missingWarehouse = batches.filter(function (batch) { return !rawWarehouseCodeValue(batch); });
+    pushMaintenancePreview(preview, "MANUAL_BATCH_NO_WAREHOUSE", "wms_stock_import_batches", missingWarehouse, "Lote sem warehouse_code/source_type confiável.", "Alto", "Revisar manualmente antes de qualquer limpeza.", "Manual", false);
+  }
+
+  function addMaintenanceStockPreview(preview, stockRows, batches) {
+    var latestBatchByGroup = {};
+    batches.forEach(function (batch) {
+      if (!rawWarehouseCodeValue(batch)) return;
+      var key = rowWarehouseCode(batch) + "|" + normalizeText(batch.source_type || "-").toUpperCase();
+      if (!latestBatchByGroup[key] || new Date(batch.created_at || 0) > new Date(latestBatchByGroup[key].created_at || 0)) latestBatchByGroup[key] = batch;
+    });
+    var inactiveOld = stockRows.filter(function (row) {
+      if (!rawWarehouseCodeValue(row) || row.archived === true || row.active === true) return false;
+      var groupKey = rowWarehouseCode(row) + "|" + normalizeText(row.source_type || "-").toUpperCase();
+      var latestBatch = latestBatchByGroup[groupKey];
+      if (latestBatch && row.batch_id && row.batch_id === latestBatch.id) return false;
+      return healthDateOlderThanHours(row.updated_at || row.created_at, 24);
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_INACTIVE_STOCK", "wms_stock_positions", inactiveOld, "Registros inativos antigos fora da base atual.", "Baixo", "Arquivar registros inativos, sem apagar base ativa.", "Arquivar");
+    var missingSku = stockRows.filter(function (row) { return rawWarehouseCodeValue(row) && !normalizeSku(row.codigo_material); });
+    pushMaintenancePreview(preview, "MANUAL_STOCK_NO_SKU", "wms_stock_positions", missingSku, "Registro da base sem codigo_material.", "Médio", "Revisar arquivo de origem ou corrigir manualmente.", "Manual", false);
+    var missingWarehouse = stockRows.filter(function (row) { return !rawWarehouseCodeValue(row); });
+    pushMaintenancePreview(preview, "MANUAL_STOCK_NO_WAREHOUSE", "wms_stock_positions", missingWarehouse, "Registro da base sem warehouse_code.", "Alto", "Não limpar automaticamente para não misturar estoques.", "Manual", false);
+  }
+
+  function addMaintenanceDuplicatePreview(preview, stockRows) {
+    var groups = {};
+    stockRows.filter(function (row) {
+      return row.active === true && row.archived !== true && rawWarehouseCodeValue(row) && normalizeSku(row.codigo_material);
+    }).forEach(function (row) {
+      var sourceType = normalizeText(row.source_type || "").toUpperCase();
+      var keyParts = [rowWarehouseCode(row), sourceType, normalizeSku(row.codigo_material), "ACTIVE"];
+      if (sourceType !== "LOJA") keyParts = keyParts.concat([row.estacao || "", row.rack || "", row.linha || "", row.coluna || "", row.codigo_endereco || ""]);
+      var key = keyParts.join("|");
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(row);
+    });
+    var exactDuplicates = [];
+    var conflicts = [];
+    Object.keys(groups).forEach(function (key) {
+      var items = groups[key];
+      if (items.length < 2) return;
+      var signatures = unique(items.map(maintenanceStockSignature));
+      items.sort(sortDbRowsByDateDesc);
+      if (signatures.length === 1) exactDuplicates = exactDuplicates.concat(items.slice(1));
+      else conflicts.push(items[0]);
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_DUPLICATE_STOCK", "wms_stock_positions", exactDuplicates, "Duplicidades ativas idênticas na base operacional.", "Médio", "Arquivar duplicado e manter o registro mais recente.", "Arquivar");
+    pushMaintenancePreview(preview, "MANUAL_STOCK_CONFLICT", "wms_stock_positions", conflicts, "Duplicidades ativas com valores diferentes.", "Alto", "Exige decisão manual, sem limpeza automática.", "Manual", false);
+  }
+
+  function addMaintenanceNotificationPreview(preview, notifications) {
+    var oldSeen = notifications.filter(function (row) {
+      return rawWarehouseCodeValue(row) && row.archived !== true && (row.read === true || row.seen === true) && healthDateOlderThanHours(row.created_at, 24 * 30);
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_OLD_NOTIFICATIONS", "wms_notifications", oldSeen, "Notificações vistas com mais de 30 dias.", "Baixo", "Arquivar notificações antigas já vistas.", "Arquivar");
+  }
+
+  function addMaintenanceUserPreview(preview) {
+    var users = authState.users.filter(function (user) {
+      if (user.archived === true || user.active !== false) return false;
+      if (user.id === (authState.currentUser || {}).id) return false;
+      if (maintenanceState.warehouseFilter === "ALL") return true;
+      return maintenanceSelectedWarehouseCodes().some(function (code) { return userBelongsToWarehouse(user, code); });
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_INACTIVE_USERS", "wms_users", users.map(function (user) {
+      return { id: user.id, warehouse_code: user.defaultWarehouseCode, created_at: user.createdAt, updated_at: user.updatedAt };
+    }), "Usuários inativos não arquivados.", "Baixo", "Arquivar usuário e manter histórico operacional.", "Arquivar");
+  }
+
+  function addMaintenanceTestTransferPreview(preview, transfers) {
+    var rows = transfers.filter(function (row) {
+      if (!rawWarehouseCodeValue(row) || row.is_deleted === true) return false;
+      return isLikelyTestTransfer({
+        id: row.id,
+        code: row.codigo_transferencia,
+        name: row.nome_transferencia,
+        observation: row.observacao,
+        createdByName: row.criado_por_nome
+      });
+    });
+    pushMaintenancePreview(preview, "SOFT_DELETE_TEST_TRANSFER", "wms_transfers", rows, "Transferências marcadas como teste.", "Médio", "Cancelar e ocultar da operação por soft delete.", "Arquivar");
+  }
+
+  function addMaintenanceTestReplenishmentPreview(preview, requests) {
+    var rows = requests.filter(function (row) {
+      var status = normalizeText(row.status).toUpperCase();
+      var text = normalizeText([row.codigo_material, row.nome_material, row.observacao].join(" ")).toLowerCase();
+      if (!rawWarehouseCodeValue(row) || row.is_deleted === true || row.archived === true) return false;
+      return row.is_test === true || text.indexOf("teste") >= 0 || status === "CANCELADO" && healthDateOlderThanHours(row.updated_at || row.created_at, 24 * 30);
+    });
+    pushMaintenancePreview(preview, "ARCHIVE_TEST_REPLENISHMENT", "wms_replenishment_requests", rows, "Reposições de teste, canceladas antigas ou marcadas manualmente.", "Médio", "Arquivar/ocultar pedido sem apagar histórico.", "Arquivar");
+  }
+
+  async function buildMaintenanceOrphanPreview(preview, transferRows, transferItems, notifications, requests, scope) {
+    var activeTransferIds = {};
+    transferRows.forEach(function (row) {
+      if (row.id && row.is_deleted !== true) activeTransferIds[row.id] = true;
+    });
+    var tables = [];
+    if (scope === "all" || scope === "orphans") {
+      var orphanItems = transferItems.filter(function (row) { return row.id && row.transfer_id && !activeTransferIds[row.transfer_id] && rawWarehouseCodeValue(row); });
+      tables.push({ name: "wms_transfer_items", orphanCount: orphanItems.length, orphanRows: orphanItems, missing: false });
+      pushMaintenancePreview(preview, "DELETE_ORPHAN_TRANSFER_ITEMS", "wms_transfer_items", orphanItems, "Itens de transferência sem transferência ativa.", "Médio", "Remover somente IDs órfãos confirmados.", "Apagar por ID");
+      var orphanNotifications = notifications.filter(function (row) { return row.id && row.transfer_id && !activeTransferIds[row.transfer_id] && rawWarehouseCodeValue(row); });
+      tables.push({ name: "wms_notifications", orphanCount: orphanNotifications.length, orphanRows: orphanNotifications, missing: false });
+      pushMaintenancePreview(preview, "ARCHIVE_ORPHAN_NOTIFICATIONS", "wms_notifications", orphanNotifications, "Notificações de transferência inexistente.", "Baixo", "Arquivar notificações órfãs.", "Arquivar");
+      var requestsNoWarehouse = requests.filter(function (row) { return row.id && !rawWarehouseCodeValue(row); });
+      tables.push({ name: "wms_replenishment_requests", orphanCount: requestsNoWarehouse.length, orphanRows: requestsNoWarehouse, missing: false });
+      pushMaintenancePreview(preview, "MANUAL_REPLENISHMENT_NO_WAREHOUSE", "wms_replenishment_requests", requestsNoWarehouse, "Pedido de reposição sem warehouse_code.", "Alto", "Corrigir manualmente antes de limpar.", "Manual", false);
+      var transfersNoWarehouse = transferRows.filter(function (row) { return row.id && !rawWarehouseCodeValue(row); });
+      tables.push({ name: "wms_transfers", orphanCount: transfersNoWarehouse.length, orphanRows: transfersNoWarehouse, missing: false });
+      pushMaintenancePreview(preview, "MANUAL_TRANSFER_NO_WAREHOUSE", "wms_transfers", transfersNoWarehouse, "Transferência sem warehouse_code.", "Alto", "Corrigir estoque antes de qualquer limpeza.", "Manual", false);
+    }
+    return tables;
+  }
+
+  function pushMaintenancePreview(preview, type, tableName, rows, reason, risk, proposedAction, mode, executable) {
+    rows = rows || [];
+    if (!rows.length) return;
+    if (executable === undefined) executable = true;
+    var byWarehouse = {};
+    rows.forEach(function (row) {
+      var code = rawWarehouseCodeValue(row) ? rowWarehouseCode(row) : "SEM_ESTOQUE";
+      if (!byWarehouse[code]) byWarehouse[code] = [];
+      byWarehouse[code].push(row);
+    });
+    Object.keys(byWarehouse).forEach(function (code) {
+      var groupedRows = byWarehouse[code].slice(0, 500);
+      preview.push({
+        id: type + "-" + tableName + "-" + code + "-" + preview.length,
+        type: type,
+        tableName: tableName,
+        warehouseCode: code,
+        count: byWarehouse[code].length,
+        ids: groupedRows.map(function (row) { return row.id; }).filter(Boolean),
+        reason: reason,
+        risk: risk,
+        proposedAction: proposedAction,
+        mode: mode,
+        executable: executable && code !== "SEM_ESTOQUE",
+        dateRange: maintenanceDateRange(byWarehouse[code])
+      });
+    });
+  }
+
+  function maintenanceDateRange(rows) {
+    var dates = (rows || []).map(function (row) { return row.updated_at || row.created_at || row.updatedAt || row.createdAt || ""; }).filter(Boolean).sort();
+    if (!dates.length) return "-";
+    if (dates.length === 1) return formatDateTime(dates[0]);
+    return formatDateTime(dates[0]) + " até " + formatDateTime(dates[dates.length - 1]);
+  }
+
+  function maintenanceStockSignature(row) {
+    return [
+      normalizeText(row.source_type).toUpperCase(),
+      normalizeSku(row.codigo_material),
+      Number(row.total_fisico || 0),
+      Number(row.total_alocado || 0),
+      Number(row.total_disponivel || 0),
+      normalizeText(row.estacao),
+      normalizeText(row.rack),
+      normalizeText(row.linha),
+      normalizeText(row.coluna),
+      normalizeText(row.codigo_endereco),
+      normalizeText(row.record_hash)
+    ].join("|");
+  }
+
+  function sortDbRowsByDateDesc(a, b) {
+    return new Date(b.updated_at || b.created_at || b.updatedAt || b.createdAt || 0) - new Date(a.updated_at || a.created_at || a.updatedAt || a.createdAt || 0);
+  }
+
+  function renderMaintenancePreview(report) {
+    if (!$("maintenancePreviewRows")) return;
+    var rows = (report && report.preview) || [];
+    $("maintenancePreviewRows").innerHTML = rows.length ? rows.map(function (entry) {
+      return [
+        "<tr class=\"" + (entry.executable ? "" : "maintenance-manual-row") + "\">",
+        "<td><strong>" + escapeHtml(entry.tableName) + "</strong><br><span class=\"muted\">" + escapeHtml(entry.mode || "-") + "</span></td>",
+        "<td>" + escapeHtml(entry.warehouseCode || "-") + "</td>",
+        "<td>" + entry.count + "</td>",
+        "<td>" + escapeHtml(entry.reason) + "</td>",
+        "<td><span class=\"status-badge " + (entry.risk === "Alto" ? "inactive" : entry.risk === "Médio" ? "pending" : "active") + "\">" + escapeHtml(entry.risk) + "</span></td>",
+        "<td>" + escapeHtml(entry.executable ? entry.proposedAction : "Somente revisão manual") + "</td>",
+        "<td>" + escapeHtml(entry.dateRange || "-") + "</td>",
+        "</tr>"
+      ].join("");
+    }).join("") : "<tr><td colspan=\"7\">Nenhuma prévia gerada ainda.</td></tr>";
   }
 
   async function cleanMaintenanceResidues() {
-    if (!isAdmin()) return;
+    if (!isGlobalAdmin()) {
+      setStatus("maintenanceStatus", "Acesso restrito ao administrador geral.", "error");
+      return;
+    }
+    if (!isSupabaseReady()) {
+      setStatus("maintenanceStatus", "Supabase não conectado.", "error");
+      return;
+    }
     if (!maintenanceState.lastReport) {
-      setStatus("maintenanceStatus", "Clique em Verificar resíduos antes de limpar.", "warning");
+      setStatus("maintenanceStatus", "Gere a prévia antes de executar a limpeza.", "warning");
       return;
     }
-    var report = maintenanceState.lastReport;
-    if (!report.orphanTotal) {
-      setStatus("maintenanceStatus", "Nenhum resíduo órfão encontrado para limpar.", "success");
+    var executable = (maintenanceState.lastReport.preview || []).filter(function (entry) { return entry.executable && entry.count > 0 && entry.ids.length; });
+    if (!executable.length) {
+      setStatus("maintenanceStatus", "Nenhuma ação automática segura disponível. Revise os itens manuais.", "warning");
       return;
     }
-    if (!window.confirm("Esta ação remove apenas dados de teste e registros órfãos. Deseja continuar?")) return;
+    if ($("maintenanceConfirmInput") && normalizeText($("maintenanceConfirmInput").value).toUpperCase() !== "LIMPAR") {
+      setStatus("maintenanceStatus", "Digite LIMPAR para confirmar a execução.", "error");
+      return;
+    }
     if (maintenanceState.cleaning) return;
     maintenanceState.cleaning = true;
     $("cleanResiduesButton").disabled = true;
-    $("cleanResiduesButton").textContent = "Limpando...";
+    $("cleanResiduesButton").textContent = "Executando...";
+    var affected = 0;
+    var errors = [];
     try {
-      var removed = 0;
-      for (var i = 0; i < report.tables.length; i += 1) {
-        var table = report.tables[i];
-        if (table.missing || !table.orphanRows || !table.orphanRows.length) continue;
-        for (var j = 0; j < table.orphanRows.length; j += 1) {
-          var row = table.orphanRows[j];
-          if (!row.id) continue;
-          var response = await supabaseDb.from(table.name).delete().eq("id", row.id);
-          if (response.error && !isMissingTransferTableError(response.error)) throw response.error;
-          removed += 1;
+      await recordMaintenanceLog("EXECUTION_START", "maintenance_safe_cleanup", maintenanceState.lastReport.previewCount, "STARTED", "Execução iniciada para " + maintenanceState.lastReport.warehouseLabel + ".");
+      for (var i = 0; i < executable.length; i += 1) {
+        try {
+          affected += await executeMaintenancePreviewEntry(executable[i]);
+        } catch (entryError) {
+          errors.push(executable[i].tableName + ": " + formatSupabaseError(entryError));
         }
       }
+      maintenanceState.lastResult = { executedAt: nowIso(), affected: affected, errors: errors };
+      await recordMaintenanceLog("EXECUTION_FINISH", "maintenance_safe_cleanup", affected, errors.length ? "PARTIAL" : "OK", errors.join(" | ") || "Limpeza segura concluída.");
       maintenanceState.lastReport = null;
-      await loadTransferData();
-      renderTransfers();
-      await verifyMaintenanceResidues();
-      setStatus("maintenanceStatus", removed + " registro(s) órfão(s) removido(s).", "success");
+      if ($("maintenanceConfirmInput")) $("maintenanceConfirmInput").value = "";
+      resetLazyModuleState(true);
+      await loadData();
+      renderAll();
+      setStatus("maintenanceStatus", errors.length ? "Limpeza parcial: " + affected + " registro(s) ajustado(s). Erros: " + errors.join(" | ") : "Limpeza segura concluída: " + affected + " registro(s) ajustado(s).", errors.length ? "warning" : "success");
     } catch (error) {
-      console.error("Erro ao limpar resíduos:", error);
-      setStatus("maintenanceStatus", "Erro ao limpar resíduos: " + formatSupabaseError(error), "error");
+      await recordMaintenanceLog("EXECUTION_ERROR", "maintenance_safe_cleanup", affected, "ERROR", formatSupabaseError(error));
+      setStatus("maintenanceStatus", "Erro ao executar limpeza: " + formatSupabaseError(error), "error");
     } finally {
       maintenanceState.cleaning = false;
       $("cleanResiduesButton").disabled = false;
-      $("cleanResiduesButton").textContent = "Limpar resíduos de teste";
+      $("cleanResiduesButton").textContent = "Executar limpeza segura";
     }
+  }
+
+  async function executeMaintenancePreviewEntry(entry) {
+    var ids = (entry.ids || []).filter(Boolean).slice(0, 500);
+    if (!ids.length) return 0;
+    var now = nowIso();
+    if (entry.type === "FAIL_STUCK_BATCHES") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, {
+        status: "FAILED",
+        finished_at: now,
+        updated_at: now,
+        error_message: "Lote travado por mais de 2 horas. Encerrado pela manutenção segura.",
+        notes: "Lote travado por mais de 2 horas. Encerrado pela manutenção segura."
+      });
+    }
+    if (entry.type === "ARCHIVE_OLD_BATCHES") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, maintenanceArchivePayload(now));
+    }
+    if (entry.type === "ARCHIVE_INACTIVE_STOCK") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, maintenanceArchivePayload(now));
+    }
+    if (entry.type === "ARCHIVE_DUPLICATE_STOCK") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, Object.assign({ active: false }, maintenanceArchivePayload(now)));
+    }
+    if (entry.type === "ARCHIVE_OLD_NOTIFICATIONS" || entry.type === "ARCHIVE_ORPHAN_NOTIFICATIONS") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, { archived: true, archived_at: now });
+    }
+    if (entry.type === "ARCHIVE_INACTIVE_USERS") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, {
+        archived: true,
+        archived_at: now,
+        archived_by_id: (authState.currentUser || {}).id || "",
+        archived_by_name: (authState.currentUser || {}).name || "",
+        active: false,
+        available_for_tasks: false
+      });
+    }
+    if (entry.type === "SOFT_DELETE_TEST_TRANSFER") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, {
+        status: "CANCELADA",
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by_id: (authState.currentUser || {}).id || "",
+        deleted_by_name: (authState.currentUser || {}).name || "",
+        updated_at: now,
+        last_action_at: now,
+        last_action_label: "Transferência de teste arquivada pela manutenção segura"
+      });
+    }
+    if (entry.type === "ARCHIVE_TEST_REPLENISHMENT") {
+      return updateRowsByIdsWithSchemaFallback(entry.tableName, ids, Object.assign({
+        status: "CANCELADO",
+        is_deleted: true,
+        deleted_at: now,
+        deleted_by_id: (authState.currentUser || {}).id || "",
+        deleted_by_name: (authState.currentUser || {}).name || "",
+        updated_at: now
+      }, maintenanceArchivePayload(now)));
+    }
+    if (entry.type === "DELETE_ORPHAN_TRANSFER_ITEMS") {
+      return deleteRowsByIdsSafely(entry.tableName, ids);
+    }
+    return 0;
+  }
+
+  function maintenanceArchivePayload(now) {
+    return {
+      archived: true,
+      archived_at: now,
+      archived_by_id: (authState.currentUser || {}).id || "",
+      archived_by_name: (authState.currentUser || {}).name || "",
+      updated_at: now
+    };
+  }
+
+  async function updateRowsByIdsWithSchemaFallback(tableName, ids, payload) {
+    var total = 0;
+    for (var start = 0; start < ids.length; start += 100) {
+      var chunk = ids.slice(start, start + 100);
+      var updatePayload = Object.assign({}, payload);
+      var attemptedMissingColumns = {};
+      while (Object.keys(updatePayload).length) {
+        var response = await supabaseDb.from(tableName).update(updatePayload).in("id", chunk);
+        if (!response.error) {
+          total += chunk.length;
+          break;
+        }
+        if (!isMissingColumnError(response.error)) throw response.error;
+        var missingColumn = getMissingColumnName(response.error);
+        if (!missingColumn || attemptedMissingColumns[missingColumn]) throw response.error;
+        attemptedMissingColumns[missingColumn] = true;
+        delete updatePayload[missingColumn];
+      }
+    }
+    return total;
+  }
+
+  async function deleteRowsByIdsSafely(tableName, ids) {
+    var total = 0;
+    for (var start = 0; start < ids.length; start += 100) {
+      var chunk = ids.slice(start, start + 100);
+      var response = await supabaseDb.from(tableName).delete().in("id", chunk);
+      if (response.error && !isMissingTransferTableError(response.error)) throw response.error;
+      total += chunk.length;
+    }
+    return total;
+  }
+
+  async function recordMaintenanceLog(actionType, tableName, count, status, notes) {
+    if (!isSupabaseReady()) return;
+    var row = {
+      id: "maint-" + Date.now() + "-" + Math.random().toString(16).slice(2),
+      created_at: nowIso(),
+      executed_by_id: (authState.currentUser || {}).id || "",
+      executed_by_name: (authState.currentUser || {}).name || "",
+      action_type: actionType,
+      table_name: tableName,
+      warehouse_code: maintenanceWarehouseLabel(),
+      preview_count: Number(count || 0),
+      affected_count: Number(count || 0),
+      criteria: JSON.stringify({
+        scope: maintenanceState.activeScope || "all",
+        warehouseFilter: maintenanceState.warehouseFilter || "CURRENT"
+      }),
+      status: status || "OK",
+      notes: notes || ""
+    };
+    try {
+      var response = await supabaseDb.from("wms_maintenance_logs").insert(row);
+      if (response.error && !isMissingHealthTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
+    } catch (error) {
+      recordPerformanceError("maintenance-log", error);
+    }
+  }
+
+  function downloadMaintenanceSafeReport() {
+    var report = maintenanceState.lastReport || buildLocalMaintenanceReport();
+    var lines = [
+      "# Relatório - Manutenção Segura do Banco",
+      "",
+      "Gerado em: " + formatDateTime(report.generatedAt || nowIso()),
+      "Usuário: " + ((authState.currentUser || {}).name || "-"),
+      "Filtro de estoque: " + (report.warehouseLabel || maintenanceWarehouseLabel()),
+      "Escopo: " + (report.scope || maintenanceState.activeScope || "all"),
+      "",
+      "Resumo:",
+      "- Transferências avaliadas: " + (report.transferCount || 0),
+      "- Registros na prévia: " + (report.previewCount || 0),
+      "- Órfãos encontrados: " + (report.orphanTotal || 0),
+      "- Transferências de teste: " + ((report.testTransfers || []).length),
+      "",
+      "Prévia:",
+      (report.preview && report.preview.length ? report.preview.map(function (entry) {
+        return "- " + entry.tableName + " | " + entry.warehouseCode + " | " + entry.count + " | " + entry.reason + " | Risco: " + entry.risk + " | Ação: " + (entry.executable ? entry.proposedAction : "Manual");
+      }).join("\n") : "- Nenhuma ação encontrada"),
+      "",
+      "Observações:",
+      (report.notes && report.notes.length ? report.notes.map(function (note) { return "- " + note; }).join("\n") : "- Nenhum erro de leitura registrado"),
+      "",
+      "Última execução:",
+      maintenanceState.lastResult ? "- " + maintenanceState.lastResult.affected + " registro(s) ajustado(s) em " + formatDateTime(maintenanceState.lastResult.executedAt) + "." : "- Nenhuma execução nesta sessão."
+    ];
+    var content = lines.join("\n");
+    downloadTextFile("relatorio-manutencao-segura-banco-" + new Date().toISOString().slice(0, 10) + ".md", content, "text/markdown;charset=utf-8");
   }
 
   function renderEstablishments() {
