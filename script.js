@@ -8111,7 +8111,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
       recordPerformanceError("live-transfer", error);
-      setSyncStatus("Erro tempo real", "error");
+      // A sincronização incremental é recuperável: um schema antigo ou uma resposta
+      // interrompida não deve bloquear a operação nem deixar o status em erro permanente.
+      try {
+        moduleLoadState.transfers = false;
+        var recovered = await loadTransferData();
+        if (recovered) {
+          renderTransferRealtimeViews();
+          setSyncStatus("Sincronizado (recuperado)", "warning");
+        } else {
+          setSyncStatus("Sincronizando novamente", "warning");
+        }
+      } catch (recoveryError) {
+        recordPerformanceError("live-transfer-recovery", recoveryError);
+        setSyncStatus("Sincronizando novamente", "warning");
+      }
+      realtimeState.refreshPending = true;
     } finally {
       realtimeState.refreshRunning = false;
       if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
