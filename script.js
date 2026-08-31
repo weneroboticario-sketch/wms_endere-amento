@@ -1367,6 +1367,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "estabelecimento_nome",
       "estabelecimento_cnpj",
       "import_source",
+      "import_batch_id",
+      "import_file_name",
+      "imported_by_id",
+      "imported_by_name",
       "origem_id",
       "origem_nome",
       "origem_cnpj",
@@ -1389,7 +1393,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "criado_por_id",
       "criado_por_nome",
       "iniciado_em",
+      "started_at",
       "finalizado_em",
+      "finished_at",
       "duracao_segundos",
       "separacao_iniciada_em",
       "separacao_concluida_em",
@@ -2201,6 +2207,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       establishmentName: row.estabelecimento_nome || "",
       establishmentCnpj: row.estabelecimento_cnpj || "",
       importSource: row.import_source || "",
+      importBatchId: row.import_batch_id || "",
+      importFileName: row.import_file_name || "",
+      importedById: row.imported_by_id || "",
+      importedByName: row.imported_by_name || "",
       rawSourceText: row.raw_source_text || "",
       originId: row.origem_id || "",
       originName: row.origem_nome || "",
@@ -2221,7 +2231,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       flowType: row.tipo_fluxo || row.flow_type || row.tipo_transferencia || "",
       createdById: row.criado_por_id || "",
       createdByName: row.criado_por_nome || "",
-      startedAt: row.iniciado_em || "",
+      startedAt: row.iniciado_em || row.started_at || "",
       finishedAt: row.finalizado_em || row.finished_at || "",
       durationSeconds: Number(row.duracao_segundos || row.duration_seconds || 0),
       separationStartedAt: row.separacao_iniciada_em || row.separation_started_at || row.iniciado_em || "",
@@ -2230,8 +2240,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       packingStartedAt: row.lacre_iniciado_em || row.packing_started_at || "",
       packingFinishedAt: row.lacre_concluido_em || row.packing_finished_at || "",
       packingDurationSeconds: Number(row.duracao_lacre_segundos || row.packing_duration_seconds || 0),
-      totalStartedAt: row.total_started_at || row.iniciado_em || "",
-      totalFinishedAt: row.total_finished_at || row.finalizado_em || "",
+      totalStartedAt: row.total_started_at || row.iniciado_em || row.started_at || "",
+      totalFinishedAt: row.total_finished_at || row.finalizado_em || row.finished_at || "",
       totalDurationSeconds: Number(row.total_duration_seconds || row.duracao_segundos || 0),
       totalItems: Number(row.total_items || 0),
       totalSkus: Number(row.total_skus || 0),
@@ -2413,8 +2423,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       observacao: item.observation || "",
       criado_por_id: item.createdById,
       criado_por_nome: item.createdByName,
+      import_batch_id: item.importBatchId || item.requestId || "",
+      import_file_name: item.importFileName || item.rawSourceText || "",
+      imported_by_id: item.importedById || item.createdById || "",
+      imported_by_name: item.importedByName || item.createdByName || "",
       iniciado_em: item.startedAt || null,
+      started_at: item.startedAt || null,
       finalizado_em: item.finishedAt || null,
+      finished_at: item.finishedAt || null,
       duracao_segundos: Number(item.durationSeconds || 0),
       separacao_iniciada_em: item.separationStartedAt || null,
       separacao_concluida_em: item.separationFinishedAt || null,
@@ -2520,8 +2536,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       motivo_pendencia: item.pendingReason || "",
       observacao_pendencia: item.pendingObservation || "",
       has_divergence: Boolean(item.divergenceType || Number(item.missingQty || 0) > 0 || Number(item.excessQty || 0) > 0),
-      status_operacional: item.statusOperational || item.status || "PENDENTE",
-      status_divergencia: item.statusDivergence || (item.divergenceType ? "COM_DIVERGENCIA" : "SEM_DIVERGENCIA"),
+      status_operacional: transferOperationalStatusForItem(item),
+      status_divergencia: transferDivergenceStatusForItem(item),
       status: item.status || "PENDENTE",
       idempotency_key: item.idempotencyKey || "",
       request_id: item.requestId || item.idempotencyKey || "",
@@ -10705,7 +10721,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isTransferItemSeparationClosed(item) {
     if (isTransferItemNotSent(item)) return true;
-    var status = normalizeText(item && item.status).toUpperCase();
+    var status = normalizeText(item && (item.statusOperational || item.status)).toUpperCase();
     var requested = Math.max(0, Number(item && item.requestedQty || 0));
     var separated = Math.max(0, Number(item && item.separatedQty || 0));
     var missing = Math.max(0, Number(item && item.missingQty || 0));
@@ -10783,6 +10799,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       packedUnits: packedUnits,
       pendingUnits: Math.max(0, expectedUnits - packedUnits)
     };
+  }
+
+  function transferOperationalStatusForItem(item) {
+    if (!item) return "PENDENTE";
+    if (item.isExtra) return "EXTRA";
+    if (isTransferItemNotSent(item)) return "SEPARADO";
+    var qty = itemQtyNumbers(item);
+    if (qty.packed > 0 || ["ENVIADO", "ENVIADO_PARCIAL", "ENVIADO_COM_DIVERGENCIA"].indexOf(normalizeText(item.status).toUpperCase()) >= 0) return "ENVIADO";
+    if (qty.separated > 0 || isTransferItemSeparationClosed(item)) return "SEPARADO";
+    return "PENDENTE";
+  }
+
+  function transferDivergenceStatusForItem(item) {
+    if (!item) return "SEM_DIVERGENCIA";
+    if (item.isExtra) return "EXTRA";
+    var qty = itemQtyNumbers(item);
+    if (isTransferItemNotSent(item)) return "FALTA_TOTAL";
+    if (Number(item.excessQty || 0) > 0 || qty.separated > qty.requested || qty.packed > Math.max(qty.separated, qty.requested)) return "EXCESSO";
+    if (Number(item.missingQty || 0) >= qty.requested && qty.requested > 0 && qty.separated <= 0) return "FALTA_TOTAL";
+    if (Number(item.missingQty || 0) > 0 || (qty.separated > 0 && qty.separated < qty.requested) || (qty.packed > 0 && qty.packed < qty.separated)) return "PARCIAL";
+    if (item.divergenceType) return "COM_DIVERGENCIA";
+    return "SEM_DIVERGENCIA";
   }
 
   function getTransferItemCheckedQty(item) {
@@ -12133,6 +12171,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var update = Object.assign({
         quantidade_faltante: item.missingQty,
         divergence_type: item.divergenceType,
+        status_operacional: transferOperationalStatusForItem(item),
+        status_divergencia: transferDivergenceStatusForItem(item),
         status: item.status,
         motivo_pendencia: item.pendingReason,
         observacao_pendencia: item.pendingObservation || "",
@@ -12166,7 +12206,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       divergence_count: report.divergences.length,
       updated_at: now
     };
-    var response = await supabaseDb.from("wms_transfers").update(update).eq("id", transfer.id);
+    var response = await updateTransferWithSchemaFallback(transfer.id, update);
     if (response.error && isMissingColumnError(response.error)) {
       response = await supabaseDb.from("wms_transfers").update({ status: finalStatus, updated_at: now }).eq("id", transfer.id);
     }
@@ -13435,6 +13475,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var transfer = buildImportedTransferRecord(group, responsible, transferId, buildTransferCode(group, groupIndex), buildTransferName(group), now);
       transfer.requestId = creationRequestId;
       transfer.idempotencyKey = creationRequestId + ":GRUPO-" + (groupIndex + 1);
+      transfer.importBatchId = creationRequestId;
+      transfer.importFileName = transferState.previewFileName || group.fileName || "";
+      transfer.importedById = authState.currentUser.id;
+      transfer.importedByName = authState.currentUser.name;
       transfers.push(transfer);
       consolidateTransferGroupItems(group.items).forEach(function (item, itemIndex) {
         var transferItem = buildImportedTransferItem(item, transferId, now);
@@ -14050,11 +14094,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function markTransferHasDivergence(transfer) {
     if (!transfer || !isSupabaseReady()) return;
     transfer.hasDivergence = true;
-    var response = await supabaseDb.from("wms_transfers").update({
+    var response = await updateTransferWithSchemaFallback(transfer.id, {
       has_divergence: true,
-      divergence_count: countTransferDivergences(transfer.id) + 1,
+      divergence_count: countTransferDivergences(transfer.id),
       updated_at: new Date().toISOString()
-    }).eq("id", transfer.id);
+    });
     if (response.error && !isMissingColumnError(response.error)) console.warn("Divergencia da transferencia nao marcada:", response.error);
   }
 
@@ -14472,6 +14516,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         unidades_por_caixa: item.unitsPerBox || 0,
         quantidade_total_unidades: getTransferExpectedUnits(item),
         embalagem_observacao: item.packagingObservation || "",
+        status_operacional: transferOperationalStatusForItem(item),
+        status_divergencia: transferDivergenceStatusForItem(item),
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));
@@ -14513,6 +14559,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var sepUpdate = Object.assign({
         quantidade_separada: item.separatedQty,
         quantidade_faltante: item.missingQty || 0,
+        status_operacional: transferOperationalStatusForItem(item),
+        status_divergencia: transferDivergenceStatusForItem(item),
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));

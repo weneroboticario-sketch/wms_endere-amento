@@ -407,6 +407,12 @@ create table if not exists public.wms_transfers (
   updated_at timestamptz default now(),
   codigo_transferencia text default '',
   nome_transferencia text default '',
+  import_source text default '',
+  import_batch_id text default '',
+  import_file_name text default '',
+  imported_by_id text default '',
+  imported_by_name text default '',
+  raw_source_text text default '',
   estabelecimento_id text default '',
   estabelecimento_codigo text default '',
   estabelecimento_nome text default '',
@@ -427,6 +433,10 @@ alter table public.wms_transfers add column if not exists updated_at timestamptz
 alter table public.wms_transfers add column if not exists codigo_transferencia text default '';
 alter table public.wms_transfers add column if not exists nome_transferencia text default '';
 alter table public.wms_transfers add column if not exists import_source text default '';
+alter table public.wms_transfers add column if not exists import_batch_id text default '';
+alter table public.wms_transfers add column if not exists import_file_name text default '';
+alter table public.wms_transfers add column if not exists imported_by_id text default '';
+alter table public.wms_transfers add column if not exists imported_by_name text default '';
 alter table public.wms_transfers add column if not exists raw_source_text text default '';
 alter table public.wms_transfers add column if not exists origem_id text default '';
 alter table public.wms_transfers add column if not exists origem_nome text default '';
@@ -451,7 +461,9 @@ alter table public.wms_transfers add column if not exists observacao text defaul
 alter table public.wms_transfers add column if not exists criado_por_id text default '';
 alter table public.wms_transfers add column if not exists criado_por_nome text default '';
 alter table public.wms_transfers add column if not exists iniciado_em timestamptz;
+alter table public.wms_transfers add column if not exists started_at timestamptz;
 alter table public.wms_transfers add column if not exists finalizado_em timestamptz;
+alter table public.wms_transfers add column if not exists finished_at timestamptz;
 alter table public.wms_transfers add column if not exists duracao_segundos numeric default 0;
 alter table public.wms_transfers add column if not exists separacao_iniciada_em timestamptz;
 alter table public.wms_transfers add column if not exists separacao_concluida_em timestamptz;

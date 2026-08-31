@@ -7,6 +7,8 @@ alter table public.wms_transfers add column if not exists import_file_name text;
 alter table public.wms_transfers add column if not exists imported_by_id text;
 alter table public.wms_transfers add column if not exists imported_by_name text;
 alter table public.wms_transfers add column if not exists updated_at timestamptz default now();
+alter table public.wms_transfers add column if not exists started_at timestamptz;
+alter table public.wms_transfers add column if not exists finished_at timestamptz;
 
 update public.wms_transfers
 set import_source = 'MANUAL'
