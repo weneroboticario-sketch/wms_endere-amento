@@ -15406,7 +15406,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function isMissingTransferTableError(error) {
     var message = formatSupabaseError(error).toLowerCase();
-    return (
+    var mentionsTransferTable = (
       message.indexOf("wms_establishments") >= 0 ||
       message.indexOf("wms_transfers") >= 0 ||
       message.indexOf("wms_transfer_items") >= 0 ||
@@ -15421,13 +15421,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       message.indexOf("wms_stock_positions") >= 0 ||
       message.indexOf("wms_stock_import_batches") >= 0 ||
       message.indexOf("wms_stock_alerts") >= 0
-    ) && (
-      message.indexOf("not found") >= 0 ||
-      message.indexOf("schema cache") >= 0 ||
-      message.indexOf("does not exist") >= 0 ||
-      message.indexOf("pgrst") >= 0 ||
-      message.indexOf("404") >= 0
     );
+    if (!mentionsTransferTable) return false;
+    if (message.indexOf("column") >= 0 && message.indexOf("schema cache") >= 0) return false;
+    return message.indexOf("could not find the table") >= 0 ||
+      message.indexOf("relation") >= 0 && message.indexOf("does not exist") >= 0 ||
+      message.indexOf("table") >= 0 && message.indexOf("not found") >= 0 ||
+      message.indexOf("pgrst205") >= 0 ||
+      message.indexOf("404") >= 0;
   }
 
   function isMissingColumnError(error) {
