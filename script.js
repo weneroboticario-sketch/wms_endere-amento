@@ -15,6 +15,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+  var EXPECTED_SCHEMA_VERSION = "2026.08.30.001";
   var DEFAULT_WAREHOUSE_CODE = "VDCG";
   var DEFAULT_WAREHOUSE_ID = "warehouse-vdcg";
   var WAREHOUSE_SEED = [
@@ -9531,6 +9532,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return tableName + ": " + (entry.reason || "desativada");
     });
     var replenishmentSchema = await getReplenishmentSchemaDiagnostics();
+    var schemaVersion = await getSchemaVersionDiagnostics();
     $("systemDiagnosticsSummary").innerHTML = [
       summaryChip("Estoque ativo", warehouse),
       summaryChip("Supabase", isSupabaseReady() ? "Conectado" : "Nao configurado", isSupabaseReady() ? "result-ok" : "result-missing"),
@@ -9542,10 +9544,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Ultima sync", performanceState.lastSyncAt ? formatDateTime(performanceState.lastSyncAt) : "-"),
       summaryChip("Enderecamento", performanceState.lastCoreLoadMs + " ms"),
       summaryChip("Transferencias", performanceState.lastTransferLoadMs + " ms"),
-      summaryChip("Consulta SKU", performanceState.lastSkuQueryMs + " ms")
+      summaryChip("Consulta SKU", performanceState.lastSkuQueryMs + " ms"),
+      summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
+      "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
       "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",
       "<p><strong>Indices de idempotencia da reposicao:</strong> idx_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.idx_replenishment_requests_idempotency) + " | uq_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.uq_replenishment_requests_idempotency) + ".</p>",
       "<p><strong>Ultimo erro de criacao de pedido:</strong> " + escapeHtml(performanceState.lastReplenishmentCreateError || "-") + (performanceState.lastReplenishmentCreateErrorAt ? " em " + escapeHtml(formatDateTime(performanceState.lastReplenishmentCreateErrorAt)) : "") + ".</p>",
@@ -9564,6 +9568,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Erros recentes:</strong></p>",
       performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
     ].join("");
+  }
+
+  async function getSchemaVersionDiagnostics() {
+    var result = { version: "", appliedAt: "", current: false, error: "" };
+    if (!isSupabaseReady()) return result;
+    try {
+      var response = await supabaseDb.from("wms_schema_version").select("version,applied_at").eq("id", "current").limit(1);
+      if (response.error) {
+        if (!isMissingHealthTableError(response.error) && !isMissingColumnError(response.error)) result.error = formatSupabaseError(response.error);
+        return result;
+      }
+      var row = (response.data || [])[0] || {};
+      result.version = normalizeText(row.version);
+      result.appliedAt = row.applied_at || "";
+      result.current = result.version === EXPECTED_SCHEMA_VERSION;
+      return result;
+    } catch (error) {
+      if (!isMissingHealthTableError(error) && !isMissingColumnError(error)) result.error = formatSupabaseError(error);
+      return result;
+    }
   }
 
   function healthRequiredColumns() {
