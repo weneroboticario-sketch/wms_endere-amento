@@ -6,6 +6,22 @@ alter table public.wms_transfers add column if not exists import_batch_id text;
 alter table public.wms_transfers add column if not exists import_file_name text;
 alter table public.wms_transfers add column if not exists imported_by_id text;
 alter table public.wms_transfers add column if not exists imported_by_name text;
+alter table public.wms_transfers add column if not exists raw_source_text text default '';
+alter table public.wms_transfers add column if not exists origem_id text default '';
+alter table public.wms_transfers add column if not exists origem_nome text default '';
+alter table public.wms_transfers add column if not exists origem_cnpj text default '';
+alter table public.wms_transfers add column if not exists origem_codigo_loja text default '';
+alter table public.wms_transfers add column if not exists origem_codigo_interno text default '';
+alter table public.wms_transfers add column if not exists origem_canal text default '';
+alter table public.wms_transfers add column if not exists destino_id text default '';
+alter table public.wms_transfers add column if not exists destino_nome text default '';
+alter table public.wms_transfers add column if not exists destino_cnpj text default '';
+alter table public.wms_transfers add column if not exists destino_codigo_loja text default '';
+alter table public.wms_transfers add column if not exists destino_codigo_interno text default '';
+alter table public.wms_transfers add column if not exists destino_canal text default '';
+alter table public.wms_transfers add column if not exists tipo_fluxo text default '';
+alter table public.wms_transfers add column if not exists flow_type text default '';
+alter table public.wms_transfers add column if not exists tipo_transferencia text default '';
 alter table public.wms_transfers add column if not exists updated_at timestamptz default now();
 alter table public.wms_transfers add column if not exists started_at timestamptz;
 alter table public.wms_transfers add column if not exists finished_at timestamptz;
@@ -66,6 +82,7 @@ alter table public.wms_stock_import_batches add column if not exists updated_at 
 alter table public.wms_stock_import_batches add column if not exists finished_at timestamptz;
 alter table public.wms_stock_import_batches add column if not exists error_message text;
 alter table public.wms_stock_import_batches add column if not exists notes text;
+alter table public.wms_stock_import_batches add column if not exists import_mode text default 'CARGA_COMPLETA';
 
 alter table public.wms_users add column if not exists archived boolean default false;
 alter table public.wms_users add column if not exists archived_at timestamptz;
@@ -115,7 +132,7 @@ create table if not exists public.wms_schema_version (
 );
 
 insert into public.wms_schema_version (id, version, description, applied_at, applied_by)
-values ('current', '2026.08.30.001', 'Estabilizacao de schema: importacao, lotes, estabelecimentos, snapshots e usuarios', now(), 'migration')
+values ('current', '2026.08.30.002', 'Estabilizacao de schema: rotas de transferencia, lotes, import_mode e compatibilidade de fallback', now(), 'migration')
 on conflict (id) do update set
   version = excluded.version,
   description = excluded.description,
@@ -142,12 +159,14 @@ where table_schema = 'public'
   and table_name in ('wms_transfers', 'wms_transfer_items', 'wms_stock_positions', 'wms_stock_import_batches', 'wms_establishments', 'wms_users')
   and column_name in (
     'import_source', 'import_batch_id', 'import_file_name', 'imported_by_id', 'imported_by_name',
+    'raw_source_text', 'origem_id', 'origem_nome', 'origem_cnpj', 'origem_codigo_loja',
+    'destino_id', 'destino_nome', 'destino_cnpj', 'destino_codigo_loja',
     'codigo_loja', 'codigo_interno', 'cnpj', 'sigla', 'canal', 'active',
     'codigo_material', 'nome_material_snapshot', 'saldo_captacao_snapshot', 'saldo_loja_snapshot',
     'quantidade_retirar_captacao', 'quantidade_retirar_loja', 'quantidade_faltante',
     'localizacao_captacao_snapshot', 'localizacao_wms_snapshot', 'stock_snapshot_at',
     'status_operacional', 'status_divergencia', 'record_hash', 'updated_at', 'finished_at',
-    'error_message', 'archived'
+    'error_message', 'import_mode', 'archived'
   )
 order by table_name, column_name;
 

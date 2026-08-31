@@ -15,7 +15,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.08.30.001";
+  var EXPECTED_SCHEMA_VERSION = "2026.08.30.002";
   var DEFAULT_WAREHOUSE_CODE = "VDCG";
   var DEFAULT_WAREHOUSE_ID = "warehouse-vdcg";
   var WAREHOUSE_SEED = [
@@ -2637,6 +2637,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var message = formatSupabaseError(error);
     var quotedColumn = message.match(/'([^']+)'\s+column/i);
     if (quotedColumn && quotedColumn[1]) return quotedColumn[1];
+    var qualifiedColumn = message.match(/column\s+"?([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)"?/i);
+    if (qualifiedColumn && qualifiedColumn[2]) return qualifiedColumn[2];
     var columnMatch = message.match(/column\s+"?([a-zA-Z0-9_]+)"?/i);
     if (columnMatch && columnMatch[1] && columnMatch[1] !== "column") return columnMatch[1];
     return "";
