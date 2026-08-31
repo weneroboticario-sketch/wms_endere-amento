@@ -1985,11 +1985,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return loadedFromCache;
     }
     try {
-      var establishmentResponse = await supabaseDb
-        .from("wms_establishments")
-        .select(establishmentSelectColumns())
-        .order("codigo", { ascending: true })
-        .limit(1000);
+      var establishmentResponse = await selectRowsWithMissingColumnFallback("wms_establishments", establishmentSelectColumns(), function (query) {
+        return query.order("codigo", { ascending: true }).limit(1000);
+      });
       if (establishmentResponse.error) throw establishmentResponse.error;
       performanceState.lastTransferQueryCount += 1;
       var establishmentRows = establishmentResponse.data || [];
