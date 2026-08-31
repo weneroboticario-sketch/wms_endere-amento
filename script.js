@@ -1556,9 +1556,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     }
     if (response.error) throw response.error;
+    var rows = response.data || [];
+    if (!rows.length && isMultiWarehouseMode()) {
+      var fallbackResponse = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
+        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
+      });
+      if (fallbackResponse.error) throw fallbackResponse.error;
+      rows = (fallbackResponse.data || []).filter(function (row) {
+        var explicitWarehouse = rawWarehouseCodeValue(row);
+        return !explicitWarehouse || normalizeWarehouseCode(explicitWarehouse) === warehouse;
+      }).map(function (row) {
+        if (!rawWarehouseCodeValue(row)) row.warehouse_code = warehouse;
+        return row;
+      });
+    }
     recordPerformanceMetric("lastTransferItemsMs", startedAt);
     performanceState.lastTransferQueryCount += 1;
-    return response.data || [];
+    return rows;
   }
 
   function stripTransferItemSelectColumns() {
@@ -7970,7 +7984,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var row = payload && (payload.new || payload.old) ? (payload.new || payload.old) : {};
     if (!processRowMatchesActiveWarehouse(row)) {
       transferDebugLog("Evento ignorado por estoque diferente ou indefinido", payload);
-      if (!rowWarehouseCode(row) && isMultiWarehouseMode()) scheduleTransferRealtimeRefresh("realtime-warehouse-indefinido", 500);
+      if (!rawWarehouseCodeValue(row) && isMultiWarehouseMode()) scheduleTransferRealtimeRefresh("realtime-warehouse-indefinido", 500);
       return;
     }
     realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
@@ -8098,10 +8112,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var transferRows = await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since);
         var shouldFetchItemRows = transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0;
         var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
-        var activeTransferIds = await fetchActiveWarehouseTransferIds();
-        transferState.transfers.slice().forEach(function (transfer) {
-          if (transferBelongsToActiveWarehouse(transfer) && !activeTransferIds[transfer.id]) removeLocalTransferEverywhere(transfer.id);
-        });
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
@@ -10696,8 +10706,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function isTransferItemSeparationClosed(item) {
     if (isTransferItemNotSent(item)) return true;
     var status = normalizeText(item && item.status).toUpperCase();
-    if (["SEPARADO", "SEPARADO_COM_DIVERGENCIA", "ENVIADO", "ENVIADO_PARCIAL", "ENVIADO_COM_DIVERGENCIA", "CONCLUIDO"].indexOf(status) >= 0) return true;
-    if (item && item.divergenceType) return true;
+    var requested = Math.max(0, Number(item && item.requestedQty || 0));
+    var separated = Math.max(0, Number(item && item.separatedQty || 0));
+    var missing = Math.max(0, Number(item && item.missingQty || 0));
+    var hasOperationalMissingReason = Boolean(item && (item.pendingReason || item.pendingObservation));
+    if (requested <= 0) return true;
+    if (separated >= requested) return true;
+    if (["SEPARADO", "SEPARADO_COM_DIVERGENCIA", "ENVIADO", "ENVIADO_PARCIAL", "ENVIADO_COM_DIVERGENCIA", "CONCLUIDO"].indexOf(status) >= 0) {
+      return separated > 0 || (missing >= requested && hasOperationalMissingReason);
+    }
+    if (item && item.divergenceType) return separated > 0 || (missing >= requested && hasOperationalMissingReason);
     return false;
   }
 
