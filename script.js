@@ -2853,7 +2853,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var importResult = await saveStockImportBatch(sourceType, file.name, parsed, importMode);
       invalidateStockCacheForWarehouseSource(activeWarehouseCode(), sourceType, importResult.changedSkus || []);
       await refreshStockOperationalData();
-      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + parsed.ignored + " ignorado(s).", "success");
+      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
     } catch (error) {
       setStatus("stockImportStatus", "Falha na importacao: " + formatSupabaseError(error), "error");
@@ -2879,7 +2879,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         var rack = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Rack", "Nr Rack"])) : "";
         var line = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Linha prod alocado", "Linha", "Linha Produto Alocado"])) : "";
         var column = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Coluna prod alocado", "Coluna", "Coluna Produto Alocado"])) : "";
-        var location = sourceType === "CAPTACAO" ? buildLocationFromParts(station, rack, line, column) : { valid: false };
+        var addressText = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Endereco", "Endereço", "Codigo Endereco", "Código Endereco", "Codigo do Endereco", "Código do Endereço", "Localizacao", "Localização", "Localizacao captacao", "Localização captação"])) : "";
+        var locationStatus = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Status localizacao", "Status localização", "Situacao localizacao", "Situação localização"])) : "";
+        var location = sourceType === "CAPTACAO" ? buildStockImportLocation(station, rack, line, column, addressText) : { valid: false };
+        var rowHasLocationColumns = sourceType === "CAPTACAO" && stockImportRowHasLocationColumns(row);
         result.rows.push({
           codigoMaterial: normalizeSku(sku) || normalizeText(sku),
           nomeMaterial: name,
@@ -2891,12 +2894,65 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           linha: line,
           coluna: column,
           codigoEndereco: location.valid ? location.code : "",
+          semLocalizacao: sourceType === "CAPTACAO" && rowHasLocationColumns && !location.valid && stockImportRowMeansNoLocation(station, rack, line, column, addressText, locationStatus),
           isSellable: isSellableStockProduct(name)
         });
       });
     });
     result.rows = dedupeStockRows(sourceType, result.rows);
     return result;
+  }
+
+  function stockImportLocationAliases() {
+    return [
+      "Estacao", "Estação", "Nome estacao", "Nome estação",
+      "Rack", "Nr Rack",
+      "Linha prod alocado", "Linha", "Linha Produto Alocado",
+      "Coluna prod alocado", "Coluna", "Coluna Produto Alocado",
+      "Endereco", "Endereço", "Codigo Endereco", "Código Endereco", "Codigo do Endereco", "Código do Endereço",
+      "Localizacao", "Localização", "Localizacao captacao", "Localização captação",
+      "Status localizacao", "Status localização", "Situacao localizacao", "Situação localização"
+    ];
+  }
+
+  function stockImportRowHasLocationColumns(row) {
+    var available = Object.keys(row || {}).map(normalizeHeader);
+    return stockImportLocationAliases().some(function (alias) {
+      return available.indexOf(normalizeHeader(alias)) >= 0;
+    });
+  }
+
+  function buildStockImportLocation(station, rack, line, column, addressText) {
+    var fromParts = buildLocationFromParts(station, rack, line, column);
+    if (fromParts.valid) return fromParts;
+    var fromAddress = normalizeLocation(addressText);
+    return fromAddress.valid ? fromAddress : { valid: false };
+  }
+
+  function stockImportRowMeansNoLocation(station, rack, line, column, addressText, locationStatus) {
+    var values = [station, rack, line, column, addressText, locationStatus].map(normalizeText);
+    if (values.some(isNoLocationMarker)) return true;
+    return ![station, rack, line, column, addressText].some(stockImportLocationValueHasContent);
+  }
+
+  function stockImportLocationValueHasContent(value) {
+    var text = normalizeText(value);
+    return !!text && text !== "-" && text !== "--" && text !== "0";
+  }
+
+  function isNoLocationMarker(value) {
+    var text = normalizeHeader(value);
+    if (!text) return false;
+    return [
+      "semlocalizacao",
+      "semlocalizacaocadastrada",
+      "semendereco",
+      "semenderecocadastrado",
+      "naolocalizado",
+      "naolocalizada",
+      "naoenderecado",
+      "naoenderecada"
+    ].indexOf(text) >= 0;
   }
 
   function dedupeStockRows(sourceType, rows) {
@@ -2960,7 +3016,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       var incomingKeys = {};
       var upsertRows = [];
-      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0, negative: 0, alertRows: 0, changedSkus: [] };
+      var unlocatedSkuKeys = sourceType === "CAPTACAO" ? stockImportSkuKeysWithoutLocation(parsed.rows) : [];
+      var unlocatedSkuKeySet = {};
+      unlocatedSkuKeys.forEach(function (key) { unlocatedSkuKeySet[key] = true; });
+      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0, negative: 0, alertRows: 0, unlocatedBindingsRemoved: 0, changedSkus: [] };
       parsed.rows.forEach(function (row, index) {
         var key = stockPositionOperationalKey(sourceType, row, warehouseCode);
         if (!key) return;
@@ -2988,12 +3047,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
       if (upsertRows.length) await upsertStockPositionRows(upsertRows);
       var deactivatedPositions = currentRows.filter(function (position) {
-        return duplicateActiveIds[position.id] || (importMode === "CARGA_COMPLETA" && !incomingKeys[stockPositionOperationalKey(sourceType, position, warehouseCode)]);
+        var skuKey = normalizeSkuKey(position.codigoMaterial);
+        var becameUnlocated = unlocatedSkuKeySet[skuKey] && stockPositionLocation(position);
+        return duplicateActiveIds[position.id] || becameUnlocated || (importMode === "CARGA_COMPLETA" && !incomingKeys[stockPositionOperationalKey(sourceType, position, warehouseCode)]);
       });
       deactivatedPositions.forEach(function (position) { metrics.changedSkus.push(normalizeSku(position.codigoMaterial)); });
       var deactivatedIds = deactivatedPositions.map(function (position) { return position.id; }).filter(Boolean);
       metrics.deactivated = deactivatedIds.length;
       if (deactivatedIds.length) await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
+      metrics.unlocatedBindingsRemoved = await clearBindingsForUnlocatedStockImport(sourceType, parsed.rows, warehouseCode, batchId, now);
       metrics.alertRows = await generateNegativeStockAlerts(warehouseCode, sourceType, batchId, now);
       await updateStockBatchMetrics(batchId, Object.assign({}, metrics, {
         importedRows: parsed.rows.length,
@@ -3001,7 +3063,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         errorRows: parsed.errors.length,
         status: "COMPLETED",
         importMode: importMode,
-        notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s)."
+        notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
       }));
       return metrics;
     } catch (error) {
@@ -3045,6 +3107,97 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         attemptedMissingColumns[missingColumn] = true;
         payload.forEach(function (row) { delete row[missingColumn]; });
       }
+    }
+  }
+
+  async function clearBindingsForUnlocatedStockImport(sourceType, rows, warehouseCode, batchId, now) {
+    if (sourceType !== "CAPTACAO") return 0;
+    var clearSkuKeys = stockImportSkuKeysWithoutLocation(rows);
+    if (!clearSkuKeys.length) return 0;
+    var clearSet = {};
+    clearSkuKeys.forEach(function (key) { clearSet[key] = true; });
+    var removedBindings = state.bindings.filter(function (binding) {
+      if (!bindingMatchesWarehouseCode(binding, warehouseCode)) return false;
+      return skuCandidateKeys(binding.sku).some(function (key) { return clearSet[key]; });
+    });
+    if (!removedBindings.length) return 0;
+    var remoteIds = await fetchBindingIdsForSkuKeySet(warehouseCode, clearSet);
+    var removeIds = unique(removedBindings.map(function (binding) { return binding.id; }).concat(remoteIds).filter(Boolean));
+    if (removeIds.length) await deleteBindingsByIds(removeIds);
+    var removeIdSet = {};
+    removeIds.forEach(function (id) { removeIdSet[id] = true; });
+    state.bindings = state.bindings.filter(function (binding) {
+      return !removeIdSet[binding.id];
+    });
+    var removedSkuList = unique(removedBindings.map(function (binding) { return normalizeSku(binding.sku); }).filter(Boolean));
+    var sample = removedSkuList.slice(0, 12).join(", ");
+    var details = removedBindings.length + " vinculo(s) antigo(s) removido(s) porque a base de captacao importada marcou o SKU sem localizacao no estoque " + normalizeWarehouseCode(warehouseCode) + ".";
+    if (sample) details += " SKUs: " + sample + (removedSkuList.length > 12 ? "..." : "") + ".";
+    var historyItem = createHistoryItem("Endereco removido pela base", removedSkuList.length === 1 ? removedSkuList[0] : "", "", details);
+    state.history.push(historyItem);
+    if (state.history.length > 1000) state.history = state.history.slice(state.history.length - 1000);
+    if (historySchemaAvailable) {
+      try {
+        var historyPayload = toDbHistory(historyItem);
+        var historyResponse = await supabaseDb.from("wms_history").upsert(historyPayload, { onConflict: "id" });
+        if (historyResponse.error && isMissingWarehouseColumnError(historyResponse.error)) {
+          assertWarehouseFallbackAllowed("wms_history", historyResponse.error);
+          historyResponse = await supabaseDb.from("wms_history").upsert(stripWarehouseColumns(historyPayload), { onConflict: "id" });
+        }
+        if (historyResponse.error && !isHistorySchemaError(historyResponse.error)) throw historyResponse.error;
+        if (historyResponse.error) historySchemaAvailable = false;
+      } catch (error) {
+        if (!isHistorySchemaError(error)) throw error;
+        historySchemaAvailable = false;
+      }
+    }
+    await writeModuleCache("coreData", {
+      bindings: state.bindings,
+      products: state.products
+    });
+    invalidateStockCacheForWarehouseSource(warehouseCode, sourceType, removedSkuList);
+    return removedBindings.length;
+  }
+
+  function stockImportSkuKeysWithoutLocation(rows) {
+    var signals = {};
+    (rows || []).forEach(function (row) {
+      var key = normalizeSkuKey(row && row.codigoMaterial);
+      if (!key) return;
+      if (!signals[key]) signals[key] = { hasLocation: false, noLocation: false };
+      if (normalizeText(row.codigoEndereco)) signals[key].hasLocation = true;
+      if (row.semLocalizacao === true) signals[key].noLocation = true;
+    });
+    return Object.keys(signals).filter(function (key) {
+      return signals[key].noLocation && !signals[key].hasLocation;
+    });
+  }
+
+  function bindingMatchesWarehouseCode(binding, warehouseCode) {
+    var wanted = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var rawCode = rawWarehouseCodeValue(binding);
+    if (rawCode) return normalizeWarehouseCode(rawCode) === wanted;
+    return wanted === activeWarehouseCode() && !isMultiWarehouseMode();
+  }
+
+  async function deleteBindingsByIds(ids) {
+    var size = 400;
+    for (var i = 0; i < ids.length; i += size) {
+      var response = await supabaseDb.from("wms_bindings").delete().in("id", ids.slice(i, i + size));
+      if (response.error) throw response.error;
+    }
+  }
+
+  async function fetchBindingIdsForSkuKeySet(warehouseCode, clearSet) {
+    try {
+      var rows = await fetchWarehouseRows("wms_bindings", "created_at", false);
+      return (rows || []).filter(function (row) {
+        if (!bindingMatchesWarehouseCode(row, warehouseCode)) return false;
+        return skuCandidateKeys(row.sku).some(function (key) { return clearSet[key]; });
+      }).map(function (row) { return row.id; }).filter(Boolean);
+    } catch (error) {
+      recordPerformanceError("stock-unlocated-bindings-fetch", error);
+      return [];
     }
   }
 
