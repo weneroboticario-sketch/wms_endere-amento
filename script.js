@@ -2340,19 +2340,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: row.endereco_codigo || "",
       hasLocation: row.has_location === true,
       locationWarning: row.location_warning || "",
-      storeAvailable: Number(row.saldo_loja_snapshot !== undefined && row.saldo_loja_snapshot !== null ? row.saldo_loja_snapshot : row.saldo_loja_disponivel || 0),
+      storeAvailable: null,
       captureAvailable: Number(row.saldo_captacao_snapshot !== undefined && row.saldo_captacao_snapshot !== null ? row.saldo_captacao_snapshot : row.saldo_captacao_disponivel || 0),
       originSuggested: row.origem_sugerida || "",
       suggestedCaptureQty: Number(row.quantidade_retirar_captacao !== undefined && row.quantidade_retirar_captacao !== null ? row.quantidade_retirar_captacao : row.quantidade_sugerida_captacao || 0),
-      suggestedStoreQty: Number(row.quantidade_retirar_loja !== undefined && row.quantidade_retirar_loja !== null ? row.quantidade_retirar_loja : row.quantidade_sugerida_loja || 0),
+      suggestedStoreQty: 0,
       quantityShortage: Number(row.quantidade_faltante || 0),
       stockAlert: row.alerta_saldo === true || Boolean(row.alerta_saldo && typeof row.alerta_saldo === "string"),
       stockAlertMessage: row.alerta_saldo_mensagem || row.alerta_saldo || "",
       operationalMessage: row.alerta_saldo_mensagem || row.alerta_saldo || "",
       stockBaseFound: normalizeText(row.alerta_saldo_mensagem || row.alerta_saldo || "") !== "SKU ausente na Base de Estoque.",
-      suggestedLocation: row.localizacao_sugerida || row.localizacao_captacao_snapshot || row.localizacao_wms_snapshot || "",
+      suggestedLocation: row.localizacao_captacao_snapshot || "",
       captureLocationSnapshot: row.localizacao_captacao_snapshot || "",
-      wmsLocationSnapshot: row.localizacao_wms_snapshot || "",
+      wmsLocationSnapshot: "",
       stockSnapshotAt: row.stock_snapshot_at || "",
       quantityType: row.tipo_envio || row.tipo_quantidade || "UNIDADE",
       boxQty: Number(row.quantidade_caixas || 0),
@@ -2507,22 +2507,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       endereco_codigo: item.addressCode || "",
       has_location: item.hasLocation === true,
       location_warning: item.locationWarning || "",
-      saldo_loja_disponivel: Number(item.storeAvailable || 0),
+      saldo_loja_disponivel: 0,
       saldo_captacao_disponivel: Number(item.captureAvailable || 0),
       nome_material_snapshot: item.description || "",
-      saldo_loja_snapshot: Number(item.storeAvailable || 0),
+      saldo_loja_snapshot: 0,
       saldo_captacao_snapshot: Number(item.captureAvailable || 0),
       origem_sugerida: item.originSuggested || "",
       quantidade_sugerida_captacao: Number(item.suggestedCaptureQty || 0),
-      quantidade_sugerida_loja: Number(item.suggestedStoreQty || 0),
+      quantidade_sugerida_loja: 0,
       quantidade_retirar_captacao: Number(item.suggestedCaptureQty || 0),
-      quantidade_retirar_loja: Number(item.suggestedStoreQty || 0),
+      quantidade_retirar_loja: 0,
       quantidade_faltante: Number(item.quantityShortage || item.missingQty || 0),
       alerta_saldo: item.stockAlert === true,
       alerta_saldo_mensagem: item.stockAlertMessage || "",
       localizacao_sugerida: item.suggestedLocation || "",
       localizacao_captacao_snapshot: item.captureLocationSnapshot || item.suggestedLocation || "",
-      localizacao_wms_snapshot: item.wmsLocationSnapshot || item.addressCode || "",
+      localizacao_wms_snapshot: "",
       stock_snapshot_at: item.stockSnapshotAt || null,
       tipo_quantidade: item.quantityType || "UNIDADE",
       tipo_envio: item.quantityType || "UNIDADE",
@@ -2748,7 +2748,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var batchResponse = await loadStockImportBatchRows();
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
-      stockState.summary.loja = await countActiveStockPositions("LOJA");
+      stockState.summary.loja = 0;
       stockState.summary.captacao = await countActiveStockPositions("CAPTACAO");
       stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
       stockState.tablesAvailable = true;
@@ -2775,7 +2775,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function loadStockImportBatchRows() {
     return selectRowsWithMissingColumnFallback("wms_stock_import_batches", "id,created_at,updated_at,finished_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,inserted_rows,updated_rows,unchanged_rows,deactivated_rows,negative_rows,alert_rows,ignored_rows,error_rows,status,notes,error_message,import_mode", function (query) {
-      return query.eq("warehouse_code", activeWarehouseCode()).order("created_at", { ascending: false }).limit(10);
+      return query.eq("warehouse_code", activeWarehouseCode()).eq("source_type", "CAPTACAO").order("created_at", { ascending: false }).limit(10);
     });
   }
 
@@ -2788,8 +2788,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function renderStockBase() {
     if (!$("stockBaseSummary")) return;
     $("stockBaseSummary").innerHTML = [
-      stockSummaryCard("Loja", stockState.summary.loja || 0),
-      stockSummaryCard("Captacao", stockState.summary.captacao || 0),
+      stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
       stockSummaryCard("Ultima importacao", stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-")
     ].join("");
     if ($("stockBatchRows")) {
@@ -3203,22 +3202,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function generateNegativeStockAlerts(warehouseCode, sourceType, batchId, now) {
     try {
-      var positions = await fetchActiveStockPositions("");
+      var positions = await fetchActiveStockPositions("CAPTACAO");
       var grouped = groupStockPositionsBySku(positions);
       var activeNegativeSkus = {};
       var rows = Object.keys(grouped).map(function (sku) {
         var group = grouped[sku] || [];
-        var loja = aggregateStockPositions(group.filter(function (item) { return item.sourceType === "LOJA"; }));
         var captacaoPositions = group.filter(function (item) { return item.sourceType === "CAPTACAO"; });
         var captacao = aggregateStockPositions(captacaoPositions);
-        var lojaSaldo = Number(loja.totalDisponivel || 0);
         var captacaoSaldo = Number(captacao.totalDisponivel || 0);
         var alertType = "";
-        if (lojaSaldo < 0 && captacaoSaldo < 0) alertType = "LOJA_E_CAPTACAO_NEGATIVAS";
-        else if (lojaSaldo < 0 && captacaoSaldo > 0) alertType = "LOJA_NEGATIVA_CAPTACAO_POSITIVA";
-        else if (captacaoSaldo < 0 && lojaSaldo > 0) alertType = "CAPTACAO_NEGATIVA_LOJA_POSITIVA";
-        else if (lojaSaldo < 0) alertType = "LOJA_NEGATIVA";
-        else if (captacaoSaldo < 0) alertType = "CAPTACAO_NEGATIVA";
+        if (captacaoSaldo < 0) alertType = "CAPTACAO_NEGATIVA";
         if (!alertType) return null;
         activeNegativeSkus[sku] = true;
         var captureLocation = captacaoPositions.filter(function (item) { return item.codigoEndereco || stockPositionLocation(item); })[0] || null;
@@ -3230,8 +3223,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           source_type: sourceType || "",
           alert_type: alertType,
           codigo_material: sku,
-          nome_material: loja.nomeMaterial || captacao.nomeMaterial || "",
-          saldo_loja: lojaSaldo,
+          nome_material: captacao.nomeMaterial || "",
+          saldo_loja: 0,
           saldo_captacao: captacaoSaldo,
           localizacao_captacao: captureLocation ? stockPositionLocation(captureLocation) : "",
           batch_id: batchId || "",
@@ -3459,7 +3452,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
     var missing = cleanSkus.filter(function (sku) {
-      return !stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] || !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)];
+      return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)];
     });
     if (missing.length) {
       var response = await supabaseDb
@@ -3467,7 +3460,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         .select(stockPositionSelectColumns())
         .eq("warehouse_code", warehouse)
         .eq("active", true)
-        .in("source_type", ["LOJA", "CAPTACAO"])
+        .eq("source_type", "CAPTACAO")
         .in("codigo_material", missing)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error && isMissingColumnError(response.error)) {
@@ -3476,13 +3469,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .select(stockPositionLegacySelectColumns())
           .eq("warehouse_code", warehouse)
           .eq("active", true)
-          .in("source_type", ["LOJA", "CAPTACAO"])
+          .eq("source_type", "CAPTACAO")
           .in("codigo_material", missing)
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
       missing.forEach(function (sku) {
-        stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] = [];
         stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] = [];
       });
       (response.data || []).map(fromDbStockPosition).forEach(function (position) {
@@ -3492,9 +3484,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     }
     return cleanSkus.reduce(function (all, sku) {
-      return all
-        .concat(stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] || [])
-        .concat(stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || []);
+      return all.concat(stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || []);
     }, []);
   }
 
@@ -3537,18 +3527,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function buildStockSuggestion(sku, requestedQty, positions, warehouseCode) {
     sku = normalizeSku(sku);
-    var loja = aggregateStockPositions((positions || []).filter(function (item) { return item.sourceType === "LOJA"; }));
     var captacaoPositions = (positions || []).filter(function (item) { return item.sourceType === "CAPTACAO"; });
     var captacao = aggregateStockPositions(captacaoPositions);
     var captureLocation = captacaoPositions.filter(function (item) { return item.codigoEndereco || stockPositionLocation(item); }).sort(function (a, b) {
       return Number(b.totalDisponivel || 0) - Number(a.totalDisponivel || 0);
     })[0] || null;
-    var official = findTransferLocationForSku(sku, warehouseCode);
     var needed = Number(requestedQty || 0);
-    if (!(positions || []).length) {
+    if (!captacaoPositions.length) {
       return {
         sku: sku,
-        name: "Não encontrado na Base de Estoque",
+        name: "Não encontrado na Base CAPTAÇÃO",
         baseFound: false,
         storePhysical: null,
         storeAllocated: null,
@@ -3559,52 +3547,42 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         operationalTotal: null,
         rupture: false,
         captureLocation: "",
-        officialLocation: official ? official.locationCode : "",
-        originSuggested: "VERIFICAR",
+        officialLocation: "",
+        originSuggested: "NAO_ENCONTRADO_CAPTACAO",
         suggestedCaptureQty: 0,
         suggestedStoreQty: 0,
         quantityShortage: Math.max(0, needed),
         suggestedReplenishmentQty: 0,
         stockAlert: true,
-        alertMessage: "SKU ausente na Base de Estoque.",
-        operationalMessage: "SKU ausente na Base de Estoque.",
+        alertMessage: "Produto não encontrado na base da CAPTAÇÃO.",
+        operationalMessage: "Produto não encontrado na base da CAPTAÇÃO.",
         sellable: false
       };
     }
     var captureAvailable = Number(captacao.totalDisponivel || 0);
-    var storeAvailable = Number(loja.totalDisponivel || 0);
-    var operationalTotal = captureAvailable + storeAvailable;
+    var operationalTotal = captureAvailable;
     var captureUsable = Math.max(0, captureAvailable);
-    var storeUsable = Math.max(0, storeAvailable);
-    var originSuggested = "SEM_SALDO";
-    var captureQty = Math.min(needed, captureUsable);
-    var remaining = Math.max(0, needed - captureQty);
-    var storeQty = Math.min(remaining, storeUsable);
-    var shortage = Math.max(0, needed - captureQty - storeQty);
+    var originSuggested = "SEM_SALDO_CAPTACAO";
+    var captureQty = needed > 0 ? Math.min(needed, captureUsable) : 0;
+    var shortage = needed > 0 ? Math.max(0, needed - captureQty) : 0;
     if (needed <= 0) {
-      originSuggested = operationalTotal > 0 ? "VERIFICAR" : "SEM_SALDO";
+      originSuggested = captureAvailable > 0 ? "CAPTACAO" : "SEM_SALDO_CAPTACAO";
     } else if (shortage > 0) {
-      originSuggested = "SEM_SALDO";
-    } else if (captureQty > 0 && storeQty > 0) {
-      originSuggested = "CAPTACAO_E_LOJA";
+      originSuggested = captureAvailable > 0 ? "CAPTACAO_PARCIAL" : "SEM_SALDO_CAPTACAO";
     } else if (captureUsable >= needed) {
       originSuggested = "CAPTACAO";
-    } else if (storeUsable > 0) {
-      originSuggested = "LOJA";
     }
     var location = captureLocation ? stockPositionLocation(captureLocation) : "";
-    var officialCode = official ? official.locationCode : "";
-    var hasDivergence = Boolean(location && officialCode && location !== officialCode);
-    var hasNegative = captureAvailable < 0 || storeAvailable < 0;
-    var suggestionQty = storeAvailable < 0 && captureUsable > 0 ? Math.min(Math.abs(storeAvailable), captureUsable) : 0;
-    var alertMessage = shortage > 0 ? "Saldo insuficiente. Faltam " + formatQty(shortage) + " un." : needed <= 0 ? "Quantidade solicitada zerada. Verificar pedido." : hasDivergence ? "Localizacao da captacao diverge do enderecamento oficial." : hasNegative ? "Existe saldo negativo para este SKU." : originSuggested === "CAPTACAO_E_LOJA" ? "Retirar parte na captacao e completar na loja." : originSuggested === "LOJA" ? "Captacao sem saldo suficiente. Retirar da loja." : originSuggested === "SEM_SALDO" ? "Produto sem saldo disponivel." : "";
+    var hasNegative = captureAvailable < 0;
+    var suggestionQty = 0;
+    var alertMessage = hasNegative ? "Saldo CAPTAÇÃO negativo para este SKU." : shortage > 0 ? "Saldo CAPTAÇÃO insuficiente. Faltam " + formatQty(shortage) + " un." : !location ? "Produto encontrado na CAPTAÇÃO sem localização." : needed <= 0 ? "Produto encontrado na CAPTAÇÃO. Verifique a quantidade necessária." : "";
     return {
       sku: sku,
       baseFound: true,
-      name: (captacao.nomeMaterial || loja.nomeMaterial || (official && official.productName) || findProductName(sku) || ""),
-      storePhysical: loja.totalFisico,
-      storeAllocated: loja.totalAlocado,
-      storeAvailable: loja.totalDisponivel,
+      name: (captacao.nomeMaterial || findProductName(sku) || ""),
+      storePhysical: null,
+      storeAllocated: null,
+      storeAvailable: null,
       capturePhysical: captacao.totalFisico,
       captureAllocated: captacao.totalAlocado,
       captureAvailable: captacao.totalDisponivel,
@@ -3615,16 +3593,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       captureRack: captureLocation ? captureLocation.rack : "",
       captureLine: captureLocation ? captureLocation.linha : "",
       captureColumn: captureLocation ? captureLocation.coluna : "",
-      officialLocation: officialCode,
+      officialLocation: "",
       originSuggested: originSuggested,
       suggestedCaptureQty: captureQty,
-      suggestedStoreQty: storeQty,
+      suggestedStoreQty: 0,
       quantityShortage: shortage,
       suggestedReplenishmentQty: suggestionQty,
-      stockAlert: shortage > 0 || hasDivergence || hasNegative || originSuggested === "SEM_SALDO" || originSuggested === "CAPTACAO_E_LOJA" || originSuggested === "LOJA" || originSuggested === "VERIFICAR",
+      stockAlert: shortage > 0 || hasNegative || !location || originSuggested === "SEM_SALDO_CAPTACAO" || originSuggested === "CAPTACAO_PARCIAL",
       alertMessage: alertMessage,
-      operationalMessage: alertMessage || "Retirar da captacao.",
-      sellable: captacao.isSellable || loja.isSellable
+      operationalMessage: alertMessage || "Retirar da CAPTAÇÃO.",
+      sellable: captacao.isSellable
     };
   }
 
@@ -3708,7 +3686,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function getStockAlerts(kind) {
-    var positions = await fetchActiveStockPositions("");
+    var positions = await fetchActiveStockPositions("CAPTACAO");
     var grouped = {};
     positions.forEach(function (position) {
       var key = position.codigoMaterial || "";
@@ -3732,33 +3710,33 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at";
   }
 
-  async function fetchReplenishmentStoreCandidates(filter, offset, limit) {
-    var query = buildReplenishmentStoreCandidatesQuery(filter, stockPositionSelectColumns());
+  async function fetchReplenishmentCaptureCandidates(filter, offset, limit) {
+    var query = buildReplenishmentCaptureCandidatesQuery(filter, stockPositionSelectColumns());
     var response = await query.range(offset, offset + limit - 1);
     if (response.error && isMissingColumnError(response.error)) {
-      response = await buildReplenishmentStoreCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      response = await buildReplenishmentCaptureCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
     }
     if (response.error) throw response.error;
     return (response.data || []).map(fromDbStockPosition);
   }
 
-  function buildReplenishmentStoreCandidatesQuery(filter, columns) {
+  function buildReplenishmentCaptureCandidatesQuery(filter, columns) {
     var query = supabaseDb
       .from("wms_stock_positions")
       .select(columns)
       .eq("warehouse_code", activeWarehouseCode())
-      .eq("source_type", "LOJA")
+      .eq("source_type", "CAPTACAO")
       .eq("active", true)
       .eq("is_sellable", true)
       .order("total_disponivel", { ascending: true })
       .order("codigo_material", { ascending: true });
-    if (filter === "LOJA_NEGATIVA" || filter === "SEM_SALDO_CAPTACAO") {
-      return query.lt("total_disponivel", 0);
+    if (filter === "SEM_SALDO_CAPTACAO") {
+      return query.lte("total_disponivel", 0);
     }
-    if (filter === "LOJA_ZERADA") {
-      return query.eq("total_disponivel", 0);
+    if (filter === "CAPTACAO_POSITIVA") {
+      return query.gt("total_disponivel", 0);
     }
-    return query.lte("total_disponivel", 0);
+    return query.lt("total_disponivel", 3);
   }
 
   async function fetchReplenishmentNoLocationCandidates(offset, limit) {
@@ -3843,47 +3821,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function classifyReplenishmentSuggestion(suggestion) {
-    var loja = Number(suggestion.storeAvailable || 0);
     var captacao = Number(suggestion.captureAvailable || 0);
-    var total = Number(suggestion.operationalTotal !== undefined ? suggestion.operationalTotal : loja + captacao);
-    if (total < 3) {
+    if (captacao < 3) {
       return {
         type: "RUPTURA",
         priority: 1,
         qty: 0,
-        message: "Ruptura operacional: saldo loja + captacao menor que 3."
-      };
-    }
-    if (loja < 0 && captacao > 0) {
-      return {
-        type: "LOJA_NEGATIVA_CAPTACAO_POSITIVA",
-        priority: 2,
-        qty: Math.min(Math.abs(loja), captacao),
-        message: "Produto negativo em loja com saldo disponivel na captacao."
-      };
-    }
-    if (loja === 0 && captacao > 0) {
-      return {
-        type: "LOJA_ZERADA_CAPTACAO_POSITIVA",
-        priority: 3,
-        qty: Math.min(1, captacao),
-        message: "Produto zerado em loja com saldo disponivel na captacao."
-      };
-    }
-    if (loja < 0 && captacao <= 0) {
-      return {
-        type: "LOJA_NEGATIVA_SEM_CAPTACAO",
-        priority: 4,
-        qty: 0,
-        message: "Produto negativo em loja sem saldo disponivel na captacao."
+        message: "Ruptura operacional: saldo CAPTAÇÃO menor que 3."
       };
     }
     if (captacao > 0 && !suggestion.captureLocation) {
       return {
         type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
-        priority: 5,
+        priority: 2,
         qty: 0,
-        message: "Captacao positiva sem localizacao cadastrada."
+        message: "CAPTAÇÃO positiva sem localização cadastrada."
       };
     }
     return null;
@@ -3891,11 +3843,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentSuggestionMatchesFilter(suggestion, filter) {
     if (!filter) return true;
-    if (filter === "LOJA_NEGATIVA") return Number(suggestion.storeAvailable || 0) < 0;
-    if (filter === "LOJA_ZERADA") return Number(suggestion.storeAvailable || 0) === 0;
     if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
-    if (filter === "SEM_SALDO_CAPTACAO") return Number(suggestion.storeAvailable || 0) < 0 && Number(suggestion.captureAvailable || 0) <= 0;
-    if (filter === "SEM_LOCALIZACAO") return !suggestion.captureLocation || !suggestion.officialLocation;
+    if (filter === "SEM_SALDO_CAPTACAO") return Number(suggestion.captureAvailable || 0) <= 0;
+    if (filter === "SEM_LOCALIZACAO") return !suggestion.captureLocation;
     if (filter === "COM_PEDIDO_ABERTO") return suggestion.hasOpenRequest;
     if (filter === "SEM_PEDIDO_ABERTO") return !suggestion.hasOpenRequest;
     return true;
@@ -3912,7 +3862,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (filter === "SEM_LOCALIZACAO") {
       candidates = await fetchReplenishmentNoLocationCandidates(offset, candidateLimit);
     } else {
-      candidates = await fetchReplenishmentStoreCandidates(filter, offset, candidateLimit);
+      candidates = await fetchReplenishmentCaptureCandidates(filter, offset, candidateLimit);
       if (!filter) {
         var noLocation = await fetchReplenishmentNoLocationCandidates(offset, Math.max(25, limit));
         candidates = candidates.concat(noLocation);
@@ -3955,13 +3905,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       SKU: alert.sku || "",
       Produto: alert.name || "",
-      "Saldo loja": Number(alert.storeAvailable || 0),
-      "Saldo captacao": Number(alert.captureAvailable || 0),
-      "Endereco WMS": alert.officialLocation || "",
-      "Endereco captacao": alert.captureLocation || "",
+      "Saldo CAPTACAO": Number(alert.captureAvailable || 0),
+      "Endereco CAPTACAO": alert.captureLocation || "",
       "Sugestao reposicao": Number(alert.suggestedReplenishmentQty || 0),
       "Origem sugerida": alert.originSuggested || "",
-      Alerta: alert.alertMessage || (!alert.captureLocation ? "Produto sem localizacao na base de captacao." : "")
+      Alerta: alert.alertMessage || (!alert.captureLocation ? "Produto sem localizacao na base da CAPTACAO." : "")
     };
   }
 
@@ -4028,11 +3976,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return {
           SKU: alert.sku,
           Produto: alert.name,
-          "Saldo loja": alert.storeAvailable,
-          "Saldo captacao": alert.captureAvailable,
+          "Saldo CAPTACAO": alert.captureAvailable,
+          "Fisico CAPTACAO": alert.capturePhysical,
+          "Alocado CAPTACAO": alert.captureAllocated,
           "Qtd sugerida": alert.suggestedReplenishmentQty,
-          "Endereco captacao": alert.captureLocation || "",
-          "Endereco WMS": alert.officialLocation || ""
+          "Localizacao CAPTACAO": alert.captureLocation || ""
         };
       });
       writeWorkbookFromSheets("Sugestao_Reposicao_" + activeWarehouseCode() + "_" + dateForFileName(new Date()) + ".xlsx", [{ name: "Reposicao", rows: rows }]);
@@ -4297,11 +4245,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       requestedQty: requestedQty,
       attendedQty: 0,
       pendingQty: requestedQty,
-      localizacaoWms: productInfo.wmsLocation || "",
-      localizacaoEstacao: productInfo.wmsStation || "",
-      localizacaoRack: productInfo.wmsRack || "",
-      localizacaoLinha: productInfo.wmsLine || "",
-      localizacaoColuna: productInfo.wmsColumn || "",
+      localizacaoWms: productInfo.captureLocation || "",
+      localizacaoEstacao: productInfo.captureStation || "",
+      localizacaoRack: productInfo.captureRack || "",
+      localizacaoLinha: productInfo.captureLine || "",
+      localizacaoColuna: productInfo.captureColumn || "",
       captacaoEstacao: productInfo.captureStation || "",
       captacaoRack: productInfo.captureRack || "",
       captacaoLinha: productInfo.captureLine || "",
@@ -4396,19 +4344,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function lookupReplenishmentProduct(sku) {
     sku = normalizeSku(sku);
-    var bindings = findBySku(sku).slice().sort(sortByDateDesc);
-    var latest = bindings[0] || null;
-    var name = (latest && latest.productName) || findProductName(sku) || "";
     return {
       sku: sku,
-      name: name,
+      name: findProductName(sku) || "",
       storeBalance: null,
       captureBalance: null,
-      wmsLocation: latest ? latest.locationCode : "",
-      wmsStation: latest ? "R" + pad2(latest.rua) : "",
-      wmsRack: latest ? "RK" + pad2(latest.rack) : "",
-      wmsLine: latest ? "L" + pad2(latest.linha) : "",
-      wmsColumn: latest ? latest.letra : "",
+      wmsLocation: "",
+      wmsStation: "",
+      wmsRack: "",
+      wmsLine: "",
+      wmsColumn: "",
+      captureLocation: "",
       captureStation: "",
       captureRack: "",
       captureLine: "",
@@ -4421,8 +4367,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     product = Object.assign({}, product || {});
     if (!suggestion || !suggestion.sku) return product;
     product.name = suggestion.name || product.name || "";
-    product.storeBalance = Number(suggestion.storeAvailable || 0);
+    product.storeBalance = null;
     product.captureBalance = Number(suggestion.captureAvailable || 0);
+    product.captureLocation = suggestion.captureLocation || product.captureLocation || "";
     product.captureStation = suggestion.captureStation || product.captureStation || "";
     product.captureRack = suggestion.captureRack || product.captureRack || "";
     product.captureLine = suggestion.captureLine || product.captureLine || "";
@@ -4439,8 +4386,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if ($("replenishmentRequestQtyInput") && !normalizeText($("replenishmentRequestQtyInput").value) && Number(suggestion.suggestedReplenishmentQty || 0) > 0) {
         $("replenishmentRequestQtyInput").value = String(suggestion.suggestedReplenishmentQty);
       }
-      if ($("replenishmentStoreQtyInput") && Number(suggestion.storeAvailable || 0) !== 0) {
-        $("replenishmentStoreQtyInput").value = String(suggestion.storeAvailable);
+      if ($("replenishmentStoreQtyInput")) {
+        $("replenishmentStoreQtyInput").value = String(Number(suggestion.captureAvailable || 0));
       }
     } catch (error) {
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock-lookup", error);
@@ -6554,13 +6501,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base de Estoque" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Endereçamento";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
 
   function isRemovedScreen(screenId) {
-    return ["assistente", "conferencias", "historico", "exportar"].indexOf(screenId) >= 0;
+    return ["assistente", "conferencias", "historico", "exportar", "bipagem", "consultaPrateleira", "etiquetas"].indexOf(screenId) >= 0;
   }
 
   function bindEvents() {
@@ -7244,12 +7191,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function renderDashboard() {
-    var uniqueSkus = unique(state.bindings.map(function (item) { return item.sku; }));
-    var uniqueLocations = unique(state.bindings.map(function (item) { return item.locationCode; }));
-    $("metricSkus").textContent = uniqueSkus.length;
-    $("metricLocations").textContent = uniqueLocations.length;
-    $("metricBindings").textContent = state.bindings.length;
-    $("metricUpdated").textContent = state.bindings.length ? formatDateTime(latestDate(state.bindings)) : "-";
+    var captacaoTotal = Number((stockState.summary && stockState.summary.captacao) || 0);
+    $("metricSkus").textContent = captacaoTotal || "-";
+    $("metricLocations").textContent = captacaoTotal || "-";
+    $("metricBindings").textContent = stockState.batches ? stockState.batches.length : 0;
+    $("metricUpdated").textContent = stockState.summary && stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-";
     setTextIfExists("metricTransfersOpen", getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA" && !isFinalTransferStatus(transfer.status);
     }).length);
@@ -7265,7 +7211,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderReplenishmentLeaderSummary();
   }
 
-  function renderDashboardSkuQuickSearch() {
+  async function renderDashboardSkuQuickSearch() {
     if (!$("dashboardSkuQuickInput") || !$("dashboardSkuQuickResult")) return;
     var sku = firstSkuValue($("dashboardSkuQuickInput").value);
     if (!sku) {
@@ -7273,19 +7219,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("dashboardSkuQuickInput").focus();
       return;
     }
-    var rows = findBySku(sku);
-    if (!rows.length) {
-      $("dashboardSkuQuickResult").innerHTML = "<div class=\"inline-status warning\">Nenhuma localização encontrada no estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
+    var suggestion = null;
+    try {
+      suggestion = await stockService().getReplenishmentSuggestion(sku, activeWarehouseCode());
+    } catch (error) {
+      recordPerformanceError("dashboard-consulta-captacao", error);
+      $("dashboardSkuQuickResult").innerHTML = "<div class=\"inline-status error\">" + escapeHtml(missingStockSchemaMessage(error)) + "</div>";
       $("dashboardSkuQuickInput").select();
       return;
     }
-    var first = rows[0];
+    if (!suggestion || suggestion.baseFound === false) {
+      $("dashboardSkuQuickResult").innerHTML = "<div class=\"inline-status warning\">Produto não encontrado na base da CAPTAÇÃO do estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
+      $("dashboardSkuQuickInput").select();
+      return;
+    }
     $("dashboardSkuQuickResult").innerHTML = [
       "<article class=\"dashboard-sku-result\">",
       "<div><span>SKU</span><strong>" + escapeHtml(sku) + "</strong></div>",
-      "<div><span>Produto</span><strong>" + escapeHtml(first.productName || findProductName(sku) || "-") + "</strong></div>",
-      "<div><span>Endereço</span><strong>" + escapeHtml(first.locationCode || "-") + "</strong></div>",
-      rows.length > 1 ? "<small>" + rows.length + " localizações encontradas.</small>" : "",
+      "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || findProductName(sku) || "-") + "</strong></div>",
+      "<div><span>Localização CAPTAÇÃO</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localização") + "</strong></div>",
+      "<small>Disponível: " + escapeHtml(formatQty(suggestion.captureAvailable)) + " | Físico: " + escapeHtml(formatQty(suggestion.capturePhysical)) + " | Alocado: " + escapeHtml(formatQty(suggestion.captureAllocated)) + "</small>",
       "</article>"
     ].join("");
     $("dashboardSkuQuickInput").value = "";
@@ -7423,7 +7376,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentSuggestionCardHtml(item) {
     var location = item.captureLocation || "Sem localizacao";
-    var official = item.officialLocation || "Sem WMS";
     var isRupture = item.suggestionType === "RUPTURA";
     var tone = item.suggestionPriority === 1 ? "danger" : item.suggestionPriority === 2 ? "warning" : item.suggestionPriority === 3 ? "danger" : "info";
     return [
@@ -7433,14 +7385,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>Tipo</span><strong>" + escapeHtml(displaySuggestionType(item.suggestionType)) + "</strong><p>" + escapeHtml(item.alertMessage || "") + "</p></div>",
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
-      replenishmentMetricHtml("Loja", formatQty(item.storeAvailable)),
-      replenishmentMetricHtml("Captacao", formatQty(item.captureAvailable)),
+      replenishmentMetricHtml("Captacao fisico", formatQty(item.capturePhysical)),
+      replenishmentMetricHtml("Captacao disponivel", formatQty(item.captureAvailable)),
       replenishmentMetricHtml("Qtd sugerida", isRupture ? "Sem sugestao" : item.suggestedReplenishmentQty > 0 ? formatQty(item.suggestedReplenishmentQty) : "Analise"),
       replenishmentMetricHtml("Pedido aberto", item.hasOpenRequest ? "Sim" : "Nao"),
       "</div>",
       "<div class=\"replenishment-suggestion-locations\">",
-      "<span><small>Localizacao captacao</small><b>" + escapeHtml(location) + "</b></span>",
-      "<span><small>Localizacao WMS</small><b>" + escapeHtml(official) + "</b></span>",
+      "<span><small>Localizacao CAPTACAO</small><b>" + escapeHtml(location) + "</b></span>",
       item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(item.openRequestStatus + (item.openRequestResponsible ? " - " + item.openRequestResponsible : "")) + "</b></span>" : "",
       "</div>",
       isRupture ? "" : "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
@@ -7450,10 +7401,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function displaySuggestionType(type) {
     if (type === "RUPTURA") return "Ruptura";
-    if (type === "LOJA_NEGATIVA_CAPTACAO_POSITIVA") return "Loja negativa + captacao";
-    if (type === "LOJA_ZERADA_CAPTACAO_POSITIVA") return "Loja zerada + captacao";
-    if (type === "LOJA_NEGATIVA_SEM_CAPTACAO") return "Loja negativa sem captacao";
-    if (type === "CAPTACAO_POSITIVA_SEM_LOCALIZACAO") return "Captacao sem localizacao";
+    if (type === "CAPTACAO_POSITIVA_SEM_LOCALIZACAO") return "CAPTACAO sem localizacao";
     return type || "-";
   }
 
@@ -7461,16 +7409,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var canManage = isAdminOrSupervisor();
     var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
     var queueLabel = item.status === "PENDENTE" && !item.responsavelId ? "Na fila" : displayReplenishmentStatus(item.status);
-    var location = item.localizacaoWms || "Sem localizacao WMS";
+    var location = replenishmentCaptureLocationLabel(item);
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
       "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
       "<div class=\"replenishment-card-main\">",
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
-      "<div class=\"replenishment-location\"><span>Localizacao</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.localizacaoEstacao || "-") + " | " + escapeHtml(item.localizacaoRack || "-") + " | " + escapeHtml(item.localizacaoLinha || "-") + " | " + escapeHtml(item.localizacaoColuna || "-") + "</small></div>",
+      "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
-      replenishmentMetricHtml("Loja", formatQty(item.storeQty)),
+      replenishmentMetricHtml("Saldo captacao", formatQty(item.storeQty)),
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
       replenishmentMetricHtml("Atendida", formatQty(item.attendedQty)),
       replenishmentMetricHtml("Pendente", formatQty(item.pendingQty)),
@@ -7490,6 +7438,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentMetricHtml(label, value) {
     return "<span><small>" + escapeHtml(label) + "</small><strong>" + escapeHtml(value) + "</strong></span>";
+  }
+
+  function replenishmentCaptureLocationLabel(item) {
+    if (!item) return "Sem localizacao";
+    var built = buildLocationFromParts(item.captacaoEstacao || item.localizacaoEstacao, item.captacaoRack || item.localizacaoRack, item.captacaoLinha || item.localizacaoLinha, item.captacaoColuna || item.localizacaoColuna);
+    if (built.valid) return built.code;
+    var hasCaptureParts = Boolean(item.captacaoEstacao || item.captacaoRack || item.captacaoLinha || item.captacaoColuna);
+    if (hasCaptureParts && item.localizacaoWms) return item.localizacaoWms;
+    return "Sem localizacao";
   }
 
   function replenishmentActionsHtml(item, canManage, canWork) {
@@ -7545,10 +7502,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<strong>SKU " + escapeHtml(product.sku) + "</strong>",
       "<span>" + escapeHtml(product.name || "Produto sem nome cadastrado") + "</span>",
       "<div class=\"replenishment-product-meta\">",
-      "<span><small>Saldo loja</small><b>" + escapeHtml(product.storeBalance === null ? "Nao importado" : formatQty(product.storeBalance)) + "</b></span>",
-      "<span><small>Saldo captacao</small><b>" + escapeHtml(product.captureBalance === null ? "Nao importado" : formatQty(product.captureBalance)) + "</b></span>",
-      "<span><small>Endereco WMS</small><b>" + escapeHtml(product.wmsLocation || "Sem localizacao") + "</b></span>",
-      "<span><small>Endereco captacao</small><b>" + escapeHtml([product.captureStation, product.captureRack, product.captureLine, product.captureColumn].filter(Boolean).join("-") || "Nao importado") + "</b></span>",
+      "<span><small>Saldo CAPTACAO</small><b>" + escapeHtml(product.captureBalance === null ? "Nao importado" : formatQty(product.captureBalance)) + "</b></span>",
+      "<span><small>Localizacao CAPTACAO</small><b>" + escapeHtml(product.captureLocation || [product.captureStation, product.captureRack, product.captureLine, product.captureColumn].filter(Boolean).join("-") || "Sem localizacao") + "</b></span>",
       "</div>",
       product.balanceWarning ? "<em>" + escapeHtml(product.balanceWarning) + "</em>" : ""
     ].join("");
@@ -7711,10 +7666,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("replenishmentSuggestionModalSummary").innerHTML = [
         "<div><span>Codigo Material</span><strong>" + escapeHtml(suggestion.sku) + "</strong></div>",
         "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || "-") + "</strong></div>",
-        "<div><span>Saldo loja</span><strong>" + escapeHtml(formatQty(suggestion.storeAvailable)) + "</strong></div>",
-        "<div><span>Saldo captacao</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>",
-        "<div><span>Localizacao captacao</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localizacao") + "</strong></div>",
-        "<div><span>Localizacao WMS</span><strong>" + escapeHtml(suggestion.officialLocation || "Sem WMS") + "</strong></div>"
+        "<div><span>Saldo CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>",
+        "<div><span>Fisico CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.capturePhysical)) + "</strong></div>",
+        "<div><span>Alocado CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAllocated)) + "</strong></div>",
+        "<div><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localizacao") + "</strong></div>"
       ].join("");
     }
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").value = suggestion.suggestedReplenishmentQty > 0 ? String(suggestion.suggestedReplenishmentQty) : "";
@@ -7747,15 +7702,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: suggestion.sku,
-        storeQty: suggestion.storeAvailable,
+        storeQty: suggestion.captureAvailable,
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
         observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
         productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
           name: suggestion.name,
-          storeBalance: suggestion.storeAvailable,
+          storeBalance: null,
           captureBalance: suggestion.captureAvailable,
-          wmsLocation: suggestion.officialLocation,
+          wmsLocation: "",
+          captureLocation: suggestion.captureLocation || "",
           captureStation: suggestion.captureStation,
           captureRack: suggestion.captureRack,
           captureLine: suggestion.captureLine,
@@ -7787,20 +7743,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function renderTransferDashboardAlert() {
     if (!$("transferDashboardAlert") || !authState.currentUser) return;
-    if (isAdminOrSupervisor()) {
-      var report = buildAddressMaintenanceReport();
-      var totalConflicts = report.skuConflicts.length + report.locationDuplicates.length + report.invalidRows.length;
-      if (totalConflicts) {
-        $("transferDashboardAlert").hidden = false;
-        $("transferDashboardAlert").innerHTML = [
-          "<strong>Enderecamento com pendencias para revisar</strong>",
-          "<span>" + report.skuConflicts.length + " conflito(s) de SKU, " + report.locationDuplicates.length + " duplicidade(s) exata(s).</span>",
-          "<span>Resolva antes de exportar para o Videmais.</span>",
-          "<button class=\"primary-button\" data-address-conflicts-open type=\"button\">Abrir manutencao</button>"
-        ].join("");
-        return;
-      }
-    }
     var assigned = getVisibleTransfers().filter(function (transfer) {
       return ["ATRIBUIDA", "PENDENTE", "AGUARDANDO_SEPARACAO", "EM_SEPARACAO", "SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA"].indexOf(transfer.status) >= 0;
     });
@@ -9618,7 +9560,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("PWA", serviceWorkerStatus, serviceWorkerStatus === "Ativo" ? "result-ok" : ""),
       summaryChip("Tamanho cache", formatBytes(cacheBytes)),
       summaryChip("Ultima sync", performanceState.lastSyncAt ? formatDateTime(performanceState.lastSyncAt) : "-"),
-      summaryChip("Enderecamento", performanceState.lastCoreLoadMs + " ms"),
+      summaryChip("Base CAPTACAO", performanceState.lastStockLoadMs + " ms"),
       summaryChip("Transferencias", performanceState.lastTransferLoadMs + " ms"),
       summaryChip("Consulta SKU", performanceState.lastSkuQueryMs + " ms"),
       summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
@@ -9630,7 +9572,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<p><strong>Indices de idempotencia da reposicao:</strong> idx_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.idx_replenishment_requests_idempotency) + " | uq_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.uq_replenishment_requests_idempotency) + ".</p>",
       "<p><strong>Ultimo erro de criacao de pedido:</strong> " + escapeHtml(performanceState.lastReplenishmentCreateError || "-") + (performanceState.lastReplenishmentCreateErrorAt ? " em " + escapeHtml(formatDateTime(performanceState.lastReplenishmentCreateErrorAt)) : "") + ".</p>",
       replenishmentSchema.error ? "<p><strong>Diagnostico reposicao:</strong> " + escapeHtml(replenishmentSchema.error) + "</p>" : "",
-      "<p><strong>Registros carregados:</strong> " + state.bindings.length + " enderecamentos, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
+      "<p><strong>Registros carregados:</strong> " + stockState.summary.captacao + " registros CAPTACAO, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
       "<p><strong>Tempo real das transferencias:</strong> " + escapeHtml(realtimeState.active ? "ativo" : "parado") + " | Canal: " + escapeHtml(realtimeState.warehouseCode ? "wms-live-" + realtimeState.warehouseCode : "-") + " | Status: " + escapeHtml(realtimeState.subscriptionStatus || "-") + (realtimeState.lastLiveUpdateAt ? " | Ultima mensagem: " + escapeHtml(formatDateTime(realtimeState.lastLiveUpdateAt)) : "") + ".</p>",
       "<p><strong>Cache IndexedDB:</strong> " + escapeHtml(localCacheState.available ? "ativo" : "inativo") + " | escritas pendentes: " + escapeHtml(String(localCacheState.writesPending || 0)) + " | ultimo erro: " + escapeHtml(localCacheState.lastError || "-") + " | ultima limpeza: " + escapeHtml(localCacheState.lastCleanupAt ? formatDateTime(localCacheState.lastCleanupAt) : "-") + ".</p>",
       "<p><strong>Tabelas realtime opcionais desativadas:</strong> " + escapeHtml(disabledRealtimeTables.length ? disabledRealtimeTables.join(" | ") : "nenhuma") + ".</p>",
@@ -9937,7 +9879,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       summaryChip("Realtime", realtimeState.active ? "Conectado" : (realtimeState.subscriptionStatus || "Desconectado"), realtimeState.active ? "result-ok" : "result-missing"),
       summaryChip("Cache local", localCacheState.disabled ? "Desativado" : localCacheState.lastError ? "Erro" : localCacheState.available ? "OK" : "Indisponível", localCacheState.lastError ? "result-missing" : localCacheState.available ? "result-ok" : "result-changed"),
       summaryChip("Sincronização", localCacheState.writesPending ? localCacheState.writesPending + " pendência(s)" : performanceState.syncStatus || "OK", localCacheState.writesPending ? "result-changed" : performanceState.syncType === "error" ? "result-missing" : "result-ok"),
-      summaryChip("Última importação Loja", healthLastImportLabel(report.imports, "LOJA"), healthLastImportClass(report.imports, "LOJA")),
       summaryChip("Última importação Captação", healthLastImportLabel(report.imports, "CAPTACAO"), healthLastImportClass(report.imports, "CAPTACAO")),
       summaryChip("Pedidos abertos", report.openRequests, report.openRequests ? "result-changed" : "result-ok"),
       summaryChip("Transferências abertas", report.openTransfers, report.openTransfers ? "result-changed" : "result-ok"),
@@ -9971,7 +9912,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     renderHealthRows("healthPerformanceDetails", [
       { title: "Diagnóstico", detail: "Tempo para montar este relatório.", count: report.runtime.generatedMs + " ms", level: report.runtime.generatedMs > 2500 ? "warning" : "ok" },
       { title: "Login/carregamento inicial", detail: "O diagnóstico só carrega ao abrir esta tela.", count: "Sob demanda", level: "ok" },
-      { title: "Módulos", detail: "Endereçamento " + performanceState.lastCoreLoadMs + " ms | Transferências " + performanceState.lastTransferLoadMs + " ms | Reposição " + performanceState.lastReplenishmentLoadMs + " ms | Base " + performanceState.lastStockLoadMs + " ms", count: "Info", level: "muted" },
+      { title: "Módulos", detail: "Base CAPTACAO " + performanceState.lastStockLoadMs + " ms | Transferências " + performanceState.lastTransferLoadMs + " ms | Reposição " + performanceState.lastReplenishmentLoadMs + " ms", count: "Info", level: "muted" },
       { title: "Transferências - lista", detail: "Painel carrega resumo sem itens/eventos/base completa.", count: performanceState.lastTransferListMs + " ms", level: performanceState.lastTransferListMs > 1800 ? "warning" : "ok" },
       { title: "Transferências - detalhe", detail: "Itens carregados sob demanda por transfer_id + warehouse_code.", count: performanceState.lastTransferItemsMs + " ms", level: performanceState.lastTransferItemsMs > 1800 ? "warning" : "ok" },
       { title: "Transferências - estoque", detail: "Consulta apenas SKUs da transferência aberta.", count: performanceState.lastTransferStockMs + " ms", level: performanceState.lastTransferStockMs > 1800 ? "warning" : "ok" },
@@ -11535,18 +11476,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function transferStockGuidanceHtml(item, variant) {
-    if (!item || (!item.originSuggested && !item.stockAlertMessage && !item.suggestedLocation)) return "";
+    if (!item || (!item.originSuggested && !item.stockAlertMessage && !transferCaptureLocationCode(item))) return "";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
-    var tone = item.originSuggested === "CAPTACAO" && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
-    var captureLocation = item.captureLocationSnapshot || item.suggestedLocation || "-";
-    var wmsLocation = item.wmsLocationSnapshot || item.addressCode || transferCompactLocationLabel(item).replace(/^EndereÃ§o: |^Endereço: /, "") || "-";
+    var tone = item.originSuggested === "CAPTACAO" && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || item.originSuggested === "SEM_SALDO_CAPTACAO" || item.originSuggested === "NAO_ENCONTRADO_CAPTACAO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
+    var captureLocation = transferCaptureLocationCode(item) || "-";
     return [
       "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
       "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
-      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | retirar loja " + formatQty(item.suggestedStoreQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
-      "<span>Saldo captação " + formatQty(item.captureAvailable || 0) + " | saldo loja " + formatQty(item.storeAvailable || 0) + "</span>",
-      "<span>Local captação: " + escapeHtml(captureLocation) + "</span>",
-      "<span>Local WMS: " + escapeHtml(wmsLocation) + "</span>",
+      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
+      "<span>Saldo captação " + transferStockValueLabel(item.captureAvailable, item) + "</span>",
+      "<span>Local CAPTACAO: " + escapeHtml(captureLocation) + "</span>",
       item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "",
       "</div>"
     ].join("");
@@ -13005,7 +12944,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
-    var list = sku ? findBySku(sku) : [];
+    var list = [];
     var requestSeq = ++skuSearchRequestSeq;
     if (!sku) {
       setStatus("skuSearchStatus", "Informe ou bipe um SKU.", "error");
@@ -13027,30 +12966,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       recordPerformanceError("consulta-sku-estoque", error);
     }
     if (requestSeq !== skuSearchRequestSeq) return;
-    addHistory("SKU consultado", sku, "", list.length ? "Consulta por SKU encontrou registros." : "Nenhuma localizacao encontrada.");
-    if (list.length) refreshProductNamesForBindings(list);
-    list = list.slice().sort(sortByDateDesc);
-    var hasSkuConflict = list.length > 1;
-    var hasStockData = stockSuggestion && (stockSuggestion.name || Number(stockSuggestion.storeAvailable || 0) !== 0 || Number(stockSuggestion.capturePhysical || 0) !== 0 || Number(stockSuggestion.captureAvailable || 0) !== 0);
-    if (!list.length && !hasStockData) {
-      setStatus("skuSearchStatus", stockError || "Nenhuma localizacao encontrada para este SKU.", stockError ? "error" : "warning");
-    } else if (hasSkuConflict) {
-      setStatus("skuSearchStatus", "Atencao: este SKU possui mais de uma localizacao cadastrada.", "warning");
-    } else if (!list.length) {
-      setStatus("skuSearchStatus", "SKU encontrado na base operacional, sem localizacao WMS cadastrada.", "warning");
+    addHistory("SKU consultado", sku, "", stockSuggestion && stockSuggestion.baseFound !== false ? "Consulta CAPTACAO encontrou o produto." : "Produto não encontrado na base da CAPTAÇÃO.");
+    var hasStockData = stockSuggestion && stockSuggestion.baseFound !== false;
+    if (!hasStockData) {
+      setStatus("skuSearchStatus", stockError || "Produto não encontrado na base da CAPTAÇÃO.", stockError ? "error" : "warning");
+    } else if (!stockSuggestion.captureLocation) {
+      setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO, sem localização cadastrada.", "warning");
     } else {
-      setStatus("skuSearchStatus", list.length + " localizacao(oes) encontrada(s).", "success");
+      setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO.", "success");
     }
-    $("skuResults").innerHTML = list.map(skuTableRowHtml).join("");
-    bindActionButtons($("skuResults"));
-    $("skuResultCards").innerHTML = list.map(function (binding, index) {
-      return skuLocationCardHtml(binding, index === 0);
-    }).join("");
-    bindActionButtons($("skuResultCards"));
+    $("skuResults").innerHTML = "";
+    $("skuResultCards").innerHTML = "";
     renderSkuOperationalHub(sku, list, stockSuggestion, stockError);
     $("skuResultActions").hidden = false;
     clearSkuSearchInput();
-    saveData();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
   }
 
@@ -13106,9 +13035,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<section class=\"sku-hub-card\">",
       "<div class=\"sku-hub-title\"><span>Produto</span><strong>" + escapeHtml(sku) + "</strong><p>" + escapeHtml(suggestion.name || "Produto sem nome") + "</p></div>",
       "<div class=\"sku-hub-grid\">",
-      skuHubTile("Localizacao WMS", suggestion.officialLocation || "Sem WMS"),
-      skuHubTile("Localizacao captacao", suggestion.captureLocation || "Sem captacao"),
-      skuHubTile("Saldo loja", formatQty(suggestion.storeAvailable)),
+      skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"),
       skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)),
       skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)),
       skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)),
@@ -13129,11 +13056,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function buildSkuReplenishmentSuggestion(sku, locations, stockSuggestion) {
-    var latest = (locations || []).slice().sort(sortByDateDesc)[0] || null;
     var suggestion = stockSuggestion ? Object.assign({}, stockSuggestion) : {
       sku: sku,
       name: "",
-      storeAvailable: 0,
+      storeAvailable: null,
       capturePhysical: 0,
       captureAllocated: 0,
       captureAvailable: 0,
@@ -13142,8 +13068,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     };
     var classification = classifyReplenishmentSuggestion(suggestion);
     suggestion.sku = sku;
-    suggestion.name = suggestion.name || (latest && (latest.productName || findProductName(latest.sku))) || findProductName(sku) || "";
-    suggestion.officialLocation = suggestion.officialLocation || (latest ? latest.locationCode : "");
+    suggestion.name = suggestion.name || findProductName(sku) || "";
+    suggestion.officialLocation = "";
     suggestion.suggestionType = classification ? classification.type : "MANUAL";
     suggestion.suggestionPriority = classification ? classification.priority : 5;
     suggestion.suggestedReplenishmentQty = classification ? classification.qty : 0;
@@ -13152,13 +13078,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     suggestion.productInfo = {
       sku: sku,
       name: suggestion.name,
-      storeBalance: suggestion.storeAvailable,
+      storeBalance: null,
       captureBalance: suggestion.captureAvailable,
-      wmsLocation: suggestion.officialLocation,
-      wmsStation: latest ? "R" + pad2(latest.rua) : "",
-      wmsRack: latest ? "RK" + pad2(latest.rack) : "",
-      wmsLine: latest ? "L" + pad2(latest.linha) : "",
-      wmsColumn: latest ? latest.letra : "",
+      wmsLocation: "",
+      wmsStation: "",
+      wmsRack: "",
+      wmsLine: "",
+      wmsColumn: "",
+      captureLocation: suggestion.captureLocation || "",
       captureStation: suggestion.captureStation || "",
       captureRack: suggestion.captureRack || "",
       captureLine: suggestion.captureLine || "",
@@ -14271,14 +14198,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: item.addressCode || "",
       hasLocation: item.hasLocation === true,
       locationWarning: item.locationWarning || "",
-      storeAvailable: Number(item.storeAvailable || 0),
+      storeAvailable: null,
       captureAvailable: Number(item.captureAvailable || 0),
       originSuggested: item.originSuggested || "",
       suggestedCaptureQty: Number(item.suggestedCaptureQty || 0),
-      suggestedStoreQty: Number(item.suggestedStoreQty || 0),
+      suggestedStoreQty: 0,
       stockAlert: item.stockAlert === true,
       stockAlertMessage: item.stockAlertMessage || "",
-      suggestedLocation: item.suggestedLocation || "",
+      suggestedLocation: item.captureLocationSnapshot || item.suggestedLocation || "",
+      captureLocationSnapshot: item.captureLocationSnapshot || "",
+      wmsLocationSnapshot: "",
       quantityType: item.quantityType || "UNIDADE",
       boxQty: item.boxQty || 0,
       unitsPerBox: item.unitsPerBox || 0,
@@ -14366,20 +14295,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function applyTransferItemStockSuggestion(item, suggestion) {
     if (!item || !suggestion) return item;
-    item.storeAvailable = suggestion.storeAvailable === null ? null : Number(suggestion.storeAvailable || 0);
+    item.storeAvailable = null;
     item.captureAvailable = suggestion.captureAvailable === null ? null : Number(suggestion.captureAvailable || 0);
     item.originSuggested = suggestion.originSuggested || "";
     item.suggestedCaptureQty = Number(suggestion.suggestedCaptureQty || 0);
-    item.suggestedStoreQty = Number(suggestion.suggestedStoreQty || 0);
+    item.suggestedStoreQty = 0;
     item.quantityShortage = Number(suggestion.quantityShortage || 0);
     item.stockBaseFound = suggestion.baseFound !== false;
     item.stockAlert = suggestion.stockAlert === true;
     item.stockAlertMessage = suggestion.alertMessage || suggestion.operationalMessage || "";
     item.operationalMessage = suggestion.operationalMessage || suggestion.alertMessage || "";
-    item.suggestedLocation = suggestion.captureLocation || suggestion.officialLocation || "";
+    item.suggestedLocation = suggestion.captureLocation || "";
     item.captureLocationSnapshot = suggestion.captureLocation || "";
-    item.wmsLocationSnapshot = suggestion.officialLocation || item.addressCode || "";
+    item.wmsLocationSnapshot = "";
     item.stockSnapshotAt = nowIso();
+    applyCaptureLocationToTransferItem(item, suggestion.captureLocation || "");
     if (suggestion.name) item.description = suggestion.name;
     return item;
   }
@@ -14424,17 +14354,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function applyTransferItemLocation(item) {
-    var location = findTransferLocationForSku(item.sku);
-    if (location) {
-      applyLocationToTransferItem(item, location);
-    } else {
-      clearTransferItemLocation(item);
-    }
-    return item;
-  }
-
-  function bindingHasUsableLocation(binding) {
-    return !!(binding && normalizeText(binding.locationCode) && normalizeText(binding.rua) && normalizeText(binding.rack) && normalizeText(binding.linha) && normalizeText(binding.letra));
+    return applyCaptureLocationToTransferItem(item, transferCaptureLocationCode(item));
   }
 
   function applyLocationToTransferItem(item, location) {
@@ -14459,16 +14379,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return item;
   }
 
-  function findTransferLocationForSku(sku, warehouseCode) {
-    return bindingsForWarehouse(warehouseCode || activeWarehouseCode()).filter(function (binding) {
-      return bindingHasUsableLocation(binding) && isSameSku(binding.sku, sku);
-    }).sort(sortByDateDesc)[0] || null;
-  }
-
   function transferLocationStatus(item) {
-    var location = findTransferLocationForSku(item.sku, item && item.warehouseCode);
-    if (location) {
-      applyLocationToTransferItem(item, location);
+    var locationCode = transferCaptureLocationCode(item);
+    var parsed = normalizeLocation(locationCode);
+    if (parsed.valid) {
+      applyLocationToTransferItem(item, {
+        rua: parsed.rua,
+        rack: parsed.rack,
+        linha: parsed.linha,
+        letra: parsed.letra,
+        locationCode: parsed.code
+      });
       return {
         hasLocation: true,
         rua: item.addressRua || "",
@@ -14480,6 +14401,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     clearTransferItemLocation(item);
     return { hasLocation: false, warning: item.locationWarning || "Sem localização cadastrada." };
+  }
+
+  function transferCaptureLocationCode(item) {
+    if (!item) return "";
+    return item.captureLocationSnapshot || (isCaptureTransferOrigin(item.originSuggested) ? item.suggestedLocation || "" : "");
+  }
+
+  function isCaptureTransferOrigin(origin) {
+    return ["CAPTACAO", "CAPTACAO_PARCIAL"].indexOf(origin || "") >= 0;
+  }
+
+  function applyCaptureLocationToTransferItem(item, locationCode) {
+    var parsed = normalizeLocation(locationCode || "");
+    if (!parsed.valid) return clearTransferItemLocation(item);
+    return applyLocationToTransferItem(item, {
+      rua: parsed.rua,
+      rack: parsed.rack,
+      linha: parsed.linha,
+      letra: parsed.letra,
+      locationCode: parsed.code
+    });
   }
 
   function transferLocationLabel(item) {
@@ -14494,10 +14436,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferOriginSuggestionLabel(origin) {
     return {
       CAPTACAO: "Captação",
-      LOJA: "Loja",
-      LOJA_E_CAPTACAO: "Captação + Loja",
-      CAPTACAO_E_LOJA: "Captação + Loja",
-      SEM_SALDO: "Sem saldo",
+      CAPTACAO_PARCIAL: "Captação parcial",
+      SEM_SALDO_CAPTACAO: "Sem saldo CAPTAÇÃO",
+      NAO_ENCONTRADO_CAPTACAO: "Não encontrado CAPTAÇÃO",
+      LOJA: "Legado",
+      LOJA_E_CAPTACAO: "Legado",
+      CAPTACAO_E_LOJA: "Legado",
+      SEM_SALDO: "Sem saldo CAPTAÇÃO",
       VERIFICAR: "Verificar"
     }[origin] || origin || "-";
   }
@@ -14512,9 +14457,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var pieces = [
       "<div class=\"transfer-stock-snapshot" + (item.stockAlert ? " alert" : "") + "\">",
       "<span>Saldo captação <b>" + escapeHtml(transferStockValueLabel(item.captureAvailable, item)) + "</b></span>",
-      "<span>Saldo loja <b>" + escapeHtml(transferStockValueLabel(item.storeAvailable, item)) + "</b></span>",
-      "<span>Retirar captação <b>" + formatQty(item.suggestedCaptureQty || 0) + "</b></span>",
-      "<span>Retirar loja <b>" + formatQty(item.suggestedStoreQty || 0) + "</b></span>"
+      "<span>Retirar captação <b>" + formatQty(item.suggestedCaptureQty || 0) + "</b></span>"
     ];
     if (Number(item.quantityShortage || 0) > 0) pieces.push("<span class=\"danger-text\">Faltante <b>" + formatQty(item.quantityShortage) + "</b></span>");
     pieces.push("</div>");
@@ -14526,9 +14469,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
     var parts = [];
     if (origin && origin !== "-") parts.push("Pegar: " + origin);
-    parts.push("Retirar captacao " + formatQty(item.suggestedCaptureQty || 0) + " / loja " + formatQty(item.suggestedStoreQty || 0));
-    if (item.suggestedLocation) parts.push("Local retirada: " + item.suggestedLocation);
-    parts.push("Saldo captacao " + transferStockValueLabel(item.captureAvailable, item) + " / loja " + transferStockValueLabel(item.storeAvailable, item));
+    parts.push("Retirar captacao " + formatQty(item.suggestedCaptureQty || 0));
+    if (transferCaptureLocationCode(item)) parts.push("Local CAPTACAO: " + transferCaptureLocationCode(item));
+    parts.push("Saldo captacao " + transferStockValueLabel(item.captureAvailable, item));
     if (Number(item.quantityShortage || 0) > 0) parts.push("Faltante " + formatQty(item.quantityShortage));
     if (item.stockAlertMessage) parts.push(item.stockAlertMessage);
     return parts.join(" | ");

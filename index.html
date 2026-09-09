@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#102634">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="description" content="Sistema WMS de endereçamento de estoque em HTML, CSS e JavaScript puro.">
-  <title>WMS Endereçamento de Estoque</title>
+  <meta name="description" content="Sistema WMS com Base CAPTACAO, transferencias e reposicao em HTML, CSS e JavaScript puro.">
+  <title>WMS Base CAPTACAO</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -22,7 +22,7 @@
         <div class="brand-mark">W</div>
         <div>
           <h1>WMS Estoque</h1>
-          <p>Endereçamento</p>
+          <p>Base CAPTACAO</p>
         </div>
       </div>
       <p class="eyebrow">Acesso ao sistema</p>
@@ -70,7 +70,7 @@
       <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu">☰</button>
       <div>
         <strong>WMS Estoque</strong>
-        <span id="mobileModuleSubtitle">Endereçamento</span>
+        <span id="mobileModuleSubtitle">Base CAPTACAO</span>
       </div>
       <button class="secondary-button logout-button" id="mobileLogoutButton" type="button">Sair</button>
     </header>
@@ -80,7 +80,7 @@
         <div class="brand-mark">W</div>
         <div>
           <h1>WMS Estoque</h1>
-          <p id="sidebarModuleSubtitle">Endereçamento</p>
+          <p id="sidebarModuleSubtitle">Base CAPTACAO</p>
         </div>
       </div>
 
@@ -88,8 +88,8 @@
         <div class="menu-section">
           <p class="menu-label">Operacao</p>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
-          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button">Prateleira</button>
-          <button class="menu-item" data-icon="ALC" data-screen="bipagem" type="button">Alocar Produto</button>
+          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button" hidden>Prateleira</button>
+          <button class="menu-item" data-icon="ALC" data-screen="bipagem" type="button" hidden>Alocar Produto</button>
           <button class="menu-item task-menu-item" data-icon="TAR" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         </div>
         <div class="menu-section">
@@ -102,7 +102,7 @@
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
           <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
-          <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button">Etiquetas</button>
+          <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button" hidden>Etiquetas</button>
         </div>
         <div class="menu-section">
           <p class="menu-label">Administracao</p>
@@ -174,20 +174,20 @@
             <p class="eyebrow">Visao geral</p>
             <h2>Dashboard</h2>
           </div>
-          <button class="primary-button" data-screen-target="bipagem" type="button">Iniciar bipagem</button>
+          <button class="primary-button" data-screen-target="consultaSku" type="button">Consultar CAPTACAO</button>
         </div>
 
         <div class="metric-grid">
           <article class="metric-card">
-            <span>Total de SKUs</span>
+            <span>SKUs CAPTACAO</span>
             <strong id="metricSkus">0</strong>
           </article>
           <article class="metric-card">
-            <span>Localizacoes</span>
+            <span>Registros CAPTACAO</span>
             <strong id="metricLocations">0</strong>
           </article>
           <article class="metric-card">
-            <span>Vinculos SKU + endereco</span>
+            <span>Lotes importados</span>
             <strong id="metricBindings">0</strong>
           </article>
           <article class="metric-card">
@@ -234,17 +234,17 @@
 
         <div class="quick-actions">
           <button class="secondary-button" data-screen-target="consultaSku" type="button">Consultar SKU</button>
-          <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar prateleira</button>
-          <button class="secondary-button" data-screen-target="bipagem" type="button">Alocar produto</button>
+          <button class="secondary-button" data-screen-target="consultaPrateleira" type="button" hidden>Consultar prateleira</button>
+          <button class="secondary-button" data-screen-target="bipagem" type="button" hidden>Alocar produto</button>
           <button class="secondary-button" data-screen-target="reposicao" type="button">Pedidos de reposicao</button>
           <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas tarefas</button>
-          <button class="secondary-button" data-screen-target="etiquetas" type="button">Gerar etiquetas</button>
+          <button class="secondary-button" data-screen-target="etiquetas" type="button" hidden>Gerar etiquetas</button>
         </div>
 
         <section class="transfer-alert" id="transferDashboardAlert" hidden></section>
       </section>
 
-      <section class="screen" id="bipagem">
+      <section class="screen" id="bipagem" hidden>
         <div class="page-title">
           <div>
             <p class="eyebrow">Operacao principal</p>
@@ -300,8 +300,8 @@
             <button class="primary-button" id="skuSearchButton" type="button">Consultar</button>
           </div>
           <div class="quick-actions operational-actions">
-            <button class="secondary-button" data-screen-target="consultaPrateleira" type="button">Consultar Prateleira</button>
-            <button class="secondary-button" data-screen-target="bipagem" type="button">Alocar Produto</button>
+            <button class="secondary-button" data-screen-target="consultaPrateleira" type="button" hidden>Consultar Prateleira</button>
+            <button class="secondary-button" data-screen-target="bipagem" type="button" hidden>Alocar Produto</button>
             <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas Tarefas</button>
           </div>
           <div id="skuSearchStatus" class="inline-status"></div>
@@ -310,9 +310,9 @@
           <div class="button-row sku-result-actions" id="skuResultActions" hidden>
             <button class="secondary-button" id="clearSkuSearchButton" type="button">Limpar</button>
             <button class="primary-button" id="newSkuSearchButton" type="button">Nova consulta</button>
-            <button class="secondary-button" id="allocateSkuSearchButton" type="button">Alocar manualmente este produto</button>
+            <button class="secondary-button" id="allocateSkuSearchButton" type="button" hidden>Alocar manualmente este produto</button>
           </div>
-          <div class="table-wrap legacy-sku-table">
+          <div class="table-wrap legacy-sku-table" hidden>
             <table>
               <thead>
                 <tr>
@@ -334,7 +334,7 @@
         </section>
       </section>
 
-      <section class="screen" id="consultaPrateleira">
+      <section class="screen" id="consultaPrateleira" hidden>
         <div class="page-title">
           <div>
             <p class="eyebrow">Pesquisa</p>
@@ -370,7 +370,7 @@
         </section>
       </section>
 
-      <section class="screen" id="etiquetas">
+      <section class="screen" id="etiquetas" hidden>
         <div class="page-title">
           <div>
             <p class="eyebrow">Impressao</p>
@@ -432,13 +432,13 @@
               <option value="CARGA_COMPLETA">Carga completa</option>
               <option value="CARGA_PARCIAL">Carga parcial</option>
             </select>
-            <label for="captureStockFileInput">Estoque / Captacao</label>
+            <label for="captureStockFileInput">Base CAPTACAO</label>
             <input id="captureStockFileInput" type="file" accept=".xlsx,.xls">
-            <button class="primary-button wide-button" id="importCaptureStockButton" type="button">Importar Estoque/Captacao</button>
+            <button class="primary-button wide-button" id="importCaptureStockButton" type="button">Importar CAPTACAO</button>
 
-            <label for="storeStockFileInput">Estoque Loja</label>
-            <input id="storeStockFileInput" type="file" accept=".xlsx,.xls">
-            <button class="secondary-button wide-button" id="importStoreStockButton" type="button">Importar Estoque Loja</button>
+            <label for="storeStockFileInput" hidden>Estoque Loja</label>
+            <input id="storeStockFileInput" type="file" accept=".xlsx,.xls" hidden>
+            <button class="secondary-button wide-button" id="importStoreStockButton" type="button" hidden>Importar Estoque Loja</button>
             <div id="stockImportStatus" class="inline-status"></div>
           </section>
 
@@ -449,13 +449,11 @@
             <div id="stockBaseSummary" class="stock-base-summary"></div>
             <label for="stockExportSourceFilter">Filtro de origem</label>
             <select id="stockExportSourceFilter">
-              <option value="">Ambas</option>
               <option value="CAPTACAO">Captacao</option>
-              <option value="LOJA">Loja</option>
             </select>
             <div class="button-row stock-export-actions">
-              <button class="secondary-button" id="exportCaptureStockTemplateButton" type="button">Exportar Modelo Estoque/Captacao</button>
-              <button class="secondary-button" id="exportStoreStockTemplateButton" type="button">Exportar Modelo Loja</button>
+              <button class="secondary-button" id="exportCaptureStockTemplateButton" type="button">Exportar Modelo CAPTACAO</button>
+              <button class="secondary-button" id="exportStoreStockTemplateButton" type="button" hidden>Exportar Modelo Loja</button>
               <button class="secondary-button" id="exportCurrentStockButton" type="button">Exportar Base Atual</button>
               <button class="secondary-button" id="exportStockAlertsButton" type="button">Exportar Alertas</button>
               <button class="secondary-button" id="exportStockNoLocationButton" type="button">Exportar Produtos sem Localizacao</button>
@@ -492,7 +490,7 @@
       <section class="screen" id="reposicao">
         <div class="page-title">
           <div>
-            <p class="eyebrow">Operacao loja</p>
+            <p class="eyebrow">Operacao CAPTACAO</p>
             <h2>Pedidos de Reposicao</h2>
           </div>
         </div>
@@ -507,7 +505,7 @@
               <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
               <div class="replenishment-qty-grid">
-                <label>Qtd na loja
+                <label>Saldo CAPTACAO informado
                   <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" step="1" value="0">
                 </label>
                 <label>Qtd para repor
@@ -559,14 +557,12 @@
           <div class="panel-header">
             <div>
               <h3>Sugestoes de abastecimento</h3>
-              <p class="muted">Produtos vendaveis com loja zerada ou negativa cruzados com captacao.</p>
+              <p class="muted">Produtos vendaveis com saldo CAPTACAO menor que 3 ou sem localizacao.</p>
             </div>
             <button class="secondary-button" id="refreshReplenishmentSuggestionsButton" type="button">Atualizar</button>
           </div>
           <div class="button-row replenishment-suggestion-filters">
             <button class="secondary-button active" data-replenishment-suggestion-filter="" type="button">Todos</button>
-            <button class="secondary-button" data-replenishment-suggestion-filter="LOJA_NEGATIVA" type="button">Loja negativa</button>
-            <button class="secondary-button" data-replenishment-suggestion-filter="LOJA_ZERADA" type="button">Loja zerada</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="CAPTACAO_POSITIVA" type="button">Captacao positiva</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="SEM_SALDO_CAPTACAO" type="button">Sem saldo captacao</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="SEM_LOCALIZACAO" type="button">Sem localizacao</button>
@@ -1222,7 +1218,7 @@
               </table>
             </div>
           </section>
-          <section class="panel maintenance-panel">
+          <section class="panel maintenance-panel" hidden>
             <div class="panel-header">
               <h3>Manutenção do Endereçamento</h3>
             </div>

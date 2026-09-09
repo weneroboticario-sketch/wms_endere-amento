@@ -1002,6 +1002,18 @@ on public.wms_stock_import_batches (warehouse_code, created_at desc, status);
 create index if not exists wms_stock_positions_warehouse_source_active_idx
 on public.wms_stock_positions (warehouse_code, source_type, active);
 
+create index if not exists idx_wms_stock_positions_captacao_sku
+on public.wms_stock_positions (warehouse_code, codigo_material)
+where source_type = 'CAPTACAO' and active = true;
+
+create index if not exists idx_wms_stock_positions_captacao_location
+on public.wms_stock_positions (warehouse_code, estacao, rack, linha, coluna)
+where source_type = 'CAPTACAO' and active = true;
+
+create index if not exists idx_wms_stock_positions_captacao_updated
+on public.wms_stock_positions (warehouse_code, updated_at desc)
+where source_type = 'CAPTACAO' and active = true;
+
 create index if not exists idx_stock_positions_source_active
 on public.wms_stock_positions (warehouse_code, source_type, active);
 
