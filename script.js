@@ -3453,7 +3453,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
     var missing = cleanSkus.filter(function (sku) {
-      return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)];
+      return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || !stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
     });
     if (missing.length) {
       var response = await supabaseDb
@@ -3461,7 +3461,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         .select(stockPositionSelectColumns())
         .eq("warehouse_code", warehouse)
         .eq("active", true)
-        .eq("source_type", "CAPTACAO")
+        .in("source_type", ["CAPTACAO", "LOJA"])
         .in("codigo_material", missing)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error && isMissingColumnError(response.error)) {
@@ -3470,13 +3470,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .select(stockPositionLegacySelectColumns())
           .eq("warehouse_code", warehouse)
           .eq("active", true)
-          .eq("source_type", "CAPTACAO")
+          .in("source_type", ["CAPTACAO", "LOJA"])
           .in("codigo_material", missing)
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
       missing.forEach(function (sku) {
         stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] = [];
+        stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] = [];
       });
       (response.data || []).map(fromDbStockPosition).forEach(function (position) {
         var key = stockCacheKey(warehouse, position.sourceType, position.codigoMaterial);
@@ -3485,7 +3486,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       });
     }
     return cleanSkus.reduce(function (all, sku) {
-      return all.concat(stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || []);
+      return all
+        .concat(stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || [])
+        .concat(stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] || []);
     }, []);
   }
 
@@ -3529,19 +3532,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function buildStockSuggestion(sku, requestedQty, positions, warehouseCode) {
     sku = normalizeSku(sku);
     var captacaoPositions = (positions || []).filter(function (item) { return item.sourceType === "CAPTACAO"; });
+    var lojaPositions = (positions || []).filter(function (item) { return item.sourceType === "LOJA"; });
     var captacao = aggregateStockPositions(captacaoPositions);
+    var loja = aggregateStockPositions(lojaPositions);
     var captureLocation = captacaoPositions.filter(function (item) { return item.codigoEndereco || stockPositionLocation(item); }).sort(function (a, b) {
       return Number(b.totalDisponivel || 0) - Number(a.totalDisponivel || 0);
     })[0] || null;
     var needed = Number(requestedQty || 0);
+    var productName = captacao.nomeMaterial || loja.nomeMaterial || findProductName(sku) || "";
     if (!captacaoPositions.length) {
       return {
         sku: sku,
-        name: "Não encontrado na Base CAPTAÇÃO",
-        baseFound: false,
-        storePhysical: null,
-        storeAllocated: null,
-        storeAvailable: null,
+        name: productName || "Não encontrado na Base CAPTAÇÃO",
+        baseFound: lojaPositions.length > 0,
+        captureFound: false,
+        storeFound: lojaPositions.length > 0,
+        storePhysical: lojaPositions.length ? loja.totalFisico : null,
+        storeAllocated: lojaPositions.length ? loja.totalAlocado : null,
+        storeAvailable: lojaPositions.length ? loja.totalDisponivel : null,
         capturePhysical: null,
         captureAllocated: null,
         captureAvailable: null,
@@ -3555,9 +3563,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         quantityShortage: Math.max(0, needed),
         suggestedReplenishmentQty: 0,
         stockAlert: true,
-        alertMessage: "Produto não encontrado na base da CAPTAÇÃO.",
-        operationalMessage: "Produto não encontrado na base da CAPTAÇÃO.",
-        sellable: false
+        alertMessage: lojaPositions.length ? "Produto encontrado na Loja, mas sem registro na CAPTAÇÃO." : "Produto não encontrado na base da CAPTAÇÃO.",
+        operationalMessage: lojaPositions.length ? "Produto sem localização/saldo CAPTAÇÃO para retirada." : "Produto não encontrado na base da CAPTAÇÃO.",
+        sellable: loja.isSellable
       };
     }
     var captureAvailable = Number(captacao.totalDisponivel || 0);
@@ -3580,10 +3588,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       sku: sku,
       baseFound: true,
-      name: (captacao.nomeMaterial || findProductName(sku) || ""),
-      storePhysical: null,
-      storeAllocated: null,
-      storeAvailable: null,
+      captureFound: true,
+      storeFound: lojaPositions.length > 0,
+      name: productName,
+      storePhysical: lojaPositions.length ? loja.totalFisico : null,
+      storeAllocated: lojaPositions.length ? loja.totalAlocado : null,
+      storeAvailable: lojaPositions.length ? loja.totalDisponivel : null,
       capturePhysical: captacao.totalFisico,
       captureAllocated: captacao.totalAlocado,
       captureAvailable: captacao.totalDisponivel,
@@ -3687,7 +3697,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function getStockAlerts(kind) {
-    var positions = await fetchActiveStockPositions("CAPTACAO");
+    var positions = await fetchActiveStockPositions("");
     var grouped = {};
     positions.forEach(function (position) {
       var key = position.codigoMaterial || "";
@@ -3696,7 +3706,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       grouped[key].push(position);
     });
     return Object.keys(grouped).map(function (sku) {
-      return buildStockSuggestion(sku, 0, grouped[sku]);
+      var suggestion = buildStockSuggestion(sku, 0, grouped[sku]);
+      var classification = classifyReplenishmentSuggestion(suggestion);
+      if (!classification) return suggestion;
+      return Object.assign({}, suggestion, {
+        suggestionType: classification.type,
+        suggestionPriority: classification.priority,
+        suggestedReplenishmentQty: classification.qty,
+        alertMessage: classification.message || suggestion.alertMessage
+      });
     }).filter(function (suggestion) {
       if (kind === "SEM_LOCALIZACAO") return !suggestion.captureLocation;
       return suggestion.stockAlert || !suggestion.captureLocation || suggestion.suggestedReplenishmentQty > 0;
@@ -3711,31 +3729,34 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return "id,warehouse_code,source_type,batch_id,codigo_material,nome_material,total_fisico,total_alocado,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,is_sellable,created_at,updated_at";
   }
 
-  async function fetchReplenishmentCaptureCandidates(filter, offset, limit) {
-    var query = buildReplenishmentCaptureCandidatesQuery(filter, stockPositionSelectColumns());
+  async function fetchReplenishmentStoreCandidates(filter, offset, limit) {
+    var query = buildReplenishmentStoreCandidatesQuery(filter, stockPositionSelectColumns());
     var response = await query.range(offset, offset + limit - 1);
     if (response.error && isMissingColumnError(response.error)) {
-      response = await buildReplenishmentCaptureCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      response = await buildReplenishmentStoreCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
     }
     if (response.error) throw response.error;
     return (response.data || []).map(fromDbStockPosition);
   }
 
-  function buildReplenishmentCaptureCandidatesQuery(filter, columns) {
+  function buildReplenishmentStoreCandidatesQuery(filter, columns) {
     var query = supabaseDb
       .from("wms_stock_positions")
       .select(columns)
       .eq("warehouse_code", activeWarehouseCode())
-      .eq("source_type", "CAPTACAO")
+      .eq("source_type", "LOJA")
       .eq("active", true)
       .eq("is_sellable", true)
       .order("total_disponivel", { ascending: true })
       .order("codigo_material", { ascending: true });
-    if (filter === "SEM_SALDO_CAPTACAO") {
+    if (filter === "SEM_SALDO_LOJA") {
       return query.lte("total_disponivel", 0);
     }
-    if (filter === "CAPTACAO_POSITIVA") {
-      return query.gt("total_disponivel", 0);
+    if (filter === "LOJA_BAIXA") {
+      return query.lt("total_disponivel", 3);
+    }
+    if (filter === "LOJA_POSITIVA") {
+      return query.gt("total_disponivel", 0).lt("total_disponivel", 3);
     }
     return query.lt("total_disponivel", 3);
   }
@@ -3822,13 +3843,39 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function classifyReplenishmentSuggestion(suggestion) {
+    var hasStore = suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined;
+    var loja = hasStore ? Number(suggestion.storeAvailable || 0) : null;
     var captacao = Number(suggestion.captureAvailable || 0);
-    if (captacao < 3) {
+    if (hasStore && loja < 3) {
+      if (captacao <= 0) {
+        return {
+          type: "RUPTURA",
+          priority: 1,
+          qty: 0,
+          message: "Loja abaixo de 3 e CAPTAÇÃO sem saldo para repor."
+        };
+      }
+      if (!suggestion.captureLocation) {
+        return {
+          type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
+          priority: 2,
+          qty: 0,
+          message: "Loja abaixo de 3 e CAPTAÇÃO positiva sem localização cadastrada."
+        };
+      }
+      return {
+        type: "ABASTECER_LOJA",
+        priority: 2,
+        qty: Math.min(captacao, Math.max(0, 3 - loja)),
+        message: "Loja abaixo de 3. Repor a partir da CAPTAÇÃO."
+      };
+    }
+    if (!hasStore && captacao < 3) {
       return {
         type: "RUPTURA",
         priority: 1,
         qty: 0,
-        message: "Ruptura operacional: saldo CAPTAÇÃO menor que 3."
+        message: "Saldo da Loja não importado e CAPTAÇÃO menor que 3."
       };
     }
     if (captacao > 0 && !suggestion.captureLocation) {
@@ -3844,6 +3891,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function replenishmentSuggestionMatchesFilter(suggestion, filter) {
     if (!filter) return true;
+    if (filter === "LOJA_BAIXA") return suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined && Number(suggestion.storeAvailable || 0) < 3;
+    if (filter === "SEM_SALDO_LOJA") return suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined && Number(suggestion.storeAvailable || 0) <= 0;
     if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
     if (filter === "SEM_SALDO_CAPTACAO") return Number(suggestion.captureAvailable || 0) <= 0;
     if (filter === "SEM_LOCALIZACAO") return !suggestion.captureLocation;
@@ -3863,7 +3912,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (filter === "SEM_LOCALIZACAO") {
       candidates = await fetchReplenishmentNoLocationCandidates(offset, candidateLimit);
     } else {
-      candidates = await fetchReplenishmentCaptureCandidates(filter, offset, candidateLimit);
+      candidates = await fetchReplenishmentStoreCandidates(filter, offset, candidateLimit);
       if (!filter) {
         var noLocation = await fetchReplenishmentNoLocationCandidates(offset, Math.max(25, limit));
         candidates = candidates.concat(noLocation);
@@ -3877,7 +3926,6 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var suggestion = buildStockSuggestion(sku, 0, grouped[sku]);
       var classification = classifyReplenishmentSuggestion(suggestion);
       if (!classification || !suggestion.sellable) return null;
-      if (classification.type === "RUPTURA") return null;
       var openRequest = openRequests[sku] || null;
       return Object.assign({}, suggestion, {
         suggestionType: classification.type,
@@ -3906,6 +3954,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return {
       SKU: alert.sku || "",
       Produto: alert.name || "",
+      "Saldo Loja": alert.storeAvailable === null || alert.storeAvailable === undefined ? "" : Number(alert.storeAvailable || 0),
       "Saldo CAPTACAO": Number(alert.captureAvailable || 0),
       "Endereco CAPTACAO": alert.captureLocation || "",
       "Sugestao reposicao": Number(alert.suggestedReplenishmentQty || 0),
@@ -3977,6 +4026,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         return {
           SKU: alert.sku,
           Produto: alert.name,
+          "Saldo Loja": alert.storeAvailable === null || alert.storeAvailable === undefined ? "" : alert.storeAvailable,
           "Saldo CAPTACAO": alert.captureAvailable,
           "Fisico CAPTACAO": alert.capturePhysical,
           "Alocado CAPTACAO": alert.captureAllocated,
@@ -4368,7 +4418,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     product = Object.assign({}, product || {});
     if (!suggestion || !suggestion.sku) return product;
     product.name = suggestion.name || product.name || "";
-    product.storeBalance = null;
+    product.storeBalance = suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? null : Number(suggestion.storeAvailable || 0);
     product.captureBalance = Number(suggestion.captureAvailable || 0);
     product.captureLocation = suggestion.captureLocation || product.captureLocation || "";
     product.captureStation = suggestion.captureStation || product.captureStation || "";
@@ -4388,7 +4438,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         $("replenishmentRequestQtyInput").value = String(suggestion.suggestedReplenishmentQty);
       }
       if ($("replenishmentStoreQtyInput")) {
-        $("replenishmentStoreQtyInput").value = String(Number(suggestion.captureAvailable || 0));
+        $("replenishmentStoreQtyInput").value = String(Number(suggestion.storeAvailable || 0));
       }
     } catch (error) {
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock-lookup", error);
@@ -7239,7 +7289,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div><span>SKU</span><strong>" + escapeHtml(sku) + "</strong></div>",
       "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || findProductName(sku) || "-") + "</strong></div>",
       "<div><span>Localização CAPTAÇÃO</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localização") + "</strong></div>",
-      "<small>Disponível: " + escapeHtml(formatQty(suggestion.captureAvailable)) + " | Físico: " + escapeHtml(formatQty(suggestion.capturePhysical)) + " | Alocado: " + escapeHtml(formatQty(suggestion.captureAllocated)) + "</small>",
+      "<small>Loja: " + escapeHtml(suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Não importado" : formatQty(suggestion.storeAvailable)) + " | CAPTAÇÃO disponível: " + escapeHtml(formatQty(suggestion.captureAvailable)) + " | físico: " + escapeHtml(formatQty(suggestion.capturePhysical)) + " | alocado: " + escapeHtml(formatQty(suggestion.captureAllocated)) + "</small>",
       "</article>"
     ].join("");
     $("dashboardSkuQuickInput").value = "";
@@ -7387,6 +7437,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Captacao fisico", formatQty(item.capturePhysical)),
+      replenishmentMetricHtml("Saldo Loja", item.storeAvailable === null || item.storeAvailable === undefined ? "Nao importado" : formatQty(item.storeAvailable)),
       replenishmentMetricHtml("Captacao disponivel", formatQty(item.captureAvailable)),
       replenishmentMetricHtml("Qtd sugerida", isRupture ? "Sem sugestao" : item.suggestedReplenishmentQty > 0 ? formatQty(item.suggestedReplenishmentQty) : "Analise"),
       replenishmentMetricHtml("Pedido aberto", item.hasOpenRequest ? "Sim" : "Nao"),
@@ -7402,6 +7453,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function displaySuggestionType(type) {
     if (type === "RUPTURA") return "Ruptura";
+    if (type === "ABASTECER_LOJA") return "Abastecer Loja";
     if (type === "CAPTACAO_POSITIVA_SEM_LOCALIZACAO") return "CAPTACAO sem localizacao";
     return type || "-";
   }
@@ -7419,7 +7471,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
-      replenishmentMetricHtml("Saldo captacao", formatQty(item.storeQty)),
+      replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
       replenishmentMetricHtml("Atendida", formatQty(item.attendedQty)),
       replenishmentMetricHtml("Pendente", formatQty(item.pendingQty)),
@@ -7503,6 +7555,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<strong>SKU " + escapeHtml(product.sku) + "</strong>",
       "<span>" + escapeHtml(product.name || "Produto sem nome cadastrado") + "</span>",
       "<div class=\"replenishment-product-meta\">",
+      "<span><small>Saldo Loja</small><b>" + escapeHtml(product.storeBalance === null || product.storeBalance === undefined ? "Nao importado" : formatQty(product.storeBalance)) + "</b></span>",
       "<span><small>Saldo CAPTACAO</small><b>" + escapeHtml(product.captureBalance === null ? "Nao importado" : formatQty(product.captureBalance)) + "</b></span>",
       "<span><small>Localizacao CAPTACAO</small><b>" + escapeHtml(product.captureLocation || [product.captureStation, product.captureRack, product.captureLine, product.captureColumn].filter(Boolean).join("-") || "Sem localizacao") + "</b></span>",
       "</div>",
@@ -7667,6 +7720,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       $("replenishmentSuggestionModalSummary").innerHTML = [
         "<div><span>Codigo Material</span><strong>" + escapeHtml(suggestion.sku) + "</strong></div>",
         "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || "-") + "</strong></div>",
+        "<div><span>Saldo Loja</span><strong>" + escapeHtml(suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)) + "</strong></div>",
         "<div><span>Saldo CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>",
         "<div><span>Fisico CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.capturePhysical)) + "</strong></div>",
         "<div><span>Alocado CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAllocated)) + "</strong></div>",
@@ -7703,13 +7757,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: suggestion.sku,
-        storeQty: suggestion.captureAvailable,
+        storeQty: suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? 0 : suggestion.storeAvailable,
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
         observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
         productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
           name: suggestion.name,
-          storeBalance: null,
+          storeBalance: suggestion.storeAvailable,
           captureBalance: suggestion.captureAvailable,
           wmsLocation: "",
           captureLocation: suggestion.captureLocation || "",
@@ -13037,6 +13091,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"sku-hub-title\"><span>Produto</span><strong>" + escapeHtml(sku) + "</strong><p>" + escapeHtml(suggestion.name || "Produto sem nome") + "</p></div>",
       "<div class=\"sku-hub-grid\">",
       skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"),
+      skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)),
       skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)),
       skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)),
       skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)),
@@ -13079,7 +13134,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     suggestion.productInfo = {
       sku: sku,
       name: suggestion.name,
-      storeBalance: null,
+      storeBalance: suggestion.storeAvailable,
       captureBalance: suggestion.captureAvailable,
       wmsLocation: "",
       wmsStation: "",

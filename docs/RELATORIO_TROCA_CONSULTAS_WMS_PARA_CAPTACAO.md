@@ -4,7 +4,7 @@ Data: 2026-09-09
 
 ## Objetivo
 
-Trocar a fonte operacional do WMS antigo para a Base CAPTACAO. A partir desta revisao, Consulta SKU, Transferencias e Reposicao passam a usar `wms_stock_positions` com `source_type = 'CAPTACAO'`, `active = true` e `warehouse_code` do estoque ativo.
+Trocar a fonte operacional de localizacao/retirada do WMS antigo para a Base CAPTACAO. A partir desta revisao, Consulta SKU, Transferencias e Reposicao passam a usar `wms_stock_positions` por `warehouse_code` do estoque ativo. CAPTACAO e a fonte principal de localizacao e retirada; LOJA continua alimentada para consulta de produto, saldo da loja e regra de reposicao.
 
 ## Consultas WMS removidas do fluxo vivo
 
@@ -18,9 +18,9 @@ Trocar a fonte operacional do WMS antigo para a Base CAPTACAO. A partir desta re
 
 - Consulta SKU busca o SKU em `wms_stock_positions`.
 - Transferencias buscam somente os SKUs da transferencia no estoque ativo.
-- Reposicao busca o SKU solicitado e gera sugestoes usando saldo CAPTACAO.
-- Alertas de estoque usam CAPTACAO ativa para saldo negativo, saldo baixo e falta de localizacao.
-- Base de Estoque lista e conta lotes CAPTACAO do estoque atual.
+- Reposicao busca o SKU solicitado em LOJA e CAPTACAO: LOJA indica necessidade, CAPTACAO indica saldo/localizacao de retirada.
+- Alertas de estoque usam CAPTACAO ativa para saldo negativo e falta de localizacao, mantendo saldo LOJA como apoio consultivo.
+- Base de Estoque lista e importa lotes CAPTACAO e LOJA do estoque atual.
 
 ## Telas ajustadas
 
@@ -28,16 +28,16 @@ Trocar a fonte operacional do WMS antigo para a Base CAPTACAO. A partir desta re
 - Dashboard: atalhos antigos foram ocultados e os indicadores passaram a falar em CAPTACAO.
 - Consulta SKU: tabela legada de enderecamento foi ocultada; o card operacional mostra saldo fisico, alocado, disponivel e localizacao CAPTACAO.
 - Transferencias: snapshot e orientacao de retirada mostram saldo, retirada, faltante e localizacao CAPTACAO.
-- Reposicao: novo pedido, fila, modal de sugestao e cards mostram saldo/localizacao CAPTACAO.
+- Reposicao: novo pedido, fila, modal de sugestao e cards mostram saldo LOJA e saldo/localizacao CAPTACAO.
 - Saude do Sistema: indicadores principais deixaram de apresentar Enderecamento como modulo operacional.
 
 ## Services alterados
 
-- `getStockPositionsForSkus` filtra apenas CAPTACAO ativa por estoque.
+- `getStockPositionsForSkus` busca CAPTACAO e LOJA ativas por estoque para o mesmo SKU.
 - `buildStockSuggestion` calcula retirada, faltante e origem sugerida somente com saldo CAPTACAO.
 - `getTransferStockSuggestion` usa a CAPTACAO para enriquecer itens importados e abertos.
-- `getReplenishmentSuggestions` busca candidatos na CAPTACAO paginada, sem carregar toda a base.
-- `getStockAlerts` e `generateNegativeStockAlerts` passaram a trabalhar com CAPTACAO.
+- `getReplenishmentSuggestions` busca candidatos da LOJA abaixo de 3 e cruza com CAPTACAO paginada, sem carregar toda a base na tela.
+- `getStockAlerts` cruza LOJA e CAPTACAO; `generateNegativeStockAlerts` permanece voltado para alertas da fonte importada.
 
 ## Impacto por modulo
 
@@ -52,7 +52,8 @@ Transferencias:
 - Localizacao so aparece quando existe snapshot CAPTACAO valido.
 
 Reposicao:
-- Pedido novo usa saldo CAPTACAO informado.
+- Pedido novo usa saldo LOJA informado.
+- Sugestao automatica nasce quando LOJA esta abaixo de 3; a quantidade sugerida e limitada pelo saldo disponivel na CAPTACAO.
 - Localizacao exibida vem das partes de CAPTACAO.
 - Importacao de Estoque Loja permanece disponivel na Base de Estoque; somente a localizacao operacional deixou de vir do WMS manual.
 
@@ -68,7 +69,7 @@ Esses indices aceleram consulta por SKU, localizacao e ultima atualizacao da CAP
 
 ## Dados preservados
 
-Nenhuma tabela antiga foi apagada. A importacao de Estoque Loja permanece ativa. `wms_bindings` e campos de localizacao WMS permanecem no schema para compatibilidade, mas deixam de ser fonte operacional de localizacao.
+Nenhuma tabela antiga foi apagada. A importacao de Estoque Loja permanece ativa e necessaria para consulta de produto/saldo e reposicao. `wms_bindings` e campos de localizacao WMS permanecem no schema para compatibilidade, mas deixam de ser fonte operacional de localizacao.
 
 ## Riscos restantes
 

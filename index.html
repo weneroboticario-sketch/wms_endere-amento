@@ -507,7 +507,7 @@
               <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
               <div class="replenishment-qty-grid">
-                <label>Saldo CAPTACAO informado
+                <label>Saldo Loja informado
                   <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" step="1" value="0">
                 </label>
                 <label>Qtd para repor
@@ -559,14 +559,15 @@
           <div class="panel-header">
             <div>
               <h3>Sugestoes de abastecimento</h3>
-              <p class="muted">Produtos vendaveis com saldo CAPTACAO menor que 3 ou sem localizacao.</p>
+              <p class="muted">Produtos vendaveis com saldo Loja abaixo de 3, cruzados com a CAPTACAO para retirada.</p>
             </div>
             <button class="secondary-button" id="refreshReplenishmentSuggestionsButton" type="button">Atualizar</button>
           </div>
           <div class="button-row replenishment-suggestion-filters">
             <button class="secondary-button active" data-replenishment-suggestion-filter="" type="button">Todos</button>
+            <button class="secondary-button" data-replenishment-suggestion-filter="LOJA_BAIXA" type="button">Loja abaixo de 3</button>
+            <button class="secondary-button" data-replenishment-suggestion-filter="SEM_SALDO_LOJA" type="button">Sem saldo loja</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="CAPTACAO_POSITIVA" type="button">Captacao positiva</button>
-            <button class="secondary-button" data-replenishment-suggestion-filter="SEM_SALDO_CAPTACAO" type="button">Sem saldo captacao</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="SEM_LOCALIZACAO" type="button">Sem localizacao</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="COM_PEDIDO_ABERTO" type="button">Com pedido aberto</button>
             <button class="secondary-button" data-replenishment-suggestion-filter="SEM_PEDIDO_ABERTO" type="button">Sem pedido aberto</button>
