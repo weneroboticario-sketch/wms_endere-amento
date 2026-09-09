@@ -2748,7 +2748,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var batchResponse = await loadStockImportBatchRows();
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
-      stockState.summary.loja = 0;
+      stockState.summary.loja = await countActiveStockPositions("LOJA");
       stockState.summary.captacao = await countActiveStockPositions("CAPTACAO");
       stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
       stockState.tablesAvailable = true;
@@ -2775,7 +2775,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   async function loadStockImportBatchRows() {
     return selectRowsWithMissingColumnFallback("wms_stock_import_batches", "id,created_at,updated_at,finished_at,warehouse_code,source_type,file_name,imported_by_name,total_rows,imported_rows,inserted_rows,updated_rows,unchanged_rows,deactivated_rows,negative_rows,alert_rows,ignored_rows,error_rows,status,notes,error_message,import_mode", function (query) {
-      return query.eq("warehouse_code", activeWarehouseCode()).eq("source_type", "CAPTACAO").order("created_at", { ascending: false }).limit(10);
+      return query.eq("warehouse_code", activeWarehouseCode()).order("created_at", { ascending: false }).limit(10);
     });
   }
 
@@ -2788,6 +2788,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function renderStockBase() {
     if (!$("stockBaseSummary")) return;
     $("stockBaseSummary").innerHTML = [
+      stockSummaryCard("Loja", stockState.summary.loja || 0),
       stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
       stockSummaryCard("Ultima importacao", stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-")
     ].join("");

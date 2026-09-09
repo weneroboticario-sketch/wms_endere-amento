@@ -10,7 +10,7 @@ Trocar a fonte operacional do WMS antigo para a Base CAPTACAO. A partir desta re
 
 - Consulta SKU deixou de usar `wms_bindings` como fonte de localizacao.
 - Transferencias deixaram de buscar localizacao pelo enderecamento manual.
-- Reposicao deixou de exibir endereco WMS e saldo loja como referencia principal.
+- Reposicao deixou de exibir endereco WMS como referencia de localizacao.
 - Dashboard deixou de contar vinculos manuais como indicador operacional.
 - Alertas do dashboard deixaram de cobrar manutencao de enderecamento manual.
 
@@ -48,13 +48,13 @@ Consulta SKU:
 
 Transferencias:
 - Origem sugerida agora segue CAPTACAO, CAPTACAO_PARCIAL, SEM_SALDO_CAPTACAO ou NAO_ENCONTRADO_CAPTACAO.
-- Colunas antigas de loja/WMS continuam preservadas por compatibilidade, mas sao gravadas neutras e nao alimentam a tela.
+- Colunas antigas de localizacao WMS continuam preservadas por compatibilidade, mas sao gravadas neutras e nao alimentam a tela.
 - Localizacao so aparece quando existe snapshot CAPTACAO valido.
 
 Reposicao:
 - Pedido novo usa saldo CAPTACAO informado.
 - Localizacao exibida vem das partes de CAPTACAO.
-- Sugestoes automaticas nao usam mais loja negativa/zerada como regra.
+- Importacao de Estoque Loja permanece disponivel na Base de Estoque; somente a localizacao operacional deixou de vir do WMS manual.
 
 ## Banco e performance
 
@@ -68,7 +68,7 @@ Esses indices aceleram consulta por SKU, localizacao e ultima atualizacao da CAP
 
 ## Dados preservados
 
-Nenhuma tabela antiga foi apagada. `wms_bindings`, campos de saldo loja e campos de localizacao WMS permanecem no schema para compatibilidade, mas deixam de ser fonte operacional dos modulos principais.
+Nenhuma tabela antiga foi apagada. A importacao de Estoque Loja permanece ativa. `wms_bindings` e campos de localizacao WMS permanecem no schema para compatibilidade, mas deixam de ser fonte operacional de localizacao.
 
 ## Riscos restantes
 

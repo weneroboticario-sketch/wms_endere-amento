@@ -436,9 +436,9 @@
             <input id="captureStockFileInput" type="file" accept=".xlsx,.xls">
             <button class="primary-button wide-button" id="importCaptureStockButton" type="button">Importar CAPTACAO</button>
 
-            <label for="storeStockFileInput" hidden>Estoque Loja</label>
-            <input id="storeStockFileInput" type="file" accept=".xlsx,.xls" hidden>
-            <button class="secondary-button wide-button" id="importStoreStockButton" type="button" hidden>Importar Estoque Loja</button>
+            <label for="storeStockFileInput">Estoque Loja</label>
+            <input id="storeStockFileInput" type="file" accept=".xlsx,.xls">
+            <button class="secondary-button wide-button" id="importStoreStockButton" type="button">Importar Estoque Loja</button>
             <div id="stockImportStatus" class="inline-status"></div>
           </section>
 
@@ -449,11 +449,13 @@
             <div id="stockBaseSummary" class="stock-base-summary"></div>
             <label for="stockExportSourceFilter">Filtro de origem</label>
             <select id="stockExportSourceFilter">
+              <option value="">Ambas</option>
               <option value="CAPTACAO">Captacao</option>
+              <option value="LOJA">Loja</option>
             </select>
             <div class="button-row stock-export-actions">
               <button class="secondary-button" id="exportCaptureStockTemplateButton" type="button">Exportar Modelo CAPTACAO</button>
-              <button class="secondary-button" id="exportStoreStockTemplateButton" type="button" hidden>Exportar Modelo Loja</button>
+              <button class="secondary-button" id="exportStoreStockTemplateButton" type="button">Exportar Modelo Loja</button>
               <button class="secondary-button" id="exportCurrentStockButton" type="button">Exportar Base Atual</button>
               <button class="secondary-button" id="exportStockAlertsButton" type="button">Exportar Alertas</button>
               <button class="secondary-button" id="exportStockNoLocationButton" type="button">Exportar Produtos sem Localizacao</button>
