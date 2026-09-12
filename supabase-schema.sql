@@ -484,6 +484,8 @@ alter table public.wms_transfers add column if not exists itens_separados numeri
 alter table public.wms_transfers add column if not exists itens_pendentes numeric default 0;
 alter table public.wms_transfers add column if not exists itens_divergentes numeric default 0;
 alter table public.wms_transfers add column if not exists total_caixas numeric default 0;
+alter table public.wms_transfers add column if not exists final_box_count numeric default 0;
+alter table public.wms_transfers add column if not exists total_boxes numeric default 0;
 alter table public.wms_transfers add column if not exists current_step text default '';
 alter table public.wms_transfers add column if not exists last_action_at timestamptz;
 alter table public.wms_transfers add column if not exists last_action_label text default '';
@@ -720,6 +722,51 @@ where warehouse_code is null or warehouse_code = '' or warehouse_id is null or w
 
 alter table if exists public.wms_transfer_boxes add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table if exists public.wms_transfer_boxes add column if not exists warehouse_code text default 'VDCG';
+
+create table if not exists public.wms_task_notifications (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  warehouse_id text default 'warehouse-vdcg',
+  warehouse_code text default 'VDCG',
+  user_id text default '',
+  user_name text default '',
+  entity_id text default '',
+  transfer_id text default '',
+  event_type text default '',
+  title text default '',
+  message text default '',
+  read boolean default false,
+  seen boolean default false,
+  idempotency_key text default '',
+  request_id text default '',
+  payload jsonb default '{}'::jsonb
+);
+
+create table if not exists public.wms_notifications (
+  id text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  warehouse_id text default 'warehouse-vdcg',
+  warehouse_code text default 'VDCG',
+  user_id text default '',
+  user_name text default '',
+  entity_id text default '',
+  transfer_id text default '',
+  event_type text default '',
+  title text default '',
+  message text default '',
+  read boolean default false,
+  seen boolean default false,
+  archived boolean default false,
+  archived_at timestamptz,
+  archived_by_id text default '',
+  archived_by_name text default '',
+  idempotency_key text default '',
+  request_id text default '',
+  payload jsonb default '{}'::jsonb
+);
+
 alter table if exists public.wms_task_notifications add column if not exists warehouse_id text default 'warehouse-vdcg';
 alter table if exists public.wms_task_notifications add column if not exists warehouse_code text default 'VDCG';
 alter table if exists public.wms_task_notifications add column if not exists idempotency_key text default '';
@@ -1158,6 +1205,8 @@ alter table public.wms_transfer_events enable row level security;
 alter table public.wms_transfer_divergences enable row level security;
 alter table public.wms_transfer_merge_items enable row level security;
 alter table public.wms_product_packaging enable row level security;
+alter table public.wms_notifications enable row level security;
+alter table public.wms_task_notifications enable row level security;
 
 drop policy if exists "wms_establishments_public_all" on public.wms_establishments;
 create policy "wms_establishments_public_all"
@@ -1199,6 +1248,22 @@ to anon
 using (true)
 with check (true);
 
+drop policy if exists "wms_notifications_public_all" on public.wms_notifications;
+create policy "wms_notifications_public_all"
+on public.wms_notifications
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
+drop policy if exists "wms_task_notifications_public_all" on public.wms_task_notifications;
+create policy "wms_task_notifications_public_all"
+on public.wms_task_notifications
+for all
+to anon, authenticated
+using (true)
+with check (true);
+
 drop policy if exists "wms_transfer_events_public_all" on public.wms_transfer_events;
 create policy "wms_transfer_events_public_all"
 on public.wms_transfer_events
@@ -1206,6 +1271,23 @@ for all
 to anon
 using (true)
 with check (true);
+
+grant all on table public.wms_warehouses to anon, authenticated;
+grant all on table public.wms_bindings to anon, authenticated;
+grant all on table public.wms_products to anon, authenticated;
+grant all on table public.wms_history to anon, authenticated;
+grant all on table public.wms_users to anon, authenticated;
+grant all on table public.wms_sessions to anon, authenticated;
+grant all on table public.wms_access_requests to anon, authenticated;
+grant all on table public.wms_establishments to anon, authenticated;
+grant all on table public.wms_transfers to anon, authenticated;
+grant all on table public.wms_transfer_items to anon, authenticated;
+grant all on table public.wms_transfer_events to anon, authenticated;
+grant all on table public.wms_transfer_divergences to anon, authenticated;
+grant all on table public.wms_transfer_merge_items to anon, authenticated;
+grant all on table public.wms_product_packaging to anon, authenticated;
+grant all on table public.wms_notifications to anon, authenticated;
+grant all on table public.wms_task_notifications to anon, authenticated;
 
 drop policy if exists "wms_transfer_divergences_public_all" on public.wms_transfer_divergences;
 create policy "wms_transfer_divergences_public_all"
@@ -1935,7 +2017,7 @@ create table if not exists public.wms_schema_version (
 );
 
 insert into public.wms_schema_version (id, version, description, applied_at, applied_by)
-values ('current', '2026.08.31.001', 'Manutencao segura do banco: logs, arquivamento controlado e limpeza por estoque', now(), 'schema')
+values ('current', '2026.09.11.001', 'Correcao aditiva de schema operacional para Transferencias, Base, Reposicao e realtime', now(), 'schema')
 on conflict (id) do update set
   version = excluded.version,
   description = excluded.description,
