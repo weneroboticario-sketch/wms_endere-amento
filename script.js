@@ -6506,7 +6506,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       activateTransferTab("myTransfersSection");
     }
     document.querySelectorAll(".screen").forEach(function (screen) {
-      screen.classList.toggle("active", screen.id === screenId);
+      var isActive = screen.id === screenId;
+      screen.classList.toggle("active", isActive);
+      screen.hidden = !isActive;
     });
     document.querySelectorAll(".menu-item").forEach(function (item) {
       item.classList.toggle("active", item.dataset.screen === screenId);
