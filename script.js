@@ -8437,6 +8437,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var operationalTransfers = getVisibleTransfers().filter(function (item) { return !isFinalTransferStatus(item.status); });
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
+    setTextIfExists("transferMetricBox", operationalTransfers.filter(function (item) { return ["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(item.status) >= 0; }).length);
     $("transferMetricReady").textContent = operationalTransfers.filter(function (item) { return item.status === "PRONTA_PARA_NOTA" || item.status === "PRONTA_PARA_NOTA_COM_DIVERGENCIA" || item.status === "LACRE_CONCLUIDO" || item.status === "MONTAGEM_CAIXA_CONCLUIDA"; }).length;
     var renderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_RENDER_LIMIT);
     var visibleTransfers = transfers.slice(0, renderLimit);
@@ -8452,6 +8453,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var destination = transferRouteDestinationLabel(transfer);
     var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
     var stage = transferPanelStageInfo(transfer.status);
+    var pendingCount = stage.label === "Caixa" || stage.label === "Nota" ? stats.pendingPacking : stats.pendingSeparation;
+    var progressClass = stats.progress >= 100 ? "is-complete" : stats.progress > 0 ? "is-active" : "is-empty";
+    var progressDetail = stage.label === "Caixa" || stage.label === "Nota"
+      ? formatQty(stats.packed) + " de " + formatQty(Math.max(stats.separated, stats.requested)) + " na caixa"
+      : formatQty(stats.separated) + " de " + formatQty(stats.requested) + " separados";
     var mergeSelect = isAdminOrSupervisor() && canSelectTransferForMerge(transfer)
       ? "<label class=\"transfer-merge-select\"><input type=\"checkbox\" data-transfer-merge-select=\"" + transfer.id + "\"" + (transferState.mergeSelection[transfer.id] ? " checked" : "") + "> Unificar</label>"
       : "";
@@ -8462,13 +8468,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return [
       "<article class=\"transfer-board-card " + stage.className + "\">",
       "<div class=\"transfer-board-main\">",
-      "<div class=\"transfer-board-title\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
+      "<div class=\"transfer-board-top\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><span class=\"transfer-stage-chip\">" + escapeHtml(stage.label) + "</span></div>",
+      "<div class=\"transfer-board-title\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
       "<div class=\"transfer-route-flow\"><div><span>Sai de</span><strong>" + escapeHtml(origin) + "</strong></div><span class=\"route-arrow\">&rarr;</span><div><span>Vai para</span><strong>" + escapeHtml(destination) + "</strong></div></div>",
       "</div>",
       "<div class=\"transfer-board-status\">",
       "<div class=\"transfer-stage-line\"><span class=\"stage-dot\"></span><strong>" + escapeHtml(stage.label) + "</strong><span>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></div>",
-      "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
-      "<div class=\"transfer-board-meta\"><span><strong>" + stats.totalItems + "</strong> SKUs</span><span><strong>" + formatQty(stats.requested) + "</strong> un.</span><span><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong> resp.</span><span>" + formatDateTime(transfer.createdAt) + "</span></div>",
+      transferStageTrackHtml(transfer.status),
+      "<div class=\"transfer-progress " + progressClass + "\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span><strong>" + stats.progress + "%</strong> " + escapeHtml(progressDetail) + "</span></div>",
+      "<div class=\"transfer-board-meta\"><span><small>SKUs</small><strong>" + stats.totalItems + "</strong></span><span><small>Volume</small><strong>" + formatQty(stats.requested) + " un.</strong></span><span><small>Pendente</small><strong>" + pendingCount + "</strong></span><span><small>Responsável</small><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong></span><span><small>Criada</small><strong>" + formatDateTime(transfer.createdAt) + "</strong></span></div>",
       conferenceAssignment ? "<div class=\"transfer-board-note\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</div>" : "",
       mergedInfo,
       "</div>",
@@ -8493,6 +8501,21 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (status === "UNIFICADA" || status === "ARQUIVADA_POR_UNIFICACAO") return { label: "Unificada", className: "stage-merged" };
     if (status === "CANCELADA") return { label: "Cancelada", className: "stage-cancelled" };
     return { label: "Separação", className: "stage-separation" };
+  }
+
+  function transferStageTrackHtml(status) {
+    var activeIndex = 1;
+    if (["EM_SEPARACAO", "SEPARACAO_CONCLUIDA"].indexOf(status) >= 0) activeIndex = 2;
+    if (["EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(status) >= 0) activeIndex = 3;
+    if (["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA", "PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA"].indexOf(status) >= 0) activeIndex = 3;
+    if (isFinalTransferStatus(status)) activeIndex = 4;
+    if (status === "CANCELADA" || status === "UNIFICADA" || status === "ARQUIVADA_POR_UNIFICACAO") activeIndex = -1;
+    var steps = ["Criada", "Separação", "Caixa", "Nota"];
+    return "<div class=\"transfer-stage-track\">" + steps.map(function (label, index) {
+      var stepIndex = index + 1;
+      var className = activeIndex < 0 ? "" : stepIndex < activeIndex ? "is-done" : stepIndex === activeIndex ? "is-current" : "";
+      return "<span class=\"" + className + "\">" + escapeHtml(label) + "</span>";
+    }).join("") + "</div>";
   }
 
   function renderTransferMergePanel() {

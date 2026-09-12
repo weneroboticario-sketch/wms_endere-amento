@@ -601,6 +601,7 @@
             <section class="panel">
               <div class="panel-header">
                 <h3>Filtros</h3>
+                <span class="panel-mini-label">Estoque atual</span>
               </div>
               <div class="transfer-filter-grid">
                 <label>Status
@@ -641,14 +642,19 @@
               <div class="transfer-summary-grid">
                 <div><span>Total</span><strong id="transferMetricTotal">0</strong></div>
                 <div><span>Em separação</span><strong id="transferMetricSeparating">0</strong></div>
+                <div><span>Em caixa</span><strong id="transferMetricBox">0</strong></div>
                 <div><span>Prontas para nota</span><strong id="transferMetricReady">0</strong></div>
               </div>
             </section>
           </div>
 
-          <section class="panel">
-            <div class="panel-header">
-              <h3>Painel de Transferências</h3>
+          <section class="panel transfer-board-panel">
+            <div class="panel-header transfer-board-panel-header">
+              <div>
+                <h3>Painel de Transferências</h3>
+                <p class="muted">Fluxo operacional por etapa do estoque atual.</p>
+              </div>
+              <span class="panel-mini-label">Tempo real</span>
             </div>
             <div class="transfer-merge-panel" id="transferMergePanel" hidden>
               <div class="panel-header">

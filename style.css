@@ -617,6 +617,20 @@ table {
   font-size: 1.08rem;
 }
 
+.panel-mini-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #cfe0ea;
+  border-radius: 999px;
+  background: #eef6fa;
+  color: var(--primary-dark);
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .area-totals {
   display: grid;
   gap: 8px;
@@ -1805,6 +1819,15 @@ tbody tr:hover td {
   background: #fbfdff;
 }
 
+#transferencias .transfer-summary-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+#transferencias .transfer-summary-grid div {
+  min-height: 88px;
+  background: linear-gradient(180deg, #ffffff 0%, #f3f8fb 100%);
+}
+
 .transfer-summary-grid span,
 .transfer-card span {
   display: block;
@@ -1945,11 +1968,24 @@ tbody tr:hover td {
 }
 
 .transfer-progress {
+  display: grid;
+  gap: 5px;
   min-width: 116px;
 }
 
+.transfer-progress > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.transfer-progress > span strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
 .transfer-progress-bar {
-  height: 9px;
+  height: 10px;
   overflow: hidden;
   border-radius: 999px;
   background: #dbe6ee;
@@ -1958,7 +1994,16 @@ tbody tr:hover td {
 .transfer-progress-bar span {
   display: block;
   height: 100%;
-  background: var(--primary);
+  background: linear-gradient(90deg, var(--primary), #20a4b8);
+  transition: width 0.2s ease;
+}
+
+.transfer-progress.is-complete .transfer-progress-bar span {
+  background: linear-gradient(90deg, var(--success), #34c986);
+}
+
+.transfer-progress.is-empty .transfer-progress-bar span {
+  background: #9eb1c0;
 }
 
 .transfer-card-grid {
@@ -2066,7 +2111,6 @@ tbody tr:hover td {
 
 .transfer-source-pill {
   display: inline-flex;
-  margin-top: 6px;
   min-height: 24px;
   align-items: center;
   border-radius: 999px;
@@ -2075,6 +2119,18 @@ tbody tr:hover td {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.transfer-board-panel {
+  padding: 14px;
+}
+
+.transfer-board-panel-header {
+  align-items: flex-start;
+}
+
+.transfer-board-panel-header .muted {
+  margin: 4px 0 0;
 }
 
 .transfer-route-cell span {
@@ -2088,13 +2144,13 @@ tbody tr:hover td {
 
 .transfer-board-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .transfer-board-card {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(260px, 0.9fr) minmax(126px, 0.26fr);
-  gap: 12px;
+  grid-template-columns: minmax(300px, 1.05fr) minmax(360px, 1.15fr) minmax(142px, 0.32fr);
+  gap: 14px;
   align-items: stretch;
   padding: 14px;
   border: 1px solid var(--line);
@@ -2143,9 +2199,49 @@ tbody tr:hover td {
   align-content: start;
 }
 
+.transfer-board-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.transfer-stage-chip {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0 9px;
+  background: #e8f7ef;
+  color: var(--success);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.stage-box .transfer-stage-chip {
+  background: #fff1cf;
+  color: var(--warning);
+}
+
+.stage-note .transfer-stage-chip {
+  background: #dff8ec;
+  color: var(--success);
+}
+
+.stage-cancelled .transfer-stage-chip {
+  background: #fde5e5;
+  color: var(--danger);
+}
+
+.stage-merged .transfer-stage-chip {
+  background: #e8f0f6;
+  color: var(--muted);
+}
+
 .transfer-board-title strong {
   color: var(--ink);
-  font-size: 1rem;
+  font-size: 1.04rem;
   line-height: 1.15;
   overflow-wrap: anywhere;
 }
@@ -2249,6 +2345,10 @@ tbody tr:hover td {
   background: #f1f7fb;
 }
 
+.transfer-board-card .transfer-route-flow {
+  min-height: 74px;
+}
+
 .transfer-route-flow div {
   min-width: 0;
 }
@@ -2286,6 +2386,39 @@ tbody tr:hover td {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.transfer-stage-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.transfer-stage-track span {
+  min-width: 0;
+  padding: 7px 6px;
+  border: 1px solid #d9e5ee;
+  border-radius: 999px;
+  background: #f3f7fb;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-stage-track span.is-done {
+  border-color: #b8e2d0;
+  background: #e8f7ef;
+  color: var(--success);
+}
+
+.transfer-stage-track span.is-current {
+  border-color: rgba(8, 125, 143, 0.36);
+  background: #e8f6f8;
+  color: var(--primary-dark);
 }
 
 .stage-dot {
@@ -2332,7 +2465,7 @@ tbody tr:hover td {
 
 .transfer-board-meta {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -2349,16 +2482,31 @@ tbody tr:hover td {
 }
 
 .transfer-board-meta strong {
+  display: block;
   color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-board-meta small {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .transfer-board-actions {
   align-self: center;
+  gap: 7px;
 }
 
 .transfer-board-actions button {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-height: 36px;
 }
 
 .admin-progress-table,
@@ -4775,6 +4923,14 @@ tbody tr:hover td {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  #transferencias .transfer-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #transferencias .transfer-summary-grid div {
+    min-height: 74px;
   }
 
   .metric-card {
