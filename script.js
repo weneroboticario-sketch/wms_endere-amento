@@ -3846,44 +3846,22 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var hasStore = suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined;
     var loja = hasStore ? Number(suggestion.storeAvailable || 0) : null;
     var captacao = Number(suggestion.captureAvailable || 0);
-    if (hasStore && loja < 3) {
-      if (captacao <= 0) {
-        return {
-          type: "RUPTURA",
-          priority: 1,
-          qty: 0,
-          message: "Loja abaixo de 3 e CAPTAÇÃO sem saldo para repor."
-        };
-      }
+    var totalOperacional = hasStore ? loja + captacao : captacao;
+    var canSuggestFromCapture = hasStore && loja < 3 && captacao > 1 && totalOperacional > 3;
+    if (canSuggestFromCapture) {
       if (!suggestion.captureLocation) {
         return {
           type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
           priority: 2,
           qty: 0,
-          message: "Loja abaixo de 3 e CAPTAÇÃO positiva sem localização cadastrada."
+          message: "Loja abaixo de 3, CAPTAÇÃO acima de 1 e sem localização cadastrada."
         };
       }
       return {
         type: "ABASTECER_LOJA",
         priority: 2,
         qty: Math.min(captacao, Math.max(0, 3 - loja)),
-        message: "Loja abaixo de 3. Repor a partir da CAPTAÇÃO."
-      };
-    }
-    if (!hasStore && captacao < 3) {
-      return {
-        type: "RUPTURA",
-        priority: 1,
-        qty: 0,
-        message: "Saldo da Loja não importado e CAPTAÇÃO menor que 3."
-      };
-    }
-    if (captacao > 0 && !suggestion.captureLocation) {
-      return {
-        type: "CAPTACAO_POSITIVA_SEM_LOCALIZACAO",
-        priority: 2,
-        qty: 0,
-        message: "CAPTAÇÃO positiva sem localização cadastrada."
+        message: "Loja abaixo de 3 com CAPTAÇÃO suficiente. Repor a partir da CAPTAÇÃO."
       };
     }
     return null;
@@ -3893,7 +3871,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!filter) return true;
     if (filter === "LOJA_BAIXA") return suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined && Number(suggestion.storeAvailable || 0) < 3;
     if (filter === "SEM_SALDO_LOJA") return suggestion.storeAvailable !== null && suggestion.storeAvailable !== undefined && Number(suggestion.storeAvailable || 0) <= 0;
-    if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 0;
+    if (filter === "CAPTACAO_POSITIVA") return Number(suggestion.captureAvailable || 0) > 1;
     if (filter === "SEM_SALDO_CAPTACAO") return Number(suggestion.captureAvailable || 0) <= 0;
     if (filter === "SEM_LOCALIZACAO") return !suggestion.captureLocation;
     if (filter === "COM_PEDIDO_ABERTO") return suggestion.hasOpenRequest;
