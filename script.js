@@ -30,7 +30,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    etiquetas: ["ADMINISTRADOR"],
+    etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
