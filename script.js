@@ -31,6 +31,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -6532,13 +6533,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
 
   function isRemovedScreen(screenId) {
-    return ["assistente", "conferencias", "historico", "exportar", "bipagem", "consultaPrateleira"].indexOf(screenId) >= 0;
+    return ["assistente", "conferencias", "historico", "bipagem", "consultaPrateleira"].indexOf(screenId) >= 0;
   }
 
   function bindEvents() {
