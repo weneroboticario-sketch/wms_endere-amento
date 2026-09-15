@@ -3743,6 +3743,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var needed = Number(requestedQty || 0);
     var productName = captacao.nomeMaterial || loja.nomeMaterial || findProductName(sku) || "";
     if (!captacaoPositions.length) {
+      var storeOnlyAvailable = Number(loja.totalDisponivel || 0);
+      var storeOnlyUsable = Math.max(0, storeOnlyAvailable);
+      var storeOnlyQty = needed > 0 ? Math.min(needed, storeOnlyUsable) : 0;
+      var storeOnlyShortage = needed > 0 ? Math.max(0, needed - storeOnlyQty) : 0;
+      var storeOnlyOrigin = storeOnlyQty > 0 ? "LOJA" : "SEM_SALDO";
       return {
         sku: sku,
         name: productName || findProductName(sku) || "",
@@ -3751,42 +3756,49 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         storeFound: lojaPositions.length > 0,
         storePhysical: lojaPositions.length ? loja.totalFisico : 0,
         storeAllocated: lojaPositions.length ? loja.totalAlocado : 0,
-        storeAvailable: lojaPositions.length ? loja.totalDisponivel : 0,
+        storeAvailable: storeOnlyAvailable,
         capturePhysical: 0,
         captureAllocated: 0,
         captureAvailable: 0,
-        operationalTotal: 0,
-        rupture: false,
+        operationalTotal: storeOnlyAvailable,
+        rupture: storeOnlyShortage > 0,
         captureLocation: "",
         officialLocation: "",
-        originSuggested: "SEM_SALDO_CAPTACAO",
+        originSuggested: storeOnlyOrigin,
         suggestedCaptureQty: 0,
-        suggestedStoreQty: 0,
-        quantityShortage: Math.max(0, needed),
+        suggestedStoreQty: storeOnlyQty,
+        quantityShortage: storeOnlyShortage,
         suggestedReplenishmentQty: 0,
-        stockAlert: true,
-        alertMessage: lojaPositions.length ? "Saldo CAPTAÇÃO zerado para este SKU." : "Saldo CAPTAÇÃO zerado; SKU sem registro ativo na base operacional.",
-        operationalMessage: "Saldo CAPTAÇÃO zerado para retirada.",
+        stockAlert: storeOnlyShortage > 0,
+        alertMessage: storeOnlyShortage > 0 ? "Saldo Loja insuficiente e CAPTAÇÃO zerada. Faltam " + formatQty(storeOnlyShortage) + " un." : "Retirar da Loja. CAPTAÇÃO zerada.",
+        operationalMessage: storeOnlyShortage > 0 ? "Saldo insuficiente para atender a transferência." : "Retirar da Loja.",
         sellable: loja.isSellable
       };
     }
     var captureAvailable = Number(captacao.totalDisponivel || 0);
-    var operationalTotal = captureAvailable;
+    var storeAvailable = Number(loja.totalDisponivel || 0);
+    var operationalTotal = captureAvailable + storeAvailable;
     var captureUsable = Math.max(0, captureAvailable);
-    var originSuggested = "SEM_SALDO_CAPTACAO";
+    var storeUsable = Math.max(0, storeAvailable);
     var captureQty = needed > 0 ? Math.min(needed, captureUsable) : 0;
-    var shortage = needed > 0 ? Math.max(0, needed - captureQty) : 0;
+    var storeQty = needed > 0 ? Math.min(Math.max(0, needed - captureQty), storeUsable) : 0;
+    var shortage = needed > 0 ? Math.max(0, needed - captureQty - storeQty) : 0;
+    var originSuggested = "SEM_SALDO";
     if (needed <= 0) {
-      originSuggested = captureAvailable > 0 ? "CAPTACAO" : "SEM_SALDO_CAPTACAO";
-    } else if (shortage > 0) {
-      originSuggested = captureAvailable > 0 ? "CAPTACAO_PARCIAL" : "SEM_SALDO_CAPTACAO";
-    } else if (captureUsable >= needed) {
+      originSuggested = captureAvailable > 0 ? "CAPTACAO" : storeAvailable > 0 ? "LOJA" : "SEM_SALDO";
+    } else if (captureQty > 0 && storeQty > 0) {
+      originSuggested = "CAPTACAO_E_LOJA";
+    } else if (captureQty > 0) {
       originSuggested = "CAPTACAO";
+    } else if (storeQty > 0) {
+      originSuggested = "LOJA";
+    } else if (captureAvailable <= 0) {
+      originSuggested = "SEM_SALDO_CAPTACAO";
     }
     var location = captureLocation ? stockPositionLocation(captureLocation) : "";
     var hasNegative = captureAvailable < 0;
     var suggestionQty = 0;
-    var alertMessage = hasNegative ? "Saldo CAPTAÇÃO negativo para este SKU." : shortage > 0 ? "Saldo CAPTAÇÃO insuficiente. Faltam " + formatQty(shortage) + " un." : !location ? "Produto encontrado na CAPTAÇÃO sem localização." : needed <= 0 ? "Produto encontrado na CAPTAÇÃO. Verifique a quantidade necessária." : "";
+    var alertMessage = hasNegative ? "Saldo CAPTAÇÃO negativo para este SKU." : shortage > 0 ? "Saldo CAPTAÇÃO/Loja insuficiente. Faltam " + formatQty(shortage) + " un." : !location && captureQty > 0 ? "Produto encontrado na CAPTAÇÃO sem localização." : storeQty > 0 && captureQty <= 0 ? "Retirar da Loja. CAPTAÇÃO zerada." : storeQty > 0 ? "Completar retirada pela Loja." : needed <= 0 ? "Produto encontrado na CAPTAÇÃO. Verifique a quantidade necessária." : "";
     return {
       sku: sku,
       baseFound: true,
@@ -3795,7 +3807,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       name: productName,
       storePhysical: lojaPositions.length ? loja.totalFisico : 0,
       storeAllocated: lojaPositions.length ? loja.totalAlocado : 0,
-      storeAvailable: lojaPositions.length ? loja.totalDisponivel : 0,
+      storeAvailable: storeAvailable,
       capturePhysical: captacao.totalFisico,
       captureAllocated: captacao.totalAlocado,
       captureAvailable: captacao.totalDisponivel,
@@ -3809,10 +3821,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       officialLocation: "",
       originSuggested: originSuggested,
       suggestedCaptureQty: captureQty,
-      suggestedStoreQty: 0,
+      suggestedStoreQty: storeQty,
       quantityShortage: shortage,
       suggestedReplenishmentQty: suggestionQty,
-      stockAlert: shortage > 0 || hasNegative || !location || originSuggested === "SEM_SALDO_CAPTACAO" || originSuggested === "CAPTACAO_PARCIAL",
+      stockAlert: shortage > 0 || hasNegative || (captureQty > 0 && !location) || originSuggested === "SEM_SALDO_CAPTACAO",
       alertMessage: alertMessage,
       operationalMessage: alertMessage || "Retirar da CAPTAÇÃO.",
       sellable: captacao.isSellable
@@ -11765,12 +11777,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferStockGuidanceHtml(item, variant) {
     if (!item || (!item.originSuggested && !item.stockAlertMessage && !transferCaptureLocationCode(item))) return "";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
-    var tone = item.originSuggested === "CAPTACAO" && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || item.originSuggested === "SEM_SALDO_CAPTACAO" || item.originSuggested === "NAO_ENCONTRADO_CAPTACAO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
+    var originResolved = ["CAPTACAO", "LOJA", "CAPTACAO_E_LOJA", "LOJA_E_CAPTACAO"].indexOf(item.originSuggested) >= 0;
+    var tone = originResolved && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || item.originSuggested === "SEM_SALDO_CAPTACAO" || item.originSuggested === "NAO_ENCONTRADO_CAPTACAO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
     var captureLocation = transferCaptureLocationCode(item) || "-";
     return [
       "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
       "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
-      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
+      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | retirar loja " + formatQty(item.suggestedStoreQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
       "<span>Saldo loja " + transferStockValueLabel(item.storeAvailable, null) + "</span>",
       "<span>Saldo captação " + transferStockValueLabel(item.captureAvailable, item) + "</span>",
       "<span>Local CAPTACAO: " + escapeHtml(captureLocation) + "</span>",
@@ -14731,7 +14744,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       LOJA: "Loja",
       LOJA_E_CAPTACAO: "Loja + CAPTAÇÃO",
       CAPTACAO_E_LOJA: "CAPTAÇÃO + Loja",
-      SEM_SALDO: "Sem saldo CAPTAÇÃO",
+      SEM_SALDO: "Sem saldo",
       VERIFICAR: "Verificar"
     }[origin] || origin || "-";
   }
