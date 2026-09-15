@@ -428,6 +428,39 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return new Promise(function (resolve) { window.setTimeout(resolve, ms); });
   }
 
+  function isSupabaseTransientNetworkError(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("failed to fetch") >= 0 ||
+      message.indexOf("networkerror") >= 0 ||
+      message.indexOf("network error") >= 0 ||
+      message.indexOf("load failed") >= 0 ||
+      message.indexOf("fetch failed") >= 0 ||
+      message.indexOf("connection") >= 0 && message.indexOf("lost") >= 0 ||
+      message.indexOf("timeout") >= 0 ||
+      message.indexOf("timed out") >= 0 ||
+      message.indexOf("aborted") >= 0;
+  }
+
+  async function runSupabaseRequestWithRetry(label, operation) {
+    var waits = [0, 500, 1200, 2500];
+    var lastError = null;
+    for (var attempt = 0; attempt < waits.length; attempt += 1) {
+      try {
+        if (waits[attempt]) await delay(waits[attempt]);
+        var response = await operation();
+        if (!response || !response.error || !isSupabaseTransientNetworkError(response.error) || attempt === waits.length - 1) {
+          return response;
+        }
+        lastError = response.error;
+      } catch (error) {
+        if (!isSupabaseTransientNetworkError(error) || attempt === waits.length - 1) throw error;
+        lastError = error;
+      }
+    }
+    if (lastError) throw lastError;
+    return null;
+  }
+
   function bindLocalCacheShutdownEvents() {
     window.addEventListener("pageshow", function () {
       localCacheState.disabled = false;
@@ -1631,9 +1664,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var columns = selectColumnsToArray(selectColumns);
     var removedColumns = {};
     while (true) {
-      var query = supabaseDb.from(tableName).select(columns.join(","));
-      query = configureQuery(query);
-      var response = await query;
+      var response = await runSupabaseRequestWithRetry("select-" + tableName, function () {
+        var query = supabaseDb.from(tableName).select(columns.join(","));
+        return configureQuery(query);
+      });
       if (!response.error || !isMissingColumnError(response.error)) return response;
       var missingColumn = getMissingColumnName(response.error).toLowerCase();
       var nextColumns = columns.filter(function (column) { return normalizedSelectColumnName(column) !== missingColumn; });
@@ -2764,12 +2798,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function countActiveStockPositions(sourceType) {
-    var response = await supabaseDb
-      .from("wms_stock_positions")
-      .select("id", { count: "exact", head: true })
-      .eq("warehouse_code", activeWarehouseCode())
-      .eq("source_type", sourceType)
-      .eq("active", true);
+    var response = await runSupabaseRequestWithRetry("count-stock-" + sourceType, function () {
+      return supabaseDb
+        .from("wms_stock_positions")
+        .select("id", { count: "exact", head: true })
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("source_type", sourceType)
+        .eq("active", true);
+    });
     if (response.error) throw response.error;
     return Number(response.count || 0);
   }
@@ -2857,7 +2893,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
     } catch (error) {
-      setStatus("stockImportStatus", "Falha na importacao: " + formatSupabaseError(error), "error");
+      setStatus("stockImportStatus", "Falha na importacao: " + missingStockSchemaMessage(error), "error");
       recordPerformanceError("import-stock-" + sourceType, error);
     } finally {
       stockState.importing = false;
@@ -3068,14 +3104,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }));
       return metrics;
     } catch (error) {
-      await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, {
-        status: "FAILED",
-        notes: formatSupabaseError(error),
-        error_message: formatSupabaseError(error),
-        finished_at: nowIso(),
-        updated_at: nowIso(),
-        imported_rows: 0
-      });
+      try {
+        await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, {
+          status: "FAILED",
+          notes: formatSupabaseError(error),
+          error_message: formatSupabaseError(error),
+          finished_at: nowIso(),
+          updated_at: nowIso(),
+          imported_rows: 0
+        });
+      } catch (statusError) {
+        recordPerformanceError("stock-batch-failed-status", statusError);
+      }
       throw error;
     }
   }
@@ -3083,13 +3123,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function insertStockBatchWithFallback(batch) {
     var payload = Object.assign({}, batch);
     var attemptedMissingColumns = {};
-    var response = await supabaseDb.from("wms_stock_import_batches").insert(payload);
+    var response = await runSupabaseRequestWithRetry("insert-stock-batch", function () {
+      return supabaseDb.from("wms_stock_import_batches").insert(payload);
+    });
     while (response.error && isMissingColumnError(response.error)) {
       var missingColumn = getMissingColumnName(response.error);
       if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
       attemptedMissingColumns[missingColumn] = true;
       delete payload[missingColumn];
-      response = await supabaseDb.from("wms_stock_import_batches").insert(payload);
+      response = await runSupabaseRequestWithRetry("insert-stock-batch", function () {
+        return supabaseDb.from("wms_stock_import_batches").insert(payload);
+      });
     }
     return response;
   }
@@ -3182,9 +3226,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function deleteBindingsByIds(ids) {
-    var size = 400;
+    var size = 120;
     for (var i = 0; i < ids.length; i += size) {
-      var response = await supabaseDb.from("wms_bindings").delete().in("id", ids.slice(i, i + size));
+      var chunk = ids.slice(i, i + size);
+      var response = await runSupabaseRequestWithRetry("delete-bindings", function () {
+        return supabaseDb.from("wms_bindings").delete().in("id", chunk);
+      });
       if (response.error) throw response.error;
     }
   }
@@ -3264,11 +3311,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function deactivateResolvedStockAlerts(warehouseCode, activeNegativeSkus, now) {
-    var response = await supabaseDb
-      .from("wms_stock_alerts")
-      .select("id,codigo_material")
-      .eq("warehouse_code", normalizeWarehouseCode(warehouseCode))
-      .eq("active", true);
+    var response = await runSupabaseRequestWithRetry("select-stock-alerts", function () {
+      return supabaseDb
+        .from("wms_stock_alerts")
+        .select("id,codigo_material")
+        .eq("warehouse_code", normalizeWarehouseCode(warehouseCode))
+        .eq("active", true);
+    });
     if (response.error) throw response.error;
     var resolvedIds = (response.data || []).filter(function (row) {
       return !activeNegativeSkus[normalizeSku(row.codigo_material || "")];
@@ -3278,20 +3327,26 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function updateStockAlertsByIds(ids, payload) {
-    var size = 400;
+    var size = 120;
     for (var i = 0; i < ids.length; i += size) {
-      var response = await supabaseDb.from("wms_stock_alerts").update(payload).in("id", ids.slice(i, i + size));
+      var chunk = ids.slice(i, i + size);
+      var response = await runSupabaseRequestWithRetry("update-stock-alerts", function () {
+        return supabaseDb.from("wms_stock_alerts").update(payload).in("id", chunk);
+      });
       if (response.error) throw response.error;
     }
   }
 
   async function updateStockRowsByIds(ids, payload) {
-    var size = 400;
+    var size = 120;
     for (var i = 0; i < ids.length; i += size) {
-      var response = await supabaseDb
-        .from("wms_stock_positions")
-        .update(payload)
-        .in("id", ids.slice(i, i + size));
+      var chunk = ids.slice(i, i + size);
+      var response = await runSupabaseRequestWithRetry("update-stock-positions", function () {
+        return supabaseDb
+          .from("wms_stock_positions")
+          .update(payload)
+          .in("id", chunk);
+      });
       if (response.error) throw response.error;
     }
   }
@@ -3314,14 +3369,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       finished_at: metrics.status === "PROCESSING" ? null : nowIso(),
       error_message: metrics.errorMessage || ""
     };
-    var response = await supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+    var response = await runSupabaseRequestWithRetry("update-stock-batch", function () {
+      return supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+    });
     var attemptedMissingColumns = {};
     while (response.error && isMissingColumnError(response.error)) {
       var missingColumn = getMissingColumnName(response.error);
       if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
       attemptedMissingColumns[missingColumn] = true;
       delete payload[missingColumn];
-      response = await supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+      response = await runSupabaseRequestWithRetry("update-stock-batch", function () {
+        return supabaseDb.from("wms_stock_import_batches").update(payload).eq("id", batchId);
+      });
     }
     if (response.error) throw response.error;
   }
@@ -3651,23 +3710,27 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var from = 0;
     var pageSize = 1000;
     while (true) {
-      var query = supabaseDb
-        .from("wms_stock_positions")
-        .select(stockPositionSelectColumns())
-        .eq("warehouse_code", activeWarehouseCode())
-        .eq("active", true)
-        .order("codigo_material", { ascending: true });
-      if (sourceType) query = query.eq("source_type", sourceType);
-      var response = await query.range(from, from + pageSize - 1);
-      if (response.error && isMissingColumnError(response.error)) {
-        var fallbackQuery = supabaseDb
+      var response = await runSupabaseRequestWithRetry("fetch-stock-positions", function () {
+        var query = supabaseDb
           .from("wms_stock_positions")
-          .select(stockPositionLegacySelectColumns())
+          .select(stockPositionSelectColumns())
           .eq("warehouse_code", activeWarehouseCode())
           .eq("active", true)
           .order("codigo_material", { ascending: true });
-        if (sourceType) fallbackQuery = fallbackQuery.eq("source_type", sourceType);
-        response = await fallbackQuery.range(from, from + pageSize - 1);
+        if (sourceType) query = query.eq("source_type", sourceType);
+        return query.range(from, from + pageSize - 1);
+      });
+      if (response.error && isMissingColumnError(response.error)) {
+        response = await runSupabaseRequestWithRetry("fetch-stock-positions-legacy", function () {
+          var fallbackQuery = supabaseDb
+            .from("wms_stock_positions")
+            .select(stockPositionLegacySelectColumns())
+            .eq("warehouse_code", activeWarehouseCode())
+            .eq("active", true)
+            .order("codigo_material", { ascending: true });
+          if (sourceType) fallbackQuery = fallbackQuery.eq("source_type", sourceType);
+          return fallbackQuery.range(from, from + pageSize - 1);
+        });
       }
       if (response.error) throw response.error;
       var rows = response.data || [];
@@ -3731,10 +3794,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function fetchReplenishmentStoreCandidates(filter, offset, limit) {
-    var query = buildReplenishmentStoreCandidatesQuery(filter, stockPositionSelectColumns());
-    var response = await query.range(offset, offset + limit - 1);
+    var response = await runSupabaseRequestWithRetry("fetch-replenishment-store-candidates", function () {
+      return buildReplenishmentStoreCandidatesQuery(filter, stockPositionSelectColumns()).range(offset, offset + limit - 1);
+    });
     if (response.error && isMissingColumnError(response.error)) {
-      response = await buildReplenishmentStoreCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      response = await runSupabaseRequestWithRetry("fetch-replenishment-store-candidates-legacy", function () {
+        return buildReplenishmentStoreCandidatesQuery(filter, stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      });
     }
     if (response.error) throw response.error;
     return (response.data || []).map(fromDbStockPosition);
@@ -3763,9 +3829,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function fetchReplenishmentNoLocationCandidates(offset, limit) {
-    var response = await buildReplenishmentNoLocationCandidatesQuery(stockPositionSelectColumns()).range(offset, offset + limit - 1);
+    var response = await runSupabaseRequestWithRetry("fetch-replenishment-no-location", function () {
+      return buildReplenishmentNoLocationCandidatesQuery(stockPositionSelectColumns()).range(offset, offset + limit - 1);
+    });
     if (response.error && isMissingColumnError(response.error)) {
-      response = await buildReplenishmentNoLocationCandidatesQuery(stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      response = await runSupabaseRequestWithRetry("fetch-replenishment-no-location-legacy", function () {
+        return buildReplenishmentNoLocationCandidatesQuery(stockPositionLegacySelectColumns()).range(offset, offset + limit - 1);
+      });
     }
     if (response.error) throw response.error;
     return (response.data || []).map(fromDbStockPosition).filter(function (position) {
@@ -3788,21 +3858,25 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function fetchActiveStockPositionsForSkus(skus) {
     var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
     if (!cleanSkus.length) return [];
-    var response = await supabaseDb
-      .from("wms_stock_positions")
-      .select(stockPositionSelectColumns())
-      .eq("warehouse_code", activeWarehouseCode())
-      .eq("active", true)
-      .in("codigo_material", cleanSkus)
-      .limit(Math.max(300, cleanSkus.length * 8));
-    if (response.error && isMissingColumnError(response.error)) {
-      response = await supabaseDb
+    var response = await runSupabaseRequestWithRetry("fetch-stock-positions-skus", function () {
+      return supabaseDb
         .from("wms_stock_positions")
-        .select(stockPositionLegacySelectColumns())
+        .select(stockPositionSelectColumns())
         .eq("warehouse_code", activeWarehouseCode())
         .eq("active", true)
         .in("codigo_material", cleanSkus)
         .limit(Math.max(300, cleanSkus.length * 8));
+    });
+    if (response.error && isMissingColumnError(response.error)) {
+      response = await runSupabaseRequestWithRetry("fetch-stock-positions-skus-legacy", function () {
+        return supabaseDb
+          .from("wms_stock_positions")
+          .select(stockPositionLegacySelectColumns())
+          .eq("warehouse_code", activeWarehouseCode())
+          .eq("active", true)
+          .in("codigo_material", cleanSkus)
+          .limit(Math.max(300, cleanSkus.length * 8));
+      });
     }
     if (response.error) throw response.error;
     return (response.data || []).map(fromDbStockPosition);
@@ -4037,6 +4111,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function missingStockSchemaMessage(error) {
+    if (isSupabaseTransientNetworkError(error)) {
+      return "Falha temporaria de comunicacao com o Supabase. O sistema agora tenta novamente automaticamente; se persistir, recarregue a pagina e importe a planilha de novo.";
+    }
     if (isMissingStockTableError(error) || isMissingColumnError(error)) {
       return "Estrutura da Base de Estoque desatualizada no Supabase. Execute supabase-schema.sql no SQL Editor e recarregue o app. Erro original: " + formatSupabaseError(error);
     }
@@ -4633,11 +4710,14 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function upsertInChunks(tableName, rows, onConflict) {
-    var chunkSize = 500;
+    var chunkSize = tableName === "wms_stock_positions" ? 120 : 250;
     for (var i = 0; i < rows.length; i += chunkSize) {
       var chunk = rows.slice(i, i + chunkSize);
-      var response = await supabaseDb.from(tableName).upsert(chunk, onConflict ? { onConflict: onConflict } : undefined);
+      var response = await runSupabaseRequestWithRetry("upsert-" + tableName, function () {
+        return supabaseDb.from(tableName).upsert(chunk, onConflict ? { onConflict: onConflict } : undefined);
+      });
       if (response.error) throw response.error;
+      if (tableName === "wms_stock_positions" && i + chunkSize < rows.length) await delay(40);
     }
   }
 
