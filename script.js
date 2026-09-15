@@ -2384,11 +2384,15 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: row.endereco_codigo || "",
       hasLocation: row.has_location === true,
       locationWarning: row.location_warning || "",
-      storeAvailable: null,
+      storeAvailable: row.saldo_loja_snapshot !== undefined && row.saldo_loja_snapshot !== null
+        ? Number(row.saldo_loja_snapshot || 0)
+        : row.saldo_loja_disponivel !== undefined && row.saldo_loja_disponivel !== null
+          ? Number(row.saldo_loja_disponivel || 0)
+          : null,
       captureAvailable: Number(row.saldo_captacao_snapshot !== undefined && row.saldo_captacao_snapshot !== null ? row.saldo_captacao_snapshot : row.saldo_captacao_disponivel || 0),
       originSuggested: row.origem_sugerida || "",
       suggestedCaptureQty: Number(row.quantidade_retirar_captacao !== undefined && row.quantidade_retirar_captacao !== null ? row.quantidade_retirar_captacao : row.quantidade_sugerida_captacao || 0),
-      suggestedStoreQty: 0,
+      suggestedStoreQty: Number(row.quantidade_retirar_loja !== undefined && row.quantidade_retirar_loja !== null ? row.quantidade_retirar_loja : row.quantidade_sugerida_loja || 0),
       quantityShortage: Number(row.quantidade_faltante || 0),
       stockAlert: row.alerta_saldo === true || Boolean(row.alerta_saldo && typeof row.alerta_saldo === "string"),
       stockAlertMessage: row.alerta_saldo_mensagem || row.alerta_saldo || "",
@@ -2551,16 +2555,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       endereco_codigo: item.addressCode || "",
       has_location: item.hasLocation === true,
       location_warning: item.locationWarning || "",
-      saldo_loja_disponivel: 0,
+      saldo_loja_disponivel: item.storeAvailable === null || item.storeAvailable === undefined ? 0 : Number(item.storeAvailable || 0),
       saldo_captacao_disponivel: Number(item.captureAvailable || 0),
       nome_material_snapshot: item.description || "",
-      saldo_loja_snapshot: 0,
+      saldo_loja_snapshot: item.storeAvailable === null || item.storeAvailable === undefined ? 0 : Number(item.storeAvailable || 0),
       saldo_captacao_snapshot: Number(item.captureAvailable || 0),
       origem_sugerida: item.originSuggested || "",
       quantidade_sugerida_captacao: Number(item.suggestedCaptureQty || 0),
-      quantidade_sugerida_loja: 0,
+      quantidade_sugerida_loja: Number(item.suggestedStoreQty || 0),
       quantidade_retirar_captacao: Number(item.suggestedCaptureQty || 0),
-      quantidade_retirar_loja: 0,
+      quantidade_retirar_loja: Number(item.suggestedStoreQty || 0),
       quantidade_faltante: Number(item.quantityShortage || item.missingQty || 0),
       alerta_saldo: item.stockAlert === true,
       alerta_saldo_mensagem: item.stockAlertMessage || "",
@@ -11767,6 +11771,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
       "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
       "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
+      "<span>Saldo loja " + transferStockValueLabel(item.storeAvailable, null) + "</span>",
       "<span>Saldo captação " + transferStockValueLabel(item.captureAvailable, item) + "</span>",
       "<span>Local CAPTACAO: " + escapeHtml(captureLocation) + "</span>",
       item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "",
@@ -14482,11 +14487,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       addressCode: item.addressCode || "",
       hasLocation: item.hasLocation === true,
       locationWarning: item.locationWarning || "",
-      storeAvailable: null,
+      storeAvailable: item.storeAvailable === null || item.storeAvailable === undefined ? null : Number(item.storeAvailable || 0),
       captureAvailable: Number(item.captureAvailable || 0),
       originSuggested: item.originSuggested || "",
       suggestedCaptureQty: Number(item.suggestedCaptureQty || 0),
-      suggestedStoreQty: 0,
+      suggestedStoreQty: Number(item.suggestedStoreQty || 0),
       stockAlert: item.stockAlert === true,
       stockAlertMessage: item.stockAlertMessage || "",
       suggestedLocation: item.captureLocationSnapshot || item.suggestedLocation || "",
@@ -14579,11 +14584,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function applyTransferItemStockSuggestion(item, suggestion) {
     if (!item || !suggestion) return item;
-    item.storeAvailable = null;
+    item.storeAvailable = suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? null : Number(suggestion.storeAvailable || 0);
     item.captureAvailable = suggestion.captureAvailable === null ? null : Number(suggestion.captureAvailable || 0);
     item.originSuggested = suggestion.originSuggested || "";
     item.suggestedCaptureQty = Number(suggestion.suggestedCaptureQty || 0);
-    item.suggestedStoreQty = 0;
+    item.suggestedStoreQty = Number(suggestion.suggestedStoreQty || 0);
     item.quantityShortage = Number(suggestion.quantityShortage || 0);
     item.stockBaseFound = suggestion.baseFound !== false;
     item.stockAlert = suggestion.stockAlert === true;
@@ -14723,9 +14728,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       CAPTACAO_PARCIAL: "Captação parcial",
       SEM_SALDO_CAPTACAO: "Sem saldo CAPTAÇÃO",
       NAO_ENCONTRADO_CAPTACAO: "Não encontrado CAPTAÇÃO",
-      LOJA: "Legado",
-      LOJA_E_CAPTACAO: "Legado",
-      CAPTACAO_E_LOJA: "Legado",
+      LOJA: "Loja",
+      LOJA_E_CAPTACAO: "Loja + CAPTAÇÃO",
+      CAPTACAO_E_LOJA: "CAPTAÇÃO + Loja",
       SEM_SALDO: "Sem saldo CAPTAÇÃO",
       VERIFICAR: "Verificar"
     }[origin] || origin || "-";
@@ -14740,9 +14745,11 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   function transferStockSnapshotCell(item) {
     var pieces = [
       "<div class=\"transfer-stock-snapshot" + (item.stockAlert ? " alert" : "") + "\">",
+      "<span>Saldo loja <b>" + escapeHtml(transferStockValueLabel(item.storeAvailable, null)) + "</b></span>",
       "<span>Saldo captação <b>" + escapeHtml(transferStockValueLabel(item.captureAvailable, item)) + "</b></span>",
       "<span>Retirar captação <b>" + formatQty(item.suggestedCaptureQty || 0) + "</b></span>"
     ];
+    if (Number(item.suggestedStoreQty || 0) > 0) pieces.push("<span>Retirar loja <b>" + formatQty(item.suggestedStoreQty || 0) + "</b></span>");
     if (Number(item.quantityShortage || 0) > 0) pieces.push("<span class=\"danger-text\">Faltante <b>" + formatQty(item.quantityShortage) + "</b></span>");
     pieces.push("</div>");
     return pieces.join("");
@@ -14753,7 +14760,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
     var parts = [];
     if (origin && origin !== "-") parts.push("Pegar: " + origin);
+    parts.push("Saldo loja " + transferStockValueLabel(item.storeAvailable, null));
     parts.push("Retirar captacao " + formatQty(item.suggestedCaptureQty || 0));
+    if (Number(item.suggestedStoreQty || 0) > 0) parts.push("Retirar loja " + formatQty(item.suggestedStoreQty || 0));
     if (transferCaptureLocationCode(item)) parts.push("Local CAPTACAO: " + transferCaptureLocationCode(item));
     parts.push("Saldo captacao " + transferStockValueLabel(item.captureAvailable, item));
     if (Number(item.quantityShortage || 0) > 0) parts.push("Faltante " + formatQty(item.quantityShortage));
