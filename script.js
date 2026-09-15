@@ -442,7 +442,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function runSupabaseRequestWithRetry(label, operation) {
-    var waits = [0, 500, 1200, 2500];
+    var waits = [0, 800, 2000, 4000, 7000, 10000];
     var lastError = null;
     for (var attempt = 0; attempt < waits.length; attempt += 1) {
       try {
@@ -453,12 +453,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         }
         lastError = response.error;
       } catch (error) {
-        if (!isSupabaseTransientNetworkError(error) || attempt === waits.length - 1) throw error;
+        if (!isSupabaseTransientNetworkError(error)) throw error;
         lastError = error;
+        if (attempt === waits.length - 1) return { error: error, data: null };
       }
     }
     if (lastError) throw lastError;
     return null;
+  }
+
+  function smallerSupabaseChunkSize(size) {
+    return Math.max(20, Math.floor(Number(size || 20) / 2));
   }
 
   function bindLocalCacheShutdownEvents() {
@@ -1335,11 +1340,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function fetchAllRows(tableName, orderColumn, ascending) {
     var allRows = [];
     var from = 0;
-    var pageSize = 1000;
+    var pageSize = 500;
     while (true) {
-      var query = supabaseDb.from(tableName).select("*");
-      if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
-      var response = await query.range(from, from + pageSize - 1);
+      var response = await runSupabaseRequestWithRetry("fetch-all-" + tableName, function () {
+        var query = supabaseDb.from(tableName).select("*");
+        if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        return query.range(from, from + pageSize - 1);
+      });
       if (response.error) throw response.error;
       var rows = response.data || [];
       allRows = allRows.concat(rows);
@@ -1352,18 +1359,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function fetchWarehouseRowsWithFilter(tableName, orderColumn, ascending, includeWarehouseId) {
     var allRows = [];
     var from = 0;
-    var pageSize = 1000;
+    var pageSize = 500;
     var code = activeWarehouseCode();
     var id = activeWarehouseId();
     var warehouseFilter = "warehouse_code.eq." + code;
     if (includeWarehouseId && id) warehouseFilter += ",warehouse_id.eq." + id;
     while (true) {
-      var query = supabaseDb
-        .from(tableName)
-        .select("*")
-        .or(warehouseFilter);
-      if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
-      var response = await query.range(from, from + pageSize - 1);
+      var response = await runSupabaseRequestWithRetry("fetch-warehouse-" + tableName, function () {
+        var query = supabaseDb
+          .from(tableName)
+          .select("*")
+          .or(warehouseFilter);
+        if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        return query.range(from, from + pageSize - 1);
+      });
       if (response.error) throw response.error;
       var rows = response.data || [];
       allRows = allRows.concat(rows);
@@ -3226,13 +3235,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function deleteBindingsByIds(ids) {
-    var size = 120;
-    for (var i = 0; i < ids.length; i += size) {
+    var size = 80;
+    for (var i = 0; i < ids.length;) {
       var chunk = ids.slice(i, i + size);
       var response = await runSupabaseRequestWithRetry("delete-bindings", function () {
         return supabaseDb.from("wms_bindings").delete().in("id", chunk);
       });
+      if (response.error && isSupabaseTransientNetworkError(response.error) && size > 20) {
+        size = smallerSupabaseChunkSize(size);
+        continue;
+      }
       if (response.error) throw response.error;
+      i += chunk.length;
     }
   }
 
@@ -3327,19 +3341,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function updateStockAlertsByIds(ids, payload) {
-    var size = 120;
-    for (var i = 0; i < ids.length; i += size) {
+    var size = 80;
+    for (var i = 0; i < ids.length;) {
       var chunk = ids.slice(i, i + size);
       var response = await runSupabaseRequestWithRetry("update-stock-alerts", function () {
         return supabaseDb.from("wms_stock_alerts").update(payload).in("id", chunk);
       });
+      if (response.error && isSupabaseTransientNetworkError(response.error) && size > 20) {
+        size = smallerSupabaseChunkSize(size);
+        continue;
+      }
       if (response.error) throw response.error;
+      i += chunk.length;
     }
   }
 
   async function updateStockRowsByIds(ids, payload) {
-    var size = 120;
-    for (var i = 0; i < ids.length; i += size) {
+    var size = 80;
+    for (var i = 0; i < ids.length;) {
       var chunk = ids.slice(i, i + size);
       var response = await runSupabaseRequestWithRetry("update-stock-positions", function () {
         return supabaseDb
@@ -3347,7 +3366,12 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           .update(payload)
           .in("id", chunk);
       });
+      if (response.error && isSupabaseTransientNetworkError(response.error) && size > 20) {
+        size = smallerSupabaseChunkSize(size);
+        continue;
+      }
       if (response.error) throw response.error;
+      i += chunk.length;
     }
   }
 
@@ -3708,7 +3732,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
     var allRows = [];
     var from = 0;
-    var pageSize = 1000;
+    var pageSize = 500;
     while (true) {
       var response = await runSupabaseRequestWithRetry("fetch-stock-positions", function () {
         var query = supabaseDb
@@ -4710,14 +4734,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function upsertInChunks(tableName, rows, onConflict) {
-    var chunkSize = tableName === "wms_stock_positions" ? 120 : 250;
-    for (var i = 0; i < rows.length; i += chunkSize) {
+    var chunkSize = tableName === "wms_stock_positions" ? 80 : 200;
+    for (var i = 0; i < rows.length;) {
       var chunk = rows.slice(i, i + chunkSize);
       var response = await runSupabaseRequestWithRetry("upsert-" + tableName, function () {
         return supabaseDb.from(tableName).upsert(chunk, onConflict ? { onConflict: onConflict } : undefined);
       });
+      if (response.error && isSupabaseTransientNetworkError(response.error) && chunkSize > 20) {
+        chunkSize = smallerSupabaseChunkSize(chunkSize);
+        continue;
+      }
       if (response.error) throw response.error;
-      if (tableName === "wms_stock_positions" && i + chunkSize < rows.length) await delay(40);
+      i += chunk.length;
+      if (tableName === "wms_stock_positions" && i < rows.length) await delay(80);
     }
   }
 
