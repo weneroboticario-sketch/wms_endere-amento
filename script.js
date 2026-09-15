@@ -2698,13 +2698,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   async function updateRowWithSchemaFallback(tableName, columnName, value, update) {
     var payload = Object.assign({}, update);
     var attemptedMissingColumns = {};
-    var response = await supabaseDb.from(tableName).update(payload).eq(columnName, value);
+    var response = await runSupabaseRequestWithRetry("update-" + tableName, function () {
+      return supabaseDb.from(tableName).update(payload).eq(columnName, value);
+    });
     while (response.error && isMissingColumnError(response.error)) {
       var missingColumn = getMissingColumnName(response.error);
       if (!missingColumn || attemptedMissingColumns[missingColumn]) break;
       attemptedMissingColumns[missingColumn] = true;
       delete payload[missingColumn];
-      response = await supabaseDb.from(tableName).update(payload).eq(columnName, value);
+      response = await runSupabaseRequestWithRetry("update-" + tableName, function () {
+        return supabaseDb.from(tableName).update(payload).eq(columnName, value);
+      });
     }
     return response;
   }
@@ -2789,6 +2793,10 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
     if (!isSupabaseReady()) return false;
     try {
+      if (!stockState.importing) {
+        await closeInterruptedStockImportBatches("LOJA", 10);
+        await closeInterruptedStockImportBatches("CAPTACAO", 10);
+      }
       var batchResponse = await loadStockImportBatchRows();
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
@@ -2867,6 +2875,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     ].join("<br>");
   }
 
+  function updateLocalStockBatchProgress(batchId, patch) {
+    if (!batchId || !patch) return;
+    var existingIndex = (stockState.batches || []).findIndex(function (batch) { return batch.id === batchId; });
+    if (existingIndex >= 0) {
+      stockState.batches[existingIndex] = Object.assign({}, stockState.batches[existingIndex], patch);
+    } else {
+      stockState.batches.unshift(Object.assign({ id: batchId }, patch));
+      stockState.batches = stockState.batches.slice(0, 10);
+    }
+    if (getActiveScreenId() === "baseEstoque") renderStockBase();
+  }
+
   async function importStockFromInput(sourceType) {
     if (!ensureActiveWarehouse()) return;
     if (!window.XLSX) {
@@ -2895,7 +2915,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         setStatus("stockImportStatus", "Nenhuma linha valida encontrada no modelo de " + stockSourceLabel(sourceType) + ".", "error");
         return;
       }
-      setStatus("stockImportStatus", "Gravando " + parsed.rows.length + " item(ns) no Supabase...", "warning");
+      setStatus("stockImportStatus", "Comparando " + parsed.rows.length + " item(ns) com o Supabase...", "warning");
       var importResult = await saveStockImportBatch(sourceType, file.name, parsed, importMode);
       invalidateStockCacheForWarehouseSource(activeWarehouseCode(), sourceType, importResult.changedSkus || []);
       await refreshStockOperationalData();
@@ -3048,10 +3068,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       idempotency_key: requestId,
       request_id: requestId
     };
+    await closeInterruptedStockImportBatches(sourceType, 10);
     var batchResponse = await insertStockBatchWithFallback(batch);
     if (batchResponse.error) throw batchResponse.error;
+    updateLocalStockBatchProgress(batchId, batch);
     try {
       var currentRows = await fetchActiveStockPositions(sourceType);
+      setStatus("stockImportStatus", "Base atual carregada. Preparando gravacao no Supabase...", "warning");
       var currentByKey = {};
       var duplicateActiveIds = {};
       currentRows.forEach(function (position) {
@@ -3091,7 +3114,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
           updatedAt: now
         })));
       });
-      if (upsertRows.length) await upsertStockPositionRows(upsertRows);
+      updateLocalStockBatchProgress(batchId, {
+        imported_rows: metrics.unchanged,
+        inserted_rows: metrics.inserted,
+        updated_rows: metrics.updated,
+        unchanged_rows: metrics.unchanged,
+        negative_rows: metrics.negative,
+        notes: "Comparacao concluida. Gravando alteracoes no Supabase..."
+      });
+      if (upsertRows.length) {
+        setStatus("stockImportStatus", "Gravando " + upsertRows.length + " item(ns) alterado(s) no Supabase...", "warning");
+        await upsertStockPositionRows(upsertRows, function (progress) {
+          setStatus("stockImportStatus", "Gravando " + progress.processed + " de " + progress.total + " item(ns) alterado(s) no Supabase...", "warning");
+          updateLocalStockBatchProgress(batchId, {
+            imported_rows: metrics.unchanged + progress.processed,
+            inserted_rows: metrics.inserted,
+            updated_rows: metrics.updated,
+            unchanged_rows: metrics.unchanged,
+            negative_rows: metrics.negative,
+            notes: "Gravando " + progress.processed + " de " + progress.total + " item(ns) alterado(s)."
+          });
+        });
+      }
       var deactivatedPositions = currentRows.filter(function (position) {
         var skuKey = normalizeSkuKey(position.codigoMaterial);
         var becameUnlocated = unlocatedSkuKeySet[skuKey] && stockPositionLocation(position);
@@ -3100,9 +3144,20 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       deactivatedPositions.forEach(function (position) { metrics.changedSkus.push(normalizeSku(position.codigoMaterial)); });
       var deactivatedIds = deactivatedPositions.map(function (position) { return position.id; }).filter(Boolean);
       metrics.deactivated = deactivatedIds.length;
-      if (deactivatedIds.length) await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
+      if (deactivatedIds.length) {
+        setStatus("stockImportStatus", "Inativando " + deactivatedIds.length + " registro(s) fora da carga atual...", "warning");
+        await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
+      }
+      setStatus("stockImportStatus", "Validando localizacoes antigas e alertas da base...", "warning");
       metrics.unlocatedBindingsRemoved = await clearBindingsForUnlocatedStockImport(sourceType, parsed.rows, warehouseCode, batchId, now);
       metrics.alertRows = await generateNegativeStockAlerts(warehouseCode, sourceType, batchId, now);
+      setStatus("stockImportStatus", "Finalizando lote da importacao...", "warning");
+      updateLocalStockBatchProgress(batchId, {
+        imported_rows: parsed.rows.length,
+        deactivated_rows: metrics.deactivated,
+        alert_rows: metrics.alertRows,
+        notes: "Finalizando lote da importacao..."
+      });
       await updateStockBatchMetrics(batchId, Object.assign({}, metrics, {
         importedRows: parsed.rows.length,
         ignoredRows: parsed.ignored,
@@ -3111,16 +3166,38 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
         importMode: importMode,
         notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
       }));
+      updateLocalStockBatchProgress(batchId, {
+        imported_rows: parsed.rows.length,
+        inserted_rows: metrics.inserted,
+        updated_rows: metrics.updated,
+        unchanged_rows: metrics.unchanged,
+        deactivated_rows: metrics.deactivated,
+        negative_rows: metrics.negative,
+        alert_rows: metrics.alertRows,
+        ignored_rows: parsed.ignored,
+        error_rows: parsed.errors.length,
+        status: "COMPLETED",
+        updated_at: nowIso(),
+        finished_at: nowIso(),
+        notes: "Importacao concluida."
+      });
       return metrics;
     } catch (error) {
       try {
+        updateLocalStockBatchProgress(batchId, {
+          status: "FAILED",
+          notes: formatSupabaseError(error),
+          error_message: formatSupabaseError(error),
+          finished_at: nowIso(),
+          updated_at: nowIso()
+        });
         await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, {
           status: "FAILED",
           notes: formatSupabaseError(error),
           error_message: formatSupabaseError(error),
           finished_at: nowIso(),
           updated_at: nowIso(),
-          imported_rows: 0
+          imported_rows: Math.max(0, Number((stockState.batches.find(function (batch) { return batch.id === batchId; }) || {}).imported_rows || 0))
         });
       } catch (statusError) {
         recordPerformanceError("stock-batch-failed-status", statusError);
@@ -3147,12 +3224,49 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return response;
   }
 
-  async function upsertStockPositionRows(rows) {
+  async function closeInterruptedStockImportBatches(sourceType, minAgeMinutes) {
+    try {
+      var cutoff = new Date(Date.now() - Math.max(1, Number(minAgeMinutes || 10)) * 60000).toISOString();
+      var response = await runSupabaseRequestWithRetry("select-interrupted-stock-batches", function () {
+        return supabaseDb
+          .from("wms_stock_import_batches")
+          .select("id")
+          .eq("warehouse_code", activeWarehouseCode())
+          .eq("source_type", sourceType)
+          .eq("status", "PROCESSING")
+          .lt("created_at", cutoff)
+          .limit(20);
+      });
+      if (response.error) throw response.error;
+      var ids = (response.data || []).map(function (row) { return row.id; }).filter(Boolean);
+      if (!ids.length) return 0;
+      var now = nowIso();
+      var updateResponse = await runSupabaseRequestWithRetry("close-interrupted-stock-batches", function () {
+        return supabaseDb
+          .from("wms_stock_import_batches")
+          .update({
+            status: "FAILED",
+            notes: "Lote encerrado automaticamente antes de nova importacao. A base ativa anterior foi preservada.",
+            error_message: "Importacao interrompida antes de finalizar.",
+            updated_at: now,
+            finished_at: now
+          })
+          .in("id", ids);
+      });
+      if (updateResponse.error) throw updateResponse.error;
+      return ids.length;
+    } catch (error) {
+      recordPerformanceError("stock-close-interrupted-batches", error);
+      return 0;
+    }
+  }
+
+  async function upsertStockPositionRows(rows, onProgress) {
     var payload = rows.map(function (row) { return Object.assign({}, row); });
     var attemptedMissingColumns = {};
     while (true) {
       try {
-        await upsertInChunks("wms_stock_positions", payload, "id");
+        await upsertInChunks("wms_stock_positions", payload, "id", onProgress);
         return;
       } catch (error) {
         if (!isMissingColumnError(error)) throw error;
@@ -4733,7 +4847,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     return;
   }
 
-  async function upsertInChunks(tableName, rows, onConflict) {
+  async function upsertInChunks(tableName, rows, onConflict, onProgress) {
     var chunkSize = tableName === "wms_stock_positions" ? 80 : 200;
     for (var i = 0; i < rows.length;) {
       var chunk = rows.slice(i, i + chunkSize);
@@ -4746,6 +4860,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
       if (response.error) throw response.error;
       i += chunk.length;
+      if (typeof onProgress === "function") onProgress({ processed: i, total: rows.length, chunkSize: chunk.length });
       if (tableName === "wms_stock_positions" && i < rows.length) await delay(80);
     }
   }
