@@ -3745,28 +3745,28 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!captacaoPositions.length) {
       return {
         sku: sku,
-        name: productName || "Não encontrado na Base CAPTAÇÃO",
+        name: productName || findProductName(sku) || "",
         baseFound: lojaPositions.length > 0,
         captureFound: false,
         storeFound: lojaPositions.length > 0,
         storePhysical: lojaPositions.length ? loja.totalFisico : null,
         storeAllocated: lojaPositions.length ? loja.totalAlocado : null,
         storeAvailable: lojaPositions.length ? loja.totalDisponivel : null,
-        capturePhysical: null,
-        captureAllocated: null,
-        captureAvailable: null,
-        operationalTotal: null,
+        capturePhysical: 0,
+        captureAllocated: 0,
+        captureAvailable: 0,
+        operationalTotal: 0,
         rupture: false,
         captureLocation: "",
         officialLocation: "",
-        originSuggested: "NAO_ENCONTRADO_CAPTACAO",
+        originSuggested: "SEM_SALDO_CAPTACAO",
         suggestedCaptureQty: 0,
         suggestedStoreQty: 0,
         quantityShortage: Math.max(0, needed),
         suggestedReplenishmentQty: 0,
         stockAlert: true,
-        alertMessage: lojaPositions.length ? "Produto encontrado na Loja, mas sem registro na CAPTAÇÃO." : "Produto não encontrado na base da CAPTAÇÃO.",
-        operationalMessage: lojaPositions.length ? "Produto sem localização/saldo CAPTAÇÃO para retirada." : "Produto não encontrado na base da CAPTAÇÃO.",
+        alertMessage: lojaPositions.length ? "Saldo CAPTAÇÃO zerado para este SKU." : "Saldo CAPTAÇÃO zerado; SKU sem registro ativo na base operacional.",
+        operationalMessage: "Saldo CAPTAÇÃO zerado para retirada.",
         sellable: loja.isSellable
       };
     }
@@ -14737,7 +14737,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function transferStockValueLabel(value, item) {
-    if (item && item.stockBaseFound === false) return "não encontrado";
+    if (item && item.stockBaseFound === false && (value === null || value === undefined || value === "")) return "não encontrado";
     if (value === null || value === undefined || value === "") return "não encontrado";
     return formatQty(value);
   }
