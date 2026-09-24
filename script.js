@@ -13808,8 +13808,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     window.XLSX.writeFile(workbook, fileName);
     addHistory("Excel exportado", "", "", exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao.");
     await saveData();
-    if ($("exportStatus")) setStatus("exportStatus", "Excel exportado no modelo LinhaSeparacao.", "success");
-    showToast("Excel exportado no mesmo modelo da importacao.", "success");
+    if ($("exportStatus")) setStatus("exportStatus", "Excel exportado no modelo LinhaSeparacao, com uma linha por SKU.", "success");
+    showToast("Excel exportado com uma linha por SKU.", "success");
     } finally {
       endTransferAction(actionButton);
     }
