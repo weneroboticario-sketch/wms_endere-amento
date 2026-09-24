@@ -89,7 +89,7 @@
           <p class="menu-label">Operacao</p>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
           <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button" hidden>Prateleira</button>
-          <button class="menu-item" data-icon="ALC" data-screen="bipagem" type="button" hidden>Alocar Produto</button>
+          <button class="menu-item" data-icon="END" data-screen="bipagem" type="button">Endereçamento</button>
           <button class="menu-item task-menu-item" data-icon="TAR" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         </div>
         <div class="menu-section">
@@ -236,7 +236,7 @@
         <div class="quick-actions">
           <button class="secondary-button" data-screen-target="consultaSku" type="button">Consultar SKU</button>
           <button class="secondary-button" data-screen-target="consultaPrateleira" type="button" hidden>Consultar prateleira</button>
-          <button class="secondary-button" data-screen-target="bipagem" type="button" hidden>Alocar produto</button>
+          <button class="secondary-button" data-screen-target="bipagem" type="button">Endereçar produto</button>
           <button class="secondary-button" data-screen-target="reposicao" type="button">Pedidos de reposicao</button>
           <button class="secondary-button" data-screen-target="transferencias" type="button">Minhas tarefas</button>
           <button class="secondary-button" data-screen-target="exportar" type="button">Exportar Excel</button>
@@ -249,32 +249,38 @@
       <section class="screen" id="bipagem" hidden>
         <div class="page-title">
           <div>
-            <p class="eyebrow">Operacao principal</p>
-            <h2>Alocar Produto</h2>
+            <p class="eyebrow">Operação principal</p>
+            <h2>Endereçamento</h2>
           </div>
         </div>
 
         <div class="scan-grid">
           <section class="panel scan-panel">
             <form id="scanForm" autocomplete="off">
+              <div class="scan-flow" aria-label="Etapas do endereçamento">
+                <span class="scan-flow-step active">1. Produto</span>
+                <span class="scan-flow-arrow" aria-hidden="true">→</span>
+                <span class="scan-flow-step">2. Prateleira</span>
+              </div>
+
               <label for="skuInput">SKU do produto</label>
               <div class="input-action">
                 <input id="skuInput" name="sku" inputmode="text" type="text" placeholder="Bipe ou digite o SKU" autocomplete="off">
-                <button class="primary-button" id="skuReadButton" type="button">Ler SKU</button>
+                <button class="primary-button" id="skuReadButton" type="button">Confirmar produto</button>
               </div>
 
-              <label for="locationInput">Codigo da prateleira</label>
+              <label for="locationInput">Código da prateleira</label>
               <div class="input-action">
-                <input id="locationInput" name="location" inputmode="text" type="text" placeholder="Ex.: R1-RK1-L1-A" autocomplete="off">
-                <button class="secondary-button" id="locationReadButton" type="button">Ler prateleira</button>
+                <input id="locationInput" name="location" inputmode="text" type="text" placeholder="Bipe a prateleira após o produto" autocomplete="off" disabled>
+                <button class="secondary-button" id="locationReadButton" type="button" disabled>Confirmar prateleira</button>
               </div>
 
               <select id="areaSelect" name="area" hidden aria-hidden="true"></select>
 
-              <div class="scan-message" id="scanMessage">Pronto para bipar o produto.</div>
+              <div class="scan-message" id="scanMessage" role="status" aria-live="polite">Pronto para bipar o produto.</div>
 
               <div class="button-row">
-                <button class="primary-button" id="saveManualButton" type="submit">Confirmar</button>
+                <button class="primary-button" id="saveManualButton" type="submit">Confirmar endereçamento</button>
                 <button class="secondary-button" id="clearScanButton" type="button">Limpar</button>
               </div>
             </form>
@@ -1372,13 +1378,13 @@
   </div>
   <div class="decision-modal" id="locationConflictModal" hidden role="dialog" aria-modal="true" aria-labelledby="locationConflictTitle">
     <div class="decision-card">
-      <p class="eyebrow">Localizacao ocupada</p>
-      <h2 id="locationConflictTitle">Localizacao com outros produtos</h2>
+      <p class="eyebrow">Atenção: prateleira ocupada</p>
+      <h2 id="locationConflictTitle">Já existem produtos neste endereço</h2>
       <p id="locationConflictMessage" class="muted"></p>
       <div id="locationConflictList" class="decision-list"></div>
       <div class="decision-actions">
-        <button class="primary-button" data-location-decision="include" type="button">Sim, incluir SKU</button>
-        <button class="secondary-button" data-location-decision="cancel" type="button">Cancelar</button>
+        <button class="primary-button" data-location-decision="include" type="button">Endereçar mesmo assim</button>
+        <button class="secondary-button" data-location-decision="cancel" type="button">Escolher outra prateleira</button>
       </div>
     </div>
   </div>

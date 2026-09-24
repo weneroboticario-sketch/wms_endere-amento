@@ -6773,13 +6773,13 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
+    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
   }
 
   function isRemovedScreen(screenId) {
-    return ["assistente", "conferencias", "historico", "bipagem", "consultaPrateleira"].indexOf(screenId) >= 0;
+    return ["assistente", "conferencias", "historico", "consultaPrateleira"].indexOf(screenId) >= 0;
   }
 
   function bindEvents() {
@@ -7124,6 +7124,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     currentSku = sku;
     $("skuInput").value = sku;
+    setLocationScanEnabled(true);
     var locations = findBySku(sku);
     addHistory("SKU consultado", sku, "", locations.length ? "Produto ja possui localizacao." : "Produto sem localizacao cadastrada.");
     if (locations.length) {
@@ -7157,7 +7158,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     }
     currentLocation = parsed;
     $("locationInput").value = parsed.code;
-    setScanMessage("Endereco identificado: " + parsed.code + ". Salvando...", "success");
+    setScanMessage("Prateleira " + parsed.code + " identificada. Verificando ocupação no estoque " + activeWarehouseCode() + "...", "warning");
     await saveManualScan();
   }
 
@@ -7206,12 +7207,24 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
   }
 
   async function allocateSkuToLocation(sku, parsed, areaCode, sourceBindingId) {
-    if (!locationExistsInMaster(parsed.code)) {
-      var createLocation = window.confirm("Localizacao nao encontrada na base. Deseja criar nova localizacao?");
-      if (!createLocation) return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
+    var occupancyCheck = await fetchLocationOccupantsForAllocation(parsed.code);
+    if (!occupancyCheck.ok) {
+      return {
+        ok: false,
+        message: "Não foi possível verificar se a prateleira está ocupada: " + occupancyCheck.message + ". Tente novamente.",
+        type: "error"
+      };
     }
 
-    var locationOccupants = findByLocation(parsed.code).filter(function (binding) {
+    if (!locationExistsInMaster(parsed.code)) {
+      var createLocation = window.confirm("Localizacao nao encontrada na base. Deseja criar nova localizacao?");
+      if (!createLocation) {
+        prepareAnotherLocationScan();
+        return { ok: false, message: "Cadastro cancelado. Bipe outra prateleira para o mesmo produto.", type: "warning" };
+      }
+    }
+
+    var locationOccupants = occupancyCheck.occupants.filter(function (binding) {
       return !sourceBindingId || binding.id !== sourceBindingId;
     });
     var sameLocation = locationOccupants.find(function (binding) { return isSameSku(binding.sku, sku); });
@@ -7225,8 +7238,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       renderScanResults(locationOccupants);
       var decision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
       if (decision !== "include") {
-        clearScanFieldsForNext();
-        return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
+        prepareAnotherLocationScan();
+        return { ok: false, message: "Endereçamento não realizado. Bipe outra prateleira para o SKU " + sku + ".", type: "warning" };
       }
     }
 
@@ -7277,6 +7290,34 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     state.history = state.history.concat(historyItems);
     renderAll();
     return { ok: true, binding: binding };
+  }
+
+  async function fetchLocationOccupantsForAllocation(locationCode) {
+    var normalizedLocation = locationKeyFromCode(locationCode);
+    var localOccupants = findByLocation(normalizedLocation);
+    if (!isSupabaseReady()) {
+      return { ok: false, occupants: localOccupants, message: "Supabase não conectado" };
+    }
+
+    try {
+      var response = await runSupabaseRequestWithRetry("binding-location-occupancy", function () {
+        return supabaseDb
+          .from("wms_bindings")
+          .select("*")
+          .eq("warehouse_code", activeWarehouseCode())
+          .eq("location_code", normalizedLocation);
+      });
+      if (response.error) throw response.error;
+
+      var remoteOccupants = expandDbBindingRows(response.data || []).filter(bindingMatchesActiveWarehouse);
+      state.bindings = state.bindings.filter(function (binding) {
+        return !bindingMatchesActiveWarehouse(binding) || locationKeyFromBinding(binding) !== normalizedLocation;
+      }).concat(remoteOccupants);
+      return { ok: true, occupants: findByLocation(normalizedLocation) };
+    } catch (error) {
+      console.error("Falha ao verificar ocupação da prateleira no Supabase:", error);
+      return { ok: false, occupants: localOccupants, message: formatSupabaseError(error) };
+    }
   }
 
   async function persistAllocationChange(binding, idsToRemove, historyItems) {
@@ -7340,8 +7381,8 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     if (!modal) {
       return Promise.resolve(window.confirm("Esta localizacao ja possui outros produtos cadastrados: " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja incluir o SKU " + sku + " nesta localizacao?") ? "include" : "cancel");
     }
-    $("locationConflictTitle").textContent = "Localizacao com outros produtos";
-    $("locationConflictMessage").textContent = "Esta localizacao ja possui outros produtos cadastrados. Deseja incluir o SKU " + sku + " nesta mesma localizacao?";
+    $("locationConflictTitle").textContent = "Prateleira " + locationCode + " já está ocupada";
+    $("locationConflictMessage").textContent = "Confira os produtos abaixo. O SKU " + sku + " só será incluído neste mesmo endereço se você confirmar.";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
@@ -7389,6 +7430,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     editingId = null;
     $("skuInput").value = "";
     $("locationInput").value = "";
+    setLocationScanEnabled(false);
     $("areaSelect").value = "1";
     renderScanResults([]);
     setScanMessage("Pronto para o proximo produto.", "success");
@@ -7401,8 +7443,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     editingId = null;
     $("skuInput").value = "";
     $("locationInput").value = "";
+    setLocationScanEnabled(false);
     $("areaSelect").value = "1";
     focusSkuInput();
+  }
+
+  function prepareAnotherLocationScan() {
+    currentLocation = null;
+    $("locationInput").value = "";
+    setLocationScanEnabled(true);
+    window.setTimeout(function () { $("locationInput").focus(); }, 80);
   }
 
   function focusSkuInput() {
@@ -7410,6 +7460,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       var input = $("skuInput");
       if (input) input.focus();
     }, 80);
+  }
+
+  function setLocationScanEnabled(enabled) {
+    var input = $("locationInput");
+    var button = $("locationReadButton");
+    if (input) input.disabled = !enabled;
+    if (button) button.disabled = !enabled;
+    document.querySelectorAll(".scan-flow-step").forEach(function (step, index) {
+      step.classList.toggle("active", enabled ? index === 1 : index === 0);
+      step.classList.toggle("complete", enabled && index === 0);
+    });
   }
 
   function setScanMessage(message, type) {
@@ -13304,6 +13365,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function allocateLastSkuSearch() {
     if (lastSkuSearch) $("skuInput").value = lastSkuSearch;
+    setLocationScanEnabled(Boolean(lastSkuSearch));
     showScreen("bipagem");
     if (lastSkuSearch) {
       currentSku = lastSkuSearch;
@@ -13553,8 +13615,9 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     $("skuInput").value = binding.sku;
     $("locationInput").value = binding.locationCode;
     $("areaSelect").value = String(binding.areaCode);
+    setLocationScanEnabled(true);
     showScreen("bipagem");
-    setScanMessage("Edite os dados e clique em Salvar manualmente.", "warning");
+    setScanMessage("Edite a prateleira e confirme o endereçamento.", "warning");
   }
 
   function removeBinding(id) {
