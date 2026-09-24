@@ -1,3 +1,8 @@
+-- Idempotent legacy baseline for new installations and schema convergence.
+-- Rollback (manual): restore the pre-migration database backup. This baseline
+-- intentionally does not drop tables or delete rows and must not be reversed
+-- by dropping objects that may already contain operational data.
+
 create table if not exists public.wms_bindings (
   id text primary key,
   sku text not null,
@@ -61,7 +66,10 @@ set id = 'warehouse-vdar',
 where code = 'VDR'
   and not exists (select 1 from public.wms_warehouses where code = 'VDAR');
 
-delete from public.wms_warehouses
+update public.wms_warehouses
+set active = false,
+    notes = concat_ws(' | ', nullif(notes, ''), 'Legacy alias preserved; use VDAR.'),
+    updated_at = now()
 where code in ('VDR', 'DVR');
 
 create index if not exists wms_warehouses_code_idx
@@ -329,57 +337,57 @@ drop policy if exists "wms_warehouses_public_all" on public.wms_warehouses;
 create policy "wms_warehouses_public_all"
 on public.wms_warehouses
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_bindings_public_all" on public.wms_bindings;
 create policy "wms_bindings_public_all"
 on public.wms_bindings
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_products_public_all" on public.wms_products;
 create policy "wms_products_public_all"
 on public.wms_products
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_history_public_all" on public.wms_history;
 create policy "wms_history_public_all"
 on public.wms_history
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_users_public_all" on public.wms_users;
 create policy "wms_users_public_all"
 on public.wms_users
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_sessions_public_all" on public.wms_sessions;
 create policy "wms_sessions_public_all"
 on public.wms_sessions
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_access_requests_public_all" on public.wms_access_requests;
 create policy "wms_access_requests_public_all"
 on public.wms_access_requests
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 create table if not exists public.wms_establishments (
   id text primary key,
@@ -1173,15 +1181,15 @@ alter table public.wms_stock_alerts enable row level security;
 
 drop policy if exists "wms_stock_import_batches_public_all" on public.wms_stock_import_batches;
 create policy "wms_stock_import_batches_public_all" on public.wms_stock_import_batches
-for all using (true) with check (true);
+for all using (false) with check (false);
 
 drop policy if exists "wms_stock_positions_public_all" on public.wms_stock_positions;
 create policy "wms_stock_positions_public_all" on public.wms_stock_positions
-for all using (true) with check (true);
+for all using (false) with check (false);
 
 drop policy if exists "wms_stock_alerts_public_all" on public.wms_stock_alerts;
 create policy "wms_stock_alerts_public_all" on public.wms_stock_alerts
-for all using (true) with check (true);
+for all using (false) with check (false);
 
 create index if not exists wms_transfer_events_warehouse_idx
 on public.wms_transfer_events (warehouse_code);
@@ -1212,90 +1220,90 @@ drop policy if exists "wms_establishments_public_all" on public.wms_establishmen
 create policy "wms_establishments_public_all"
 on public.wms_establishments
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_transfers_public_all" on public.wms_transfers;
 create policy "wms_transfers_public_all"
 on public.wms_transfers
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_transfer_items_public_all" on public.wms_transfer_items;
 create policy "wms_transfer_items_public_all"
 on public.wms_transfer_items
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_transfer_merge_items_public_all" on public.wms_transfer_merge_items;
 create policy "wms_transfer_merge_items_public_all"
 on public.wms_transfer_merge_items
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_product_packaging_public_all" on public.wms_product_packaging;
 create policy "wms_product_packaging_public_all"
 on public.wms_product_packaging
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_notifications_public_all" on public.wms_notifications;
 create policy "wms_notifications_public_all"
 on public.wms_notifications
 for all
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_task_notifications_public_all" on public.wms_task_notifications;
 create policy "wms_task_notifications_public_all"
 on public.wms_task_notifications
 for all
-to anon, authenticated
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_transfer_events_public_all" on public.wms_transfer_events;
 create policy "wms_transfer_events_public_all"
 on public.wms_transfer_events
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
-grant all on table public.wms_warehouses to anon, authenticated;
-grant all on table public.wms_bindings to anon, authenticated;
-grant all on table public.wms_products to anon, authenticated;
-grant all on table public.wms_history to anon, authenticated;
-grant all on table public.wms_users to anon, authenticated;
-grant all on table public.wms_sessions to anon, authenticated;
-grant all on table public.wms_access_requests to anon, authenticated;
-grant all on table public.wms_establishments to anon, authenticated;
-grant all on table public.wms_transfers to anon, authenticated;
-grant all on table public.wms_transfer_items to anon, authenticated;
-grant all on table public.wms_transfer_events to anon, authenticated;
-grant all on table public.wms_transfer_divergences to anon, authenticated;
-grant all on table public.wms_transfer_merge_items to anon, authenticated;
-grant all on table public.wms_product_packaging to anon, authenticated;
-grant all on table public.wms_notifications to anon, authenticated;
-grant all on table public.wms_task_notifications to anon, authenticated;
+grant all on table public.wms_warehouses to authenticated;
+grant all on table public.wms_bindings to authenticated;
+grant all on table public.wms_products to authenticated;
+grant all on table public.wms_history to authenticated;
+grant all on table public.wms_users to authenticated;
+grant all on table public.wms_sessions to authenticated;
+grant all on table public.wms_access_requests to authenticated;
+grant all on table public.wms_establishments to authenticated;
+grant all on table public.wms_transfers to authenticated;
+grant all on table public.wms_transfer_items to authenticated;
+grant all on table public.wms_transfer_events to authenticated;
+grant all on table public.wms_transfer_divergences to authenticated;
+grant all on table public.wms_transfer_merge_items to authenticated;
+grant all on table public.wms_product_packaging to authenticated;
+grant all on table public.wms_notifications to authenticated;
+grant all on table public.wms_task_notifications to authenticated;
 
 drop policy if exists "wms_transfer_divergences_public_all" on public.wms_transfer_divergences;
 create policy "wms_transfer_divergences_public_all"
 on public.wms_transfer_divergences
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 create table if not exists public.wms_conferences (
   id text primary key,
@@ -1522,33 +1530,33 @@ drop policy if exists "wms_conferences_public_all" on public.wms_conferences;
 create policy "wms_conferences_public_all"
 on public.wms_conferences
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_conference_items_public_all" on public.wms_conference_items;
 create policy "wms_conference_items_public_all"
 on public.wms_conference_items
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_conference_events_public_all" on public.wms_conference_events;
 create policy "wms_conference_events_public_all"
 on public.wms_conference_events
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_conference_divergences_public_all" on public.wms_conference_divergences;
 create policy "wms_conference_divergences_public_all"
 on public.wms_conference_divergences
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 do $$
 declare
@@ -1642,17 +1650,17 @@ drop policy if exists "wms_sync_metadata_public_all" on public.wms_sync_metadata
 create policy "wms_sync_metadata_public_all"
 on public.wms_sync_metadata
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 drop policy if exists "wms_pending_sync_actions_public_all" on public.wms_pending_sync_actions;
 create policy "wms_pending_sync_actions_public_all"
 on public.wms_pending_sync_actions
 for all
-to anon
-using (true)
-with check (true);
+to authenticated
+using (false)
+with check (false);
 
 do $$
 begin
@@ -1925,7 +1933,7 @@ as $$
   );
 $$;
 
-grant execute on function public.wms_replenishment_schema_diagnostics() to anon, authenticated;
+grant execute on function public.wms_replenishment_schema_diagnostics() to authenticated;
 
 alter table public.wms_replenishment_requests enable row level security;
 
@@ -1933,8 +1941,8 @@ drop policy if exists "wms_replenishment_requests_public_all" on public.wms_repl
 create policy "wms_replenishment_requests_public_all"
 on public.wms_replenishment_requests
 for all
-using (true)
-with check (true);
+using (false)
+with check (false);
 
 create table if not exists public.wms_maintenance_logs (
   id text primary key,
@@ -1969,8 +1977,8 @@ drop policy if exists "wms_maintenance_logs_public_all" on public.wms_maintenanc
 create policy "wms_maintenance_logs_public_all"
 on public.wms_maintenance_logs
 for all
-using (true)
-with check (true);
+using (false)
+with check (false);
 
 create index if not exists idx_wms_maintenance_logs_created
 on public.wms_maintenance_logs (warehouse_code, created_at desc);
@@ -2028,3 +2036,6 @@ create index if not exists idx_wms_schema_version_id
 on public.wms_schema_version (id);
 
 notify pgrst, 'reload schema';
+-- Legacy baseline consolidated for fresh installations.
+-- Rollback: restore a database backup. The baseline is additive/idempotent and
+-- intentionally does not drop tables or delete rows.
