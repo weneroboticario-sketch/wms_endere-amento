@@ -69,14 +69,23 @@ for all to authenticated
 using (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']))
 with check (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']));
 
-create policy wms_product_packaging_read_authenticated on public.wms_product_packaging
-for select to authenticated
-using (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR','OPERADOR']));
-
-create policy wms_product_packaging_staff_write on public.wms_product_packaging
-for all to authenticated
-using (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']))
-with check (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']));
+do $$
+begin
+  if to_regclass('public.wms_product_packaging') is not null then
+    execute $policy$
+      create policy wms_product_packaging_read_authenticated on public.wms_product_packaging
+      for select to authenticated
+      using (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR','OPERADOR']))
+    $policy$;
+    execute $policy$
+      create policy wms_product_packaging_staff_write on public.wms_product_packaging
+      for all to authenticated
+      using (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']))
+      with check (private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR']))
+    $policy$;
+  end if;
+end
+$$;
 
 create policy wms_transfer_merge_items_warehouse_read on public.wms_transfer_merge_items
 for select to authenticated
