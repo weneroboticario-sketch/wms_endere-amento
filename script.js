@@ -674,7 +674,13 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   async function ensureUsersLoaded(options) {
     options = options || {};
     if (!options.force && moduleLoadState.users && authState.users.length && options.repair !== true) return true;
-    var loaded = await loadUsers(options);
+    var loaded = false;
+    try {
+      loaded = await loadUsers(options);
+    } catch (error) {
+      recordPerformanceError("usuarios-carregamento", error);
+      loaded = authState.users.length > 0;
+    }
     moduleLoadState.users = loaded === true;
     return loaded;
   }
@@ -731,7 +737,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
     if (["transferencias", "reposicao", "usuarios"].indexOf(screenId) >= 0) {
-      await ensureUsersLoaded({ repair: false, force: true });
+      var usersLoaded = await ensureUsersLoaded({ repair: false, force: true });
+      if (!usersLoaded) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
     }
     if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
@@ -5078,14 +5085,21 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   async function loadUsers(options) {
     if (!isSupabaseReady()) return false;
-    var response = await fetchUserRowsForAuth();
+    var response;
+    try {
+      response = await fetchUserRowsForAuth();
+    } catch (error) {
+      recordPerformanceError("usuarios-supabase", error);
+      updateSupabaseStatus("Falha ao atualizar usuarios: " + formatSupabaseError(error), "error");
+      return authState.users.length > 0;
+    }
     if (response.error) {
       if (isMissingAuthTableError(response.error)) {
         authState.usersTableAvailable = false;
-        return false;
+        return authState.users.length > 0;
       }
       updateSupabaseStatus("Falha ao carregar usuarios: " + formatSupabaseError(response.error), "error");
-      return false;
+      return authState.users.length > 0;
     }
     authState.usersTableAvailable = true;
     authState.users = (response.data || []).map(fromDbUser);
@@ -5107,8 +5121,10 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   async function fetchUserRowsForAuth() {
     var columns = userSelectColumnList();
-    return fetchUsersWithColumns(columns, userOptionalColumnMap(), function (query) {
-      return query.order("created_at", { ascending: true });
+    return runSupabaseRequestWithRetry("usuarios", function () {
+      return fetchUsersWithColumns(columns, userOptionalColumnMap(), function (query) {
+        return query.order("created_at", { ascending: true });
+      });
     });
   }
 
@@ -5257,10 +5273,18 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   async function loadAccessRequests() {
     if (!isSupabaseReady()) return false;
-    var response = await supabaseDb
-      .from("wms_access_requests")
-      .select("id,created_at,updated_at,name,username,matricula,role_requested,job_title,notes,status,approved_by,approved_at,rejected_by,rejected_at,rejection_reason,warehouse_code")
-      .order("created_at", { ascending: false });
+    var response;
+    try {
+      response = await runSupabaseRequestWithRetry("solicitacoes-acesso", function () {
+        return supabaseDb
+          .from("wms_access_requests")
+          .select("id,created_at,updated_at,name,username,matricula,role_requested,job_title,notes,status,approved_by,approved_at,rejected_by,rejected_at,rejection_reason,warehouse_code")
+          .order("created_at", { ascending: false });
+      });
+    } catch (error) {
+      recordPerformanceError("solicitacoes-acesso", error);
+      return authState.accessRequests.length > 0;
+    }
     if (response.error) {
       authState.accessRequests = [];
       authState.accessRequestsTableAvailable = !isMissingAuthTableError(response.error);
@@ -5957,21 +5981,36 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   function renderUsers() {
     if (!$("userGroups") || !isAdminOrSupervisor()) return;
-    syncUserFilterControls();
-    var users = filteredUsersForManagement();
+    var users = [];
+    try {
+      syncUserFilterControls();
+      users = filteredUsersForManagement();
+    } catch (error) {
+      recordPerformanceError("usuarios-filtros", error);
+      users = visibleUsersForManagement().filter(function (user) {
+        return user.active && user.archived !== true;
+      });
+    }
     var validIds = {};
     users.forEach(function (user) { validIds[user.id] = true; });
     Object.keys(userManagementState.selectedIds).forEach(function (id) {
       if (!validIds[id]) delete userManagementState.selectedIds[id];
     });
-    renderUserDiagnostics();
-    renderUserBulkControls();
     var emptyMessage = authState.users.length
       ? "Nenhum colaborador do estoque " + activeWarehouseCode() + " corresponde aos filtros atuais."
       : "Nenhum usuario foi retornado pelo Supabase. Use Atualizar colaboradores para tentar novamente.";
-    $("userGroups").innerHTML = users.length ? groupedUserCardsHtml(users) : "<div class=\"empty-state\">" + escapeHtml(emptyMessage) + "</div>";
-    renderAccessRequests();
-    renderWarehouses();
+    try {
+      $("userGroups").innerHTML = users.length ? groupedUserCardsHtml(users) : "<div class=\"empty-state\">" + escapeHtml(emptyMessage) + "</div>";
+    } catch (error) {
+      recordPerformanceError("usuarios-cartoes", error);
+      $("userGroups").innerHTML = users.length ? users.map(function (user) {
+        return "<article class=\"user-card\"><div class=\"user-card-head\"><div><strong>" + escapeHtml(user.name || "-") + "</strong><small>" + escapeHtml(user.username || user.matricula || "-") + "</small></div><span class=\"role-badge\">" + escapeHtml(user.role || "-") + "</span></div><div class=\"user-card-meta\"><span>Estoque<strong>" + escapeHtml(user.defaultWarehouseCode || "-") + "</strong></span><span>Status<strong>" + (user.active ? "Ativo" : "Inativo") + "</strong></span></div></article>";
+      }).join("") : "<div class=\"empty-state\">" + escapeHtml(emptyMessage) + "</div>";
+    }
+    try { renderUserDiagnostics(); } catch (error) { recordPerformanceError("usuarios-indicadores", error); }
+    try { renderUserBulkControls(); } catch (error) { recordPerformanceError("usuarios-acoes", error); }
+    try { renderAccessRequests(); } catch (error) { recordPerformanceError("usuarios-solicitacoes", error); }
+    try { renderWarehouses(); } catch (error) { recordPerformanceError("usuarios-estoques", error); }
   }
 
   async function refreshUsersFromServer() {
@@ -6709,7 +6748,12 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
     }
     renderAll();
-    await ensureScreenDataLoaded(screenId);
+    try {
+      await ensureScreenDataLoaded(screenId);
+    } catch (error) {
+      recordPerformanceError("tela-" + screenId, error);
+      updateSupabaseStatus("Falha temporaria ao atualizar " + updateModuleSubtitleLabel(screenId) + ". Exibindo os dados disponiveis.", "warning");
+    }
     if (getActiveScreenId() !== screenId) return;
     renderAll();
     if (screenId === "usuarios") renderUsers();
@@ -6728,9 +6772,13 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function updateModuleSubtitle(screenId) {
-    var label = screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
+    var label = updateModuleSubtitleLabel(screenId);
     if ($("mobileModuleSubtitle")) $("mobileModuleSubtitle").textContent = label;
     if ($("sidebarModuleSubtitle")) $("sidebarModuleSubtitle").textContent = label;
+  }
+
+  function updateModuleSubtitleLabel(screenId) {
+    return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }
 
   function isRemovedScreen(screenId) {
