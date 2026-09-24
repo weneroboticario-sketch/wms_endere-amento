@@ -10,6 +10,7 @@ import {
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
+import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
 (function () {
   "use strict";
@@ -302,8 +303,10 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     channels: [],
     pollTimer: null,
     refreshTimer: null,
+    stockRefreshTimer: null,
     refreshRunning: false,
     refreshPending: false,
+    failureCount: 0,
     warehouseCode: "",
     subscriptionStatus: "",
     lastLiveUpdateAt: "",
@@ -2765,14 +2768,21 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     if (!isSupabaseReady()) return false;
     try {
       if (!stockState.importing) {
-        await closeInterruptedStockImportBatches("LOJA", 10);
-        await closeInterruptedStockImportBatches("CAPTACAO", 10);
+        await Promise.all([
+          closeInterruptedStockImportBatches("LOJA", 10),
+          closeInterruptedStockImportBatches("CAPTACAO", 10)
+        ]);
       }
-      var batchResponse = await loadStockImportBatchRows();
+      var stockResults = await Promise.all([
+        loadStockImportBatchRows(),
+        countActiveStockPositions("LOJA"),
+        countActiveStockPositions("CAPTACAO")
+      ]);
+      var batchResponse = stockResults[0];
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
-      stockState.summary.loja = await countActiveStockPositions("LOJA");
-      stockState.summary.captacao = await countActiveStockPositions("CAPTACAO");
+      stockState.summary.loja = stockResults[1];
+      stockState.summary.captacao = stockResults[2];
       stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
       stockState.tablesAvailable = true;
       recordPerformanceMetric("lastStockLoadMs", startedAt);
@@ -6652,7 +6662,6 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
       showToast("Acesso não autorizado.", "error");
       screenId = defaultScreenForUser();
     }
-    await ensureScreenDataLoaded(screenId);
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") {
       activateTransferTab("myTransfersSection");
     }
@@ -6666,6 +6675,12 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (screenId === "baseEstoque" && !moduleLoadState.stock) {
+      setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
+    }
+    renderAll();
+    await ensureScreenDataLoaded(screenId);
+    if (getActiveScreenId() !== screenId) return;
     renderAll();
     if (screenId === "usuarios") renderUsers();
     if (screenId === "manutencao") renderMaintenance();
@@ -8295,6 +8310,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     if (!isSupabaseReady() || !authState.currentUser || !canUseNetwork()) return;
     realtimeState.active = true;
     realtimeState.warehouseCode = activeWarehouseCode();
+    realtimeState.failureCount = 0;
     if (!moduleLoadState.transfers) realtimeState.lastLiveUpdateAt = "";
     try {
       if (typeof supabaseDb.channel === "function") {
@@ -8345,6 +8361,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     realtimeState.refreshRunning = false;
     realtimeState.warehouseCode = "";
     realtimeState.subscriptionStatus = "";
+    realtimeState.failureCount = 0;
     if (realtimeState.refreshTimer) {
       window.clearTimeout(realtimeState.refreshTimer);
       realtimeState.refreshTimer = null;
@@ -8352,6 +8369,10 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     if (realtimeState.pollTimer) {
       window.clearInterval(realtimeState.pollTimer);
       realtimeState.pollTimer = null;
+    }
+    if (realtimeState.stockRefreshTimer) {
+      window.clearTimeout(realtimeState.stockRefreshTimer);
+      realtimeState.stockRefreshTimer = null;
     }
     if (supabaseDb && typeof supabaseDb.removeChannel === "function") {
       (realtimeState.channels || []).forEach(function (channel) {
@@ -8412,10 +8433,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
       if (eventType === "DELETE") removeById(transferState.items, oldRow.id);
       else applyLocalTransferItemUpdate(fromDbTransferItem(row));
     } else if (table === "wms_stock_positions") {
-      stockState.positionCache = {};
-      if (getActiveScreenId() === "baseEstoque") refreshStockOperationalData().catch(function (error) {
-        recordPerformanceError("stock-realtime-refresh", error);
-      });
+      scheduleStockRealtimeRefresh();
     } else if (table === "wms_transfer_divergences") {
       var transferId = (row && row.transfer_id) || (oldRow && oldRow.transfer_id) || "";
       var transfer = getTransferById(transferId);
@@ -8432,6 +8450,19 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     if (activeScreen === "transferencias") renderTransfers();
     if (activeScreen === "dashboard") renderDashboard();
     renderOperatorTasksAlert();
+  }
+
+  function scheduleStockRealtimeRefresh() {
+    stockState.positionCache = {};
+    if (stockState.importing) return;
+    if (realtimeState.stockRefreshTimer) window.clearTimeout(realtimeState.stockRefreshTimer);
+    realtimeState.stockRefreshTimer = window.setTimeout(function () {
+      realtimeState.stockRefreshTimer = null;
+      if (stockState.importing || getActiveScreenId() !== "baseEstoque") return;
+      refreshStockOperationalData().catch(function (error) {
+        recordPerformanceError("stock-realtime-refresh", error);
+      });
+    }, 1500);
   }
 
   function applyReplenishmentRealtimePayload(payload) {
@@ -8484,6 +8515,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     }
     realtimeState.refreshRunning = true;
     realtimeState.refreshPending = false;
+    var retryDelay = 0;
     try {
       var startedAt = performance.now();
       var since = realtimeState.lastLiveUpdateAt || "";
@@ -8507,6 +8539,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
       }
       recordPerformanceMetric("lastTransferQueryMs", startedAt);
       renderTransferRealtimeViews();
+      realtimeState.failureCount = 0;
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("live-transfer", error);
@@ -8517,18 +8550,24 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
         var recovered = await loadTransferData();
         if (recovered) {
           renderTransferRealtimeViews();
+          realtimeState.failureCount = 0;
           setSyncStatus("Sincronizado (recuperado)", "warning");
         } else {
-          setSyncStatus("Sincronizando novamente", "warning");
+          realtimeState.failureCount += 1;
+          retryDelay = nextRealtimeRetryDelay(realtimeState.failureCount);
+          setSyncStatus("Conexão instável • nova tentativa", "warning");
         }
       } catch (recoveryError) {
         recordPerformanceError("live-transfer-recovery", recoveryError);
-        setSyncStatus("Sincronizando novamente", "warning");
+        realtimeState.failureCount += 1;
+        retryDelay = nextRealtimeRetryDelay(realtimeState.failureCount);
+        setSyncStatus("Conexão instável • nova tentativa", "warning");
       }
-      realtimeState.refreshPending = true;
+      realtimeState.refreshPending = false;
     } finally {
       realtimeState.refreshRunning = false;
-      if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
+      if (retryDelay) scheduleTransferRealtimeRefresh("retry", retryDelay);
+      else if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
     }
   }
 
@@ -13251,6 +13290,8 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
       return;
     }
     lastSkuSearch = sku;
+    list = findBySku(sku);
+    refreshProductNamesForBindings(list);
     setStatus("skuSearchStatus", "Consultando SKU " + sku + " no estoque " + activeWarehouseCode() + "...", "warning");
     var stockSuggestion = null;
     var stockError = "";
@@ -13271,7 +13312,10 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
       setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO.", "success");
     }
     $("skuResults").innerHTML = "";
-    $("skuResultCards").innerHTML = "";
+    $("skuResultCards").innerHTML = list.map(function (binding, index) {
+      return skuLocationCardHtml(binding, index === 0);
+    }).join("");
+    bindActionButtons($("skuResultCards"));
     renderSkuOperationalHub(sku, list, stockSuggestion, stockError);
     $("skuResultActions").hidden = false;
     clearSkuSearchInput();
@@ -13327,6 +13371,7 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
     var tone = suggestion.suggestionPriority === 1 || suggestion.suggestionPriority === 3 ? "danger" : suggestion.suggestionPriority === 2 ? "warning" : "info";
     var suggestionQty = Number(suggestion.suggestedReplenishmentQty || 0);
     hub.hidden = false;
+    hub.removeAttribute("hidden");
     hub.innerHTML = [
       "<section class=\"sku-hub-card\">",
       "<div class=\"sku-hub-title\"><span>Produto</span><strong>" + escapeHtml(sku) + "</strong><p>" + escapeHtml(suggestion.name || "Produto sem nome") + "</p></div>",
