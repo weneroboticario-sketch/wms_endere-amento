@@ -201,19 +201,19 @@ begin
          where c.table_schema = 'public' and c.table_name = target_table and c.column_name = 'warehouse_code'
        ) then
       execute format(
-        'create policy %I on public.%I for select to authenticated using (private.can_access_warehouse(warehouse_code))',
+        'create policy %I on public.%I for select to authenticated using (warehouse_code = any(((select private.current_wms_allowed_warehouses()))::text[]))',
         target_table || '_warehouse_read', target_table
       );
       execute format(
-        'create policy %I on public.%I for insert to authenticated with check (private.can_access_warehouse(warehouse_code))',
+        'create policy %I on public.%I for insert to authenticated with check (warehouse_code = any(((select private.current_wms_allowed_warehouses()))::text[]))',
         target_table || '_warehouse_insert', target_table
       );
       execute format(
-        'create policy %I on public.%I for update to authenticated using (private.can_access_warehouse(warehouse_code)) with check (private.can_access_warehouse(warehouse_code))',
+        'create policy %I on public.%I for update to authenticated using (warehouse_code = any(((select private.current_wms_allowed_warehouses()))::text[])) with check (warehouse_code = any(((select private.current_wms_allowed_warehouses()))::text[]))',
         target_table || '_warehouse_update', target_table
       );
       execute format(
-        'create policy %I on public.%I for delete to authenticated using (private.can_access_warehouse(warehouse_code) and private.has_wms_role(array[''ADMINISTRADOR'',''SUPERVISOR'']))',
+        'create policy %I on public.%I for delete to authenticated using (warehouse_code = any(((select private.current_wms_allowed_warehouses()))::text[]) and private.has_wms_role(array[''ADMINISTRADOR'',''SUPERVISOR'']))',
         target_table || '_warehouse_delete', target_table
       );
     end if;
