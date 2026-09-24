@@ -1,5 +1,5 @@
-const STATIC_CACHE = "wms-static-v1";
-const RUNTIME_CACHE = "wms-runtime-v1";
+const STATIC_CACHE = "wms-static-v2";
+const RUNTIME_CACHE = "wms-runtime-v2";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", function (event) {
@@ -46,18 +46,31 @@ self.addEventListener("fetch", function (event) {
     return;
   }
 
-  if (url.origin === self.location.origin || url.hostname === "cdn.jsdelivr.net") {
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      fetch(request).then(function (response) {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(STATIC_CACHE).then(function (cache) { cache.put(request, copy); });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(request);
+      })
+    );
+    return;
+  }
+
+  if (url.hostname === "cdn.jsdelivr.net") {
     event.respondWith(
       caches.match(request).then(function (cached) {
-        const network = fetch(request).then(function (response) {
+        return fetch(request).then(function (response) {
           if (response && response.ok) {
             const copy = response.clone();
-            caches.open(url.origin === self.location.origin ? STATIC_CACHE : RUNTIME_CACHE)
-              .then(function (cache) { cache.put(request, copy); });
+            caches.open(RUNTIME_CACHE).then(function (cache) { cache.put(request, copy); });
           }
           return response;
         }).catch(function () { return cached; });
-        return cached || network;
       })
     );
   }

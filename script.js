@@ -748,9 +748,11 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   function registerServiceWorker() {
     if (!("serviceWorker" in navigator) || window.location.protocol === "file:") return;
     window.addEventListener("load", function () {
-      navigator.serviceWorker.register("/sw.js").catch(function (error) {
-        console.warn("Service worker nao registrado:", error);
-      });
+      navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
+        .then(function (registration) { return registration.update(); })
+        .catch(function (error) {
+          console.warn("Service worker nao registrado:", error);
+        });
     });
   }
 
