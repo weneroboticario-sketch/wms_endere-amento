@@ -7246,17 +7246,23 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     var skuLocations = findBySku(sku).filter(function (binding) {
       return binding.locationCode !== parsed.code && (!sourceBindingId || binding.id !== sourceBindingId);
     });
-    var keepSkuInMultipleLocations = false;
     if (skuLocations.length) {
       renderScanResults(skuLocations);
-      keepSkuInMultipleLocations = askSkuDuplicateDecision(sku, parsed.code, skuLocations);
-      if (!keepSkuInMultipleLocations) {
+      var moveSku = askSkuMoveDecision(sku, parsed.code, skuLocations);
+      if (!moveSku) {
         clearScanFieldsForNext();
-        return { ok: false, message: "Cadastro cancelado. Pronto para o proximo produto.", type: "warning" };
+        return { ok: false, message: "Alteração de endereço cancelada. Pronto para o próximo produto.", type: "warning" };
       }
     }
 
-    var target = sourceBindingId ? state.bindings.find(function (binding) { return binding.id === sourceBindingId; }) : null;
+    var target = sourceBindingId
+      ? state.bindings.find(function (binding) { return binding.id === sourceBindingId; })
+      : (skuLocations[0] || null);
+    var previousLocations = [];
+    if (target && target.locationCode !== parsed.code) previousLocations.push(target.locationCode);
+    skuLocations.forEach(function (item) {
+      if (item.id !== (target && target.id) && previousLocations.indexOf(item.locationCode) < 0) previousLocations.push(item.locationCode);
+    });
     var binding = target ? Object.assign({}, target) : createBinding(sku, parsed, areaCode);
     var now = new Date().toISOString();
     binding.sku = String(sku);
@@ -7271,13 +7277,19 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     binding.createdAt = binding.createdAt || now;
     binding.updatedAt = now;
 
-    var idsToRemove = [];
+    var idsToRemove = skuLocations
+      .filter(function (item) { return !target || item.id !== target.id; })
+      .map(function (item) { return item.id; });
     var historyItems = [
-      createHistoryItem(target ? "Endereco alterado" : "SKU incluido em localizacao", sku, parsed.code, target ? "Vinculo SKU + localizacao atualizado." : "SKU incluido na localizacao sem remover outros produtos.")
+      createHistoryItem(
+        target ? "Endereco alterado" : "SKU incluido em localizacao",
+        sku,
+        parsed.code,
+        target
+          ? "SKU movido de " + (previousLocations.join(", ") || "localizacao anterior") + " para " + parsed.code + "."
+          : "SKU incluido na localizacao sem remover outros produtos."
+      )
     ];
-    if (keepSkuInMultipleLocations) {
-      historyItems.push(createHistoryItem("SKU duplicado detectado", sku, parsed.code, "SKU mantido tambem em: " + skuLocations.map(function (item) { return item.locationCode; }).join(", ") + ". Lider deve revisar."));
-    }
 
     setScanMessage("Salvando no Supabase...", "warning");
     var saved = await persistAllocationChange(binding, idsToRemove, historyItems);
@@ -7411,15 +7423,17 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     });
   }
 
-  function askSkuDuplicateDecision(sku, newLocationCode, currentLocations) {
+  function askSkuMoveDecision(sku, newLocationCode, currentLocations) {
     var product = findProductName(sku) || "";
     var message = [
-      "Este SKU ja esta alocado em outra localizacao. Deseja registrar tambem nesta nova localizacao?",
+      "Este SKU já está alocado em outra localização. Deseja mover o produto para o novo endereço?",
       "",
       "SKU: " + sku,
       product ? "Produto: " + product : "",
-      "Localizacao atual: " + currentLocations.map(function (binding) { return binding.locationCode; }).join(", "),
-      "Nova localizacao: " + newLocationCode
+      "Localização atual: " + currentLocations.map(function (binding) { return binding.locationCode; }).join(", "),
+      "Nova localização: " + newLocationCode,
+      "",
+      "Ao confirmar, o SKU será removido da localização anterior."
     ].filter(Boolean).join("\n");
     return window.confirm(message);
   }
@@ -13760,6 +13774,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       }
     }
     var exportRows = createLinhaSeparacaoExportRows();
+    var resolvedLocationChanges = Number(validation.resolvedSkuConflicts || 0);
     var rows = [REQUIRED_COLUMNS].concat(exportRows);
     var worksheet = window.XLSX.utils.aoa_to_sheet(rows);
     var range = window.XLSX.utils.decode_range(worksheet["!ref"] || "A1:G1");
@@ -13806,10 +13821,18 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
     window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
     var fileName = "LinhaSeparacao_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
-    addHistory("Excel exportado", "", "", exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao.");
+    addHistory(
+      "Excel exportado",
+      "",
+      "",
+      exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao." +
+        (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
+    );
     await saveData();
-    if ($("exportStatus")) setStatus("exportStatus", "Excel exportado no modelo LinhaSeparacao, com uma linha por SKU.", "success");
-    showToast("Excel exportado com uma linha por SKU.", "success");
+    var exportMessage = "Excel exportado no modelo LinhaSeparacao, com uma linha por SKU." +
+      (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "");
+    if ($("exportStatus")) setStatus("exportStatus", exportMessage, "success");
+    showToast(exportMessage, "success");
     } finally {
       endTransferAction(actionButton);
     }
@@ -13821,7 +13844,7 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
       return { valid: false, message: "Existem duplicidades exatas do mesmo SKU na mesma localizacao. Corrija antes de exportar." };
     }
     if (report.skuConflicts.length) {
-      return { valid: false, type: "sku-conflict", message: "Existem SKUs em mais de uma localizacao. Revise antes de exportar." };
+      return { valid: true, resolvedSkuConflicts: report.skuConflicts.length, message: "" };
     }
     if (report.invalidRows.length) {
       return { valid: false, message: "Existem enderecamentos com campos invalidos. Corrija antes de exportar." };
@@ -13835,16 +13858,16 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function createLinhaSeparacaoExportRows() {
     var bindingsByLocation = {};
-    var bindingKeys = {};
-    activeWarehouseBindings().forEach(function (binding) {
+    var exportedSkuKeys = {};
+    activeWarehouseBindings().slice().sort(sortByDateDesc).forEach(function (binding) {
       var locationCode = locationKeyFromBinding(binding);
       if (!locationCode) return;
       var skus = splitSkuValues(binding.sku);
       if (!skus.length) skus = [firstSkuValue(binding.sku)];
       skus.filter(Boolean).forEach(function (sku) {
-        var bindingKey = locationCode + "\u0001" + normalizeSkuKey(sku);
-        if (bindingKeys[bindingKey]) return;
-        bindingKeys[bindingKey] = true;
+        var skuKey = normalizeSkuKey(sku);
+        if (exportedSkuKeys[skuKey]) return;
+        exportedSkuKeys[skuKey] = true;
         if (!bindingsByLocation[locationCode]) bindingsByLocation[locationCode] = [];
         bindingsByLocation[locationCode].push(Object.assign({}, binding, {
           sku: sku,
