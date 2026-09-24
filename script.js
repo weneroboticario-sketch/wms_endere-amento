@@ -13312,11 +13312,16 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO.", "success");
     }
     $("skuResults").innerHTML = "";
-    $("skuResultCards").innerHTML = list.map(function (binding, index) {
-      return skuLocationCardHtml(binding, index === 0);
-    }).join("");
-    bindActionButtons($("skuResultCards"));
     renderSkuOperationalHub(sku, list, stockSuggestion, stockError);
+    try {
+      $("skuResultCards").innerHTML = list.map(function (binding, index) {
+        return skuLocationCardHtml(binding, index === 0);
+      }).join("");
+      bindActionButtons($("skuResultCards"));
+    } catch (renderError) {
+      $("skuResultCards").innerHTML = "";
+      recordPerformanceError("consulta-sku-localizacoes", renderError);
+    }
     $("skuResultActions").hidden = false;
     clearSkuSearchInput();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
@@ -13370,31 +13375,57 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     };
     var tone = suggestion.suggestionPriority === 1 || suggestion.suggestionPriority === 3 ? "danger" : suggestion.suggestionPriority === 2 ? "warning" : "info";
     var suggestionQty = Number(suggestion.suggestedReplenishmentQty || 0);
+    var card = document.createElement("section");
+    card.className = "sku-hub-card";
+
+    var title = document.createElement("div");
+    title.className = "sku-hub-title";
+    title.appendChild(skuHubTextElement("span", "Produto"));
+    title.appendChild(skuHubTextElement("strong", sku));
+    title.appendChild(skuHubTextElement("p", suggestion.name || "Produto sem nome"));
+    card.appendChild(title);
+
+    var grid = document.createElement("div");
+    grid.className = "sku-hub-grid";
+    grid.appendChild(skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"));
+    grid.appendChild(skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)));
+    grid.appendChild(skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)));
+    grid.appendChild(skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)));
+    grid.appendChild(skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)));
+    card.appendChild(grid);
+
+    var replenishment = document.createElement("div");
+    replenishment.className = "sku-replenishment-box tone-" + tone;
+    var replenishmentText = document.createElement("div");
+    replenishmentText.appendChild(skuHubTextElement("span", "Reposicao"));
+    replenishmentText.appendChild(skuHubTextElement("strong", suggestion.alertMessage || "Pedido manual disponivel para este SKU."));
+    replenishmentText.appendChild(skuHubTextElement("p", suggestionQty > 0 ? "Quantidade sugerida: " + formatQty(suggestionQty) : "Informe a quantidade no pedido, se precisar repor."));
+    if (stockError) replenishmentText.appendChild(skuHubTextElement("p", stockError, "sku-stock-error"));
+    replenishment.appendChild(replenishmentText);
+
+    var createButton = skuHubTextElement("button", "Criar pedido de reposicao", "primary-button");
+    createButton.type = "button";
+    createButton.dataset.skuCreateReplenishment = sku;
+    replenishment.appendChild(createButton);
+    card.appendChild(replenishment);
+
+    hub.replaceChildren(card);
     hub.hidden = false;
     hub.removeAttribute("hidden");
-    hub.innerHTML = [
-      "<section class=\"sku-hub-card\">",
-      "<div class=\"sku-hub-title\"><span>Produto</span><strong>" + escapeHtml(sku) + "</strong><p>" + escapeHtml(suggestion.name || "Produto sem nome") + "</p></div>",
-      "<div class=\"sku-hub-grid\">",
-      skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"),
-      skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)),
-      skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)),
-      skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)),
-      skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)),
-      "</div>",
-      "<div class=\"sku-replenishment-box tone-" + escapeHtml(tone) + "\">",
-      "<div><span>Reposicao</span><strong>" + escapeHtml(suggestion.alertMessage || "Pedido manual disponivel para este SKU.") + "</strong>",
-      "<p>" + (suggestionQty > 0 ? "Quantidade sugerida: " + escapeHtml(formatQty(suggestionQty)) : "Informe a quantidade no pedido, se precisar repor.") + "</p>",
-      stockError ? "<p class=\"sku-stock-error\">" + escapeHtml(stockError) + "</p>" : "",
-      "</div>",
-      "<button class=\"primary-button\" data-sku-create-replenishment=\"" + escapeHtml(sku) + "\" type=\"button\">Criar pedido de reposicao</button>",
-      "</div>",
-      "</section>"
-    ].join("");
   }
 
   function skuHubTile(label, value) {
-    return "<span><small>" + escapeHtml(label) + "</small><strong>" + escapeHtml(value || "-") + "</strong></span>";
+    var tile = document.createElement("span");
+    tile.appendChild(skuHubTextElement("small", label));
+    tile.appendChild(skuHubTextElement("strong", value || "-"));
+    return tile;
+  }
+
+  function skuHubTextElement(tagName, value, className) {
+    var element = document.createElement(tagName);
+    if (className) element.className = className;
+    element.textContent = value === null || value === undefined ? "" : String(value);
+    return element;
   }
 
   function buildSkuReplenishmentSuggestion(sku, locations, stockSuggestion) {
