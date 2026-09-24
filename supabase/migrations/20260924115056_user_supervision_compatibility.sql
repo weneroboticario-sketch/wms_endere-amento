@@ -11,3 +11,9 @@ where profile is null or profile = '';
 
 create index if not exists idx_users_warehouse_supervisor
   on public.wms_users (default_warehouse_code, supervisor_id);
+
+alter table public.wms_access_requests
+  add column if not exists warehouse_code text default 'VDCG';
+
+create index if not exists idx_access_requests_warehouse_status
+  on public.wms_access_requests (warehouse_code, status, created_at desc);
