@@ -672,7 +672,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   async function ensureUsersLoaded(options) {
-    if (moduleLoadState.users && authState.users.length && (!options || options.repair === false)) return true;
+    options = options || {};
+    if (!options.force && moduleLoadState.users && authState.users.length && options.repair !== true) return true;
     var loaded = await loadUsers(options);
     moduleLoadState.users = loaded === true;
     return loaded;
@@ -729,6 +730,9 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
+    if (["transferencias", "reposicao", "usuarios"].indexOf(screenId) >= 0) {
+      await ensureUsersLoaded({ repair: false, force: true });
+    }
     if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
@@ -737,7 +741,6 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
     if (screenId === "usuarios") {
-      await ensureUsersLoaded({ repair: false });
       await ensureAccessRequestsLoaded();
     }
     if (screenId === "estoques") await ensureWarehousesLoaded();
@@ -5479,7 +5482,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       return "<option value=\"" + escapeHtml(warehouseCode) + "\">" + escapeHtml(warehouseCode + " - " + warehouseNameForCode(warehouseCode)) + "</option>";
     }).join("");
     select.value = code;
-    select.hidden = !isGlobalAdmin() || allowed.length <= 1;
+    select.hidden = allowed.length <= 1;
   }
 
   async function enforceFirstPasswordChange(user) {
@@ -5963,9 +5966,34 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     });
     renderUserDiagnostics();
     renderUserBulkControls();
-    $("userGroups").innerHTML = users.length ? groupedUserCardsHtml(users) : "<div class=\"empty-state\">Nenhum usuario encontrado para os filtros atuais.</div>";
+    var emptyMessage = authState.users.length
+      ? "Nenhum colaborador do estoque " + activeWarehouseCode() + " corresponde aos filtros atuais."
+      : "Nenhum usuario foi retornado pelo Supabase. Use Atualizar colaboradores para tentar novamente.";
+    $("userGroups").innerHTML = users.length ? groupedUserCardsHtml(users) : "<div class=\"empty-state\">" + escapeHtml(emptyMessage) + "</div>";
     renderAccessRequests();
     renderWarehouses();
+  }
+
+  async function refreshUsersFromServer() {
+    var button = $("refreshUsersButton");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Atualizando...";
+    }
+    try {
+      var loaded = await ensureUsersLoaded({ repair: false, force: true });
+      renderUsers();
+      if (!loaded) {
+        showToast("Nao foi possivel carregar os colaboradores do Supabase.", "error");
+        return;
+      }
+      showToast(authState.users.length + " usuario(s) carregado(s).", "success");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Atualizar colaboradores";
+      }
+    }
   }
 
   function syncUserFilterControls() {
@@ -6737,6 +6765,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       saveUserFromForm();
     });
     $("clearUserFormButton").addEventListener("click", resetUserForm);
+    if ($("refreshUsersButton")) $("refreshUsersButton").addEventListener("click", refreshUsersFromServer);
     if ($("usersRows")) $("usersRows").addEventListener("click", handleUserTableClick);
     if ($("userGroups")) $("userGroups").addEventListener("click", handleUserTableClick);
     $("accessRequestsRows").addEventListener("click", handleUserTableClick);
@@ -12392,6 +12421,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (isGlobalAdmin()) return authState.users.slice();
     if (isSupervisor()) {
       return authState.users.filter(function (user) {
+        if (authState.currentUser && user.id === authState.currentUser.id) return true;
         return user.role === "OPERADOR" && !user.isGlobalAdmin && normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === activeWarehouseCode();
       });
     }
