@@ -13835,25 +13835,45 @@ import { hashPassword, verifyPasswordHash } from "./auth-service.js";
 
   function createLinhaSeparacaoExportRows() {
     var bindingsByLocation = {};
-    state.bindings.forEach(function (binding) {
-      if (!binding.locationCode) return;
-      if (!bindingsByLocation[binding.locationCode]) bindingsByLocation[binding.locationCode] = [];
-      bindingsByLocation[binding.locationCode].push(binding);
+    var bindingKeys = {};
+    activeWarehouseBindings().forEach(function (binding) {
+      var locationCode = locationKeyFromBinding(binding);
+      if (!locationCode) return;
+      var skus = splitSkuValues(binding.sku);
+      if (!skus.length) skus = [firstSkuValue(binding.sku)];
+      skus.filter(Boolean).forEach(function (sku) {
+        var bindingKey = locationCode + "\u0001" + normalizeSkuKey(sku);
+        if (bindingKeys[bindingKey]) return;
+        bindingKeys[bindingKey] = true;
+        if (!bindingsByLocation[locationCode]) bindingsByLocation[locationCode] = [];
+        bindingsByLocation[locationCode].push(Object.assign({}, binding, {
+          sku: sku,
+          locationCode: locationCode
+        }));
+      });
     });
     Object.keys(bindingsByLocation).forEach(function (locationCode) {
-      bindingsByLocation[locationCode].sort(sortByDateDesc);
+      bindingsByLocation[locationCode].sort(sortByLocationThenSku);
     });
 
-    var usedIds = {};
-    var rows = buildLinhaSeparacaoTemplateRows().map(function (templateRow) {
-      var bindings = bindingsByLocation[templateRow.locationCode] || [];
-      var binding = bindings.shift();
-      if (binding) usedIds[binding.id] = true;
-      return linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, binding ? firstSkuValue(binding.sku) : "");
+    var usedLocations = {};
+    var rows = [];
+    buildLinhaSeparacaoTemplateRows().forEach(function (templateRow) {
+      var locationCode = locationKeyFromCode(templateRow.locationCode);
+      var bindings = bindingsByLocation[locationCode] || [];
+      usedLocations[locationCode] = true;
+      if (!bindings.length) {
+        rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, ""));
+        return;
+      }
+      bindings.forEach(function (binding) {
+        rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, firstSkuValue(binding.sku)));
+      });
     });
 
-    state.bindings
-      .filter(function (binding) { return !usedIds[binding.id]; })
+    Object.keys(bindingsByLocation)
+      .filter(function (locationCode) { return !usedLocations[locationCode]; })
+      .reduce(function (bindings, locationCode) { return bindings.concat(bindingsByLocation[locationCode]); }, [])
       .sort(sortByLocationThenSku)
       .forEach(function (binding) {
         rows.push(linhaSeparacaoRowFromBinding(binding));
