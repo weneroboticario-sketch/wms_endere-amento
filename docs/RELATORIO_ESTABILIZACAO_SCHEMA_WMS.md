@@ -23,7 +23,7 @@ Foram criados, com `IF NOT EXISTS`, indices para transferencias por estoque/stat
 
 ## Supabase
 
-A migration foi executada no projeto real usado pela aplicacao Vercel: `bzqulgdtfpcmkyaldssy`.
+A migration foi executada no projeto Supabase real usado pela aplicacao Vercel.
 O retorno final confirmou uma linha em `wms_schema_version` com a versao `2026.08.30.001`.
 Nenhuma chave sensivel foi registrada neste documento.
 

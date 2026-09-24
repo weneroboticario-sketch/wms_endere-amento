@@ -18,7 +18,7 @@ A migration `supabase-wms-compatibility-migration.sql` acompanha o schema real u
 
 ## Supabase
 
-O projeto configurado no app e o projeto Supabase `bzqulgdtfpcmkyaldssy`. A chave anon nao e registrada neste relatorio. A migration foi executada no SQL Editor desse projeto em 30/08/2026. A consulta final de verificacao retornou 21 linhas, confirmando a presenca das colunas esperadas.
+A migration foi executada no SQL Editor do projeto Supabase configurado em 30/08/2026. Nenhum identificador de projeto ou chave anon e registrado neste relatorio. A consulta final de verificacao retornou 21 linhas, confirmando a presenca das colunas esperadas.
 
 ## Compatibilidade no app
 
