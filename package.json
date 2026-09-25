@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.110.7",
-    "dompurify": "3.4.16"
+    "dompurify": "3.4.16",
+    "jsbarcode": "3.11.6"
   },
   "devDependencies": {
     "eslint": "10.11.0",

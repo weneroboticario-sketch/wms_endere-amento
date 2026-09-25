@@ -1,4 +1,5 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import JsBarcode from "jsbarcode";
 import {
   AUTH_EMAIL_DOMAIN,
   changeOwnPassword,
@@ -13945,7 +13946,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
         }
       }
     }
-    renderLabels(codes);
+    if (!renderLabels(codes)) return;
     addHistory("Etiqueta gerada", "", codes.length === 1 ? codes[0] : "", codes.length + " etiqueta(s) gerada(s).");
     saveData();
     showToast(codes.length + " etiqueta(s) pronta(s).", "success");
@@ -13955,8 +13956,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function clearLabelsPreview() {
-    $("labelsPreview").innerHTML = "";
-    if ($("labelsPrintSheet")) $("labelsPrintSheet").innerHTML = "";
+    $("labelsPreview").replaceChildren();
+    if ($("labelsPrintSheet")) $("labelsPrintSheet").replaceChildren();
     showToast("Visualizacao de etiquetas limpa.", "success");
   }
 
@@ -13987,33 +13988,48 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function renderLabels(codes) {
-    var container = $("labelsPreview");
-    var labelsHtml = codes.map(labelCardHtml).join("");
-    container.innerHTML = labelsHtml;
-    if ($("labelsPrintSheet")) $("labelsPrintSheet").innerHTML = labelsHtml;
-    window.setTimeout(function () {
-      document.querySelectorAll(".barcode").forEach(function (svg) {
-        if (window.JsBarcode) {
-          window.JsBarcode(svg, svg.dataset.code, {
-            format: "CODE128",
-            width: 1.35,
-            height: 42,
-            displayValue: false,
-            margin: 2
-          });
+    var containers = [$("labelsPreview"), $("labelsPrintSheet")].filter(Boolean);
+    var renderingError = null;
+    containers.forEach(function (container) {
+      container.replaceChildren();
+      codes.forEach(function (code, index) {
+        try {
+          container.appendChild(createLabelCard(code, index));
+        } catch (error) {
+          renderingError = renderingError || error;
         }
       });
-    }, 50);
+    });
+    if (renderingError) {
+      console.error("Falha ao gerar codigo de barras:", renderingError);
+      showToast("Nao foi possivel gerar o codigo de barras. Recarregue a pagina e tente novamente.", "error");
+      return false;
+    }
+    return true;
   }
 
-  function labelCardHtml(code, index) {
+  function createLabelCard(code, index) {
     var parsed = normalizeLocation(code);
-    return [
-      "<article class=\"label-card\">",
-      "<h3>" + parsed.code + "</h3>",
-      "<svg class=\"barcode\" data-label-index=\"" + index + "\" data-code=\"" + parsed.code + "\" aria-label=\"" + parsed.code + "\"></svg>",
-      "</article>"
-    ].join("");
+    var card = document.createElement("article");
+    var heading = document.createElement("h3");
+    var barcode = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    card.className = "label-card";
+    heading.textContent = parsed.code;
+    barcode.setAttribute("class", "barcode");
+    barcode.setAttribute("data-label-index", String(index));
+    barcode.setAttribute("data-code", parsed.code);
+    barcode.setAttribute("role", "img");
+    barcode.setAttribute("aria-label", "Codigo de barras do endereco " + parsed.code);
+    JsBarcode(barcode, parsed.code, {
+      format: "CODE128",
+      width: 1.35,
+      height: 42,
+      displayValue: false,
+      margin: 2
+    });
+    card.appendChild(heading);
+    card.appendChild(barcode);
+    return card;
   }
 
   async function exportExcel() {
