@@ -7399,8 +7399,13 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       setScanMessage(allocated.message, allocated.type || "error");
       return;
     }
-    renderScanResults([allocated.binding]);
-    setScanMessage("SKU enderecado com sucesso. Pronto para o proximo produto.", "success");
+    var allocatedOccupants = allocated.occupants && allocated.occupants.length ? allocated.occupants : [allocated.binding];
+    renderScanResults(allocatedOccupants);
+    setScanMessage(
+      "SKU endereçado com sucesso em " + parsed.code + ". " + allocatedOccupants.length +
+        " produto(s) cadastrado(s) neste endereço.",
+      "success"
+    );
     clearScanFieldsForNext();
     } finally {
       endTransferAction(actionButton);
@@ -7502,7 +7507,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     state.bindings.push(binding);
     state.history = state.history.concat(historyItems);
     renderAll();
-    return { ok: true, binding: binding };
+    return { ok: true, binding: binding, occupants: findByLocation(parsed.code) };
   }
 
   async function fetchLocationOccupantsForAllocation(locationCode) {
@@ -7592,10 +7597,10 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   function askLocationConflictDecision(locationCode, sku, occupants) {
     var modal = $("locationConflictModal");
     if (!modal) {
-      return Promise.resolve(window.confirm("Esta localizacao ja possui outros produtos cadastrados: " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja incluir o SKU " + sku + " nesta localizacao?") ? "include" : "cancel");
+      return Promise.resolve(window.confirm("Esta localização já possui os produtos " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja manter todos e endereçar também o SKU " + sku + " neste local?") ? "include" : "cancel");
     }
-    $("locationConflictTitle").textContent = "Prateleira " + locationCode + " já está ocupada";
-    $("locationConflictMessage").textContent = "Confira os produtos abaixo. O SKU " + sku + " só será incluído neste mesmo endereço se você confirmar.";
+    $("locationConflictTitle").textContent = "Prateleira " + locationCode + " possui " + occupants.length + " produto(s)";
+    $("locationConflictMessage").textContent = "Confira os produtos abaixo. Para manter todos eles e acrescentar o SKU " + sku + ", confirme em Endereçar também neste local.";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
@@ -13601,6 +13606,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       recordPerformanceError("consulta-sku-localizacoes", renderError);
     }
     $("skuResultActions").hidden = false;
+    $("allocateSkuSearchButton").hidden = false;
     clearSkuSearchInput();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
   }
