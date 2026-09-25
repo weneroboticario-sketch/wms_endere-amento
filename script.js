@@ -1005,7 +1005,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return activeCodes.length ? activeCodes : WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; });
     var allowed = parseWarehouseCodes(user.allowedWarehouseCodes);
     var defaultCode = normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode || user.warehouseCode);
-    var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, false);
+    var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, false, user.warehouseAccessConfirmed === true);
     defaultCode = repaired.defaultCode;
     allowed = repaired.allowed;
     if (!allowed.length && defaultCode) allowed = [defaultCode];
@@ -1015,8 +1015,12 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     });
   }
 
-  function removeAccidentalDefaultWarehouse(defaultCode, allowed, isGlobal) {
+  function removeAccidentalDefaultWarehouse(defaultCode, allowed, isGlobal, trustStoredAssignment) {
     allowed = unique((allowed || []).map(normalizeWarehouseCode));
+    if (trustStoredAssignment) {
+      if (defaultCode && allowed.indexOf(defaultCode) < 0) allowed.unshift(defaultCode);
+      return { defaultCode: defaultCode, allowed: allowed };
+    }
     if (isGlobal || defaultCode !== DEFAULT_WAREHOUSE_CODE || allowed.indexOf(DEFAULT_WAREHOUSE_CODE) < 0 || allowed.length < 2) {
       return { defaultCode: defaultCode, allowed: allowed };
     }
@@ -5639,7 +5643,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     var hasStoredWarehouse = Boolean(row.default_warehouse_code || row.warehouse_code || row.allowed_warehouse_codes);
     var allowedWarehouses = parseWarehouseCodes(row.allowed_warehouse_codes || row.warehouse_code);
     var defaultWarehouse = normalizeWarehouseCodeOrBlank(row.default_warehouse_code || row.warehouse_code) || allowedWarehouses[0] || DEFAULT_WAREHOUSE_CODE;
-    var repairedWarehouse = removeAccidentalDefaultWarehouse(defaultWarehouse, allowedWarehouses, role === "ADMINISTRADOR");
+    var repairedWarehouse = removeAccidentalDefaultWarehouse(defaultWarehouse, allowedWarehouses, role === "ADMINISTRADOR", hasStoredWarehouse);
     defaultWarehouse = repairedWarehouse.defaultCode || defaultWarehouse;
     allowedWarehouses = repairedWarehouse.allowed;
     if (!allowedWarehouses.length) allowedWarehouses = role === "ADMINISTRADOR" ? WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; }) : [defaultWarehouse];
