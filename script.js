@@ -5990,7 +5990,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function renderUsers() {
-    if (!$("userGroups") || !isAdminOrSupervisor()) return;
+    if (!$("userGroups")) return;
     var users = [];
     try {
       syncUserFilterControls();
@@ -6471,7 +6471,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function renderAccessRequests() {
-    if (!$("accessRequestsRows") || !isAdminOrSupervisor()) return;
+    if (!$("accessRequestsRows")) return;
     var pending = authState.accessRequests.filter(function (item) {
       return item.status === "PENDENTE";
     });
@@ -7550,6 +7550,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (activeScreen === "manutencao") renderMaintenance();
     if (activeScreen === "saudeSistema") renderSystemHealth(false);
     if (activeScreen === "estoques") renderWarehouses();
+    if (activeScreen === "usuarios") renderUsers();
     renderOperatorTasksAlert();
   }
 

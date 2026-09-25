@@ -21,7 +21,11 @@ export function sanitizeHtml(value) {
   return DOMPurify.sanitize(value === null || value === undefined ? "" : String(value), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["script", "iframe", "object", "embed"],
-    FORBID_ATTR: ["srcdoc"]
+    FORBID_ATTR: ["srcdoc"],
+    // The default Trusted Types policy must return the sanitized string itself.
+    // DOMPurify may otherwise return TrustedHTML and recursively invoke the
+    // policy while dynamic WMS panels are being rendered.
+    RETURN_TRUSTED_TYPE: false
   });
 }
 
