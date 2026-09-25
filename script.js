@@ -14113,7 +14113,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
         (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
     );
     await saveData();
-    var exportMessage = "Excel exportado no modelo LinhaSeparacao, com uma linha por SKU." +
+    var exportMessage = "Excel exportado no modelo LinhaSeparacao, com uma linha por localização e SKUs separados por ponto e vírgula." +
       (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "");
     if ($("exportStatus")) setStatus("exportStatus", exportMessage, "success");
     showToast(exportMessage, "success");
@@ -14136,8 +14136,9 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     return { valid: true, message: "" };
   }
 
-  function linhaSeparacaoRowFromBinding(binding) {
-    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, firstSkuValue(binding.sku));
+  function linhaSeparacaoRowFromGroup(group) {
+    var binding = group.binding;
+    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, group.skus.join(";"));
   }
 
   function createLinhaSeparacaoExportRows() {
@@ -14152,38 +14153,40 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
         var skuKey = normalizeSkuKey(sku);
         if (exportedSkuKeys[skuKey]) return;
         exportedSkuKeys[skuKey] = true;
-        if (!bindingsByLocation[locationCode]) bindingsByLocation[locationCode] = [];
-        bindingsByLocation[locationCode].push(Object.assign({}, binding, {
-          sku: sku,
-          locationCode: locationCode
-        }));
+        if (!bindingsByLocation[locationCode]) {
+          bindingsByLocation[locationCode] = {
+            binding: Object.assign({}, binding, { locationCode: locationCode }),
+            skus: []
+          };
+        }
+        bindingsByLocation[locationCode].skus.push(sku);
       });
     });
     Object.keys(bindingsByLocation).forEach(function (locationCode) {
-      bindingsByLocation[locationCode].sort(sortByLocationThenSku);
+      bindingsByLocation[locationCode].skus.sort(function (first, second) {
+        return String(first).localeCompare(String(second), "pt-BR", { numeric: true });
+      });
     });
 
     var usedLocations = {};
     var rows = [];
     buildLinhaSeparacaoTemplateRows().forEach(function (templateRow) {
       var locationCode = locationKeyFromCode(templateRow.locationCode);
-      var bindings = bindingsByLocation[locationCode] || [];
+      var group = bindingsByLocation[locationCode] || null;
       usedLocations[locationCode] = true;
-      if (!bindings.length) {
+      if (!group) {
         rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, ""));
         return;
       }
-      bindings.forEach(function (binding) {
-        rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, firstSkuValue(binding.sku)));
-      });
+      rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, group.skus.join(";")));
     });
 
     Object.keys(bindingsByLocation)
       .filter(function (locationCode) { return !usedLocations[locationCode]; })
-      .reduce(function (bindings, locationCode) { return bindings.concat(bindingsByLocation[locationCode]); }, [])
-      .sort(sortByLocationThenSku)
-      .forEach(function (binding) {
-        rows.push(linhaSeparacaoRowFromBinding(binding));
+      .map(function (locationCode) { return bindingsByLocation[locationCode]; })
+      .sort(function (first, second) { return sortByLocationThenSku(first.binding, second.binding); })
+      .forEach(function (group) {
+        rows.push(linhaSeparacaoRowFromGroup(group));
       });
     return rows;
   }
@@ -16398,7 +16401,6 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
         var rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
         rows.forEach(function (row) {
           var skuValues = splitSkuValues(getByAliases(row, ["Codigo Material", "Cod Material"]));
-          var sku = skuValues[0] || "";
           var productName = normalizeText(getByAliases(row, ["Desc Material", "Descricao Material", "Descrição Material", "Nome Produto", "Produto"]));
           skuValues.forEach(function (skuValue) {
             if (skuValue && productName) data.products[skuValue] = productName;
@@ -16413,14 +16415,16 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
           });
           if (!skuValues.length || !hasAddress) return;
 
-          data.addressRows.push({
-            sku: sku,
-            productName: productName,
-            station: station,
-            rack: rack,
-            line: line,
-            column: column,
-            areaCode: Number(getByAliases(row, ["Area Linha Separação", "Area Linha Separaçao", "Area Linha Separacao"])) || 1
+          skuValues.forEach(function (skuValue) {
+            data.addressRows.push({
+              sku: skuValue,
+              productName: productName,
+              station: station,
+              rack: rack,
+              line: line,
+              column: column,
+              areaCode: Number(getByAliases(row, ["Area Linha Separação", "Area Linha Separaçao", "Area Linha Separacao"])) || 1
+            });
           });
         });
       });
