@@ -685,10 +685,17 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     return loaded;
   }
 
-  async function ensureAccessRequestsLoaded() {
-    if (moduleLoadState.accessRequests) return true;
+  async function ensureAccessRequestsLoaded(options) {
+    options = options || {};
+    if (!options.force && moduleLoadState.accessRequests) return true;
     if (!isAdminOrSupervisor()) return false;
-    var loaded = await loadAccessRequests();
+    var loaded = false;
+    try {
+      loaded = await loadAccessRequests();
+    } catch (error) {
+      recordPerformanceError("solicitacoes-acesso-carregamento", error);
+      loaded = authState.accessRequests.length > 0;
+    }
     moduleLoadState.accessRequests = loaded === true;
     return loaded;
   }
@@ -748,7 +755,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
     if (screenId === "usuarios") {
-      await ensureAccessRequestsLoaded();
+      await ensureAccessRequestsLoaded({ force: true });
     }
     if (screenId === "estoques") await ensureWarehousesLoaded();
     if (screenId === "saudeSistema") await ensureHealthDataLoaded();
@@ -5286,9 +5293,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       return authState.accessRequests.length > 0;
     }
     if (response.error) {
-      authState.accessRequests = [];
       authState.accessRequestsTableAvailable = !isMissingAuthTableError(response.error);
-      return authState.accessRequestsTableAvailable;
+      return authState.accessRequests.length > 0;
     }
     authState.accessRequestsTableAvailable = true;
     authState.accessRequests = (response.data || []).map(fromDbAccessRequest);
@@ -5998,7 +6004,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     });
     var emptyMessage = authState.users.length
       ? "Nenhum colaborador do estoque " + activeWarehouseCode() + " corresponde aos filtros atuais."
-      : "Nenhum usuario foi retornado pelo Supabase. Use Atualizar colaboradores para tentar novamente.";
+      : "Nenhum usuario foi retornado pelo Supabase. Use Atualizar usuarios e solicitacoes para tentar novamente.";
     try {
       $("userGroups").innerHTML = users.length ? groupedUserCardsHtml(users) : "<div class=\"empty-state\">" + escapeHtml(emptyMessage) + "</div>";
     } catch (error) {
@@ -6021,16 +6027,18 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     }
     try {
       var loaded = await ensureUsersLoaded({ repair: false, force: true });
+      await ensureAccessRequestsLoaded({ force: true });
       renderUsers();
       if (!loaded) {
         showToast("Nao foi possivel carregar os colaboradores do Supabase.", "error");
         return;
       }
-      showToast(authState.users.length + " usuario(s) carregado(s).", "success");
+      var pendingRequests = authState.accessRequests.filter(function (request) { return request.status === "PENDENTE"; }).length;
+      showToast(authState.users.length + " usuario(s) e " + pendingRequests + " solicitacao(oes) pendente(s) carregados.", "success");
     } finally {
       if (button) {
         button.disabled = false;
-        button.textContent = "Atualizar colaboradores";
+        button.textContent = "Atualizar usuários e solicitações";
       }
     }
   }
