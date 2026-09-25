@@ -1,5 +1,5 @@
-const STATIC_CACHE = "wms-static-v2";
-const RUNTIME_CACHE = "wms-runtime-v2";
+const STATIC_CACHE = "wms-static-v3";
+const RUNTIME_CACHE = "wms-runtime-v3";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", function (event) {
@@ -13,14 +13,22 @@ self.addEventListener("install", function (event) {
 
 self.addEventListener("activate", function (event) {
   event.waitUntil(
-    caches.keys().then(function (keys) {
-      return Promise.all(keys.map(function (key) {
+    caches.keys().then(async function (keys) {
+      const hadPreviousVersion = keys.some(function (key) {
+        return (key.startsWith("wms-static-") || key.startsWith("wms-runtime-")) && key !== STATIC_CACHE && key !== RUNTIME_CACHE;
+      });
+      await Promise.all(keys.map(function (key) {
         if (key !== STATIC_CACHE && key !== RUNTIME_CACHE) return caches.delete(key);
         return undefined;
       }));
+      await self.clients.claim();
+      if (!hadPreviousVersion) return;
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      await Promise.all(windows.map(function (client) {
+        return client.navigate(client.url).catch(function () { return undefined; });
+      }));
     })
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", function (event) {

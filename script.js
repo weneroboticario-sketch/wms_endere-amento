@@ -6471,23 +6471,60 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   }
 
   function renderAccessRequests() {
-    if (!$("accessRequestsRows")) return;
+    var body = $("accessRequestsRows");
+    if (!body) return;
     var pending = authState.accessRequests.filter(function (item) {
       return item.status === "PENDENTE";
     });
-    $("accessRequestsRows").innerHTML = pending.length ? pending.map(accessRequestRowHtml).join("") : "<tr><td colspan=\"5\">Nenhuma solicitação pendente.</td></tr>";
-  }
+    body.replaceChildren();
+    if (!pending.length) {
+      var emptyRow = document.createElement("tr");
+      var emptyCell = document.createElement("td");
+      emptyCell.colSpan = 5;
+      emptyCell.textContent = "Nenhuma solicitação pendente.";
+      emptyRow.appendChild(emptyCell);
+      body.appendChild(emptyRow);
+      return;
+    }
+    pending.forEach(function (request) {
+      var row = document.createElement("tr");
+      var requesterCell = document.createElement("td");
+      var requesterName = document.createElement("strong");
+      requesterName.textContent = request.name || "-";
+      var requesterLogin = document.createElement("span");
+      requesterLogin.className = "muted";
+      requesterLogin.textContent = request.username || "-";
+      requesterCell.append(requesterName, document.createElement("br"), requesterLogin);
 
-  function accessRequestRowHtml(request) {
-    return [
-      "<tr>",
-      "<td><strong>" + escapeHtml(request.name) + "</strong><br><span class=\"muted\">" + escapeHtml(request.username) + "</span></td>",
-      "<td>" + escapeHtml(request.jobTitle || "-") + "</td>",
-      "<td>" + formatDateTime(request.createdAt) + "</td>",
-      "<td><span class=\"status-badge pending\">" + escapeHtml(request.status) + "</span></td>",
-      "<td><div class=\"row-actions\"><button class=\"edit-small\" data-request-approve=\"" + request.id + "\" type=\"button\">Aprovar</button><button class=\"remove-small\" data-request-reject=\"" + request.id + "\" type=\"button\">Recusar</button></div></td>",
-      "</tr>"
-    ].join("");
+      var roleCell = document.createElement("td");
+      roleCell.textContent = request.jobTitle || "-";
+      var dateCell = document.createElement("td");
+      dateCell.textContent = formatDateTime(request.createdAt);
+      var statusCell = document.createElement("td");
+      var status = document.createElement("span");
+      status.className = "status-badge pending";
+      status.textContent = request.status || "PENDENTE";
+      statusCell.appendChild(status);
+
+      var actionCell = document.createElement("td");
+      var actions = document.createElement("div");
+      actions.className = "row-actions";
+      var approveButton = document.createElement("button");
+      approveButton.className = "edit-small";
+      approveButton.dataset.requestApprove = request.id;
+      approveButton.type = "button";
+      approveButton.textContent = "Aprovar";
+      var rejectButton = document.createElement("button");
+      rejectButton.className = "remove-small";
+      rejectButton.dataset.requestReject = request.id;
+      rejectButton.type = "button";
+      rejectButton.textContent = "Recusar";
+      actions.append(approveButton, rejectButton);
+      actionCell.appendChild(actions);
+
+      row.append(requesterCell, roleCell, dateCell, statusCell, actionCell);
+      body.appendChild(row);
+    });
   }
 
   async function handleUserTableClick(event) {
