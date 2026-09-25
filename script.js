@@ -743,9 +743,16 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
-    if (["transferencias", "reposicao", "usuarios"].indexOf(screenId) >= 0) {
+    if (["transferencias", "reposicao"].indexOf(screenId) >= 0) {
       var usersLoaded = await ensureUsersLoaded({ repair: false, force: true });
       if (!usersLoaded) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
+    }
+    if (screenId === "usuarios") {
+      var managementResults = await Promise.all([
+        ensureUsersLoaded({ repair: false, force: true }),
+        ensureAccessRequestsLoaded({ force: true })
+      ]);
+      if (!managementResults[0]) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
     }
     if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
@@ -754,9 +761,6 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (screenId === "dashboard") await ensureReplenishmentDataLoaded();
     if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
-    if (screenId === "usuarios") {
-      await ensureAccessRequestsLoaded({ force: true });
-    }
     if (screenId === "estoques") await ensureWarehousesLoaded();
     if (screenId === "saudeSistema") await ensureHealthDataLoaded();
     return true;
@@ -6026,8 +6030,12 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       button.textContent = "Atualizando...";
     }
     try {
-      var loaded = await ensureUsersLoaded({ repair: false, force: true });
-      await ensureAccessRequestsLoaded({ force: true });
+      renderUsers();
+      var refreshResults = await Promise.all([
+        ensureUsersLoaded({ repair: false, force: true }),
+        ensureAccessRequestsLoaded({ force: true })
+      ]);
+      var loaded = refreshResults[0];
       renderUsers();
       if (!loaded) {
         showToast("Nao foi possivel carregar os colaboradores do Supabase.", "error");
@@ -6756,6 +6764,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
     }
     renderAll();
+    if (screenId === "usuarios") renderUsers();
     try {
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
