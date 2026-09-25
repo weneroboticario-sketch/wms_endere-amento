@@ -6607,12 +6607,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       showToast("Voce nao possui permissao para editar este usuario.", "error");
       return;
     }
-    $("userEditId").value = user.id;
     $("userFormTitle").textContent = "Editar usuário";
-    $("userNameInput").value = user.name;
-    $("userUsernameInput").value = user.username;
-    $("userUsernameInput").disabled = false;
-    $("userPasswordInput").value = "";
     $("userRoleInput").value = user.role;
     $("userRoleInput").disabled = isSupervisor();
     $("userActiveInput").checked = user.active;
@@ -6620,6 +6615,13 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if ($("userGlobalAdminInput")) $("userGlobalAdminInput").checked = user.isGlobalAdmin === true;
     renderUserWarehouseInputs(user);
     renderUserSupervisorOptions(user);
+    // Reapply identity fields after rebuilding selects inside the same form.
+    // Some browsers reset sibling form controls when those option lists change.
+    $("userEditId").value = user.id;
+    $("userNameInput").value = user.name;
+    $("userUsernameInput").value = user.username;
+    $("userUsernameInput").disabled = false;
+    $("userPasswordInput").value = "";
     setStatus("userFormStatus", "Editando " + user.name + ". Uma nova senha será temporária e exigirá troca no próximo acesso.", "warning");
   }
 
