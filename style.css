@@ -3417,6 +3417,10 @@ tbody tr:hover td {
   gap: 10px;
 }
 
+.decision-actions.two-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
 @media (max-width: 1040px) {
   .metric-grid,
   .dashboard-layout,

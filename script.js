@@ -7440,12 +7440,17 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
     }
 
+    var locationDecision = "include";
+    var occupantIdsToRemove = [];
     if (locationOccupants.length) {
       renderScanResults(locationOccupants);
-      var decision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
-      if (decision !== "include") {
+      locationDecision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
+      if (locationDecision === "cancel") {
         prepareAnotherLocationScan();
         return { ok: false, message: "Endereçamento não realizado. Bipe outra prateleira para o SKU " + sku + ".", type: "warning" };
+      }
+      if (locationDecision === "replace") {
+        occupantIdsToRemove = locationOccupants.map(function (binding) { return binding.id; }).filter(Boolean);
       }
     }
 
@@ -7454,10 +7459,10 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     });
     if (skuLocations.length) {
       renderScanResults(skuLocations);
-      var moveSku = askSkuMoveDecision(sku, parsed.code, skuLocations);
-      if (!moveSku) {
+      var skuDecision = await askSkuMoveDecision(sku, parsed.code, skuLocations);
+      if (skuDecision !== "move") {
         clearScanFieldsForNext();
-        return { ok: false, message: "Alteração de endereço cancelada. Pronto para o próximo produto.", type: "warning" };
+        return { ok: false, message: "SKU mantido no endereço antigo. Nenhuma localização foi alterada.", type: "warning" };
       }
     }
 
@@ -7483,9 +7488,10 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     binding.createdAt = binding.createdAt || now;
     binding.updatedAt = now;
 
-    var idsToRemove = skuLocations
+    var idsToRemove = unique(occupantIdsToRemove.concat(skuLocations
       .filter(function (item) { return !target || item.id !== target.id; })
-      .map(function (item) { return item.id; });
+      .map(function (item) { return item.id; })
+      .filter(Boolean)));
     var historyItems = [
       createHistoryItem(
         target ? "Endereco alterado" : "SKU incluido em localizacao",
@@ -7496,6 +7502,16 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
           : "SKU incluido na localizacao sem remover outros produtos."
       )
     ];
+    if (locationDecision === "replace") {
+      locationOccupants.forEach(function (occupant) {
+        historyItems.push(createHistoryItem(
+          "SKU removido de localizacao",
+          occupant.sku,
+          parsed.code,
+          "SKU removido para manter somente o produto " + sku + " neste endereco."
+        ));
+      });
+    }
 
     setScanMessage("Salvando no Supabase...", "warning");
     var saved = await persistAllocationChange(binding, idsToRemove, historyItems);
@@ -7597,10 +7613,10 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   function askLocationConflictDecision(locationCode, sku, occupants) {
     var modal = $("locationConflictModal");
     if (!modal) {
-      return Promise.resolve(window.confirm("Esta localização já possui os produtos " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Deseja manter todos e endereçar também o SKU " + sku + " neste local?") ? "include" : "cancel");
+      return Promise.resolve(window.confirm("Esta localização já possui os produtos " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Clique em OK para manter todos juntos, ou em Cancelar para escolher outra prateleira.") ? "include" : "cancel");
     }
     $("locationConflictTitle").textContent = "Prateleira " + locationCode + " possui " + occupants.length + " produto(s)";
-    $("locationConflictMessage").textContent = "Confira os produtos abaixo. Para manter todos eles e acrescentar o SKU " + sku + ", confirme em Endereçar também neste local.";
+    $("locationConflictMessage").textContent = "Confira os produtos abaixo. Você pode acrescentar o SKU " + sku + " junto com eles, remover os antigos e deixar somente o novo, ou escolher outra prateleira.";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
@@ -7631,17 +7647,42 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
   function askSkuMoveDecision(sku, newLocationCode, currentLocations) {
     var product = findProductName(sku) || "";
-    var message = [
-      "Este SKU já está alocado em outra localização. Deseja mover o produto para o novo endereço?",
-      "",
-      "SKU: " + sku,
-      product ? "Produto: " + product : "",
-      "Localização atual: " + currentLocations.map(function (binding) { return binding.locationCode; }).join(", "),
-      "Nova localização: " + newLocationCode,
-      "",
-      "Ao confirmar, o SKU será removido da localização anterior."
-    ].filter(Boolean).join("\n");
-    return window.confirm(message);
+    var modal = $("skuMoveModal");
+    var oldLocations = currentLocations.map(function (binding) { return binding.locationCode; }).join(", ");
+    if (!modal) {
+      return Promise.resolve(window.confirm(
+        "O SKU " + sku + " já está em " + oldLocations + ". Clique em OK para removê-lo do endereço antigo e usar " + newLocationCode + ", ou em Cancelar para mantê-lo onde está."
+      ) ? "move" : "keep");
+    }
+    $("skuMoveTitle").textContent = "SKU " + sku + " já possui endereço";
+    $("skuMoveMessage").textContent = "Escolha se deseja mover o produto para o novo endereço ou manter o cadastro atual.";
+    $("skuMoveList").innerHTML = [
+      "<span>Produto: " + escapeHtml(product || "Não informado") + "</span>",
+      "<span>Endereço atual: " + escapeHtml(oldLocations) + "</span>",
+      "<span>Novo endereço: " + escapeHtml(newLocationCode) + "</span>"
+    ].join("");
+    modal.hidden = false;
+
+    return new Promise(function (resolve) {
+      var buttons = modal.querySelectorAll("[data-sku-move-decision]");
+      function finish(decision) {
+        modal.hidden = true;
+        buttons.forEach(function (button) { button.onclick = null; });
+        document.removeEventListener("keydown", handleEscape);
+        resolve(decision);
+      }
+      function handleEscape(event) {
+        if (event.key === "Escape") finish("keep");
+      }
+      buttons.forEach(function (button) {
+        button.onclick = function () {
+          finish(button.dataset.skuMoveDecision);
+        };
+      });
+      document.addEventListener("keydown", handleEscape);
+      var keepButton = modal.querySelector("[data-sku-move-decision='keep']");
+      if (keepButton) keepButton.focus();
+    });
   }
 
   function resetScan() {

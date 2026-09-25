@@ -1381,7 +1381,20 @@
       <div id="locationConflictList" class="decision-list"></div>
       <div class="decision-actions">
         <button class="primary-button" data-location-decision="include" type="button">Endereçar também neste local</button>
+        <button class="danger-button" data-location-decision="replace" type="button">Remover antigos e deixar só o novo</button>
         <button class="secondary-button" data-location-decision="cancel" type="button">Escolher outra prateleira</button>
+      </div>
+    </div>
+  </div>
+  <div class="decision-modal" id="skuMoveModal" hidden role="dialog" aria-modal="true" aria-labelledby="skuMoveTitle">
+    <div class="decision-card">
+      <p class="eyebrow">Produto já endereçado</p>
+      <h2 id="skuMoveTitle">Escolha onde o produto deve ficar</h2>
+      <p id="skuMoveMessage" class="muted"></p>
+      <div id="skuMoveList" class="decision-list"></div>
+      <div class="decision-actions two-actions">
+        <button class="primary-button" data-sku-move-decision="move" type="button">Remover do antigo e usar o novo</button>
+        <button class="secondary-button" data-sku-move-decision="keep" type="button">Manter no endereço antigo</button>
       </div>
     </div>
   </div>
