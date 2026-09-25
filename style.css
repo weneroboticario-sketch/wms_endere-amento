@@ -1642,6 +1642,34 @@ tbody tr:hover td {
   padding-top: 2px;
 }
 
+.user-supervisor-assignment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f7fafc;
+}
+
+.user-supervisor-assignment label {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.user-supervisor-assignment select,
+.user-supervisor-assignment button {
+  min-height: 38px;
+}
+
+.user-supervisor-assignment select {
+  margin-top: 5px;
+}
+
 .transfer-alert {
   margin-top: 18px;
   padding: 16px;
@@ -3460,6 +3488,10 @@ tbody tr:hover td {
   .user-card-status {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .user-supervisor-assignment {
+    grid-template-columns: 1fr;
   }
 
   .app-shell {

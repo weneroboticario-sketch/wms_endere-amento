@@ -5978,11 +5978,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     if (!select) return;
     var role = user && user.role ? user.role : ($("userRoleInput") ? $("userRoleInput").value : "OPERADOR");
     var warehouseCode = normalizeWarehouseCode(user && user.defaultWarehouseCode || ($("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode()));
-    var supervisors = authState.users.filter(function (item) {
-      return item.role === "SUPERVISOR" && item.active && item.archived !== true && userBelongsToWarehouse(item, warehouseCode);
-    }).sort(function (a, b) {
-      return String(a.name || a.username).localeCompare(String(b.name || b.username));
-    });
+    var supervisors = availableSupervisorsForWarehouse(warehouseCode);
     var selectedId = user && user.supervisorId ? user.supervisorId : "";
     if (isSupervisor() && role === "OPERADOR") selectedId = selectedId || authState.currentUser.id;
     select.innerHTML = "<option value=\"\">Sem supervisor definido</option>" + supervisors.map(function (item) {
@@ -5990,6 +5986,14 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     }).join("");
     select.value = selectedId;
     select.disabled = role !== "OPERADOR";
+  }
+
+  function availableSupervisorsForWarehouse(warehouseCode) {
+    return authState.users.filter(function (item) {
+      return item.role === "SUPERVISOR" && item.active && item.archived !== true && userBelongsToWarehouse(item, warehouseCode);
+    }).sort(function (a, b) {
+      return String(a.name || a.username).localeCompare(String(b.name || b.username));
+    });
   }
 
   function selectedUserWarehouseCodes() {
@@ -6241,6 +6245,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       "<span>Último login <strong>" + escapeHtml(formatDateTime(user.lastLoginAt)) + "</strong></span>",
       "</div>",
       "<div class=\"user-card-status\"><span class=\"status-badge " + (user.active ? "active" : "inactive") + "\">" + (user.active ? "Ativo" : "Inativo") + "</span>" + archivedBadge + "</div>",
+      user.role === "OPERADOR" ? userSupervisorAssignmentHtml(user) : "",
       "<div class=\"row-actions user-card-actions\">",
       "<button class=\"edit-small\" data-user-edit=\"" + escapeHtml(user.id) + "\" type=\"button\">Editar</button>",
       "<button class=\"secondary-button\" data-user-reset=\"" + escapeHtml(user.id) + "\" type=\"button\">Redefinir senha</button>",
@@ -6249,6 +6254,21 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       isGlobalAdmin() ? "<button class=\"remove-small\" data-user-delete=\"" + escapeHtml(user.id) + "\" type=\"button\">Excluir definitivo</button>" : "",
       "</div>",
       "</article>"
+    ].join("");
+  }
+
+  function userSupervisorAssignmentHtml(user) {
+    var supervisors = availableSupervisorsForWarehouse(user.defaultWarehouseCode);
+    var options = ["<option value=\"\">Sem supervisor definido</option>"].concat(supervisors.map(function (supervisor) {
+      var selected = supervisor.id === user.supervisorId ? " selected" : "";
+      return "<option value=\"" + escapeHtml(supervisor.id) + "\"" + selected + ">" + escapeHtml(supervisor.name) + "</option>";
+    }));
+    var disabled = canManageUserRecord(user) && supervisors.length ? "" : " disabled";
+    return [
+      "<div class=\"user-supervisor-assignment\">",
+      "<label>Supervisor responsável<select data-user-supervisor-select=\"" + escapeHtml(user.id) + "\"" + disabled + ">" + options.join("") + "</select></label>",
+      "<button class=\"secondary-button\" data-user-supervisor-save=\"" + escapeHtml(user.id) + "\" type=\"button\"" + disabled + ">Salvar supervisor</button>",
+      "</div>"
     ].join("");
   }
 
@@ -6586,6 +6606,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     var toggleId = actionButton.dataset.userToggle;
     var archiveId = actionButton.dataset.userArchive;
     var deleteId = actionButton.dataset.userDelete;
+    var supervisorSaveId = actionButton.dataset.userSupervisorSave;
     var approveId = actionButton.dataset.requestApprove;
     var rejectId = actionButton.dataset.requestReject;
     if (editId) editUser(editId);
@@ -6596,6 +6617,11 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       await archiveUser(archiveId, !(archiveUserRecord && archiveUserRecord.archived));
     }
     if (deleteId) await deleteUserDefinitively(deleteId);
+    if (supervisorSaveId) {
+      var supervisorCard = actionButton.closest(".user-card");
+      var supervisorSelect = supervisorCard ? supervisorCard.querySelector("select[data-user-supervisor-select]") : null;
+      await saveOperatorSupervisor(supervisorSaveId, supervisorSelect ? supervisorSelect.value : "");
+    }
     if (approveId) await approveAccessRequest(approveId);
     if (rejectId) await rejectAccessRequest(rejectId);
   }
@@ -6617,12 +6643,50 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     renderUserSupervisorOptions(user);
     // Reapply identity fields after rebuilding selects inside the same form.
     // Some browsers reset sibling form controls when those option lists change.
+    applyEditingUserIdentity(user);
+    window.setTimeout(function () {
+      if ($("userFormTitle").textContent === "Editar usuário") applyEditingUserIdentity(user);
+    }, 0);
+    setStatus("userFormStatus", "Editando " + user.name + ". Uma nova senha será temporária e exigirá troca no próximo acesso.", "warning");
+  }
+
+  function applyEditingUserIdentity(user) {
     $("userEditId").value = user.id;
     $("userNameInput").value = user.name;
     $("userUsernameInput").value = user.username;
     $("userUsernameInput").disabled = false;
     $("userPasswordInput").value = "";
-    setStatus("userFormStatus", "Editando " + user.name + ". Uma nova senha será temporária e exigirá troca no próximo acesso.", "warning");
+  }
+
+  async function saveOperatorSupervisor(userId, supervisorId) {
+    var user = authState.users.find(function (item) { return item.id === userId; });
+    if (!user || user.role !== "OPERADOR" || !canManageUserRecord(user)) {
+      showToast("Voce nao possui permissao para alterar este operador.", "error");
+      return;
+    }
+    var supervisor = supervisorId ? authState.users.find(function (item) { return item.id === supervisorId; }) : null;
+    if (supervisorId && (!supervisor || supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, user.defaultWarehouseCode))) {
+      showToast("Selecione um supervisor do mesmo estoque do operador.", "error");
+      return;
+    }
+    var response = await updateUserRowById(user.id, {
+      supervisor_id: supervisor ? supervisor.id : "",
+      supervisor_name: supervisor ? supervisor.name : "",
+      updated_at: new Date().toISOString()
+    });
+    if (response.error) {
+      showToast("Nao foi possivel salvar o supervisor: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    await loadUsers({ repair: false });
+    var refreshed = authState.users.find(function (item) { return item.id === user.id; });
+    if (!refreshed || (refreshed.supervisorId || "") !== (supervisor ? supervisor.id : "")) {
+      showToast("O Supabase nao confirmou o vinculo do supervisor. Atualize e tente novamente.", "error");
+      renderUsers();
+      return;
+    }
+    renderUsers();
+    showToast(supervisor ? supervisor.name + " agora supervisiona " + user.name + "." : "Supervisor removido de " + user.name + ".", "success");
   }
 
   async function resetUserPassword(id) {
