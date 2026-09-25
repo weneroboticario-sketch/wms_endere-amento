@@ -315,7 +315,7 @@ a:focus-visible {
   font-size: 0.9rem;
 }
 
-.user-card {
+.sidebar .user-card {
   display: grid;
   gap: 8px;
   margin-top: auto;
@@ -324,16 +324,16 @@ a:focus-visible {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.user-card strong {
+.sidebar .user-card strong {
   color: #ffffff;
 }
 
-.user-card span {
+.sidebar .user-card span {
   color: #bdd0dd;
   font-size: 0.78rem;
 }
 
-.user-card .secondary-button {
+.sidebar .user-card .secondary-button {
   min-height: 38px;
 }
 
@@ -1626,6 +1626,10 @@ tbody tr:hover td {
   margin-top: 2px;
   color: var(--muted);
   font-weight: 700;
+}
+
+.user-card-head strong {
+  color: var(--ink);
 }
 
 .user-card-meta {
