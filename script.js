@@ -14107,7 +14107,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     var workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "LinhaSeparacao");
     window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
-    var fileName = "LinhaSeparacao_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
+    var exportWarehouseCode = activeWarehouseCode();
+    var fileName = "LinhaSeparacao_" + exportWarehouseCode + "_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
     addHistory(
       "Excel exportado",
@@ -14117,7 +14118,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
         (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
     );
     await saveData();
-    var exportMessage = "Excel exportado no modelo LinhaSeparacao, com uma linha por localização e SKUs separados por ponto e vírgula." +
+    var exportMessage = "Excel do estoque " + exportWarehouseCode + " exportado no modelo LinhaSeparacao, com uma linha por localização e SKUs separados por ponto e vírgula." +
       (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "");
     if ($("exportStatus")) setStatus("exportStatus", exportMessage, "success");
     showToast(exportMessage, "success");

@@ -19,3 +19,10 @@ test("VDCO station name matches the external warehouse registration", () => {
   assert.equal(formatLinhaSeparacaoStationName("VDAR", 1), "Rua 01");
   assert.equal(formatLinhaSeparacaoStationName("VDSI", 1), "Rua 01");
 });
+
+test("service worker cache version forces deployed clients to refresh", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../public/sw.js", import.meta.url), "utf8");
+  assert.match(source, /wms-static-v4/);
+  assert.match(source, /wms-runtime-v4/);
+});
