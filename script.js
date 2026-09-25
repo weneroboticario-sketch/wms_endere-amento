@@ -5903,6 +5903,11 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       setStatus("userFormStatus", "Erro ao confirmar estoque salvo. Esperado " + defaultWarehouseCode + ", gravado " + savedUser.defaultWarehouseCode + ".", "error");
       return;
     }
+    var expectedSupervisorId = supervisor ? supervisor.id : "";
+    if ((savedUser.supervisorId || "") !== expectedSupervisorId) {
+      setStatus("userFormStatus", "Usuario salvo, mas o vinculo com o supervisor nao foi confirmado no Supabase. Atualize a tela e tente novamente.", "error");
+      return;
+    }
     await loadUsers({ repair: false });
     await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role + " - Estoque " + defaultWarehouseCode);
     if (previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode) {
@@ -5910,7 +5915,11 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     }
     resetUserForm();
     renderUsers();
-    setStatus("userFormStatus", previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode ? "Usuario atualizado com sucesso. Estoque alterado; a mudanca sera aplicada no proximo login do colaborador." : "Usuario atualizado com sucesso.", "success");
+    var savedMessage = previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode
+      ? "Usuario atualizado com sucesso. Estoque alterado; a mudanca sera aplicada no proximo login do colaborador."
+      : "Usuario atualizado com sucesso.";
+    if (supervisor) savedMessage += " Supervisor: " + supervisor.name + ".";
+    setStatus("userFormStatus", savedMessage, "success");
     } finally {
       endTransferAction(actionButton);
     }
@@ -6019,8 +6028,19 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     }
     try { renderUserDiagnostics(); } catch (error) { recordPerformanceError("usuarios-indicadores", error); }
     try { renderUserBulkControls(); } catch (error) { recordPerformanceError("usuarios-acoes", error); }
+    try { refreshUserFormSupervisorOptions(); } catch (error) { recordPerformanceError("usuarios-supervisores", error); }
     try { renderAccessRequests(); } catch (error) { recordPerformanceError("usuarios-solicitacoes", error); }
     try { renderWarehouses(); } catch (error) { recordPerformanceError("usuarios-estoques", error); }
+  }
+
+  function refreshUserFormSupervisorOptions() {
+    var select = $("userSupervisorInput");
+    if (!select) return;
+    renderUserSupervisorOptions({
+      role: $("userRoleInput") ? $("userRoleInput").value : "OPERADOR",
+      defaultWarehouseCode: $("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode(),
+      supervisorId: select.value
+    });
   }
 
   async function refreshUsersFromServer() {
@@ -6092,7 +6112,7 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     var supervisors = authState.users.filter(function (user) {
       if (user.role !== "SUPERVISOR" || user.archived === true) return false;
       if (isGlobalAdmin() && userFilterValue("userWarehouseFilter") === "") return true;
-      return normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === warehouse;
+      return userBelongsToWarehouse(user, warehouse);
     }).sort(function (a, b) {
       return String(a.name || a.username).localeCompare(String(b.name || b.username));
     });
@@ -6231,7 +6251,9 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   function renderUserBulkControls() {
     var selected = selectedManageableUsers();
     if ($("userSelectionCount")) $("userSelectionCount").textContent = selected.length + " selecionado(s)";
-    fillUserSelect("bulkUserSupervisorSelect", userSupervisorFilterOptions(), $("bulkUserSupervisorSelect") ? $("bulkUserSupervisorSelect").value : "");
+    var supervisorOptions = userSupervisorFilterOptions().filter(function (option) { return option.value !== "__none"; });
+    if (supervisorOptions.length) supervisorOptions[0] = { value: "", label: "Selecionar supervisor" };
+    fillUserSelect("bulkUserSupervisorSelect", supervisorOptions, $("bulkUserSupervisorSelect") ? $("bulkUserSupervisorSelect").value : "");
     fillUserSelect("bulkUserWarehouseSelect", userWarehouseFilterOptions().filter(function (option) { return option.value; }), $("bulkUserWarehouseSelect") ? $("bulkUserWarehouseSelect").value : "");
     if ($("bulkUserWarehouseButton")) $("bulkUserWarehouseButton").hidden = !isGlobalAdmin();
   }
@@ -6433,17 +6455,35 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       showToast("Selecione operadores para vincular.", "warning");
       return;
     }
+    var incompatible = selected.filter(function (user) {
+      return !userBelongsToWarehouse(supervisor, user.defaultWarehouseCode);
+    });
+    if (incompatible.length) {
+      showToast("O supervisor precisa ter acesso ao mesmo estoque de todos os operadores selecionados.", "error");
+      return;
+    }
+    var failures = [];
     for (var i = 0; i < selected.length; i += 1) {
-      if (!userBelongsToWarehouse(supervisor, selected[i].defaultWarehouseCode)) continue;
-      await updateUserRowById(selected[i].id, {
+      var response = await updateUserRowById(selected[i].id, {
         supervisor_id: supervisor.id,
         supervisor_name: supervisor.name,
         updated_at: new Date().toISOString()
       });
+      if (response.error) failures.push(selected[i].name || selected[i].username);
+    }
+    await loadUsers({ repair: false });
+    var unconfirmed = selected.filter(function (user) {
+      var refreshed = authState.users.find(function (item) { return item.id === user.id; });
+      return !refreshed || refreshed.supervisorId !== supervisor.id;
+    });
+    if (failures.length || unconfirmed.length) {
+      showToast("Nao foi possivel confirmar o supervisor para todos os operadores. Tente atualizar e repetir.", "error");
+      renderUsers();
+      return;
     }
     userManagementState.selectedIds = {};
-    await loadUsers({ repair: false });
     renderUsers();
+    showToast(supervisor.name + " vinculado a " + selected.length + " operador(es).", "success");
   }
 
   function renderWarehouses() {
