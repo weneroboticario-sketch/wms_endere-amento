@@ -3,7 +3,7 @@ function normalizeWarehouseCode(value) {
 }
 
 export function shouldUseVdcgLinhaSeparacaoTemplate(warehouseCode) {
-  return normalizeWarehouseCode(warehouseCode) !== "VDCO";
+  return normalizeWarehouseCode(warehouseCode) === "VDCG";
 }
 
 export function formatLinhaSeparacaoStationName(warehouseCode, streetNumber) {
