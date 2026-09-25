@@ -10,6 +10,10 @@ import {
 } from "./src/auth.js";
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
+import {
+  formatLinhaSeparacaoStationName,
+  shouldUseVdcgLinhaSeparacaoTemplate
+} from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
@@ -14136,12 +14140,13 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     return { valid: true, message: "" };
   }
 
-  function linhaSeparacaoRowFromGroup(group) {
+  function linhaSeparacaoRowFromGroup(group, warehouseCode) {
     var binding = group.binding;
-    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, group.skus.join(";"));
+    return linhaSeparacaoRow(binding.rua, binding.rack, binding.areaCode, binding.linha, binding.letra, group.skus.join(";"), warehouseCode);
   }
 
   function createLinhaSeparacaoExportRows() {
+    var warehouseCode = activeWarehouseCode();
     var bindingsByLocation = {};
     var exportedSkuKeys = {};
     activeWarehouseBindings().slice().sort(sortByDateDesc).forEach(function (binding) {
@@ -14170,15 +14175,15 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 
     var usedLocations = {};
     var rows = [];
-    buildLinhaSeparacaoTemplateRows().forEach(function (templateRow) {
+    buildLinhaSeparacaoTemplateRows(warehouseCode).forEach(function (templateRow) {
       var locationCode = locationKeyFromCode(templateRow.locationCode);
       var group = bindingsByLocation[locationCode] || null;
       usedLocations[locationCode] = true;
       if (!group) {
-        rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, ""));
+        rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, "", warehouseCode));
         return;
       }
-      rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, group.skus.join(";")));
+      rows.push(linhaSeparacaoRow(templateRow.rua, templateRow.rack, templateRow.area, templateRow.linha, templateRow.letra, group.skus.join(";"), warehouseCode));
     });
 
     Object.keys(bindingsByLocation)
@@ -14186,13 +14191,14 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       .map(function (locationCode) { return bindingsByLocation[locationCode]; })
       .sort(function (first, second) { return sortByLocationThenSku(first.binding, second.binding); })
       .forEach(function (group) {
-        rows.push(linhaSeparacaoRowFromGroup(group));
+        rows.push(linhaSeparacaoRowFromGroup(group, warehouseCode));
       });
     return rows;
   }
 
-  function buildLinhaSeparacaoTemplateRows() {
+  function buildLinhaSeparacaoTemplateRows(warehouseCode) {
     var rows = [];
+    if (!shouldUseVdcgLinhaSeparacaoTemplate(warehouseCode || activeWarehouseCode())) return rows;
     LINHA_SEPARACAO_TEMPLATE.forEach(function (rule) {
       for (var rack = rule.rackStart; rack <= rule.rackEnd; rack += 1) {
         for (var linha = 1; linha <= rule.lineEnd; linha += 1) {
@@ -14213,9 +14219,9 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     return rows;
   }
 
-  function linhaSeparacaoRow(rua, rack, areaCode, linha, letra, sku) {
+  function linhaSeparacaoRow(rua, rack, areaCode, linha, letra, sku, warehouseCode) {
     return [
-      "Rua " + pad2(rua),
+      formatLinhaSeparacaoStationName(warehouseCode || activeWarehouseCode(), rua),
       Number(rack),
       String(areaCode || 1),
       " " + Number(linha),
