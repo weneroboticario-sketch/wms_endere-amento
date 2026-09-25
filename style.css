@@ -4665,6 +4665,74 @@ tbody tr:hover td {
   margin-top: 10px;
 }
 
+.stock-history-table {
+  min-width: 920px;
+  table-layout: fixed;
+}
+
+.stock-history-table th:nth-child(1) {
+  width: 148px;
+}
+
+.stock-history-table th:nth-child(2) {
+  width: 92px;
+}
+
+.stock-history-table th:nth-child(3) {
+  width: 28%;
+}
+
+.stock-history-table th:nth-child(4) {
+  width: 190px;
+}
+
+.stock-history-table th:nth-child(5) {
+  width: 88px;
+}
+
+.stock-history-table th:nth-child(6) {
+  width: 112px;
+}
+
+.stock-history-table th:nth-child(7) {
+  width: 132px;
+}
+
+.stock-history-table td {
+  overflow-wrap: anywhere;
+}
+
+.stock-batch-date,
+.stock-batch-source,
+.stock-batch-ignored {
+  white-space: nowrap;
+}
+
+.stock-batch-file {
+  color: var(--muted);
+  font-size: 0.84rem;
+  word-break: break-word;
+}
+
+.stock-batch-imported {
+  font-weight: 800;
+}
+
+.stock-batch-imported small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.stock-history-empty {
+  padding: 22px 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .replenishment-summary-grid,
 .replenishment-card-metrics,
 .replenishment-product-meta {
@@ -5040,6 +5108,15 @@ tbody tr:hover td {
   .table-wrap {
     max-width: 100%;
     overflow-x: auto;
+  }
+
+  #baseEstoque .table-wrap {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .stock-history-table {
+    min-width: 860px;
   }
 
   #transferencias .leader-report-table,

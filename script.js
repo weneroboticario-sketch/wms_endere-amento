@@ -2854,33 +2854,61 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
       stockSummaryCard("Ultima importacao", stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-")
     ].join("");
-    if ($("stockBatchRows")) {
-      $("stockBatchRows").innerHTML = stockState.batches.length ? stockState.batches.map(function (batch) {
-        return [
-          "<tr>",
-          "<td>" + formatDateTime(batch.created_at) + "</td>",
-          "<td>" + escapeHtml(batch.source_type || "-") + "</td>",
-          "<td>" + escapeHtml(batch.file_name || "-") + "</td>",
-          "<td title=\"" + escapeHtml(batch.notes || "") + "\">" + stockBatchImportedSummary(batch) + "</td>",
-          "<td>" + formatQty(batch.ignored_rows || 0) + "</td>",
-          "<td><span class=\"status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning") + "\">" + escapeHtml(batch.status || "-") + "</span></td>",
-          "<td>" + escapeHtml(batch.imported_by_name || "-") + "</td>",
-          "</tr>"
-        ].join("");
-      }).join("") : "<tr><td colspan=\"7\">Nenhuma importacao operacional no estoque atual.</td></tr>";
-    }
+    renderStockBatchRows();
   }
 
   function stockSummaryCard(label, value) {
     return "<article class=\"stock-summary-card\"><span>" + escapeHtml(label) + "</span><strong>" + escapeHtml(String(value)) + "</strong></article>";
   }
 
-  function stockBatchImportedSummary(batch) {
-    if (batch.inserted_rows === undefined && batch.updated_rows === undefined && batch.deactivated_rows === undefined) return formatQty(batch.imported_rows || 0);
-    return [
-      formatQty(batch.imported_rows || 0),
-      "<small>+ " + formatQty(batch.inserted_rows || 0) + " novo(s) / " + formatQty(batch.updated_rows || 0) + " alt. / " + formatQty(batch.deactivated_rows || 0) + " inat." + (batch.negative_rows !== undefined ? " / " + formatQty(batch.negative_rows || 0) + " neg." : "") + "</small>"
-    ].join("<br>");
+  function renderStockBatchRows() {
+    var body = $("stockBatchRows");
+    if (!body) return;
+
+    body.replaceChildren();
+    if (!stockState.batches.length) {
+      var emptyRow = document.createElement("tr");
+      var emptyCell = document.createElement("td");
+      emptyCell.colSpan = 7;
+      emptyCell.className = "stock-history-empty";
+      emptyCell.textContent = "Nenhuma importacao operacional no estoque atual.";
+      emptyRow.appendChild(emptyCell);
+      body.appendChild(emptyRow);
+      return;
+    }
+
+    stockState.batches.forEach(function (batch) {
+      var row = document.createElement("tr");
+      appendStockBatchTextCell(row, formatDateTime(batch.created_at), "stock-batch-date");
+      appendStockBatchTextCell(row, batch.source_type || "-", "stock-batch-source");
+      appendStockBatchTextCell(row, batch.file_name || "-", "stock-batch-file");
+
+      var importedCell = appendStockBatchTextCell(row, formatQty(batch.imported_rows || 0), "stock-batch-imported");
+      importedCell.title = batch.notes || "";
+      if (batch.inserted_rows !== undefined || batch.updated_rows !== undefined || batch.deactivated_rows !== undefined) {
+        var details = document.createElement("small");
+        details.textContent = "+ " + formatQty(batch.inserted_rows || 0) + " novo(s) / " + formatQty(batch.updated_rows || 0) + " alt. / " + formatQty(batch.deactivated_rows || 0) + " inat." + (batch.negative_rows !== undefined ? " / " + formatQty(batch.negative_rows || 0) + " neg." : "");
+        importedCell.appendChild(details);
+      }
+
+      appendStockBatchTextCell(row, formatQty(batch.ignored_rows || 0), "stock-batch-ignored");
+      var statusCell = document.createElement("td");
+      var status = document.createElement("span");
+      status.className = "status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning");
+      status.textContent = batch.status || "-";
+      statusCell.appendChild(status);
+      row.appendChild(statusCell);
+      appendStockBatchTextCell(row, batch.imported_by_name || "-", "stock-batch-user");
+      body.appendChild(row);
+    });
+  }
+
+  function appendStockBatchTextCell(row, value, className) {
+    var cell = document.createElement("td");
+    cell.className = className || "";
+    cell.textContent = String(value === undefined || value === null ? "-" : value);
+    row.appendChild(cell);
+    return cell;
   }
 
   function updateLocalStockBatchProgress(batchId, patch) {
