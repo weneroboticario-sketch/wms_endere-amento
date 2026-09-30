@@ -5434,15 +5434,7 @@ tbody tr:hover td {
   }
 
   .stock-history-table {
-    min-width: 780px;
-  }
-
-  .stock-history-table th:nth-child(1) {
-    width: 126px;
-  }
-
-  .stock-history-table th:nth-child(3) {
-    width: 24%;
+    min-width: 920px;
   }
 
   .decision-actions,
