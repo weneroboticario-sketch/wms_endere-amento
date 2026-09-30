@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { planBindingRemoval } from "../src/addressing-bindings.js";
+import { planBindingRemoval, planLocationSkuCleanup } from "../src/addressing-bindings.js";
 
 test("SKU search exposes the addressing action", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
@@ -23,6 +23,14 @@ test("existing SKU dialog distinguishes moving from keeping its address", async 
 
   assert.match(html, /data-sku-move-decision="move"[^>]*>Remover do antigo e usar o novo</);
   assert.match(html, /data-sku-move-decision="keep"[^>]*>Manter no endereço antigo</);
+});
+
+test("an already allocated SKU still asks about other products in the location", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+
+  assert.match(source, /sameLocation && !otherLocationOccupants\.length/);
+  assert.match(source, /askLocationConflictDecision\(parsed\.code, sku, otherLocationOccupants, true\)/);
+  assert.match(source, /Remover os outros e manter este/);
 });
 
 test("removing one SKU from a combined legacy row keeps the other SKUs", () => {
@@ -47,4 +55,27 @@ test("removing a normal binding deletes only its database row", () => {
   assert.equal(plan.mode, "delete");
   assert.equal(plan.remoteId, "row-1");
   assert.deepEqual(plan.remainingSkus, []);
+});
+
+test("keeping one SKU from a combined location updates the real row", () => {
+  const occupants = [
+    { id: "row-1-sku-51226-0", remoteId: "row-1", sourceSkuValue: "51226;89663", sku: "51226" },
+    { id: "row-1-sku-89663-1", remoteId: "row-1", sourceSkuValue: "51226;89663", sku: "89663" }
+  ];
+  const plan = planLocationSkuCleanup(occupants, "row-1-sku-51226-0");
+
+  assert.equal(plan.keepRemoteId, "row-1");
+  assert.equal(plan.updateKeepRow, true);
+  assert.deepEqual(plan.deleteRemoteIds, []);
+});
+
+test("keeping one SKU removes separate rows for the other location occupants", () => {
+  const occupants = [
+    { id: "row-1", remoteId: "row-1", sourceSkuValue: "51226", sku: "51226" },
+    { id: "row-2", remoteId: "row-2", sourceSkuValue: "89663", sku: "89663" }
+  ];
+  const plan = planLocationSkuCleanup(occupants, "row-1");
+
+  assert.equal(plan.updateKeepRow, false);
+  assert.deepEqual(plan.deleteRemoteIds, ["row-2"]);
 });

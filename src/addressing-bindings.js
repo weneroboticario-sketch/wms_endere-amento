@@ -28,3 +28,22 @@ export function planBindingRemoval(bindings, bindingId) {
     remainingSkus
   };
 }
+
+export function planLocationSkuCleanup(occupants, keepBindingId) {
+  const keepBinding = (occupants || []).find((binding) => String(binding.id) === String(keepBindingId));
+  if (!keepBinding) return null;
+
+  const keepRemoteId = bindingRemoteId(keepBinding);
+  const keepRemoteSiblings = (occupants || []).filter((binding) => bindingRemoteId(binding) === keepRemoteId);
+  const updateKeepRow = keepRemoteSiblings.length > 1 || splitSourceSkus(keepBinding.sourceSkuValue).length > 1;
+  const deleteRemoteIds = Array.from(new Set((occupants || [])
+    .map(bindingRemoteId)
+    .filter((remoteId) => remoteId && remoteId !== keepRemoteId)));
+
+  return {
+    keepBinding,
+    keepRemoteId,
+    updateKeepRow,
+    deleteRemoteIds
+  };
+}

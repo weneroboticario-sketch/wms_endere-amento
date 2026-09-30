@@ -16,7 +16,7 @@ import {
 } from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
-import { planBindingRemoval } from "./src/addressing-bindings.js";
+import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bindings.js";
 
 (function () {
   "use strict";
@@ -7437,10 +7437,32 @@ import { planBindingRemoval } from "./src/addressing-bindings.js";
       return !sourceBindingId || binding.id !== sourceBindingId;
     });
     var sameLocation = locationOccupants.find(function (binding) { return isSameSku(binding.sku, sku); });
-    if (sameLocation) {
+    var otherLocationOccupants = locationOccupants.filter(function (binding) {
+      return !isSameSku(binding.sku, sku);
+    });
+    if (sameLocation && !otherLocationOccupants.length) {
       renderScanResults([sameLocation]);
       clearScanFieldsForNext();
       return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
+    }
+
+    if (sameLocation && otherLocationOccupants.length) {
+      renderScanResults(locationOccupants);
+      var existingLocationDecision = await askLocationConflictDecision(parsed.code, sku, otherLocationOccupants, true);
+      if (existingLocationDecision === "cancel") {
+        prepareAnotherLocationScan();
+        return { ok: false, message: "Nenhuma alteracao realizada. Bipe outra prateleira para o SKU " + sku + ".", type: "warning" };
+      }
+      if (existingLocationDecision === "include") {
+        return { ok: true, binding: sameLocation, occupants: locationOccupants };
+      }
+
+      setScanMessage("Removendo os outros produtos desta localizacao...", "warning");
+      var cleanupResult = await keepOnlySkuAtLocation(sameLocation, locationOccupants);
+      if (!cleanupResult.ok) {
+        return { ok: false, message: "Nao foi possivel atualizar a localizacao: " + cleanupResult.message, type: "error" };
+      }
+      return { ok: true, binding: cleanupResult.binding || sameLocation, occupants: cleanupResult.occupants };
     }
 
     var locationDecision = "include";
@@ -7613,17 +7635,103 @@ import { planBindingRemoval } from "./src/addressing-bindings.js";
     }
   }
 
-  function askLocationConflictDecision(locationCode, sku, occupants) {
+  async function keepOnlySkuAtLocation(keepBinding, occupants) {
+    var cleanup = planLocationSkuCleanup(occupants, keepBinding.id);
+    if (!cleanup) return { ok: false, message: "Produto principal nao encontrado nesta localizacao." };
+    var warehouseCode = activeWarehouseCode();
+    try {
+      if (cleanup.updateKeepRow) {
+        var updateResponse = await runSupabaseRequestWithRetry("keep-only-location-sku", function () {
+          return supabaseDb
+            .from("wms_bindings")
+            .update({
+              sku: String(keepBinding.sku),
+              product_name: findProductName(keepBinding.sku) || keepBinding.productName || "",
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", cleanup.keepRemoteId)
+            .eq("warehouse_code", warehouseCode)
+            .select("id,sku,location_code")
+            .maybeSingle();
+        });
+        if (updateResponse.error) throw updateResponse.error;
+        if (!updateResponse.data || !isSameSku(updateResponse.data.sku, keepBinding.sku)) {
+          throw new Error("O produto principal nao foi confirmado no banco.");
+        }
+      }
+
+      if (cleanup.deleteRemoteIds.length) {
+        var deleteResponse = await runSupabaseRequestWithRetry("remove-other-location-skus", function () {
+          return supabaseDb
+            .from("wms_bindings")
+            .delete()
+            .eq("warehouse_code", warehouseCode)
+            .in("id", cleanup.deleteRemoteIds)
+            .select("id");
+        });
+        if (deleteResponse.error) throw deleteResponse.error;
+      }
+
+      var verifyResponse = await runSupabaseRequestWithRetry("verify-location-sku-cleanup", function () {
+        return supabaseDb
+          .from("wms_bindings")
+          .select("id,sku,rua,rack,linha,letra,location_code,area_code,area_name,product_name,warehouse_id,warehouse_code,created_at,updated_at")
+          .eq("warehouse_code", warehouseCode)
+          .eq("location_code", locationKeyFromBinding(keepBinding));
+      });
+      if (verifyResponse.error) throw verifyResponse.error;
+      var verifiedOccupants = expandDbBindingRows(verifyResponse.data || []).filter(bindingMatchesActiveWarehouse);
+      var unexpectedOccupants = verifiedOccupants.filter(function (binding) { return !isSameSku(binding.sku, keepBinding.sku); });
+      if (unexpectedOccupants.length) {
+        throw new Error("Ainda existem outros produtos vinculados a esta localizacao.");
+      }
+
+      var removedOccupants = occupants.filter(function (binding) { return !isSameSku(binding.sku, keepBinding.sku); });
+      var historyItems = removedOccupants.map(function (binding) {
+        return createHistoryItem("SKU removido de localizacao", binding.sku, keepBinding.locationCode, "SKU removido para manter somente o produto " + keepBinding.sku + " neste endereco.");
+      });
+      for (var i = 0; i < historyItems.length; i += 1) await persistOptionalHistoryItem(historyItems[i]);
+
+      var removedIds = {};
+      removedOccupants.forEach(function (binding) { removedIds[binding.id] = true; });
+      state.bindings = state.bindings.filter(function (binding) { return !removedIds[binding.id]; });
+      await writeModuleCache("coreData", { bindings: state.bindings, products: state.products });
+      await loadData();
+      renderAll();
+      var refreshedOccupants = findByLocation(keepBinding.locationCode);
+      return {
+        ok: true,
+        binding: refreshedOccupants.find(function (binding) { return isSameSku(binding.sku, keepBinding.sku); }) || keepBinding,
+        occupants: refreshedOccupants
+      };
+    } catch (error) {
+      recordPerformanceError("limpar-outros-skus-localizacao", error);
+      return { ok: false, message: formatSupabaseError(error) };
+    }
+  }
+
+  function askLocationConflictDecision(locationCode, sku, occupants, skuAlreadyHere) {
     var modal = $("locationConflictModal");
     if (!modal) {
-      return Promise.resolve(window.confirm("Esta localização já possui os produtos " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Clique em OK para manter todos juntos, ou em Cancelar para escolher outra prateleira.") ? "include" : "cancel");
+      var fallbackMessage = skuAlreadyHere
+        ? "O SKU " + sku + " ja esta nesta localizacao junto com " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Clique em OK para manter todos juntos."
+        : "Esta localização já possui os produtos " + occupants.map(function (binding) { return binding.sku; }).join(", ") + ". Clique em OK para manter todos juntos, ou em Cancelar para escolher outra prateleira.";
+      return Promise.resolve(window.confirm(fallbackMessage) ? "include" : "cancel");
     }
-    $("locationConflictTitle").textContent = "Prateleira " + locationCode + " possui " + occupants.length + " produto(s)";
-    $("locationConflictMessage").textContent = "Confira os produtos abaixo. Você pode acrescentar o SKU " + sku + " junto com eles, remover os antigos e deixar somente o novo, ou escolher outra prateleira.";
+    $("locationConflictTitle").textContent = skuAlreadyHere
+      ? "SKU " + sku + " esta junto com outro(s) produto(s)"
+      : "Prateleira " + locationCode + " possui " + occupants.length + " produto(s)";
+    $("locationConflictMessage").textContent = skuAlreadyHere
+      ? "O SKU " + sku + " ja esta em " + locationCode + ". Escolha se deseja manter também os produtos abaixo ou remove-los e deixar somente o SKU " + sku + "."
+      : "Confira os produtos abaixo. Você pode acrescentar o SKU " + sku + " junto com eles, remover os antigos e deixar somente o novo, ou escolher outra prateleira.";
     $("locationConflictList").innerHTML = occupants.map(function (binding) {
       var product = binding.productName || findProductName(binding.sku) || "";
       return "<span>" + escapeHtml(binding.sku) + (product ? " - " + escapeHtml(product) : "") + "</span>";
     }).join("");
+    var includeButton = modal.querySelector("[data-location-decision='include']");
+    var replaceButton = modal.querySelector("[data-location-decision='replace']");
+    if (includeButton) includeButton.textContent = skuAlreadyHere ? "Manter todos neste local" : "Endereçar também neste local";
+    if (replaceButton) replaceButton.textContent = skuAlreadyHere ? "Remover os outros e manter este" : "Remover antigos e deixar só o novo";
     modal.hidden = false;
 
     return new Promise(function (resolve) {
