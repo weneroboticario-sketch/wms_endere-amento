@@ -79,7 +79,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
   var FINAL_REPLENISHMENT_STATUSES = ["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE", "CANCELADO"];
   var REPLENISHMENT_RENDER_PAGE_SIZE = 30;
   var REPLENISHMENT_SUGGESTION_PAGE_SIZE = 50;
-  var OPEN_REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"];
+  var OPEN_REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"];
   var STORE_REFERENCE_ROWS = [
     { cnpj: "00.138.798/0001-32", loja: "14A1", cod: "5508", canal: "VAREJO", codVf: "743" },
     { cnpj: "00.138.798/0014-57", loja: "14D2", cod: "20004", canal: "VAREJO", codVf: "744" },
@@ -4880,12 +4880,17 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     return request.responsavelId === authState.currentUser.id;
   }
 
+  function userCanViewReplenishmentInWarehouse(user, warehouseCode) {
+    if (!user || !user.active || user.archived === true) return false;
+    return userCanAccessWarehouse(user, warehouseCode);
+  }
+
   function getVisibleReplenishmentRequests() {
     return replenishmentState.requests.filter(function (request) {
       if (request.isDeleted) return false;
       if (!processRowMatchesActiveWarehouse(request)) return false;
       if (isAdminOrSupervisor()) return true;
-      return isReplenishmentInCurrentUserQueue(request) || (authState.currentUser && request.solicitadoPorId === authState.currentUser.id);
+      return userCanViewReplenishmentInWarehouse(authState.currentUser, request.warehouseCode);
     });
   }
 
@@ -8581,7 +8586,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
       var openReplenishments = getVisibleReplenishmentRequests().filter(function (request) {
         return FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) < 0;
       });
-      var badgeCount = isOperatorUser ? replenishmentTasks.length : openReplenishments.length;
+      var badgeCount = openReplenishments.length;
       $("replenishmentMenuBadge").hidden = !badgeCount;
       $("replenishmentMenuBadge").textContent = String(badgeCount);
     }
@@ -9172,7 +9177,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     if (!user || !user.active || user.archived === true || !user.availableForTasks) return false;
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return false;
     if (["OPERADOR", "ESTOQUISTA", "SUPERVISOR", "LIDER"].indexOf(user.role) < 0) return false;
-    return normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === warehouseCode;
+    return userCanAccessWarehouse(user, warehouseCode);
   }
 
   function getAssignableUsersByWarehouse(warehouseCode) {
