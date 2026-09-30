@@ -31,7 +31,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.09.23.003";
+  var EXPECTED_SCHEMA_VERSION = "2026.09.30.004";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -7722,6 +7722,11 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
             .select("id");
         });
         if (deleteResponse.error) throw deleteResponse.error;
+        var deletedIds = unique((deleteResponse.data || []).map(function (row) { return String(row.id || ""); }).filter(Boolean));
+        var missingDeletes = cleanup.deleteRemoteIds.filter(function (id) { return deletedIds.indexOf(String(id)) < 0; });
+        if (missingDeletes.length) {
+          throw new Error("O Supabase nao autorizou a remocao dos outros produtos desta localizacao. Atualize o banco com a migration de enderecamento e tente novamente.");
+        }
       }
 
       var verifyResponse = await runSupabaseRequestWithRetry("verify-location-sku-cleanup", function () {

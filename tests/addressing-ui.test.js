@@ -88,3 +88,22 @@ test("keeping one SKU removes separate rows for the other location occupants", (
   assert.equal(plan.updateKeepRow, false);
   assert.deepEqual(plan.deleteRemoteIds, ["row-2"]);
 });
+
+test("address cleanup rejects a silent RLS delete", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+
+  assert.match(source, /missingDeletes = cleanup\.deleteRemoteIds\.filter/);
+  assert.match(source, /Supabase nao autorizou a remocao dos outros produtos/);
+});
+
+test("operators can delete only warehouse-scoped addressing bindings", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260930184528_allow_operator_binding_delete.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /drop policy if exists wms_bindings_warehouse_delete/);
+  assert.match(migration, /private\.current_wms_allowed_warehouses/);
+  assert.match(migration, /'ADMINISTRADOR', 'SUPERVISOR', 'OPERADOR'/);
+  assert.doesNotMatch(migration, /wms_transfers_warehouse_delete/);
+});

@@ -35,13 +35,33 @@ where role = 'OPERADOR' and default_warehouse_code = 'VDCG' and auth_user_id is 
 limit 1 \gset
 
 \if :{?operator_auth_user_id}
+insert into public.wms_bindings (
+  id, sku, rua, rack, linha, letra, location_code, area_code, area_name,
+  product_name, warehouse_id, warehouse_code
+)
+values (
+  'rls-test-operator-binding-delete', 'RLS-DELETE', 99, 99, 99, 'Z',
+  'R99-RK99-L99-Z', 1, 'Teste RLS', 'Teste RLS', 'warehouse-vdcg', 'VDCG'
+)
+on conflict (id) do update
+set warehouse_code = excluded.warehouse_code,
+    sku = excluded.sku,
+    location_code = excluded.location_code;
+
 select set_config('request.jwt.claims', jsonb_build_object('sub', :'operator_auth_user_id', 'role', 'authenticated')::text, true);
 set local role authenticated;
 select pg_temp.assert_true(
   not exists(select 1 from public.wms_transfers where warehouse_code = 'VDAR'),
   'VDCG operator must not read VDAR transfers'
 );
+delete from public.wms_bindings
+where id = 'rls-test-operator-binding-delete'
+  and warehouse_code = 'VDCG';
 reset role;
+select pg_temp.assert_true(
+  not exists(select 1 from public.wms_bindings where id = 'rls-test-operator-binding-delete'),
+  'operator must delete an addressing binding in an assigned warehouse'
+);
 \else
 \echo 'SKIP: create/link an active VDCG operator to exercise the cross-warehouse runtime assertion.'
 \endif
