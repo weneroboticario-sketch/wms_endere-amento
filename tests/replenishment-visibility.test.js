@@ -21,3 +21,15 @@ test("the menu badge counts all open replenishments in the active warehouse", ()
 test("operators who are not responsible cannot change an in-progress request", () => {
   assert.match(source, /var canWork = authState\.currentUser && \(item\.responsavelId === authState\.currentUser\.id \|\| canManage\);/);
 });
+
+test("operators can claim pending requests and then work on their own request", () => {
+  assert.match(source, /if \(request\.status === "PENDENTE" && canClaimReplenishmentRequest\(request\)\) return true;/);
+  assert.match(source, /data-replenishment-claim=.*?>Puxar pedido<\/button>/);
+  assert.match(source, /item\.responsavelId === authState\.currentUser\.id \|\| canManage/);
+});
+
+test("request messages are visible in cards and operator notifications", () => {
+  assert.match(source, /replenishment-request-message/);
+  assert.match(source, /Mensagem do solicitante/);
+  assert.match(source, /body \+= " \| Mensagem: " \+ normalizeText\(request\.observacao\);/);
+});

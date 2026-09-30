@@ -8200,6 +8200,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
       "</div>",
+      item.observacao ? "<div class=\"replenishment-request-message\"><span>Mensagem do solicitante</span><strong>" + escapeHtml(item.observacao) + "</strong></div>" : "",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
@@ -8213,7 +8214,6 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
       "<span>" + escapeHtml(elapsed) + "</span>",
       "</div>",
       replenishmentActionsHtml(item, canManage, canWork),
-      item.observacao ? "<p class=\"replenishment-note\">" + escapeHtml(item.observacao) + "</p>" : "",
       item.motivoCancelamento ? "<p class=\"replenishment-note danger-text\">" + escapeHtml(item.motivoCancelamento) + "</p>" : "",
       "</article>"
     ].join("");
@@ -8560,12 +8560,18 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     }).map(function (transfer) {
       return { type: "TRANSFERENCIA", id: transfer.id, title: transferDisplayName(transfer), subtitle: transferRouteDestinationLabel(transfer), source: transfer };
     });
-    var replenishments = getMyReplenishmentRequests().map(function (request) {
+    var replenishments = getVisibleReplenishmentRequests().filter(function (request) {
+      if (request.status === "PENDENTE" && canClaimReplenishmentRequest(request)) return true;
+      if (["EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(request.status) < 0) return false;
+      return request.responsavelId === authState.currentUser.id;
+    }).map(function (request) {
+      var details = request.nomeMaterial || "Pedido de reposicao";
+      if (normalizeText(request.observacao)) details += " | Mensagem: " + normalizeText(request.observacao);
       return {
         type: "REPOSICAO",
         id: request.id,
         title: "SKU " + request.codigoMaterial,
-        subtitle: request.nomeMaterial || "Pedido de reposicao",
+        subtitle: details,
         source: request
       };
     });
@@ -8611,6 +8617,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
 
   function taskMessage(task) {
     if (!task) return "Não foi possível carregar suas tarefas. Tente novamente.";
+    if (task.type === "REPOSICAO" && task.source && task.source.status === "PENDENTE") return "Novo pedido de reposição disponível para puxar.";
     if (task.type === "REPOSICAO") return "Você recebeu um pedido de reposição para atender.";
     var transfer = task.source || task;
     if (transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO") return "Sua transferência voltou para revalidação. Confira a montagem da caixa.";
@@ -8730,6 +8737,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     taskAlertState.notifiedReplenishments[notifyKey] = Date.now();
     var title = type === "returned" ? "Pedido voltou para a fila" : type === "claimed" || type === "assigned" ? "Pedido de reposicao assumido" : "Novo pedido de reposicao";
     var body = "SKU " + request.codigoMaterial + " - " + (request.nomeMaterial || "Produto") + " (" + activeWarehouseCode() + ")";
+    if (normalizeText(request.observacao)) body += " | Mensagem: " + normalizeText(request.observacao);
     showToast(title + ": " + request.codigoMaterial, "success");
     showBrowserNotification(title, body);
     if (isReplenishmentSoundEnabled()) {

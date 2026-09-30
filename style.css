@@ -4934,6 +4934,28 @@ tbody tr:hover td {
   grid-column: 1 / -1;
 }
 
+.replenishment-request-message {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #f0c56b;
+  border-radius: var(--radius);
+  background: #fff8e6;
+  color: var(--ink);
+}
+
+.replenishment-request-message span {
+  color: #8a5a00;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.replenishment-request-message strong {
+  overflow-wrap: anywhere;
+}
+
 .replenishment-card-footer {
   grid-column: 1 / -1;
   display: flex;
