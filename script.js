@@ -765,7 +765,10 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     }
     if (screenId === "transferencias") await ensureTransferDataLoaded();
     if (screenId === "dashboard") await ensureReplenishmentDataLoaded();
-    if (screenId === "reposicao") await ensureReplenishmentDataLoaded();
+    if (screenId === "reposicao") {
+      if (moduleLoadState.replenishment) await refreshReplenishmentData();
+      else await ensureReplenishmentDataLoaded();
+    }
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
     if (screenId === "estoques") await ensureWarehousesLoaded();
     if (screenId === "saudeSistema") await ensureHealthDataLoaded();
@@ -5420,6 +5423,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     applyRolePermissions();
     await ensureCoreDataLoaded();
     await applyDataMigrations();
+    if (canAccessScreen("reposicao")) await ensureReplenishmentDataLoaded();
     startTaskPolling();
     startLeaderLiveSync();
     resetSessionInactivityTimeout();
@@ -7181,6 +7185,16 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
       replenishmentState.renderLimit += REPLENISHMENT_RENDER_PAGE_SIZE;
       renderReplenishment();
     });
+    if ($("refreshReplenishmentQueueButton")) $("refreshReplenishmentQueueButton").addEventListener("click", async function () {
+      var button = $("refreshReplenishmentQueueButton");
+      button.disabled = true;
+      setStatus("replenishmentQueueStatus", "Atualizando fila do estoque " + activeWarehouseCode() + "...", "warning");
+      try {
+        await refreshReplenishmentData();
+      } finally {
+        button.disabled = false;
+      }
+    });
     if ($("refreshReplenishmentSuggestionsButton")) $("refreshReplenishmentSuggestionsButton").addEventListener("click", function () {
       refreshReplenishmentSuggestions(true);
     });
@@ -8808,6 +8822,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
             renderTransfers();
           }
         }
+        if (moduleLoadState.replenishment) await refreshReplenishmentData();
         renderOperatorTasksAlert();
       } catch (error) {
         if (authState.currentUser && authState.currentUser.role === "OPERADOR") showToast("Não foi possível carregar suas tarefas. Tente novamente.", "error");

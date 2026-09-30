@@ -33,3 +33,11 @@ test("request messages are visible in cards and operator notifications", () => {
   assert.match(source, /Mensagem do solicitante/);
   assert.match(source, /body \+= " \| Mensagem: " \+ normalizeText\(request\.observacao\);/);
 });
+
+test("the replenishment queue loads at login and refreshes while the operator works", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+
+  assert.match(source, /if \(canAccessScreen\("reposicao"\)\) await ensureReplenishmentDataLoaded\(\);/);
+  assert.match(source, /if \(moduleLoadState\.replenishment\) await refreshReplenishmentData\(\);/);
+  assert.match(html, /id="refreshReplenishmentQueueButton"[^>]*>Atualizar fila<\/button>/);
+});

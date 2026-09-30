@@ -576,7 +576,10 @@
               <h3>Pedidos em andamento</h3>
               <p class="muted">Fila operacional do estoque atual, separada das sugestoes automaticas.</p>
             </div>
-            <button class="secondary-button" id="loadMoreReplenishmentButton" type="button">Carregar mais</button>
+            <div class="button-row">
+              <button class="secondary-button" id="refreshReplenishmentQueueButton" type="button">Atualizar fila</button>
+              <button class="secondary-button" id="loadMoreReplenishmentButton" type="button">Carregar mais</button>
+            </div>
           </div>
           <div id="replenishmentList" class="replenishment-list"></div>
           <div id="replenishmentQueueStatus" class="inline-status"></div>
