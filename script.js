@@ -7440,12 +7440,6 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     var otherLocationOccupants = locationOccupants.filter(function (binding) {
       return !isSameSku(binding.sku, sku);
     });
-    if (sameLocation && !otherLocationOccupants.length) {
-      renderScanResults([sameLocation]);
-      clearScanFieldsForNext();
-      return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
-    }
-
     if (sameLocation && otherLocationOccupants.length) {
       renderScanResults(locationOccupants);
       var existingLocationDecision = await askLocationConflictDecision(parsed.code, sku, otherLocationOccupants, true);
@@ -7454,20 +7448,22 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
         return { ok: false, message: "Nenhuma alteracao realizada. Bipe outra prateleira para o SKU " + sku + ".", type: "warning" };
       }
       if (existingLocationDecision === "include") {
-        return { ok: true, binding: sameLocation, occupants: locationOccupants };
+        locationOccupants = occupancyCheck.occupants;
+      } else {
+        setScanMessage("Removendo os outros produtos desta localizacao...", "warning");
+        var cleanupResult = await keepOnlySkuAtLocation(sameLocation, locationOccupants);
+        if (!cleanupResult.ok) {
+          return { ok: false, message: "Nao foi possivel atualizar a localizacao: " + cleanupResult.message, type: "error" };
+        }
+        sameLocation = cleanupResult.binding || sameLocation;
+        locationOccupants = cleanupResult.occupants;
+        otherLocationOccupants = [];
       }
-
-      setScanMessage("Removendo os outros produtos desta localizacao...", "warning");
-      var cleanupResult = await keepOnlySkuAtLocation(sameLocation, locationOccupants);
-      if (!cleanupResult.ok) {
-        return { ok: false, message: "Nao foi possivel atualizar a localizacao: " + cleanupResult.message, type: "error" };
-      }
-      return { ok: true, binding: cleanupResult.binding || sameLocation, occupants: cleanupResult.occupants };
     }
 
     var locationDecision = "include";
     var occupantIdsToRemove = [];
-    if (locationOccupants.length) {
+    if (!sameLocation && locationOccupants.length) {
       renderScanResults(locationOccupants);
       locationDecision = await askLocationConflictDecision(parsed.code, sku, locationOccupants);
       if (locationDecision === "cancel") {
@@ -7483,12 +7479,49 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
       return binding.locationCode !== parsed.code && (!sourceBindingId || binding.id !== sourceBindingId);
     });
     if (skuLocations.length) {
-      renderScanResults(skuLocations);
-      var skuDecision = await askSkuMoveDecision(sku, parsed.code, skuLocations);
+      renderScanResults(sameLocation ? [sameLocation].concat(skuLocations) : skuLocations);
+      var skuDecision = await askSkuMoveDecision(sku, parsed.code, skuLocations, Boolean(sameLocation));
+      if (sameLocation) {
+        if (skuDecision === "move") {
+          var removeOldResult = await removeAddressingBindingsForUniqueSku(
+            skuLocations,
+            "Vinculo antigo removido para manter o SKU somente em " + parsed.code + "."
+          );
+          if (!removeOldResult.ok) {
+            return { ok: false, message: "Nao foi possivel remover a localizacao antiga: " + removeOldResult.message, type: "error" };
+          }
+          var currentOccupants = findByLocation(parsed.code);
+          return {
+            ok: true,
+            binding: currentOccupants.find(function (binding) { return isSameSku(binding.sku, sku); }) || sameLocation,
+            occupants: currentOccupants
+          };
+        }
+
+        var removeCurrentResult = await removeAddressingBindingsForUniqueSku(
+          [sameLocation],
+          "Vinculo removido deste endereco para manter o SKU somente na localizacao anterior."
+        );
+        if (!removeCurrentResult.ok) {
+          return { ok: false, message: "Nao foi possivel manter apenas a localizacao anterior: " + removeCurrentResult.message, type: "error" };
+        }
+        clearScanFieldsForNext();
+        return {
+          ok: false,
+          message: "SKU mantido em " + skuLocations.map(function (binding) { return binding.locationCode; }).join(", ") + ". O vinculo de " + parsed.code + " foi removido.",
+          type: "warning"
+        };
+      }
       if (skuDecision !== "move") {
         clearScanFieldsForNext();
         return { ok: false, message: "SKU mantido no endereço antigo. Nenhuma localização foi alterada.", type: "warning" };
       }
+    }
+
+    if (sameLocation) {
+      renderScanResults(locationOccupants.length ? locationOccupants : [sameLocation]);
+      clearScanFieldsForNext();
+      return { ok: false, message: "Esse codigo ja esta alocado somente nessa localizacao.", type: "warning" };
     }
 
     var target = sourceBindingId
@@ -7710,6 +7743,35 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     }
   }
 
+  async function removeAddressingBindingsForUniqueSku(bindings, details) {
+    try {
+      for (var index = 0; index < bindings.length; index += 1) {
+        var requestedBinding = bindings[index];
+        var currentBinding = state.bindings.find(function (binding) { return binding.id === requestedBinding.id; });
+        if (!currentBinding) continue;
+        var removalPlan = planBindingRemoval(state.bindings, currentBinding.id);
+        if (!removalPlan) continue;
+        await persistBindingRemoval(removalPlan);
+        state.bindings = state.bindings.filter(function (binding) { return binding.id !== currentBinding.id; });
+        if (removalPlan.mode === "update") {
+          var remainingSkuValue = removalPlan.remainingSkus.join(";");
+          state.bindings.forEach(function (binding) {
+            if (String(binding.remoteId || binding.id) === removalPlan.remoteId) binding.sourceSkuValue = remainingSkuValue;
+          });
+        }
+        var historyItem = createHistoryItem("SKU removido de localizacao", currentBinding.sku, currentBinding.locationCode, details);
+        await persistOptionalHistoryItem(historyItem);
+      }
+      await writeModuleCache("coreData", { bindings: state.bindings, products: state.products });
+      await loadData();
+      renderAll();
+      return { ok: true };
+    } catch (error) {
+      recordPerformanceError("garantir-sku-localizacao-unica", error);
+      return { ok: false, message: formatSupabaseError(error) };
+    }
+  }
+
   function askLocationConflictDecision(locationCode, sku, occupants, skuAlreadyHere) {
     var modal = $("locationConflictModal");
     if (!modal) {
@@ -7756,7 +7818,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     });
   }
 
-  function askSkuMoveDecision(sku, newLocationCode, currentLocations) {
+  function askSkuMoveDecision(sku, newLocationCode, currentLocations, skuAlreadyAtNewLocation) {
     var product = findProductName(sku) || "";
     var modal = $("skuMoveModal");
     var oldLocations = currentLocations.map(function (binding) { return binding.locationCode; }).join(", ");
@@ -7765,13 +7827,21 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
         "O SKU " + sku + " já está em " + oldLocations + ". Clique em OK para removê-lo do endereço antigo e usar " + newLocationCode + ", ou em Cancelar para mantê-lo onde está."
       ) ? "move" : "keep");
     }
-    $("skuMoveTitle").textContent = "SKU " + sku + " já possui endereço";
-    $("skuMoveMessage").textContent = "Escolha se deseja mover o produto para o novo endereço ou manter o cadastro atual.";
+    $("skuMoveTitle").textContent = skuAlreadyAtNewLocation
+      ? "SKU " + sku + " esta em mais de uma localizacao"
+      : "SKU " + sku + " já possui endereço";
+    $("skuMoveMessage").textContent = skuAlreadyAtNewLocation
+      ? "Este SKU pode permanecer em somente uma localizacao. Escolha qual endereco deve ser mantido."
+      : "Escolha se deseja mover o produto para o novo endereço ou manter o cadastro atual.";
     $("skuMoveList").innerHTML = [
       "<span>Produto: " + escapeHtml(product || "Não informado") + "</span>",
       "<span>Endereço atual: " + escapeHtml(oldLocations) + "</span>",
       "<span>Novo endereço: " + escapeHtml(newLocationCode) + "</span>"
     ].join("");
+    var moveButton = modal.querySelector("[data-sku-move-decision='move']");
+    var keepButton = modal.querySelector("[data-sku-move-decision='keep']");
+    if (moveButton) moveButton.textContent = skuAlreadyAtNewLocation ? "Remover dos antigos e manter neste" : "Remover do antigo e usar o novo";
+    if (keepButton) keepButton.textContent = skuAlreadyAtNewLocation ? "Manter no antigo e remover deste" : "Manter no endereço antigo";
     modal.hidden = false;
 
     return new Promise(function (resolve) {
@@ -7791,8 +7861,8 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
         };
       });
       document.addEventListener("keydown", handleEscape);
-      var keepButton = modal.querySelector("[data-sku-move-decision='keep']");
-      if (keepButton) keepButton.focus();
+      var defaultButton = modal.querySelector("[data-sku-move-decision='keep']");
+      if (defaultButton) defaultButton.focus();
     });
   }
 

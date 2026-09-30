@@ -28,9 +28,18 @@ test("existing SKU dialog distinguishes moving from keeping its address", async 
 test("an already allocated SKU still asks about other products in the location", async () => {
   const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
-  assert.match(source, /sameLocation && !otherLocationOccupants\.length/);
+  assert.match(source, /sameLocation && otherLocationOccupants\.length/);
   assert.match(source, /askLocationConflictDecision\(parsed\.code, sku, otherLocationOccupants, true\)/);
   assert.match(source, /Remover os outros e manter este/);
+});
+
+test("an SKU found in two locations forces the user to keep only one", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+
+  assert.match(source, /askSkuMoveDecision\(sku, parsed\.code, skuLocations, Boolean\(sameLocation\)\)/);
+  assert.match(source, /Este SKU pode permanecer em somente uma localizacao/);
+  assert.match(source, /Remover dos antigos e manter neste/);
+  assert.match(source, /Manter no antigo e remover deste/);
 });
 
 test("removing one SKU from a combined legacy row keeps the other SKUs", () => {
