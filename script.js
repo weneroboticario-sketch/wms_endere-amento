@@ -16,6 +16,7 @@ import {
 } from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
+import { planBindingRemoval } from "./src/addressing-bindings.js";
 
 (function () {
   "use strict";
@@ -5000,6 +5001,8 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
   function fromDbBinding(row) {
     return {
       id: row.id,
+      remoteId: row.id,
+      sourceSkuValue: row.sku || "",
       sku: row.sku || "",
       rua: Number(row.rua),
       rack: Number(row.rack),
@@ -13935,8 +13938,14 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
       });
     });
     root.querySelectorAll("[data-remove]").forEach(function (button) {
-      button.addEventListener("click", function () {
-        removeBinding(button.dataset.remove);
+      button.addEventListener("click", async function () {
+        if (button.disabled) return;
+        button.disabled = true;
+        try {
+          await removeBinding(button.dataset.remove);
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
       });
     });
   }
@@ -13954,30 +13963,124 @@ import { nextRealtimeRetryDelay } from "./src/sync-control.js";
     setScanMessage("Edite a prateleira e confirme o endereçamento.", "warning");
   }
 
-  function removeBinding(id) {
-    var binding = state.bindings.find(function (item) { return item.id === id; });
-    if (!binding) return;
-    var ok = window.confirm("Remover o vinculo do SKU " + binding.sku + " com o endereco " + binding.locationCode + "?");
+  async function removeBinding(id) {
+    var plan = planBindingRemoval(state.bindings, id);
+    if (!plan) {
+      showToast("Vinculo nao encontrado. Atualize a consulta e tente novamente.", "error");
+      return false;
+    }
+    var binding = plan.target;
+    var ok = window.confirm("Remover somente o vinculo do SKU " + binding.sku + " com o endereco " + binding.locationCode + "? Os outros produtos deste endereco serao mantidos.");
     if (!ok) return;
-    state.bindings = state.bindings.filter(function (item) { return item.id !== id; });
-    if (isSupabaseReady()) {
-      supabaseDb.from("wms_bindings").delete().eq("id", id).then(function (response) {
-        if (response.error) showToast("Nao foi possivel remover no Supabase.", "error");
+    if (!isSupabaseReady() || !canUseNetwork()) {
+      showToast("Conecte ao Supabase para remover o vinculo com seguranca.", "error");
+      return false;
+    }
+
+    try {
+      setSyncStatus("Salvando", "warning");
+      await persistBindingRemoval(plan);
+
+      state.bindings = state.bindings.filter(function (item) { return item.id !== binding.id; });
+      if (plan.mode === "update") {
+        var sourceSkuValue = plan.remainingSkus.join(";");
+        state.bindings.forEach(function (item) {
+          if (String(item.remoteId || item.id) === plan.remoteId) item.sourceSkuValue = sourceSkuValue;
+        });
+      }
+
+      var historyItem = createHistoryItem("Endereco removido", binding.sku, binding.locationCode, "Vinculo removido pelo usuario; os demais produtos da localizacao foram mantidos.");
+      state.history.push(historyItem);
+      await persistOptionalHistoryItem(historyItem);
+      await writeModuleCache("coreData", { bindings: state.bindings, products: state.products });
+      renderAll();
+      await loadData();
+      renderAll();
+      refreshActiveAddressingResults();
+      setSyncStatus("Sincronizado", "success");
+      showToast("Vinculo removido. Os outros produtos da localizacao foram mantidos.", "success");
+      return true;
+    } catch (error) {
+      var message = formatSupabaseError(error);
+      recordPerformanceError("remover-enderecamento", error);
+      setSyncStatus("Erro sync", "error");
+      showToast("Nao foi possivel remover o vinculo: " + message, "error");
+      return false;
+    }
+  }
+
+  async function persistBindingRemoval(plan) {
+    var warehouseCode = activeWarehouseCode();
+    var response;
+    if (plan.mode === "update") {
+      var productNames = unique(plan.remainingBindings.map(function (item) {
+        return findProductName(item.sku) || item.productName || "";
+      }).filter(Boolean));
+      var updatePayload = {
+        sku: plan.remainingSkus.join(";"),
+        product_name: productNames.join("; "),
+        updated_at: new Date().toISOString()
+      };
+      response = await runSupabaseRequestWithRetry("remove-binding-sku", function () {
+        return supabaseDb
+          .from("wms_bindings")
+          .update(updatePayload)
+          .eq("id", plan.remoteId)
+          .eq("warehouse_code", warehouseCode)
+          .select("id,sku,location_code")
+          .maybeSingle();
       });
+      if (response.error) throw response.error;
+      if (!response.data || splitSkuValues(response.data.sku).some(function (sku) { return isSameSku(sku, plan.target.sku); })) {
+        throw new Error("O produto permaneceu vinculado no banco apos a atualizacao.");
+      }
+      return;
     }
-    addHistory("Endereco removido", binding.sku, binding.locationCode, "Vinculo removido pelo usuario.");
-    saveData();
-    renderAll();
-    if ($("consultaSku").classList.contains("active") && $("skuSearchInput").value.trim()) {
-      renderSkuSearch();
+
+    response = await runSupabaseRequestWithRetry("remove-binding", function () {
+      return supabaseDb
+        .from("wms_bindings")
+        .delete()
+        .eq("id", plan.remoteId)
+        .eq("warehouse_code", warehouseCode)
+        .select("id");
+    });
+    if (response.error) throw response.error;
+
+    var verifyResponse = await runSupabaseRequestWithRetry("verify-binding-removed", function () {
+      return supabaseDb
+        .from("wms_bindings")
+        .select("id")
+        .eq("id", plan.remoteId)
+        .eq("warehouse_code", warehouseCode)
+        .maybeSingle();
+    });
+    if (verifyResponse.error) throw verifyResponse.error;
+    if (verifyResponse.data) throw new Error("O vinculo permaneceu na tabela apos a exclusao.");
+  }
+
+  async function persistOptionalHistoryItem(historyItem) {
+    if (!historySchemaAvailable) return;
+    try {
+      var response = await supabaseDb.from("wms_history").upsert(toDbHistory(historyItem), { onConflict: "id" });
+      if (response.error && isMissingWarehouseColumnError(response.error)) {
+        assertWarehouseFallbackAllowed("wms_history", response.error);
+        response = await supabaseDb.from("wms_history").upsert(stripWarehouseColumns(toDbHistory(historyItem)), { onConflict: "id" });
+      }
+      if (response.error) {
+        if (!isHistorySchemaError(response.error)) throw response.error;
+        historySchemaAvailable = false;
+      }
+    } catch (error) {
+      if (!isHistorySchemaError(error)) console.warn("Historico da remocao nao salvo:", error);
+      else historySchemaAvailable = false;
     }
-    if ($("consultaPrateleira").classList.contains("active") && $("shelfSearchInput").value.trim()) {
-      renderShelfSearch();
-    }
-    if ($("bipagem").classList.contains("active") && currentSku) {
-      renderScanResults(findBySku(currentSku));
-    }
-    showToast("Vinculo removido.", "success");
+  }
+
+  function refreshActiveAddressingResults() {
+    if ($("consultaSku").classList.contains("active") && $("skuSearchInput").value.trim()) renderSkuSearch();
+    if ($("consultaPrateleira").classList.contains("active") && $("shelfSearchInput").value.trim()) renderShelfSearch();
+    if ($("bipagem").classList.contains("active") && currentSku) renderScanResults(findBySku(currentSku));
   }
 
   function generateLabels(printAfter) {
