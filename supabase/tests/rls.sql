@@ -36,6 +36,27 @@ select pg_temp.assert_true(
   not has_function_privilege('anon', 'public.wms_commit_binding_allocation(jsonb)', 'EXECUTE'),
   'anon must not execute the atomic addressing function'
 );
+select pg_temp.assert_true(
+  exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'wms_replenishment_requests'
+      and policyname = 'wms_replenishment_requests_warehouse_update'
+      and cmd = 'UPDATE'
+  ),
+  'replenishment requests must use the profile-restricted UPDATE policy'
+);
+select pg_temp.assert_true(
+  exists (
+    select 1
+    from pg_constraint
+    where conrelid = 'public.wms_replenishment_requests'::regclass
+      and conname = 'wms_replenishment_requests_prioridade_check'
+      and convalidated is true
+  ),
+  'replenishment priority constraint must exist and be validated'
+);
 
 select auth_user_id as operator_auth_user_id
 from public.wms_users
@@ -139,6 +160,58 @@ select pg_temp.assert_true(
 reset role;
 \else
 \echo 'SKIP: create/link an active supervisor to exercise the promotion assertion.'
+\endif
+
+select auth_user_id as attendant_auth_user_id,
+       default_warehouse_code as attendant_warehouse_code
+from public.wms_users
+where role = 'ATENDENTE' and auth_user_id is not null and active is true
+limit 1 \gset
+
+\if :{?attendant_auth_user_id}
+insert into public.wms_replenishment_requests (
+  id, warehouse_code, codigo_material, quantidade_solicitada,
+  quantidade_pendente, status, prioridade, solicitado_por_id
+)
+values (
+  'rls-test-attendant-request', :'attendant_warehouse_code', 'RLS-ATTENDANT',
+  1, 1, 'PENDENTE', 'CLIENTE',
+  (select id from public.wms_users where auth_user_id = :'attendant_auth_user_id'::uuid limit 1)
+)
+on conflict (id) do update
+set warehouse_code = excluded.warehouse_code,
+    status = 'PENDENTE',
+    prioridade = 'CLIENTE';
+
+select set_config('request.jwt.claims', jsonb_build_object('sub', :'attendant_auth_user_id', 'role', 'authenticated')::text, true);
+set local role authenticated;
+select pg_temp.assert_true(
+  not private.current_wms_is_global_admin(),
+  'ATENDENTE must not become global admin even if a stale flag is present'
+);
+select pg_temp.assert_true(
+  private.current_wms_allowed_warehouses() = array[upper(:'attendant_warehouse_code')],
+  'ATENDENTE must remain restricted to the assigned warehouse'
+);
+select pg_temp.assert_true(
+  exists(select 1 from public.wms_replenishment_requests where id = 'rls-test-attendant-request'),
+  'ATENDENTE must read requests from the assigned warehouse'
+);
+with changed as (
+  update public.wms_replenishment_requests
+  set status = 'ATRIBUIDO'
+  where id = 'rls-test-attendant-request'
+  returning 1
+)
+select count(*)::integer as attendant_update_count
+from changed \gset
+select pg_temp.assert_true(
+  :attendant_update_count::integer = 0,
+  'ATENDENTE must not claim or update a replenishment request'
+);
+reset role;
+\else
+\echo 'SKIP: create/link an active ATENDENTE to exercise attendant runtime assertions.'
 \endif
 
 rollback;

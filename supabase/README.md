@@ -11,6 +11,7 @@ As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes 
 5. `20260924115056_user_supervision_compatibility.sql`: compatibilidade do vínculo entre supervisores e operadores.
 6. `20260930184528_allow_operator_binding_delete.sql`: operadores podem remover vínculos de endereço somente nos estoques permitidos.
 7. `20261001001530_addressing_concurrency_fast_path.sql`: gravação atômica do endereçamento, com trava por estoque/endereço e detecção de alteração concorrente.
+8. `20261001143352_atendente_profile_and_priority.sql`: perfil ATENDENTE, prioridade Cliente/Reposição e bloqueio de escritas operacionais por perfil.
 
 Em um banco existente, aplique a sequência pelo Supabase CLI. Os comandos `create/alter ... if not exists` e `on conflict` tornam a baseline reaplicável; ainda assim, faça backup antes.
 
