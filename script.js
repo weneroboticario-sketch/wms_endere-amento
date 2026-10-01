@@ -35,6 +35,9 @@ import {
   var LOCAL_CACHE_DB_NAME = "wms_operational_cache_v1";
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
+  var CACHE_INVALIDATION_STORAGE_PREFIX = "wms_cache_invalidation_v1:";
+  var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
+  var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var EXPECTED_SCHEMA_VERSION = "2026.09.30.005";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
@@ -328,6 +331,9 @@ import {
     lastOptionalFailure: null,
     operationalSubscribed: false,
     transferTasksLoaded: false,
+    lastCacheInvalidationId: "",
+    cacheRefreshPromise: null,
+    cacheInvalidationTableUnavailable: false,
     active: false
   };
 
@@ -389,6 +395,7 @@ import {
     installHtmlSecurity();
     await initLocalCache();
     bindLocalCacheShutdownEvents();
+    bindWarehouseCacheInvalidationEvents();
     registerServiceWorker();
     bindConnectivityEvents();
     await loadSupabaseConfig();
@@ -623,6 +630,29 @@ import {
     return localCacheState.writeQueue;
   }
 
+  function cacheDelete(key) {
+    localCacheState.writesPending += 1;
+    localCacheState.writeQueue = localCacheState.writeQueue.catch(function () { return false; }).then(function () {
+      if (localCacheState.disabled || localCacheState.closing) return false;
+      return runCacheOperation("cache-delete", false, function (db) {
+        return new Promise(function (resolve, reject) {
+          try {
+            var tx = db.transaction(LOCAL_CACHE_STORE, "readwrite");
+            tx.objectStore(LOCAL_CACHE_STORE).delete(key);
+            tx.oncomplete = function () { resolve(true); };
+            tx.onerror = function () { reject(tx.error); };
+            tx.onabort = function () { reject(tx.error || new Error("Exclusao IndexedDB abortada.")); };
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    }).finally(function () {
+      localCacheState.writesPending = Math.max(0, localCacheState.writesPending - 1);
+    });
+    return localCacheState.writeQueue;
+  }
+
   async function pauseLocalCacheForContextChange(reason) {
     localCacheState.disabled = true;
     try {
@@ -659,6 +689,76 @@ import {
 
   async function writeModuleCache(moduleName, value) {
     return writeModuleCacheForWarehouse(moduleName, activeWarehouseCode(), value);
+  }
+
+  function cacheInvalidationStorageKey(warehouseCode) {
+    return CACHE_INVALIDATION_STORAGE_PREFIX + normalizeWarehouseCode(warehouseCode || DEFAULT_WAREHOUSE_CODE);
+  }
+
+  function bindWarehouseCacheInvalidationEvents() {
+    window.addEventListener("storage", function (event) {
+      if (!event.key || event.key.indexOf(CACHE_INVALIDATION_STORAGE_PREFIX) !== 0 || !event.newValue) return;
+      try {
+        var signal = JSON.parse(event.newValue);
+        refreshWarehouseCachesFromSignal(signal, { source: "aba-local" }).catch(function (error) {
+          recordPerformanceError("cache-invalidation-storage", error);
+        });
+      } catch (error) {
+        recordPerformanceError("cache-invalidation-storage-parse", error);
+      }
+    });
+  }
+
+  async function invalidateWarehouseModuleCaches(warehouseCode) {
+    var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    await Promise.all(WAREHOUSE_CACHE_MODULES.map(function (moduleName) {
+      var scopedKey = cacheKeyForWarehouse(moduleName, normalizedWarehouseCode);
+      localStorage.removeItem(LOCAL_SYNC_PREFIX + scopedKey);
+      return cacheDelete(scopedKey);
+    }));
+  }
+
+  async function refreshWarehouseCachesFromSignal(signal, options) {
+    options = options || {};
+    var warehouseCode = normalizeWarehouseCode((signal && (signal.warehouse_code || signal.warehouseCode)) || "");
+    var signalId = normalizeText(signal && signal.id);
+    if (!warehouseCode || warehouseCode !== activeWarehouseCode() || !authState.currentUser) return false;
+    if (signalId && realtimeState.lastCacheInvalidationId === signalId) return false;
+    if (realtimeState.cacheRefreshPromise) return realtimeState.cacheRefreshPromise;
+    realtimeState.lastCacheInvalidationId = signalId || randomId("cache-refresh");
+    realtimeState.cacheRefreshPromise = performWarehouseCacheRefresh(warehouseCode, options).finally(function () {
+      realtimeState.cacheRefreshPromise = null;
+    });
+    return realtimeState.cacheRefreshPromise;
+  }
+
+  async function performWarehouseCacheRefresh(warehouseCode, options) {
+    var loadedModules = {
+      transfers: moduleLoadState.transfers,
+      replenishment: moduleLoadState.replenishment,
+      stock: moduleLoadState.stock
+    };
+    setSyncStatus("Atualizando caches", "warning");
+    await invalidateWarehouseModuleCaches(warehouseCode);
+    stockState.positionCache = {};
+    moduleLoadState.core = false;
+    moduleLoadState.transfers = false;
+    moduleLoadState.replenishment = false;
+    moduleLoadState.stock = false;
+    moduleLoadPromises.core = null;
+    moduleLoadPromises.coreWarehouseCode = "";
+    replenishmentState.loadingPromise = null;
+    replenishmentState.loadingWarehouseCode = "";
+    var refreshes = [ensureCoreDataLoaded()];
+    if (loadedModules.transfers && canAccessScreen("transferencias")) refreshes.push(ensureTransferDataLoaded());
+    if (loadedModules.replenishment && canAccessScreen("reposicao")) refreshes.push(ensureReplenishmentDataLoaded());
+    if (loadedModules.stock && canAccessScreen("baseEstoque")) refreshes.push(ensureStockDataLoaded());
+    await Promise.all(refreshes);
+    if (activeWarehouseCode() !== warehouseCode) return false;
+    renderAll();
+    setSyncStatus(realtimeState.operationalSubscribed ? "Ao vivo" : "Sincronizado", "success");
+    if (options.source !== "exportacao-local") showToast("Localizacoes e caches atualizados para o estoque " + warehouseCode + ".", "success");
+    return true;
   }
 
   function resetLazyModuleState(keepUsers) {
@@ -9060,6 +9160,124 @@ import {
     }
   }
 
+  function isAddressCacheInvalidationRow(row) {
+    return normalizeText(row && row.event_type).toUpperCase() === ADDRESS_CACHE_INVALIDATION_EVENT;
+  }
+
+  async function publishAddressCacheInvalidation(warehouseCode, fileName, rowCount) {
+    var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var createdAt = nowIso();
+    var signal = {
+      id: randomId("cache-address"),
+      created_at: createdAt,
+      updated_at: createdAt,
+      warehouse_id: activeWarehouseId(),
+      warehouse_code: normalizedWarehouseCode,
+      user_id: authState.currentUser ? authState.currentUser.id || "" : "",
+      user_name: authState.currentUser ? authState.currentUser.name || "" : "",
+      entity_id: fileName || "",
+      transfer_id: "",
+      event_type: ADDRESS_CACHE_INVALIDATION_EVENT,
+      title: "Enderecamento exportado",
+      message: "Atualizar caches do estoque " + normalizedWarehouseCode + ".",
+      read: true,
+      seen: true,
+      archived: true,
+      archived_at: createdAt,
+      archived_by_id: authState.currentUser ? authState.currentUser.id || "" : "",
+      archived_by_name: authState.currentUser ? authState.currentUser.name || "" : "",
+      idempotency_key: "cache:" + normalizedWarehouseCode + ":" + createdAt,
+      request_id: "",
+      payload: {
+        scope: "ALL_WAREHOUSE_CACHES",
+        file_name: fileName || "",
+        row_count: Number(rowCount || 0)
+      }
+    };
+    localStorage.setItem(cacheInvalidationStorageKey(normalizedWarehouseCode), JSON.stringify(signal));
+    var localRefresh = refreshWarehouseCachesFromSignal(signal, { source: "exportacao-local" });
+    var deliveries = await Promise.all([
+      broadcastAddressCacheInvalidation(signal),
+      persistAddressCacheInvalidation(signal)
+    ]);
+    await localRefresh;
+    return deliveries.some(Boolean);
+  }
+
+  async function broadcastAddressCacheInvalidation(signal) {
+    if (!realtimeState.channel || typeof realtimeState.channel.send !== "function" || !realtimeState.operationalSubscribed) return false;
+    try {
+      var result = await realtimeState.channel.send({
+        type: "broadcast",
+        event: "cache-invalidation",
+        payload: signal
+      });
+      return result === "ok";
+    } catch (error) {
+      recordPerformanceError("cache-invalidation-broadcast", error);
+      return false;
+    }
+  }
+
+  async function persistAddressCacheInvalidation(signal) {
+    if (!isSupabaseReady() || realtimeState.cacheInvalidationTableUnavailable) return false;
+    try {
+      var payload = Object.assign({}, signal);
+      var attemptedMissingColumns = {};
+      var response = await runSupabaseRequestWithRetry("cache-invalidation-insert", function () {
+        return supabaseDb.from("wms_notifications").insert(payload);
+      });
+      while (response.error && isMissingColumnError(response.error)) {
+        var missingColumn = getMissingColumnName(response.error);
+        if (!missingColumn || attemptedMissingColumns[missingColumn] || ["id", "warehouse_code", "event_type"].indexOf(missingColumn) >= 0) break;
+        attemptedMissingColumns[missingColumn] = true;
+        delete payload[missingColumn];
+        response = await runSupabaseRequestWithRetry("cache-invalidation-insert", function () {
+          return supabaseDb.from("wms_notifications").insert(payload);
+        });
+      }
+      if (response.error) throw response.error;
+      return true;
+    } catch (error) {
+      if (isMissingTransferTableError(error) || isMissingColumnError(error)) markCacheInvalidationTableUnavailable(error, "cache-invalidation-persist");
+      else recordPerformanceError("cache-invalidation-persist", error);
+      return false;
+    }
+  }
+
+  function markCacheInvalidationTableUnavailable(error, label) {
+    if (realtimeState.cacheInvalidationTableUnavailable) return;
+    realtimeState.cacheInvalidationTableUnavailable = true;
+    recordPerformanceError(label || "cache-invalidation-schema", error);
+  }
+
+  async function checkLatestAddressCacheInvalidation() {
+    if (!isSupabaseReady() || !canUseNetwork() || realtimeState.cacheInvalidationTableUnavailable) return false;
+    try {
+      if (moduleLoadPromises.core) await moduleLoadPromises.core.catch(function () { return false; });
+      var response = await supabaseDb
+        .from("wms_notifications")
+        .select("id,created_at,warehouse_code,event_type")
+        .eq("warehouse_code", activeWarehouseCode())
+        .eq("event_type", ADDRESS_CACHE_INVALIDATION_EVENT)
+        .order("created_at", { ascending: false })
+        .limit(1);
+      if (response.error) throw response.error;
+      var row = response.data && response.data[0];
+      if (!row || realtimeState.lastCacheInvalidationId === row.id) return false;
+      var coreSyncAt = localStorage.getItem(LOCAL_SYNC_PREFIX + cacheKeyForWarehouse("coreData", activeWarehouseCode())) || "";
+      if (coreSyncAt && new Date(coreSyncAt).getTime() >= new Date(row.created_at || 0).getTime()) {
+        realtimeState.lastCacheInvalidationId = row.id;
+        return false;
+      }
+      return refreshWarehouseCachesFromSignal(row, { source: "polling" });
+    } catch (error) {
+      if (isMissingTransferTableError(error) || isMissingColumnError(error)) markCacheInvalidationTableUnavailable(error, "cache-invalidation-poll");
+      else recordPerformanceError("cache-invalidation-poll", error);
+      return false;
+    }
+  }
+
   function startLeaderLiveSync() {
     stopLeaderLiveSync();
     if (!isSupabaseReady() || !authState.currentUser || !canUseNetwork()) return;
@@ -9068,6 +9286,7 @@ import {
     realtimeState.failureCount = 0;
     realtimeState.operationalSubscribed = false;
     realtimeState.transferTasksLoaded = false;
+    realtimeState.lastCacheInvalidationId = "";
     if (!moduleLoadState.transfers) realtimeState.lastLiveUpdateAt = "";
     try {
       if (typeof supabaseDb.channel === "function") {
@@ -9080,6 +9299,11 @@ import {
         var operationalChannel = supabaseDb.channel("wms-live-" + realtimeState.warehouseCode + "-operacional");
         operationalTables.forEach(function (tableName) {
           operationalChannel = operationalChannel.on("postgres_changes", warehouseRealtimeConfig(tableName), handleTransferRealtimeDelta);
+        });
+        operationalChannel = operationalChannel.on("broadcast", { event: "cache-invalidation" }, function (message) {
+          refreshWarehouseCachesFromSignal(message && message.payload ? message.payload : {}, { source: "broadcast" }).catch(function (error) {
+            recordPerformanceError("cache-invalidation-realtime", error);
+          });
         });
         operationalChannel.subscribe(function (status) {
           realtimeState.subscriptionStatus = "operacional:" + status;
@@ -9174,6 +9398,11 @@ import {
         warehouseCode: row.warehouse_code || ""
       });
       realtimeState.recentEvents = realtimeState.recentEvents.slice(0, 10);
+      if (payload && payload.table === "wms_notifications" && isAddressCacheInvalidationRow(row)) {
+        await refreshWarehouseCachesFromSignal(row, { source: "postgres-realtime" });
+        setSyncStatus("Ao vivo", "success");
+        return;
+      }
       if (payload && payload.table === "wms_replenishment_requests") {
         applyReplenishmentRealtimePayload(payload);
         renderReplenishmentRealtimeViews();
@@ -9286,6 +9515,7 @@ import {
     var retryDelay = 0;
     try {
       var startedAt = performance.now();
+      await checkLatestAddressCacheInvalidation();
       var since = realtimeState.lastLiveUpdateAt || "";
       var activeScreen = getActiveScreenId();
       var shouldLoadFullTransfers = moduleLoadState.transfers || activeScreen === "transferencias";
@@ -14711,11 +14941,17 @@ import {
       exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao." +
         (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
     );
-    await saveData();
+    var savedBeforeCacheRefresh = await saveData();
+    var cacheRefreshPublished = false;
+    if (savedBeforeCacheRefresh) {
+      cacheRefreshPublished = await publishAddressCacheInvalidation(exportWarehouseCode, fileName, exportRows.length);
+    }
     var exportMessage = "Excel do estoque " + exportWarehouseCode + " exportado no modelo LinhaSeparacao, com uma linha por localização e SKUs separados por ponto e vírgula." +
-      (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "");
-    if ($("exportStatus")) setStatus("exportStatus", exportMessage, "success");
-    showToast(exportMessage, "success");
+      (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "") +
+      (cacheRefreshPublished ? " Os caches das sessões deste estoque foram atualizados." : savedBeforeCacheRefresh ? " O cache deste dispositivo foi atualizado; os demais serão reconciliados ao recarregar." : " A planilha foi baixada, mas não foi possível sincronizar os caches.");
+    var exportStatusType = savedBeforeCacheRefresh && cacheRefreshPublished ? "success" : "warning";
+    if ($("exportStatus")) setStatus("exportStatus", exportMessage, exportStatusType);
+    showToast(exportMessage, exportStatusType);
     } finally {
       endTransferAction(actionButton);
     }
