@@ -22,6 +22,7 @@ import {
   planLocationSkuCleanup,
   resolveRemoteBindingIds
 } from "./src/addressing-bindings.js";
+import { normalizeAccessRequestRole } from "./src/access-control.js";
 
 (function () {
   "use strict";
@@ -7049,7 +7050,7 @@ import {
       name: request.name,
       username: request.username,
       matricula: request.matricula || request.username,
-      role: "OPERADOR",
+      role: normalizeAccessRequestRole(request.roleRequested),
       active: true,
       available_for_tasks: true,
       default_warehouse_id: activeWarehouseId(),
