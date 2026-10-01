@@ -34,10 +34,31 @@ test("request messages are visible in cards and operator notifications", () => {
   assert.match(source, /body \+= " \| Mensagem: " \+ normalizeText\(request\.observacao\);/);
 });
 
-test("the replenishment queue loads at login and refreshes while the operator works", async () => {
+test("the replenishment queue hydrates from cache and refreshes without blocking login", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
-  assert.match(source, /if \(canAccessScreen\("reposicao"\)\) await ensureReplenishmentDataLoaded\(\);/);
-  assert.match(source, /if \(moduleLoadState\.replenishment\) await refreshReplenishmentData\(\);/);
+  assert.match(source, /hydrateReplenishmentDataFromCache\(\)/);
+  assert.match(source, /var replenishmentPreload = canAccessScreen\("reposicao"\)[\s\S]*?ensureReplenishmentDataLoaded\(\)/);
+  assert.match(source, /replenishmentState\.loadingPromise && replenishmentState\.loadingWarehouseCode === requestedWarehouseCode/);
+  assert.match(source, /moduleLoadState\.replenishment \? refreshReplenishmentData\(\) : ensureReplenishmentDataLoaded\(\)/);
   assert.match(html, /id="refreshReplenishmentQueueButton"[^>]*>Atualizar fila<\/button>/);
+});
+
+test("realtime uses one operational channel and slower fallback polling", () => {
+  assert.match(source, /channel\("wms-live-" \+ realtimeState\.warehouseCode \+ "-operacional"\)/);
+  assert.match(source, /operationalTables\.forEach[\s\S]*?operationalChannel = operationalChannel\.on/);
+  assert.match(source, /realtimeState\.operationalSubscribed = status === "SUBSCRIBED"/);
+  assert.match(source, /scheduleTransferRealtimeRefresh\("poll", 0\);[\s\S]*?\}, 60000\);/);
+});
+
+test("replenishment no longer waits for the full product catalog", () => {
+  assert.match(source, /screenId === "reposicao"[\s\S]*?Promise\.all\(\[[\s\S]*?ensureUsersLoaded[\s\S]*?ensureReplenishmentDataLoaded/);
+  assert.match(source, /syncProductCatalogInBackground\(productCatalogPromise, requestedWarehouseCode\)/);
+  assert.match(source, /pageSize: 1000/);
+});
+
+test("background synchronization keeps cache isolated by warehouse", () => {
+  assert.match(source, /function cacheKeyForWarehouse\(moduleName, warehouseCode\)/);
+  assert.match(source, /writeModuleCacheForWarehouse\("coreData", requestedWarehouseCode/);
+  assert.match(source, /writeModuleCacheForWarehouse\("replenishmentData", requestedWarehouseCode/);
 });

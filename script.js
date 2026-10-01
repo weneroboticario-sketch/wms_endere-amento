@@ -264,7 +264,9 @@ import {
     lastCreatedSignature: "",
     lastCreatedAt: 0,
     currentProduct: null,
-    tablesAvailable: true
+    tablesAvailable: true,
+    loadingPromise: null,
+    loadingWarehouseCode: ""
   };
   var stockState = {
     batches: [],
@@ -324,6 +326,8 @@ import {
     recentEvents: [],
     disabledOptionalTables: {},
     lastOptionalFailure: null,
+    operationalSubscribed: false,
+    transferTasksLoaded: false,
     active: false
   };
 
@@ -372,6 +376,10 @@ import {
     transfers: false,
     replenishment: false,
     stock: false
+  };
+  var moduleLoadPromises = {
+    core: null,
+    coreWarehouseCode: ""
   };
   var protectedAppShell = null;
   var protectedAppShellMarker = null;
@@ -438,8 +446,12 @@ import {
     return localCacheState.opening;
   }
 
+  function cacheKeyForWarehouse(moduleName, warehouseCode) {
+    return moduleName + ":" + normalizeWarehouseCode(warehouseCode || DEFAULT_WAREHOUSE_CODE);
+  }
+
   function cacheKey(moduleName) {
-    return moduleName + ":" + activeWarehouseCode();
+    return cacheKeyForWarehouse(moduleName, activeWarehouseCode());
   }
 
   function delay(ms) {
@@ -630,15 +642,23 @@ import {
     localCacheState.closing = false;
   }
 
-  async function readModuleCache(moduleName) {
-    var record = await cacheGet(cacheKey(moduleName));
+  async function readModuleCacheForWarehouse(moduleName, warehouseCode) {
+    var record = await cacheGet(cacheKeyForWarehouse(moduleName, warehouseCode));
     return record && record.value ? record.value : null;
   }
 
-  async function writeModuleCache(moduleName, value) {
-    var scopedKey = cacheKey(moduleName);
+  async function readModuleCache(moduleName) {
+    return readModuleCacheForWarehouse(moduleName, activeWarehouseCode());
+  }
+
+  async function writeModuleCacheForWarehouse(moduleName, warehouseCode, value) {
+    var scopedKey = cacheKeyForWarehouse(moduleName, warehouseCode);
     localStorage.setItem(LOCAL_SYNC_PREFIX + scopedKey, nowIso());
     return cacheSet(scopedKey, value);
+  }
+
+  async function writeModuleCache(moduleName, value) {
+    return writeModuleCacheForWarehouse(moduleName, activeWarehouseCode(), value);
   }
 
   function resetLazyModuleState(keepUsers) {
@@ -647,6 +667,10 @@ import {
     moduleLoadState.transfers = false;
     moduleLoadState.replenishment = false;
     moduleLoadState.stock = false;
+    moduleLoadPromises.core = null;
+    moduleLoadPromises.coreWarehouseCode = "";
+    replenishmentState.loadingPromise = null;
+    replenishmentState.loadingWarehouseCode = "";
     if (!keepUsers) {
       moduleLoadState.users = false;
       moduleLoadState.warehouses = false;
@@ -713,9 +737,21 @@ import {
 
   async function ensureCoreDataLoaded() {
     if (moduleLoadState.core) return true;
-    await loadData();
-    moduleLoadState.core = true;
-    return true;
+    var warehouseCode = activeWarehouseCode();
+    if (moduleLoadPromises.core && moduleLoadPromises.coreWarehouseCode === warehouseCode) {
+      return moduleLoadPromises.core;
+    }
+    moduleLoadPromises.coreWarehouseCode = warehouseCode;
+    moduleLoadPromises.core = loadData().then(function (loaded) {
+      if (activeWarehouseCode() === warehouseCode) moduleLoadState.core = loaded !== false;
+      return loaded !== false;
+    }).finally(function () {
+      if (moduleLoadPromises.coreWarehouseCode === warehouseCode) {
+        moduleLoadPromises.core = null;
+        moduleLoadPromises.coreWarehouseCode = "";
+      }
+    });
+    return moduleLoadPromises.core;
   }
 
   async function ensureTransferDataLoaded() {
@@ -754,10 +790,6 @@ import {
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
-    if (["transferencias", "reposicao"].indexOf(screenId) >= 0) {
-      var usersLoaded = await ensureUsersLoaded({ repair: false, force: true });
-      if (!usersLoaded) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
-    }
     if (screenId === "usuarios") {
       var managementResults = await Promise.all([
         ensureUsersLoaded({ repair: false, force: true }),
@@ -765,14 +797,28 @@ import {
       ]);
       if (!managementResults[0]) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
     }
-    if (["dashboard", "bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "reposicao", "baseEstoque"].indexOf(screenId) >= 0) {
-      await ensureCoreDataLoaded();
+    if (screenId === "transferencias") {
+      var transferResults = await Promise.all([
+        ensureUsersLoaded({ repair: false }),
+        ensureTransferDataLoaded()
+      ]);
+      if (!transferResults[0]) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
+      return true;
     }
-    if (screenId === "transferencias") await ensureTransferDataLoaded();
-    if (screenId === "dashboard") await ensureReplenishmentDataLoaded();
     if (screenId === "reposicao") {
-      if (moduleLoadState.replenishment) await refreshReplenishmentData();
-      else await ensureReplenishmentDataLoaded();
+      var replenishmentResults = await Promise.all([
+        ensureUsersLoaded({ repair: false }),
+        moduleLoadState.replenishment ? refreshReplenishmentData() : ensureReplenishmentDataLoaded()
+      ]);
+      if (!replenishmentResults[0]) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
+      return true;
+    }
+    if (screenId === "dashboard") {
+      await Promise.all([ensureCoreDataLoaded(), ensureReplenishmentDataLoaded()]);
+      return true;
+    }
+    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "baseEstoque"].indexOf(screenId) >= 0) {
+      await ensureCoreDataLoaded();
     }
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
     if (screenId === "estoques") await ensureWarehousesLoaded();
@@ -1381,13 +1427,15 @@ import {
     return !!supabaseDb;
   }
 
-  async function fetchAllRows(tableName, orderColumn, ascending) {
+  async function fetchAllRows(tableName, orderColumn, ascending, options) {
+    options = options || {};
     var allRows = [];
     var from = 0;
-    var pageSize = 500;
+    var pageSize = Number(options.pageSize || 500);
+    var selectColumns = options.select || "*";
     while (true) {
       var response = await runSupabaseRequestWithRetry("fetch-all-" + tableName, function () {
-        var query = supabaseDb.from(tableName).select("*");
+        var query = supabaseDb.from(tableName).select(selectColumns);
         if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
         return query.range(from, from + pageSize - 1);
       });
@@ -1895,55 +1943,55 @@ import {
     );
   }
 
+  async function hydrateCoreDataFromCache(warehouseCode) {
+    var requestedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var cachedCore = await readModuleCacheForWarehouse("coreData", requestedWarehouseCode);
+    if (!cachedCore || !Array.isArray(cachedCore.bindings)) return false;
+    state.bindings = (cachedCore.bindings || []).filter(function (binding) {
+      return normalizeWarehouseCode(binding.warehouseCode) === requestedWarehouseCode;
+    });
+    state.history = [];
+    state.products = cachedCore.products || {};
+    return true;
+  }
+
   async function loadData() {
     var loadStartedAt = performance.now();
+    var requestedWarehouseCode = activeWarehouseCode();
     setSyncStatus("Sincronizando", "warning");
     state = { bindings: [], history: [], products: {} };
-    var cachedCore = await readModuleCache("coreData");
-    var loadedFromCache = false;
-    if (cachedCore && Array.isArray(cachedCore.bindings)) {
-      state.bindings = (cachedCore.bindings || []).filter(bindingMatchesActiveWarehouse);
-      state.history = [];
-      state.products = cachedCore.products || {};
-      loadedFromCache = true;
-    }
+    var loadedFromCache = await hydrateCoreDataFromCache(requestedWarehouseCode);
     if (!isSupabaseReady() || !canUseNetwork()) {
       if (loadedFromCache) updateSupabaseStatus("Dados carregados do cache local. Conecte para sincronizar com o Supabase.", "warning");
       recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
       setSyncStatus(loadedFromCache ? "Cache local" : "Offline", loadedFromCache ? "warning" : "error");
-      return;
+      return loadedFromCache;
     }
     try {
+      var productCatalogPromise = fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 })
+        .then(function (rows) { return { rows: rows, error: null }; })
+        .catch(function (error) { return { rows: [], error: error }; });
       var bindingRows = await fetchWarehouseRows("wms_bindings", "created_at", false);
-      state.bindings = expandDbBindingRows(bindingRows).filter(bindingMatchesActiveWarehouse);
-
-      var statusType = "success";
+      if (activeWarehouseCode() !== requestedWarehouseCode) return false;
+      var nextBindings = expandDbBindingRows(bindingRows).filter(bindingMatchesActiveWarehouse);
+      var nextProducts = Object.assign({}, state.products || {});
+      nextBindings.forEach(function (binding) {
+        if (binding.sku && binding.productName && !nextProducts[binding.sku]) nextProducts[binding.sku] = binding.productName;
+      });
+      state.bindings = nextBindings;
       state.history = [];
-
-      state.products = {};
-      var productsMessage = "";
-      try {
-        var productRows = await fetchAllRows("wms_products", "sku", true);
-        productsTableAvailable = true;
-        productRows.forEach(function (product) {
-          if (product.sku && product.product_name) state.products[product.sku] = product.product_name;
-        });
-      } catch (productsError) {
-        if (!isMissingProductsTableError(productsError)) throw productsError;
-        productsTableAvailable = false;
-        rebuildProductsFromBindings();
-        productsMessage = " Tabela wms_products ausente; nomes foram lidos de wms_bindings. Aplique as migrations do Supabase para gravar o catalogo de produtos.";
-        statusType = "warning";
-      }
+      state.products = nextProducts;
       productsDirty = false;
-      await writeModuleCache("coreData", {
+      await writeModuleCacheForWarehouse("coreData", requestedWarehouseCode, {
         bindings: state.bindings,
         products: state.products
       });
       recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
-      setSyncStatus("Sincronizado", "success");
+      setSyncStatus(realtimeState.operationalSubscribed ? "Ao vivo" : "Sincronizado", "success");
       moduleLoadState.core = true;
-      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " registro(s) em wms_bindings e " + Object.keys(state.products).length + " produto(s)." + productsMessage, statusType);
+      updateSupabaseStatus("SELECT OK: " + state.bindings.length + " endereco(s). Catalogo de produtos atualizando em segundo plano.", "success");
+      syncProductCatalogInBackground(productCatalogPromise, requestedWarehouseCode);
+      return true;
     } catch (error) {
       recordPerformanceMetric("lastCoreLoadMs", loadStartedAt);
       recordPerformanceError("enderecamento", error);
@@ -1953,7 +2001,36 @@ import {
       updateSupabaseStatus("Falha no SELECT do Supabase: " + message, "error");
       setSyncStatus(loadedFromCache ? "Cache local" : "Erro sync", loadedFromCache ? "warning" : "error");
       showToast(loadedFromCache ? "Supabase indisponivel. Usando cache local." : "Nao foi possivel carregar o banco Supabase.", loadedFromCache ? "warning" : "error");
+      return loadedFromCache;
     }
+  }
+
+  function syncProductCatalogInBackground(productCatalogPromise, requestedWarehouseCode) {
+    productCatalogPromise.then(function (productResult) {
+      if (activeWarehouseCode() !== requestedWarehouseCode) return false;
+      if (productResult.error) {
+        productsTableAvailable = !isMissingProductsTableError(productResult.error);
+        if (productsTableAvailable) recordPerformanceError("catalogo-produtos", productResult.error);
+        return false;
+      }
+      var products = {};
+      productResult.rows.forEach(function (product) {
+        if (product.sku && product.product_name) products[product.sku] = product.product_name;
+      });
+      productsTableAvailable = true;
+      state.products = products;
+      productsDirty = false;
+      return writeModuleCacheForWarehouse("coreData", requestedWarehouseCode, {
+        bindings: state.bindings,
+        products: state.products
+      }).then(function () {
+        if (activeWarehouseCode() !== requestedWarehouseCode) return;
+        updateSupabaseStatus("Sincronizacao concluida: " + state.bindings.length + " endereco(s) e " + Object.keys(state.products).length + " produto(s).", "success");
+        renderAll();
+      });
+    }).catch(function (error) {
+      recordPerformanceError("catalogo-produtos-segundo-plano", error);
+    });
   }
 
   async function saveData() {
@@ -2098,7 +2175,7 @@ import {
       });
       performanceState.lastTransferLoadedItems = transferState.items.length;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
-      setSyncStatus("Sincronizado", "success");
+      setSyncStatus(realtimeState.operationalSubscribed ? "Ao vivo" : "Sincronizado", "success");
       moduleLoadState.transfers = true;
       return true;
     } catch (error) {
@@ -2112,6 +2189,23 @@ import {
         console.error("Erro ao carregar transferencias:", error);
       }
       return loadedFromCache;
+    }
+  }
+
+  async function loadTransferTaskSummaries() {
+    if (!isSupabaseReady() || !canUseNetwork()) return false;
+    var requestedWarehouseCode = activeWarehouseCode();
+    try {
+      var rows = await fetchTransferSummaryRows(120);
+      if (activeWarehouseCode() !== requestedWarehouseCode) return false;
+      transferState.transfers = rows.map(fromDbTransfer).filter(isOperationalTransferRecord);
+      realtimeState.transferTasksLoaded = true;
+      invalidateTransferStatsCache();
+      renderOperatorTasksAlert();
+      return true;
+    } catch (error) {
+      if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("tarefas-transferencia", error);
+      return false;
     }
   }
 
@@ -4348,21 +4442,49 @@ import {
     };
   }
 
+  async function hydrateReplenishmentDataFromCache(warehouseCode) {
+    var requestedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var cached = await readModuleCacheForWarehouse("replenishmentData", requestedWarehouseCode);
+    if (!cached || !Array.isArray(cached.requests)) return false;
+    replenishmentState.requests = cached.requests.filter(function (request) {
+      return normalizeWarehouseCode(request.warehouseCode) === requestedWarehouseCode;
+    });
+    return true;
+  }
+
   async function loadReplenishmentData() {
+    var requestedWarehouseCode = activeWarehouseCode();
+    if (replenishmentState.loadingPromise && replenishmentState.loadingWarehouseCode === requestedWarehouseCode) {
+      return replenishmentState.loadingPromise;
+    }
+    replenishmentState.loadingWarehouseCode = requestedWarehouseCode;
+    replenishmentState.loadingPromise = performReplenishmentLoad(requestedWarehouseCode).finally(function () {
+      if (replenishmentState.loadingWarehouseCode === requestedWarehouseCode) {
+        replenishmentState.loadingPromise = null;
+        replenishmentState.loadingWarehouseCode = "";
+      }
+    });
+    return replenishmentState.loadingPromise;
+  }
+
+  async function performReplenishmentLoad(requestedWarehouseCode) {
     var loadStartedAt = performance.now();
-    replenishmentState.requests = [];
-    if (!isSupabaseReady()) return false;
+    var loadedFromCache = replenishmentState.requests.length > 0;
+    if (!loadedFromCache) loadedFromCache = await hydrateReplenishmentDataFromCache(requestedWarehouseCode);
+    if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
     try {
       var response = await supabaseDb
         .from("wms_replenishment_requests")
         .select(replenishmentRequestSelectColumns())
-        .eq("warehouse_code", activeWarehouseCode())
+        .eq("warehouse_code", requestedWarehouseCode)
         .neq("is_deleted", true)
         .order("updated_at", { ascending: false })
         .limit(120);
       if (response.error) throw response.error;
+      if (activeWarehouseCode() !== requestedWarehouseCode) return false;
       replenishmentState.requests = (response.data || []).map(fromDbReplenishmentRequest);
       replenishmentState.tablesAvailable = true;
+      await writeModuleCacheForWarehouse("replenishmentData", requestedWarehouseCode, { requests: replenishmentState.requests });
       recordPerformanceMetric("lastReplenishmentLoadMs", loadStartedAt);
       return true;
     } catch (error) {
@@ -4372,15 +4494,17 @@ import {
         ? "Tabela de reposicao ausente ou desatualizada. Aplique as migrations no Supabase."
         : "Nao foi possivel carregar pedidos de reposicao: " + formatSupabaseError(error);
       if (getActiveScreenId() === "reposicao") setStatus("replenishmentQueueStatus", message, "error");
-      return false;
+      return loadedFromCache;
     }
   }
 
   async function refreshReplenishmentData() {
     if (!moduleLoadState.replenishment || !isSupabaseReady() || !canUseNetwork()) return;
-    await loadReplenishmentData();
+    var loaded = await loadReplenishmentData();
+    if (!loaded) return false;
     renderReplenishment();
     renderOperatorTasksAlert();
+    return true;
   }
 
   function replenishmentRequestSelectColumns() {
@@ -5426,14 +5550,24 @@ import {
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
-    await ensureCoreDataLoaded();
-    await applyDataMigrations();
-    if (canAccessScreen("reposicao")) await ensureReplenishmentDataLoaded();
+    await Promise.all([
+      hydrateCoreDataFromCache(),
+      canAccessScreen("reposicao") ? hydrateReplenishmentDataFromCache() : Promise.resolve(false)
+    ]);
+    renderAll();
+    var initialScreenPromise = showScreen(defaultScreenForUser());
+    var replenishmentPreload = canAccessScreen("reposicao")
+      ? ensureReplenishmentDataLoaded().then(function () { renderOperatorTasksAlert(); })
+      : Promise.resolve(false);
     startTaskPolling();
     startLeaderLiveSync();
     resetSessionInactivityTimeout();
-    await showScreen(defaultScreenForUser());
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
+    await initialScreenPromise;
+    replenishmentPreload.catch(function (error) { recordPerformanceError("reposicao-preload", error); });
+    ensureCoreDataLoaded().then(applyDataMigrations).catch(function (error) {
+      recordPerformanceError("dados-principais-segundo-plano", error);
+    });
   }
 
   function showLogin(message, type) {
@@ -5553,7 +5687,10 @@ import {
     await pauseLocalCacheForContextChange("warehouse-switch");
     setActiveWarehouse(code);
     resetLazyModuleState(true);
-    await ensureCoreDataLoaded();
+    await Promise.all([
+      hydrateCoreDataFromCache(),
+      canAccessScreen("reposicao") ? hydrateReplenishmentDataFromCache() : Promise.resolve(false)
+    ]);
     await showScreen(defaultScreenForUser());
     if (!realtimeState.active || realtimeState.warehouseCode !== activeWarehouseCode()) startLeaderLiveSync();
     showToast("Estoque ativo: " + code + ".", "success");
@@ -8895,19 +9032,25 @@ import {
     if (!isSupabaseReady() || !authState.currentUser) return;
     taskPollTimer = window.setInterval(async function () {
       try {
+        if (realtimeState.operationalSubscribed) {
+          renderOperatorTasksAlert();
+          return;
+        }
         if (moduleLoadState.transfers) {
           if (realtimeState.active) scheduleTransferRealtimeRefresh("task-poll", 0);
           else {
             await loadTransferData();
             renderTransfers();
           }
+        } else if (!realtimeState.transferTasksLoaded) {
+          await loadTransferTaskSummaries();
         }
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
         renderOperatorTasksAlert();
       } catch (error) {
         if (authState.currentUser && authState.currentUser.role === "OPERADOR") showToast("Não foi possível carregar suas tarefas. Tente novamente.", "error");
       }
-    }, 45000);
+    }, 60000);
   }
 
   function stopTaskPolling() {
@@ -8923,38 +9066,49 @@ import {
     realtimeState.active = true;
     realtimeState.warehouseCode = activeWarehouseCode();
     realtimeState.failureCount = 0;
+    realtimeState.operationalSubscribed = false;
+    realtimeState.transferTasksLoaded = false;
     if (!moduleLoadState.transfers) realtimeState.lastLiveUpdateAt = "";
     try {
       if (typeof supabaseDb.channel === "function") {
-        [
-          { name: "wms_transfers", optional: false },
-          { name: "wms_transfer_items", optional: false },
-          { name: "wms_stock_positions", optional: false },
-          { name: "wms_notifications", optional: true },
-          { name: "wms_replenishment_requests", optional: false }
-        ].forEach(function (entry) {
-          if (entry.optional && isOptionalRealtimeTableDisabled(entry.name)) return;
-          var channel = supabaseDb
-            .channel("wms-live-" + realtimeState.warehouseCode + "-" + entry.name)
-            .on("postgres_changes", warehouseRealtimeConfig(entry.name), handleTransferRealtimeDelta)
+        var operationalTables = [
+          "wms_transfers",
+          "wms_transfer_items",
+          "wms_stock_positions",
+          "wms_replenishment_requests"
+        ];
+        var operationalChannel = supabaseDb.channel("wms-live-" + realtimeState.warehouseCode + "-operacional");
+        operationalTables.forEach(function (tableName) {
+          operationalChannel = operationalChannel.on("postgres_changes", warehouseRealtimeConfig(tableName), handleTransferRealtimeDelta);
+        });
+        operationalChannel.subscribe(function (status) {
+          realtimeState.subscriptionStatus = "operacional:" + status;
+          realtimeState.operationalSubscribed = status === "SUBSCRIBED";
+          if (realtimeState.operationalSubscribed) setSyncStatus("Ao vivo", "success");
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncStatus("Tempo real reconectando", "warning");
+        });
+        realtimeState.channels.push(operationalChannel);
+        realtimeState.channel = operationalChannel;
+
+        if (!isOptionalRealtimeTableDisabled("wms_notifications")) {
+          var optionalChannel = supabaseDb
+            .channel("wms-live-" + realtimeState.warehouseCode + "-notificacoes")
+            .on("postgres_changes", warehouseRealtimeConfig("wms_notifications"), handleTransferRealtimeDelta)
             .subscribe(function (status) {
-              realtimeState.subscriptionStatus = entry.name + ":" + status;
-              if (status === "SUBSCRIBED") setSyncStatus("Ao vivo", "success");
               if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-                if (entry.optional) disableOptionalRealtimeTable(entry.name, new Error("Assinatura realtime " + status), "live-optional-" + entry.name);
-                else setSyncStatus("Tempo real reconectando", "warning");
+                disableOptionalRealtimeTable("wms_notifications", new Error("Assinatura realtime " + status), "live-optional-wms_notifications");
               }
             });
-          realtimeState.channels.push(channel);
-          if (!realtimeState.channel) realtimeState.channel = channel;
-        });
+          realtimeState.channels.push(optionalChannel);
+        }
       }
     } catch (error) {
       recordPerformanceError("realtime", error);
     }
     realtimeState.pollTimer = window.setInterval(function () {
+      if (document.visibilityState === "hidden") return;
       scheduleTransferRealtimeRefresh("poll", 0);
-    }, 12000);
+    }, 60000);
     scheduleTransferRealtimeRefresh("start", 250);
   }
 
@@ -8974,6 +9128,8 @@ import {
     realtimeState.warehouseCode = "";
     realtimeState.subscriptionStatus = "";
     realtimeState.failureCount = 0;
+    realtimeState.operationalSubscribed = false;
+    realtimeState.transferTasksLoaded = false;
     if (realtimeState.refreshTimer) {
       window.clearTimeout(realtimeState.refreshTimer);
       realtimeState.refreshTimer = null;
@@ -9131,16 +9287,18 @@ import {
     try {
       var startedAt = performance.now();
       var since = realtimeState.lastLiveUpdateAt || "";
+      var activeScreen = getActiveScreenId();
+      var shouldLoadFullTransfers = moduleLoadState.transfers || activeScreen === "transferencias";
       invalidateTransferStatsCache();
-      if (!since || !moduleLoadState.transfers) {
-        await loadTransferData();
+      if (!since) {
+        if (shouldLoadFullTransfers) await loadTransferData();
+        else await loadTransferTaskSummaries();
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
-        realtimeState.lastLiveUpdateAt = latestDate(transferState.transfers.concat(transferState.items).map(function (row) {
-          return { createdAt: row.updatedAt || row.createdAt || nowIso() };
-        })) || nowIso();
+        realtimeState.lastLiveUpdateAt = nowIso();
       } else {
-        var transferRows = await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since);
-        var shouldFetchItemRows = transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0;
+        var shouldFetchTransferRows = moduleLoadState.transfers || realtimeState.transferTasksLoaded;
+        var transferRows = shouldFetchTransferRows ? await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since) : [];
+        var shouldFetchItemRows = moduleLoadState.transfers && (transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0);
         var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
