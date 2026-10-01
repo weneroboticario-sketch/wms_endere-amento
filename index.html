@@ -50,6 +50,11 @@
       <label for="requestUsernameInput">Matrícula ou usuário</label>
       <input id="requestUsernameInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: 12345">
       <p class="muted">A senha temporária será definida pelo responsável no momento da aprovação.</p>
+      <label for="requestRoleInput">Quero trabalhar como</label>
+      <select id="requestRoleInput">
+        <option value="OPERADOR">Operador de estoque</option>
+        <option value="ATENDENTE">Atendente de loja</option>
+      </select>
       <label for="requestJobInput">Função ou cargo</label>
       <input id="requestJobInput" type="text" placeholder="Opcional">
       <label for="requestNotesInput">Observação</label>
@@ -541,6 +546,14 @@
                   <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
                 </label>
               </div>
+              <fieldset class="replenishment-priority-field">
+                <legend>Tipo da solicitacao</legend>
+                <div class="replenishment-priority-options">
+                  <label><input name="replenishmentPriority" type="radio" value="NORMAL" checked><span>Reposicao</span></label>
+                  <label><input name="replenishmentPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
+                </div>
+                <small>Pedidos de cliente têm preferência na fila.</small>
+              </fieldset>
               <label for="replenishmentObservationInput">Observacao</label>
               <textarea id="replenishmentObservationInput" rows="2" placeholder="Opcional"></textarea>
               <button class="primary-button wide-button" id="createReplenishmentButton" type="submit">Criar pedido</button>
@@ -548,7 +561,7 @@
             </form>
           </section>
 
-          <section class="panel replenishment-leader-panel">
+          <section class="panel replenishment-leader-panel" id="replenishmentLeaderPanel">
             <div class="panel-header">
               <h3>Resumo da reposicao</h3>
             </div>
@@ -573,8 +586,8 @@
         <section class="panel replenishment-queue-panel">
           <div class="panel-header">
             <div>
-              <h3>Pedidos em andamento</h3>
-              <p class="muted">Fila operacional do estoque atual, separada das sugestoes automaticas.</p>
+              <h3 id="replenishmentQueueTitle">Pedidos em andamento</h3>
+              <p class="muted" id="replenishmentQueueDescription">Fila operacional do estoque atual, separada das sugestoes automaticas.</p>
             </div>
             <div class="button-row">
               <button class="secondary-button" id="refreshReplenishmentQueueButton" type="button">Atualizar fila</button>
@@ -585,7 +598,7 @@
           <div id="replenishmentQueueStatus" class="inline-status"></div>
         </section>
 
-        <section class="panel replenishment-suggestions-panel">
+        <section class="panel replenishment-suggestions-panel" id="replenishmentSuggestionsPanel">
           <div class="panel-header">
             <div>
               <h3>Sugestoes de abastecimento</h3>
@@ -969,6 +982,7 @@
               <label for="userRoleInput">Perfil</label>
               <select id="userRoleInput">
                 <option value="OPERADOR">OPERADOR</option>
+                <option value="ATENDENTE">ATENDENTE</option>
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="ADMINISTRADOR">ADMINISTRADOR</option>
               </select>
@@ -1424,6 +1438,14 @@
       <div id="replenishmentSuggestionModalSummary" class="replenishment-suggestion-modal-summary"></div>
       <label for="suggestionRequestQtyInput">Quantidade solicitada</label>
       <input id="suggestionRequestQtyInput" inputmode="decimal" min="1" step="1" type="number">
+      <fieldset class="replenishment-priority-field">
+        <legend>Tipo da solicitacao</legend>
+        <div class="replenishment-priority-options">
+          <label><input name="suggestionPriority" type="radio" value="NORMAL" checked><span>Reposicao</span></label>
+          <label><input name="suggestionPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
+        </div>
+        <small>Pedidos de cliente têm preferência na fila.</small>
+      </fieldset>
       <label for="suggestionObservationInput">Observacao</label>
       <textarea id="suggestionObservationInput" rows="2" placeholder="Opcional"></textarea>
       <div id="replenishmentSuggestionModalStatus" class="inline-status"></div>

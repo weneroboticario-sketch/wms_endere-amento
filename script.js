@@ -22,7 +22,8 @@ import {
   planLocationSkuCleanup,
   resolveRemoteBindingIds
 } from "./src/addressing-bindings.js";
-import { normalizeAccessRequestRole } from "./src/access-control.js";
+import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
+import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "./src/replenishment.js";
 
 (function () {
   "use strict";
@@ -40,18 +41,18 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.09.30.005";
-  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
+  var EXPECTED_SCHEMA_VERSION = "2026.10.01.006";
+  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
+    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     saudeSistema: ["ADMINISTRADOR"],
     manutencao: ["ADMINISTRADOR"],
@@ -4651,7 +4652,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       returnedToQueueByName: row.returned_to_queue_by_name || "",
       returnReason: row.return_reason || "",
       status: status,
-      prioridade: row.prioridade || "NORMAL",
+      prioridade: normalizeReplenishmentPriority(row.prioridade),
       observacao: row.observacao || "",
       motivoCancelamento: row.motivo_cancelamento || "",
       startedAt: row.started_at || "",
@@ -4701,7 +4702,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       returned_to_queue_by_name: item.returnedToQueueByName || "",
       return_reason: item.returnReason || "",
       status: item.status || "PENDENTE",
-      prioridade: item.prioridade || "NORMAL",
+      prioridade: normalizeReplenishmentPriority(item.prioridade),
       observacao: item.observacao || "",
       motivo_cancelamento: item.motivoCancelamento || "",
       started_at: item.startedAt || null,
@@ -4740,10 +4741,11 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     var sku = normalizeSku(data.codigoMaterial);
     var requestedQty = Number(data.requestedQty || 0);
     var storeQty = Number(data.storeQty || 0);
+    var priority = normalizeReplenishmentPriority(data.priority);
     if (!sku) throw new Error("Codigo Material obrigatorio.");
     if (!authState.currentUser) throw new Error("Usuario solicitante obrigatorio.");
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
-    var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty].join(":");
+    var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
     if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
       var recentDuplicate = findRecentReplenishmentDuplicate(sku, requestedQty, 15000);
       if (recentDuplicate) return recentDuplicate;
@@ -4762,7 +4764,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock", error);
     }
     var now = nowIso();
-    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty]);
+    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty, priority]);
     var clientActionId = data.clientActionId || idempotencyKey;
     var existingByKey = await findReplenishmentByIdempotencyKey(idempotencyKey);
     if (existingByKey) return existingByKey;
@@ -4798,7 +4800,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       returnedToQueueByName: "",
       returnReason: "",
       status: "PENDENTE",
-      prioridade: "NORMAL",
+      prioridade: priority,
       observacao: normalizeText(data.observation),
       idempotencyKey: idempotencyKey,
       requestId: idempotencyKey,
@@ -5091,6 +5093,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
 
   function canClaimReplenishmentRequest(request) {
     if (!authState.currentUser || !request || request.isDeleted) return false;
+    if (isAttendant()) return false;
     if (request.status !== "PENDENTE") return false;
     if (request.responsavelId) return false;
     if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return false;
@@ -5124,6 +5127,14 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       if (!processRowMatchesActiveWarehouse(request)) return false;
       if (isAdminOrSupervisor()) return true;
       return userCanViewReplenishmentInWarehouse(authState.currentUser, request.warehouseCode);
+    });
+  }
+
+  function getReplenishmentRequestsForCurrentView() {
+    var requests = getVisibleReplenishmentRequests();
+    if (!isAttendant() || !authState.currentUser) return requests;
+    return requests.filter(function (request) {
+      return request.solicitadoPorId === authState.currentUser.id;
     });
   }
 
@@ -5709,6 +5720,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     ["requestNameInput", "requestUsernameInput", "requestJobInput", "requestNotesInput"].forEach(function (id) {
       $(id).value = "";
     });
+    if ($("requestRoleInput")) $("requestRoleInput").value = "OPERADOR";
     setStatus("accessRequestStatus", "", "");
   }
 
@@ -5717,6 +5729,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     var username = normalizeText($("requestUsernameInput").value).toLowerCase();
     var jobTitle = normalizeText($("requestJobInput").value);
     var notes = normalizeText($("requestNotesInput").value);
+    var requestedRole = normalizeAccessRequestRole($("requestRoleInput") ? $("requestRoleInput").value : "OPERADOR");
     if (!name || !username) {
       setStatus("accessRequestStatus", "Preencha nome e usuario.", "error");
       return;
@@ -5729,7 +5742,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       name: name,
       username: username,
       matricula: username,
-      role_requested: "OPERADOR",
+      role_requested: requestedRole,
       job_title: jobTitle,
       notes: notes,
       status: "PENDENTE"
@@ -5862,14 +5875,14 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
-    if (authState.currentUser.role === "OPERADOR") return "consultaSku";
+    if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
   }
 
@@ -6037,7 +6050,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       name: row.name || "",
       username: row.username || "",
       matricula: row.matricula || row.username || "",
-      roleRequested: row.role_requested || "OPERADOR",
+      roleRequested: normalizeAccessRequestRole(row.role_requested),
       jobTitle: row.job_title || "",
       notes: row.notes || "",
       status: row.status || "PENDENTE",
@@ -6083,8 +6096,8 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       return;
     }
     if (isSupervisor()) {
-      if (role !== "OPERADOR") {
-        setStatus("userFormStatus", "Supervisor so pode cadastrar ou editar operadores.", "error");
+      if (!isStoreStaffRole(role)) {
+        setStatus("userFormStatus", "Supervisor so pode cadastrar ou editar operadores e atendentes.", "error");
         return;
       }
       defaultWarehouseCode = activeWarehouseCode();
@@ -6102,10 +6115,11 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     }
     if (allowedWarehouses.indexOf(defaultWarehouseCode) < 0) allowedWarehouses.push(defaultWarehouseCode);
     var supervisor = supervisorId ? authState.users.find(function (item) { return item.id === supervisorId; }) : null;
-    if (role !== "OPERADOR") {
+    if (!isStoreStaffRole(role)) {
       supervisor = null;
       supervisorId = "";
     }
+    if (role === "ATENDENTE") availableForTasks = false;
     if (supervisor && (supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, defaultWarehouseCode))) {
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
@@ -6224,13 +6238,32 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     $("userUsernameInput").value = "";
     $("userUsernameInput").disabled = false;
     $("userPasswordInput").value = "";
-    $("userRoleInput").value = "OPERADOR";
-    $("userRoleInput").disabled = isSupervisor();
+    renderUserRoleOptions("OPERADOR");
     $("userActiveInput").checked = true;
     $("userAvailableInput").checked = true;
     if ($("userGlobalAdminInput")) $("userGlobalAdminInput").checked = false;
     renderUserWarehouseInputs({ defaultWarehouseCode: activeWarehouseCode(), allowedWarehouseCodes: [activeWarehouseCode()], isGlobalAdmin: false });
     renderUserSupervisorOptions({ role: "OPERADOR", defaultWarehouseCode: activeWarehouseCode(), supervisorId: isSupervisor() ? authState.currentUser.id : "" });
+  }
+
+  function renderUserRoleOptions(selectedRole) {
+    var select = $("userRoleInput");
+    if (!select) return;
+    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE"] : ROLES;
+    select.innerHTML = roles.map(function (role) {
+      var label = role === "ATENDENTE" ? "ATENDENTE" : role;
+      return "<option value=\"" + escapeHtml(role) + "\">" + escapeHtml(label) + "</option>";
+    }).join("");
+    select.value = roles.indexOf(selectedRole) >= 0 ? selectedRole : "OPERADOR";
+    select.disabled = false;
+    syncUserAvailabilityForRole(select.value);
+  }
+
+  function syncUserAvailabilityForRole(role) {
+    var input = $("userAvailableInput");
+    if (!input) return;
+    input.disabled = role === "ATENDENTE";
+    if (role === "ATENDENTE") input.checked = false;
   }
 
   function renderUserWarehouseInputs(user) {
@@ -6268,12 +6301,12 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     var warehouseCode = normalizeWarehouseCode(user && user.defaultWarehouseCode || ($("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode()));
     var supervisors = availableSupervisorsForWarehouse(warehouseCode);
     var selectedId = user && user.supervisorId ? user.supervisorId : "";
-    if (isSupervisor() && role === "OPERADOR") selectedId = selectedId || authState.currentUser.id;
+    if (isSupervisor() && isStoreStaffRole(role)) selectedId = selectedId || authState.currentUser.id;
     select.innerHTML = "<option value=\"\">Sem supervisor definido</option>" + supervisors.map(function (item) {
       return "<option value=\"" + escapeHtml(item.id) + "\">" + escapeHtml(item.name + " (" + item.defaultWarehouseCode + ")") + "</option>";
     }).join("");
     select.value = selectedId;
-    select.disabled = role !== "OPERADOR";
+    select.disabled = !isStoreStaffRole(role);
   }
 
   function availableSupervisorsForWarehouse(warehouseCode) {
@@ -6376,7 +6409,8 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       { value: "", label: "Todos" },
       { value: "ADMINISTRADOR", label: "Administrador" },
       { value: "SUPERVISOR", label: "Supervisor" },
-      { value: "OPERADOR", label: "Operador" }
+      { value: "OPERADOR", label: "Operador" },
+      { value: "ATENDENTE", label: "Atendente" }
     ], userFilterValue("userRoleFilter"));
     fillUserSelect("userSupervisorFilter", userSupervisorFilterOptions(), userFilterValue("userSupervisorFilter"));
   }
@@ -6440,7 +6474,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       if (status === "archived" && user.archived !== true) return false;
       if (availability === "available" && !user.availableForTasks) return false;
       if (availability === "unavailable" && user.availableForTasks) return false;
-      if (supervisor === "__none" && (user.role !== "OPERADOR" || user.supervisorId)) return false;
+      if (supervisor === "__none" && (!isStoreStaffRole(user.role) || user.supervisorId)) return false;
       if (supervisor && supervisor !== "__none" && user.supervisorId !== supervisor) return false;
       if (query && !isNamedUser(user, query)) return false;
       return true;
@@ -6470,7 +6504,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       ["Inativos", users.filter(function (user) { return !user.active && user.archived !== true; }).length],
       ["Arquivados", users.filter(function (user) { return user.archived === true; }).length],
       ["Sem estoque", users.filter(function (user) { return !user.defaultWarehouseCode; }).length],
-      ["Sem supervisor", users.filter(function (user) { return user.role === "OPERADOR" && !user.supervisorId; }).length],
+      ["Sem supervisor", users.filter(function (user) { return isStoreStaffRole(user.role) && !user.supervisorId; }).length],
       ["Disponíveis", users.filter(function (user) { return user.active && user.archived !== true && user.availableForTasks; }).length],
       ["Indisponíveis", users.filter(function (user) { return !user.availableForTasks; }).length],
       ["Login antigo", oldLogin],
@@ -6486,10 +6520,10 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     users.forEach(function (user) {
       var warehouse = user.defaultWarehouseCode || "SEM_ESTOQUE";
       if (!byWarehouse[warehouse]) byWarehouse[warehouse] = {};
-      var supervisorKey = user.role === "OPERADOR" ? (user.supervisorId || "__none") : "__role_" + user.role;
+      var supervisorKey = isStoreStaffRole(user.role) ? (user.supervisorId || "__none") : "__role_" + user.role;
       if (!byWarehouse[warehouse][supervisorKey]) {
         byWarehouse[warehouse][supervisorKey] = {
-          label: user.role === "OPERADOR" ? (user.supervisorName || "Sem supervisor definido") : user.role,
+          label: isStoreStaffRole(user.role) ? (user.supervisorName || "Sem supervisor definido") : user.role,
           users: []
         };
       }
@@ -6533,7 +6567,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       "<span>Último login <strong>" + escapeHtml(formatDateTime(user.lastLoginAt)) + "</strong></span>",
       "</div>",
       "<div class=\"user-card-status\"><span class=\"status-badge " + (user.active ? "active" : "inactive") + "\">" + (user.active ? "Ativo" : "Inativo") + "</span>" + archivedBadge + "</div>",
-      user.role === "OPERADOR" ? userSupervisorAssignmentHtml(user) : "",
+      isStoreStaffRole(user.role) ? userSupervisorAssignmentHtml(user) : "",
       "<div class=\"row-actions user-card-actions\">",
       "<button class=\"edit-small\" data-user-edit=\"" + escapeHtml(user.id) + "\" type=\"button\">Editar</button>",
       "<button class=\"secondary-button\" data-user-reset=\"" + escapeHtml(user.id) + "\" type=\"button\">Redefinir senha</button>",
@@ -6762,16 +6796,16 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       showToast("Supervisor invalido.", "error");
       return;
     }
-    var selected = selectedManageableUsers().filter(function (user) { return user.role === "OPERADOR"; });
+    var selected = selectedManageableUsers().filter(function (user) { return isStoreStaffRole(user.role); });
     if (!selected.length) {
-      showToast("Selecione operadores para vincular.", "warning");
+      showToast("Selecione operadores ou atendentes para vincular.", "warning");
       return;
     }
     var incompatible = selected.filter(function (user) {
       return !userBelongsToWarehouse(supervisor, user.defaultWarehouseCode);
     });
     if (incompatible.length) {
-      showToast("O supervisor precisa ter acesso ao mesmo estoque de todos os operadores selecionados.", "error");
+      showToast("O supervisor precisa ter acesso ao mesmo estoque de todos os colaboradores selecionados.", "error");
       return;
     }
     var failures = [];
@@ -6922,10 +6956,10 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       return;
     }
     $("userFormTitle").textContent = "Editar usuário";
-    $("userRoleInput").value = user.role;
-    $("userRoleInput").disabled = isSupervisor();
+    renderUserRoleOptions(user.role);
     $("userActiveInput").checked = user.active;
     $("userAvailableInput").checked = user.availableForTasks;
+    syncUserAvailabilityForRole(user.role);
     if ($("userGlobalAdminInput")) $("userGlobalAdminInput").checked = user.isGlobalAdmin === true;
     renderUserWarehouseInputs(user);
     renderUserSupervisorOptions(user);
@@ -6948,13 +6982,13 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
 
   async function saveOperatorSupervisor(userId, supervisorId) {
     var user = authState.users.find(function (item) { return item.id === userId; });
-    if (!user || user.role !== "OPERADOR" || !canManageUserRecord(user)) {
-      showToast("Voce nao possui permissao para alterar este operador.", "error");
+    if (!user || !isStoreStaffRole(user.role) || !canManageUserRecord(user)) {
+      showToast("Voce nao possui permissao para alterar este colaborador.", "error");
       return;
     }
     var supervisor = supervisorId ? authState.users.find(function (item) { return item.id === supervisorId; }) : null;
     if (supervisorId && (!supervisor || supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, user.defaultWarehouseCode))) {
-      showToast("Selecione um supervisor do mesmo estoque do operador.", "error");
+      showToast("Selecione um supervisor do mesmo estoque do colaborador.", "error");
       return;
     }
     var response = await updateUserRowById(user.id, {
@@ -7043,6 +7077,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       return;
     }
     var now = new Date().toISOString();
+    var approvedRole = normalizeAccessRequestRole(request.roleRequested);
     var userRow = {
       id: randomId("user"),
       created_at: now,
@@ -7050,9 +7085,9 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       name: request.name,
       username: request.username,
       matricula: request.matricula || request.username,
-      role: normalizeAccessRequestRole(request.roleRequested),
+      role: approvedRole,
       active: true,
-      available_for_tasks: true,
+      available_for_tasks: approvedRole !== "ATENDENTE",
       default_warehouse_id: activeWarehouseId(),
       default_warehouse_code: activeWarehouseCode(),
       warehouse_id: activeWarehouseId(),
@@ -7216,7 +7251,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
     if (screenId === "reposicao" && $("replenishmentSkuInput")) {
       $("replenishmentSkuInput").focus();
-      if (!replenishmentState.suggestionsLoaded) refreshReplenishmentSuggestions(true);
+      if (!isAttendant() && !replenishmentState.suggestionsLoaded) refreshReplenishmentSuggestions(true);
     }
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
     if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
@@ -7280,6 +7315,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       if ($(id)) $(id).addEventListener("change", renderUsers);
     });
     if ($("userRoleInput")) $("userRoleInput").addEventListener("change", function () {
+      syncUserAvailabilityForRole($("userRoleInput").value);
       renderUserSupervisorOptions({ role: $("userRoleInput").value, defaultWarehouseCode: $("userDefaultWarehouseInput").value, supervisorId: $("userSupervisorInput").value });
     });
     if ($("userDefaultWarehouseInput")) $("userDefaultWarehouseInput").addEventListener("change", function () {
@@ -8401,10 +8437,10 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
 
   function renderReplenishment() {
     if (!$("replenishmentList")) return;
-    renderReplenishmentSuggestions();
-    var visible = getVisibleReplenishmentRequests().slice().sort(function (a, b) {
-      return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
-    });
+    var attendantView = isAttendant();
+    applyReplenishmentRoleView(attendantView);
+    if (!attendantView) renderReplenishmentSuggestions();
+    var visible = getReplenishmentRequestsForCurrentView().slice().sort(compareReplenishmentQueueItems);
     var today = new Date().toISOString().slice(0, 10);
     setTextIfExists("replenishmentMetricPending", visible.filter(function (item) { return item.status === "PENDENTE" && !item.responsavelId; }).length);
     setTextIfExists("replenishmentMetricSeparating", visible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
@@ -8415,10 +8451,19 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     }
     var limited = visible.slice(0, replenishmentState.renderLimit);
     $("replenishmentList").innerHTML = limited.length
-      ? limited.map(replenishmentCardHtml).join("")
-      : "<div class=\"empty-state\">Nenhum pedido de reposicao encontrado para o estoque " + escapeHtml(activeWarehouseCode()) + ".</div>";
+      ? limited.map(attendantView ? attendantReplenishmentCardHtml : replenishmentCardHtml).join("")
+      : "<div class=\"empty-state\">" + (attendantView ? "Voce ainda nao criou pedidos neste estoque." : "Nenhum pedido de reposicao encontrado para o estoque " + escapeHtml(activeWarehouseCode()) + ".") + "</div>";
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
     setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
+  }
+
+  function applyReplenishmentRoleView(attendantView) {
+    if ($("replenishmentLeaderPanel")) $("replenishmentLeaderPanel").hidden = attendantView;
+    if ($("replenishmentSuggestionsPanel")) $("replenishmentSuggestionsPanel").hidden = attendantView;
+    if ($("replenishmentQueueTitle")) $("replenishmentQueueTitle").textContent = attendantView ? "Meus pedidos deste estoque" : "Pedidos em andamento";
+    if ($("replenishmentQueueDescription")) $("replenishmentQueueDescription").textContent = attendantView
+      ? "Acompanhe o status das solicitacoes que voce criou no estoque atual."
+      : "Fila operacional do estoque atual, separada das sugestoes automaticas.";
   }
 
   async function refreshReplenishmentSuggestions(reset) {
@@ -8527,7 +8572,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     var location = replenishmentCaptureLocationLabel(item);
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
-      "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
+      "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + (item.prioridade === "CLIENTE" ? " priority-cliente" : "") + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
       "<div class=\"replenishment-card-main\">",
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
@@ -8541,6 +8586,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       "</div>",
       "<div class=\"replenishment-card-footer\">",
       "<span class=\"status-badge " + statusBadgeClass(item.status) + "\">" + escapeHtml(queueLabel) + "</span>",
+      replenishmentPriorityBadgeHtml(item.prioridade),
       "<span>Solicitado por <strong>" + escapeHtml(item.solicitadoPorNome || "-") + "</strong></span>",
       "<span>Responsavel <strong>" + escapeHtml(item.responsavelNome || "-") + "</strong></span>",
       "<span>" + escapeHtml(elapsed) + "</span>",
@@ -8549,6 +8595,29 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
       item.motivoCancelamento ? "<p class=\"replenishment-note danger-text\">" + escapeHtml(item.motivoCancelamento) + "</p>" : "",
       "</article>"
     ].join("");
+  }
+
+  function attendantReplenishmentCardHtml(item) {
+    return [
+      "<article class=\"replenishment-card attendant-replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + (item.prioridade === "CLIENTE" ? " priority-cliente" : "") + "\">",
+      "<div class=\"replenishment-card-main\">",
+      "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
+      "<div><span>Status</span><strong>" + escapeHtml(displayReplenishmentStatus(item.status)) + "</strong></div>",
+      "</div>",
+      item.observacao ? "<div class=\"replenishment-request-message\"><span>Mensagem enviada</span><strong>" + escapeHtml(item.observacao) + "</strong></div>" : "",
+      "<div class=\"replenishment-card-footer\">",
+      replenishmentPriorityBadgeHtml(item.prioridade),
+      "<span>Quantidade <strong>" + escapeHtml(formatQty(item.requestedQty)) + "</strong></span>",
+      "<span>Criado em <strong>" + escapeHtml(formatDateTime(item.createdAt)) + "</strong></span>",
+      "</div>",
+      "</article>"
+    ].join("");
+  }
+
+  function replenishmentPriorityBadgeHtml(priority) {
+    return normalizeReplenishmentPriority(priority) === "CLIENTE"
+      ? "<span class=\"replenishment-priority-badge\">CLIENTE</span>"
+      : "";
   }
 
   function replenishmentMetricHtml(label, value) {
@@ -8645,6 +8714,11 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     }, 250);
   }
 
+  function selectedRadioValue(name, fallback) {
+    var selected = document.querySelector("input[name=\"" + name + "\"]:checked");
+    return selected ? selected.value : fallback;
+  }
+
   async function handleCreateReplenishment(event) {
     event.preventDefault();
     if (replenishmentState.saving) return;
@@ -8657,14 +8731,16 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
         button.textContent = "Criando pedido...";
       }
       handleReplenishmentSkuInput();
+      var priority = normalizeReplenishmentPriority(selectedRadioValue("replenishmentPriority", "NORMAL"));
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
-        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value]);
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value, priority]);
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: $("replenishmentSkuInput").value,
         storeQty: $("replenishmentStoreQtyInput").value,
         requestedQty: $("replenishmentRequestQtyInput").value,
+        priority: priority,
         observation: $("replenishmentObservationInput").value,
         productInfo: replenishmentState.currentProduct,
         idempotencyKey: idempotencyKey,
@@ -8696,6 +8772,10 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
   async function handleReplenishmentActionClick(event) {
     var target = event.target.closest("button");
     if (!target) return;
+    if (isAttendant()) {
+      showToast("Atendentes podem criar e acompanhar pedidos, mas nao alterar a fila operacional.", "warning");
+      return;
+    }
     var id = target.dataset.replenishmentClaim || target.dataset.replenishmentReturn || target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
     if (!id) return;
     var actionKey = "reposicao:" + id + ":" + Object.keys(target.dataset).sort().join("-");
@@ -8741,6 +8821,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
   }
 
   async function handleReplenishmentActionChange(event) {
+    if (isAttendant()) return;
     var select = event.target.closest("[data-replenishment-assign]");
     if (!select || !select.value) return;
     var actionKey = "reposicao-atribuir:" + select.dataset.replenishmentAssign + ":" + select.value;
@@ -8791,6 +8872,8 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     }
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").value = suggestion.suggestedReplenishmentQty > 0 ? String(suggestion.suggestedReplenishmentQty) : "";
     if ($("suggestionObservationInput")) $("suggestionObservationInput").value = suggestion.alertMessage || "";
+    var defaultPriority = document.querySelector("input[name=\"suggestionPriority\"][value=\"NORMAL\"]");
+    if (defaultPriority) defaultPriority.checked = true;
     setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
     $("replenishmentSuggestionModal").hidden = false;
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").focus();
@@ -8813,14 +8896,16 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
         button.disabled = true;
         button.textContent = "Criando...";
       }
+      var priority = normalizeReplenishmentPriority(selectedRadioValue("suggestionPriority", "NORMAL"));
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
-        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty]);
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty, priority]);
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: suggestion.sku,
         storeQty: suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? 0 : suggestion.storeAvailable,
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
+        priority: priority,
         observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
         productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
@@ -8921,7 +9006,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     $("taskMenuBadge").hidden = !isOperatorUser || !transferTasks.length;
     $("taskMenuBadge").textContent = String(transferTasks.length);
     if ($("replenishmentMenuBadge")) {
-      var openReplenishments = getVisibleReplenishmentRequests().filter(function (request) {
+      var openReplenishments = getReplenishmentRequestsForCurrentView().filter(function (request) {
         return FINAL_REPLENISHMENT_STATUSES.indexOf(request.status) < 0;
       });
       var badgeCount = openReplenishments.length;
@@ -13373,6 +13458,10 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     return authState.currentUser && authState.currentUser.role === "SUPERVISOR";
   }
 
+  function isAttendant() {
+    return authState.currentUser && authState.currentUser.role === "ATENDENTE";
+  }
+
   function userBelongsToWarehouse(user, code) {
     code = normalizeWarehouseCode(code);
     return normalizeWarehouseCodeOrBlank(user && user.defaultWarehouseCode) === code || allowedWarehouseCodesForUser(user).indexOf(code) >= 0;
@@ -13383,7 +13472,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     if (isGlobalAdmin()) return true;
     if (!isSupervisor()) return false;
     if (user.role === "ADMINISTRADOR" || user.isGlobalAdmin) return false;
-    if (user.role !== "OPERADOR") return false;
+    if (!isStoreStaffRole(user.role)) return false;
     return normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === activeWarehouseCode();
   }
 
@@ -13392,7 +13481,7 @@ import { normalizeAccessRequestRole } from "./src/access-control.js";
     if (isSupervisor()) {
       return authState.users.filter(function (user) {
         if (authState.currentUser && user.id === authState.currentUser.id) return true;
-        return user.role === "OPERADOR" && !user.isGlobalAdmin && normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === activeWarehouseCode();
+        return isStoreStaffRole(user.role) && !user.isGlobalAdmin && normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode) === activeWarehouseCode();
       });
     }
     return [];
