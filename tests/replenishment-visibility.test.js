@@ -31,9 +31,16 @@ test("operators can claim pending requests and then work on their own request", 
 });
 
 test("request messages are visible in cards and operator notifications", () => {
+  const cardSource = source.slice(source.indexOf("function replenishmentCardHtml"), source.indexOf("function attendantReplenishmentCardHtml"));
+  const requesterFooterPosition = cardSource.indexOf("Solicitado por");
+  const messagePosition = cardSource.indexOf("Mensagem do solicitante");
+  const actionsPosition = cardSource.indexOf("replenishmentActionsHtml");
+
   assert.match(source, /replenishment-request-message/);
   assert.match(source, /Mensagem do solicitante/);
   assert.match(source, /body \+= " \| Mensagem: " \+ normalizeText\(request\.observacao\);/);
+  assert.ok(requesterFooterPosition < messagePosition, "request message must appear below the requester details");
+  assert.ok(messagePosition < actionsPosition, "request message must appear immediately above the action buttons");
 });
 
 test("the replenishment queue hydrates from cache and refreshes without blocking login", async () => {

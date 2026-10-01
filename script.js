@@ -8591,7 +8591,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
       "</div>",
-      item.observacao ? "<div class=\"replenishment-request-message\"><span>Mensagem do solicitante</span><strong>" + escapeHtml(item.observacao) + "</strong></div>" : "",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
@@ -8605,6 +8604,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<span>Responsavel <strong>" + escapeHtml(item.responsavelNome || "-") + "</strong></span>",
       "<span>" + escapeHtml(elapsed) + "</span>",
       "</div>",
+      item.observacao ? "<div class=\"replenishment-request-message\"><span>Mensagem do solicitante</span><strong>" + escapeHtml(item.observacao) + "</strong></div>" : "",
       replenishmentActionsHtml(item, canManage, canWork),
       item.motivoCancelamento ? "<p class=\"replenishment-note danger-text\">" + escapeHtml(item.motivoCancelamento) + "</p>" : "",
       "</article>"
