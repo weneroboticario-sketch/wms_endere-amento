@@ -34,3 +34,10 @@ test("access request and user management expose the attendant profile", () => {
   assert.match(html, /id="userRoleInput"[\s\S]*?value="ATENDENTE"/);
   assert.match(script, /role_requested: requestedRole/);
 });
+
+test("attendant SKU views expose only the available warehouse quantity", () => {
+  assert.match(script, /if \(attendantView\) \{\s*grid\.appendChild\(skuHubTile\("Quantidade disponivel", formatQty\(suggestion\.captureAvailable\)\)\);/);
+  assert.match(script, /if \(isAttendant\(\)\) \{\s*\$\("skuResultCards"\)\.innerHTML = "";/);
+  assert.match(script, /\$\("skuResultActions"\)\.hidden = isAttendant\(\);/);
+  assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?Quantidade disponivel[\s\S]*?product\.captureBalance[\s\S]*?return;/);
+});
