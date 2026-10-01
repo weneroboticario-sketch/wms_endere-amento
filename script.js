@@ -32,7 +32,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
   var REPLENISHMENT_SOUND_KEY = "wms_replenishment_sound_enabled_v1";
   var REPLENISHMENT_SOUND_VOLUME_KEY = "wms_replenishment_sound_volume_v1";
-  var REPLENISHMENT_SOUND_REPEAT_KEY = "wms_replenishment_sound_repeat_v1";
   var REPLENISHMENT_NOTIFICATION_PERMISSION_KEY = "wms_replenishment_notification_prompt_v1";
   var LOCAL_CACHE_DB_NAME = "wms_operational_cache_v1";
   var LOCAL_CACHE_STORE = "records";
@@ -357,8 +356,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     audioUnlocked: false,
     pendingSound: false,
     pendingReplenishmentSound: false,
-    replenishmentSoundTimer: null,
-    replenishmentSoundUntil: 0,
     notifiedReplenishments: {},
     read: {}
   };
@@ -1467,7 +1464,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").checked = localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").value = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
-    if ($("replenishmentSoundRepeatInput")) $("replenishmentSoundRepeatInput").value = localStorage.getItem(REPLENISHMENT_SOUND_REPEAT_KEY) || "repeat_30";
   }
 
   function isTaskSoundEnabled() {
@@ -1488,7 +1484,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   function saveReplenishmentSoundSetting() {
     if ($("replenishmentSoundInput")) localStorage.setItem(REPLENISHMENT_SOUND_KEY, $("replenishmentSoundInput").checked ? "true" : "false");
     if ($("replenishmentSoundVolumeInput")) localStorage.setItem(REPLENISHMENT_SOUND_VOLUME_KEY, $("replenishmentSoundVolumeInput").value || "high");
-    if ($("replenishmentSoundRepeatInput")) localStorage.setItem(REPLENISHMENT_SOUND_REPEAT_KEY, $("replenishmentSoundRepeatInput").value || "repeat_30");
     fillTaskSoundSetting();
   }
 
@@ -5132,10 +5127,16 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function getReplenishmentRequestsForCurrentView() {
     var requests = getVisibleReplenishmentRequests();
-    if (!isAttendant() || !authState.currentUser) return requests;
-    return requests.filter(function (request) {
-      return request.solicitadoPorId === authState.currentUser.id;
-    });
+    if (!authState.currentUser) return [];
+    if (isAttendant()) {
+      return requests.filter(function (request) {
+        return request.solicitadoPorId === authState.currentUser.id;
+      });
+    }
+    if (authState.currentUser.role === "OPERADOR") {
+      return requests.filter(isReplenishmentInCurrentUserQueue);
+    }
+    return requests;
   }
 
   function getMyReplenishmentRequests() {
@@ -7605,7 +7606,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").addEventListener("change", saveReplenishmentSoundSetting);
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").addEventListener("change", saveReplenishmentSoundSetting);
-    if ($("replenishmentSoundRepeatInput")) $("replenishmentSoundRepeatInput").addEventListener("change", saveReplenishmentSoundSetting);
   }
 
   function cacheStaticOptions() {
@@ -9199,43 +9199,35 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function playReplenishmentSound() {
     if (!isReplenishmentSoundEnabled()) return;
-    var repeat = localStorage.getItem(REPLENISHMENT_SOUND_REPEAT_KEY) || "repeat_30";
-    var maxRuns = repeat === "once" ? 1 : repeat === "repeat_open" ? 6 : 10;
-    taskAlertState.replenishmentSoundUntil = Date.now() + 30000;
-    runReplenishmentSoundPulse(0, maxRuns);
+    runReplenishmentSoundPulse();
   }
 
-  function runReplenishmentSoundPulse(count, maxRuns) {
-    if (!isReplenishmentSoundEnabled() || count >= maxRuns || Date.now() > taskAlertState.replenishmentSoundUntil) return;
+  function runReplenishmentSoundPulse() {
+    if (!isReplenishmentSoundEnabled()) return;
     try {
       var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextCtor) return;
       var context = new AudioContextCtor();
       var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
-      var targetGain = volume === "low" ? 0.05 : volume === "medium" ? 0.1 : 0.18;
-      [740, 980].forEach(function (frequency, index) {
+      var targetGain = volume === "low" ? 0.08 : volume === "medium" ? 0.16 : 0.26;
+      [760, 1040].forEach(function (frequency, index) {
         var oscillator = context.createOscillator();
         var gain = context.createGain();
-        var start = context.currentTime + index * 0.16;
+        var start = context.currentTime + index * 0.1;
         oscillator.type = "square";
         oscillator.frequency.value = frequency;
         gain.gain.setValueAtTime(0.001, start);
-        gain.gain.exponentialRampToValueAtTime(targetGain, start + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.12);
+        gain.gain.exponentialRampToValueAtTime(targetGain, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.095);
         oscillator.connect(gain);
         gain.connect(context.destination);
         oscillator.start(start);
-        oscillator.stop(start + 0.14);
+        oscillator.stop(start + 0.11);
       });
-      window.setTimeout(function () { context.close(); }, 520);
+      window.setTimeout(function () { context.close(); }, 320);
     } catch (error) {
       taskAlertState.pendingReplenishmentSound = true;
-      return;
     }
-    window.clearTimeout(taskAlertState.replenishmentSoundTimer);
-    taskAlertState.replenishmentSoundTimer = window.setTimeout(function () {
-      runReplenishmentSoundPulse(count + 1, maxRuns);
-    }, 3000);
   }
 
   function startTaskPolling() {

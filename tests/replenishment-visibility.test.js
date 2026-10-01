@@ -4,16 +4,18 @@ import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
-test("operators can see the replenishment queue for every allowed warehouse", () => {
+test("operators see only unclaimed requests and requests claimed by themselves", () => {
   assert.match(source, /function userCanViewReplenishmentInWarehouse\(user, warehouseCode\)[\s\S]*?return userCanAccessWarehouse\(user, warehouseCode\);/);
-  assert.match(source, /function getVisibleReplenishmentRequests\(\)[\s\S]*?return userCanViewReplenishmentInWarehouse\(authState\.currentUser, request\.warehouseCode\);/);
+  assert.match(source, /if \(authState\.currentUser\.role === "OPERADOR"\) \{[\s\S]*?return requests\.filter\(isReplenishmentInCurrentUserQueue\);/);
+  assert.match(source, /if \(request\.status === "PENDENTE" && canClaimReplenishmentRequest\(request\)\) return true;[\s\S]*?return request\.responsavelId === authState\.currentUser\.id;/);
+  assert.match(source, /if \(isAdminOrSupervisor\(\)\) return true;/);
 });
 
 test("replenishment assignment accepts an allowed warehouse instead of only the default", () => {
   assert.match(source, /function userCanReceiveReplenishmentInWarehouse\(user, warehouseCode\)[\s\S]*?return userCanAccessWarehouse\(user, warehouseCode\);/);
 });
 
-test("the menu badge counts all open replenishments in the active warehouse", () => {
+test("the menu badge follows the replenishment queue visible to the current role", () => {
   assert.match(source, /var badgeCount = openReplenishments\.length;/);
   assert.match(source, /OPEN_REPLENISHMENT_STATUSES = \[[^\]]*"SEPARADO"/);
 });
@@ -42,6 +44,16 @@ test("the replenishment queue hydrates from cache and refreshes without blocking
   assert.match(source, /replenishmentState\.loadingPromise && replenishmentState\.loadingWarehouseCode === requestedWarehouseCode/);
   assert.match(source, /moduleLoadState\.replenishment \? refreshReplenishmentData\(\) : ensureReplenishmentDataLoaded\(\)/);
   assert.match(html, /id="refreshReplenishmentQueueButton"[^>]*>Atualizar fila<\/button>/);
+});
+
+test("replenishment sound is a single loud short pulse", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+
+  assert.match(source, /function playReplenishmentSound\(\)[\s\S]*?runReplenishmentSoundPulse\(\);/);
+  assert.match(source, /var targetGain = volume === "low" \? 0\.08 : volume === "medium" \? 0\.16 : 0\.26;/);
+  assert.match(source, /context\.close\(\); \}, 320\);/);
+  assert.doesNotMatch(source, /replenishmentSoundUntil|replenishmentSoundTimer|repeat_open|repeat_30/);
+  assert.doesNotMatch(html, /id="replenishmentSoundRepeatInput"/);
 });
 
 test("realtime uses one operational channel and slower fallback polling", () => {
