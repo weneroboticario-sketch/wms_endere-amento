@@ -46,9 +46,19 @@ test("access request and user management expose the attendant profile", () => {
   assert.match(script, /role_requested: requestedRole/);
 });
 
-test("attendant SKU views expose only the available warehouse quantity", () => {
-  assert.match(script, /if \(attendantView\) \{\s*grid\.appendChild\(skuHubTile\("Quantidade disponivel", formatQty\(suggestion\.captureAvailable\)\)\);/);
+test("attendant SKU views expose only store and available warehouse balances", () => {
+  assert.match(script, /if \(attendantView\) \{\s*grid\.appendChild\(skuHubTile\("Saldo Loja",[\s\S]*?grid\.appendChild\(skuHubTile\("Quantidade disponivel", formatQty\(suggestion\.captureAvailable\)\)\);/);
   assert.match(script, /if \(isAttendant\(\)\) \{\s*\$\("skuResultCards"\)\.innerHTML = "";/);
   assert.match(script, /\$\("skuResultActions"\)\.hidden = isAttendant\(\);/);
-  assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?Quantidade disponivel[\s\S]*?product\.captureBalance[\s\S]*?return;/);
+  assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?Saldo Loja[\s\S]*?product\.storeBalance[\s\S]*?Quantidade disponivel[\s\S]*?product\.captureBalance[\s\S]*?return;/);
+});
+
+test("attendant replenishment modal starts blank and hides operational stock details", () => {
+  const modalSource = script.slice(script.indexOf("function openReplenishmentSuggestionModal"), script.indexOf("function closeReplenishmentSuggestionModal"));
+
+  assert.match(modalSource, /Saldo Loja/);
+  assert.match(modalSource, /Saldo disponivel/);
+  assert.match(modalSource, /if \(!isAttendant\(\)\) \{[\s\S]*?Fisico CAPTACAO[\s\S]*?Alocado CAPTACAO[\s\S]*?Localizacao CAPTACAO/);
+  assert.match(modalSource, /\$\("suggestionObservationInput"\)\.value = "";/);
+  assert.doesNotMatch(modalSource, /suggestion\.alertMessage \|\| ""/);
 });

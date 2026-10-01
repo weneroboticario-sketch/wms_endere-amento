@@ -3376,6 +3376,9 @@ tbody tr:hover td {
   display: grid;
   place-items: center;
   padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: rgba(8, 20, 30, 0.56);
 }
 
@@ -3385,6 +3388,11 @@ tbody tr:hover td {
 
 .decision-card {
   width: min(100%, 520px);
+  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 22px;
   border-radius: var(--radius);
   background: var(--surface);
@@ -3419,6 +3427,15 @@ tbody tr:hover td {
 
 .decision-actions.two-actions {
   grid-template-columns: 1fr 1fr;
+}
+
+#replenishmentSuggestionForm .decision-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  grid-template-columns: 1fr 1fr;
+  padding-top: 12px;
+  background: var(--surface);
 }
 
 @media (max-width: 1040px) {

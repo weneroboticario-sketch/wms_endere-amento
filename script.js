@@ -8701,6 +8701,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         "<strong>SKU " + escapeHtml(product.sku) + "</strong>",
         "<span>" + escapeHtml(product.name || "Produto sem nome cadastrado") + "</span>",
         "<div class=\"replenishment-product-meta\">",
+        "<span><small>Saldo Loja</small><b>" + escapeHtml(product.storeBalance === null || product.storeBalance === undefined ? "Nao importado" : formatQty(product.storeBalance)) + "</b></span>",
         "<span><small>Quantidade disponivel</small><b>" + escapeHtml(product.captureBalance === null ? "Consultando..." : formatQty(product.captureBalance)) + "</b></span>",
         "</div>"
       ].join("");
@@ -8884,18 +8885,23 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     replenishmentState.activeSuggestion = suggestion;
     if (!$("replenishmentSuggestionModal")) return;
     if ($("replenishmentSuggestionModalSummary")) {
-      $("replenishmentSuggestionModalSummary").innerHTML = [
+      var summary = [
         "<div><span>Codigo Material</span><strong>" + escapeHtml(suggestion.sku) + "</strong></div>",
         "<div><span>Produto</span><strong>" + escapeHtml(suggestion.name || "-") + "</strong></div>",
         "<div><span>Saldo Loja</span><strong>" + escapeHtml(suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)) + "</strong></div>",
-        "<div><span>Saldo CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>",
-        "<div><span>Fisico CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.capturePhysical)) + "</strong></div>",
-        "<div><span>Alocado CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAllocated)) + "</strong></div>",
-        "<div><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localizacao") + "</strong></div>"
-      ].join("");
+        "<div><span>Saldo disponivel</span><strong>" + escapeHtml(formatQty(suggestion.captureAvailable)) + "</strong></div>"
+      ];
+      if (!isAttendant()) {
+        summary.push(
+          "<div><span>Fisico CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.capturePhysical)) + "</strong></div>",
+          "<div><span>Alocado CAPTACAO</span><strong>" + escapeHtml(formatQty(suggestion.captureAllocated)) + "</strong></div>",
+          "<div><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(suggestion.captureLocation || "Sem localizacao") + "</strong></div>"
+        );
+      }
+      $("replenishmentSuggestionModalSummary").innerHTML = summary.join("");
     }
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").value = suggestion.suggestedReplenishmentQty > 0 ? String(suggestion.suggestedReplenishmentQty) : "";
-    if ($("suggestionObservationInput")) $("suggestionObservationInput").value = suggestion.alertMessage || "";
+    if ($("suggestionObservationInput")) $("suggestionObservationInput").value = "";
     var defaultPriority = document.querySelector("input[name=\"suggestionPriority\"][value=\"NORMAL\"]");
     if (defaultPriority) defaultPriority.checked = true;
     applyReplenishmentPriorityRoleView(isAttendant());
@@ -8931,7 +8937,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         storeQty: suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? 0 : suggestion.storeAvailable,
         requestedQty: $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty,
         priority: priority,
-        observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : suggestion.alertMessage,
+        observation: $("suggestionObservationInput") ? $("suggestionObservationInput").value : "",
         productInfo: suggestion.productInfo || {
           sku: suggestion.sku,
           name: suggestion.name,
@@ -14504,6 +14510,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var grid = document.createElement("div");
     grid.className = "sku-hub-grid";
     if (attendantView) {
+      grid.appendChild(skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)));
       grid.appendChild(skuHubTile("Quantidade disponivel", formatQty(suggestion.captureAvailable)));
     } else {
       grid.appendChild(skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"));

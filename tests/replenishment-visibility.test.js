@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../style.css", import.meta.url), "utf8");
 
 test("operators see only unclaimed requests and requests claimed by themselves", () => {
   assert.match(source, /function userCanViewReplenishmentInWarehouse\(user, warehouseCode\)[\s\S]*?return userCanAccessWarehouse\(user, warehouseCode\);/);
@@ -61,6 +62,11 @@ test("replenishment sound is a single loud short pulse", async () => {
   assert.match(source, /context\.close\(\); \}, 320\);/);
   assert.doesNotMatch(source, /replenishmentSoundUntil|replenishmentSoundTimer|repeat_open|repeat_30/);
   assert.doesNotMatch(html, /id="replenishmentSoundRepeatInput"/);
+});
+
+test("replenishment suggestion modal scrolls and keeps confirmation actions reachable", () => {
+  assert.match(styles, /\.decision-card \{[\s\S]*?max-height: calc\(100dvh - 36px\);[\s\S]*?overflow-y: auto;/);
+  assert.match(styles, /#replenishmentSuggestionForm \.decision-actions \{[\s\S]*?position: sticky;[\s\S]*?bottom: 0;/);
 });
 
 test("realtime uses one operational channel and slower fallback polling", () => {
