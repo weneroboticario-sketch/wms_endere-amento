@@ -9,6 +9,29 @@ function splitSourceSkus(value) {
     .filter(Boolean);
 }
 
+export function buildAddressingOccupantSnapshot(bindings) {
+  const byRemoteId = new Map();
+
+  (bindings || []).forEach((binding) => {
+    const id = bindingRemoteId(binding);
+    if (!id) return;
+    const sourceSku = String(binding.sourceSkuValue || binding.sku || "").trim();
+    if (!byRemoteId.has(id)) byRemoteId.set(id, { id, sku: sourceSku });
+  });
+
+  return Array.from(byRemoteId.values()).sort((first, second) => first.id.localeCompare(second.id));
+}
+
+export function resolveRemoteBindingIds(bindings, bindingIds) {
+  const byId = new Map((bindings || []).map((binding) => [String(binding.id), binding]));
+  return Array.from(new Set((bindingIds || [])
+    .map((id) => {
+      const localBinding = byId.get(String(id));
+      return localBinding ? bindingRemoteId(localBinding) : String(id || "");
+    })
+    .filter(Boolean)));
+}
+
 export function planBindingRemoval(bindings, bindingId) {
   const target = (bindings || []).find((binding) => String(binding.id) === String(bindingId));
   if (!target) return null;

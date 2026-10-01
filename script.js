@@ -16,7 +16,12 @@ import {
 } from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
-import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bindings.js";
+import {
+  buildAddressingOccupantSnapshot,
+  planBindingRemoval,
+  planLocationSkuCleanup,
+  resolveRemoteBindingIds
+} from "./src/addressing-bindings.js";
 
 (function () {
   "use strict";
@@ -31,7 +36,7 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
   var LOCAL_CACHE_STORE = "records";
   var LOCAL_SYNC_PREFIX = "wms_last_sync_";
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.09.30.004";
+  var EXPECTED_SCHEMA_VERSION = "2026.09.30.005";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -7591,7 +7596,13 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     }
 
     setScanMessage("Salvando no Supabase...", "warning");
-    var saved = await persistAllocationChange(binding, idsToRemove, historyItems);
+    var expectedOccupants = buildAddressingOccupantSnapshot(occupancyCheck.occupants);
+    var saved = await persistAllocationChange(binding, idsToRemove, historyItems, expectedOccupants);
+    if (saved.conflict) {
+      renderScanResults(saved.occupants);
+      prepareAnotherLocationScan();
+      return { ok: false, message: saved.message, type: "warning" };
+    }
     if (!saved.ok) return { ok: false, message: "Nao foi possivel salvar no Supabase: " + saved.message, type: "error" };
 
     var removeSet = {};
@@ -7631,12 +7642,27 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     }
   }
 
-  async function persistAllocationChange(binding, idsToRemove, historyItems) {
+  var bindingCommitRpcAvailable = null;
+
+  function isMissingBindingCommitFunction(error) {
+    var message = formatSupabaseError(error).toLowerCase();
+    return message.indexOf("could not find the function") >= 0 ||
+      message.indexOf("function public.wms_commit_binding_allocation") >= 0 ||
+      (message.indexOf("schema cache") >= 0 && message.indexOf("wms_commit_binding_allocation") >= 0);
+  }
+
+  async function persistAllocationChange(binding, idsToRemove, historyItems, expectedOccupants) {
     if (!isSupabaseReady()) {
       var problem = describeSupabaseConfigProblem();
       updateSupabaseStatus("Supabase nao conectado. O SKU nao foi salvo. " + problem, "error");
       return { ok: false, message: "Supabase nao conectado. " + problem };
     }
+
+    if (bindingCommitRpcAvailable !== false && String(binding.remoteId || binding.id) === String(binding.id)) {
+      var rpcResult = await persistAllocationChangeViaRpc(binding, idsToRemove, historyItems, expectedOccupants || []);
+      if (rpcResult) return rpcResult;
+    }
+
     try {
       var bindingResponse = await supabaseDb
         .from("wms_bindings")
@@ -7682,6 +7708,55 @@ import { planBindingRemoval, planLocationSkuCleanup } from "./src/addressing-bin
     } catch (error) {
       var message = formatSupabaseError(error);
       console.error("Falha ao atualizar alocacao no Supabase:", error);
+      updateSupabaseStatus("Falha ao gravar no Supabase: " + message, "error");
+      return { ok: false, message: message };
+    }
+  }
+
+  async function persistAllocationChangeViaRpc(binding, idsToRemove, historyItems, expectedOccupants) {
+    try {
+      var payload = {
+        warehouse_code: normalizeWarehouseCode(binding.warehouseCode || activeWarehouseCode()),
+        location_code: locationKeyFromBinding(binding),
+        expected_occupants: expectedOccupants,
+        ids_to_remove: resolveRemoteBindingIds(state.bindings, idsToRemove),
+        history_items: historySchemaAvailable ? historyItems.map(toDbHistory) : [],
+        binding: toDbBinding(binding)
+      };
+      var response = await runSupabaseRequestWithRetry("commit-binding-allocation", function () {
+        return supabaseDb.rpc("wms_commit_binding_allocation", { p_payload: payload });
+      });
+      if (response.error) {
+        if (isMissingBindingCommitFunction(response.error)) {
+          bindingCommitRpcAvailable = false;
+          return null;
+        }
+        throw response.error;
+      }
+
+      bindingCommitRpcAvailable = true;
+      var data = response.data || {};
+      var freshOccupants = expandDbBindingRows(data.occupants || []).filter(bindingMatchesActiveWarehouse);
+      if (data.conflict) {
+        var normalizedLocation = locationKeyFromBinding(binding);
+        state.bindings = state.bindings.filter(function (item) {
+          return !bindingMatchesActiveWarehouse(item) || locationKeyFromBinding(item) !== normalizedLocation;
+        }).concat(freshOccupants);
+        return {
+          ok: false,
+          conflict: true,
+          occupants: freshOccupants,
+          message: "Outro operador alterou este endereco agora. A lista foi atualizada; confira e bipe novamente."
+        };
+      }
+      return { ok: true, occupants: freshOccupants };
+    } catch (error) {
+      if (isMissingBindingCommitFunction(error)) {
+        bindingCommitRpcAvailable = false;
+        return null;
+      }
+      var message = formatSupabaseError(error);
+      console.error("Falha ao atualizar alocacao no Supabase (RPC):", error);
       updateSupabaseStatus("Falha ao gravar no Supabase: " + message, "error");
       return { ok: false, message: message };
     }

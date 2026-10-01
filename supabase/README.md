@@ -8,6 +8,9 @@ As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes 
 2. `20260924012751_auth_profile_foundation.sql`: vínculo com Supabase Auth e helpers privados.
 3. `20260924012758_rls_security_hardening.sql`: grants mínimos e RLS por perfil/estoque.
 4. `20260924014042_operational_data_integrity.sql`: deduplicação auditável, índices e normalização VDAR.
+5. `20260924115056_user_supervision_compatibility.sql`: compatibilidade do vínculo entre supervisores e operadores.
+6. `20260930184528_allow_operator_binding_delete.sql`: operadores podem remover vínculos de endereço somente nos estoques permitidos.
+7. `20261001001530_addressing_concurrency_fast_path.sql`: gravação atômica do endereçamento, com trava por estoque/endereço e detecção de alteração concorrente.
 
 Em um banco existente, aplique a sequência pelo Supabase CLI. Os comandos `create/alter ... if not exists` e `on conflict` tornam a baseline reaplicável; ainda assim, faça backup antes.
 

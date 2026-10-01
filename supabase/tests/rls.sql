@@ -28,6 +28,14 @@ select pg_temp.assert_true(
   not has_column_privilege('authenticated', 'public.wms_users', 'password_hash', 'SELECT'),
   'authenticated must never read password_hash'
 );
+select pg_temp.assert_true(
+  has_function_privilege('authenticated', 'public.wms_commit_binding_allocation(jsonb)', 'EXECUTE'),
+  'authenticated WMS users must execute the atomic addressing function'
+);
+select pg_temp.assert_true(
+  not has_function_privilege('anon', 'public.wms_commit_binding_allocation(jsonb)', 'EXECUTE'),
+  'anon must not execute the atomic addressing function'
+);
 
 select auth_user_id as operator_auth_user_id
 from public.wms_users
@@ -48,18 +56,68 @@ set warehouse_code = excluded.warehouse_code,
     sku = excluded.sku,
     location_code = excluded.location_code;
 
+delete from public.wms_bindings
+where id in ('rls-test-atomic-addressing', 'rls-test-atomic-addressing-2');
+
 select set_config('request.jwt.claims', jsonb_build_object('sub', :'operator_auth_user_id', 'role', 'authenticated')::text, true);
 set local role authenticated;
 select pg_temp.assert_true(
   not exists(select 1 from public.wms_transfers where warehouse_code = 'VDAR'),
   'VDCG operator must not read VDAR transfers'
 );
+select pg_temp.assert_true(
+  (public.wms_commit_binding_allocation(jsonb_build_object(
+    'warehouse_code', 'VDCG',
+    'location_code', 'R98-RK98-L98-Z',
+    'expected_occupants', '[]'::jsonb,
+    'ids_to_remove', '[]'::jsonb,
+    'history_items', '[]'::jsonb,
+    'binding', jsonb_build_object(
+      'id', 'rls-test-atomic-addressing',
+      'sku', 'RLS-ATOMIC',
+      'rua', 98,
+      'rack', 98,
+      'linha', 98,
+      'letra', 'Z',
+      'location_code', 'R98-RK98-L98-Z',
+      'area_code', 1,
+      'area_name', 'Teste RLS',
+      'product_name', 'Teste RLS'
+    )
+  ))->>'conflict' = 'false',
+  'operator must atomically create an addressing binding in an assigned warehouse'
+);
+select pg_temp.assert_true(
+  (public.wms_commit_binding_allocation(jsonb_build_object(
+    'warehouse_code', 'VDCG',
+    'location_code', 'R98-RK98-L98-Z',
+    'expected_occupants', '[]'::jsonb,
+    'ids_to_remove', '[]'::jsonb,
+    'history_items', '[]'::jsonb,
+    'binding', jsonb_build_object(
+      'id', 'rls-test-atomic-addressing-2',
+      'sku', 'RLS-CONFLICT',
+      'rua', 98,
+      'rack', 98,
+      'linha', 98,
+      'letra', 'Z',
+      'location_code', 'R98-RK98-L98-Z',
+      'area_code', 1,
+      'area_name', 'Teste RLS',
+      'product_name', 'Teste RLS'
+    )
+  ))->>'conflict' = 'true',
+  'stale addressing snapshot must return conflict instead of overwriting another operator'
+);
 delete from public.wms_bindings
-where id = 'rls-test-operator-binding-delete'
+where id in ('rls-test-operator-binding-delete', 'rls-test-atomic-addressing')
   and warehouse_code = 'VDCG';
 reset role;
 select pg_temp.assert_true(
-  not exists(select 1 from public.wms_bindings where id = 'rls-test-operator-binding-delete'),
+  not exists(
+    select 1 from public.wms_bindings
+    where id in ('rls-test-operator-binding-delete', 'rls-test-atomic-addressing')
+  ),
   'operator must delete an addressing binding in an assigned warehouse'
 );
 \else

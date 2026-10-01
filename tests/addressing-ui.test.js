@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { planBindingRemoval, planLocationSkuCleanup } from "../src/addressing-bindings.js";
+import {
+  buildAddressingOccupantSnapshot,
+  planBindingRemoval,
+  planLocationSkuCleanup,
+  resolveRemoteBindingIds
+} from "../src/addressing-bindings.js";
 
 test("SKU search exposes the addressing action", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
@@ -106,4 +111,53 @@ test("operators can delete only warehouse-scoped addressing bindings", async () 
   assert.match(migration, /private\.current_wms_allowed_warehouses/);
   assert.match(migration, /'ADMINISTRADOR', 'SUPERVISOR', 'OPERADOR'/);
   assert.doesNotMatch(migration, /wms_transfers_warehouse_delete/);
+});
+
+test("concurrency snapshot collapses expanded legacy rows to their database row", () => {
+  const snapshot = buildAddressingOccupantSnapshot([
+    { id: "row-1-sku-51226-0", remoteId: "row-1", sourceSkuValue: "51226;89663", sku: "51226" },
+    { id: "row-1-sku-89663-1", remoteId: "row-1", sourceSkuValue: "51226;89663", sku: "89663" },
+    { id: "row-2", remoteId: "row-2", sourceSkuValue: "100", sku: "100" }
+  ]);
+
+  assert.deepEqual(snapshot, [
+    { id: "row-1", sku: "51226;89663" },
+    { id: "row-2", sku: "100" }
+  ]);
+});
+
+test("atomic removal resolves synthetic IDs to database IDs", () => {
+  const bindings = [
+    { id: "row-1-sku-51226-0", remoteId: "row-1", sku: "51226" },
+    { id: "row-1-sku-89663-1", remoteId: "row-1", sku: "89663" },
+    { id: "row-2", remoteId: "row-2", sku: "100" }
+  ];
+
+  assert.deepEqual(
+    resolveRemoteBindingIds(bindings, ["row-1-sku-51226-0", "row-1-sku-89663-1", "row-2"]),
+    ["row-1", "row-2"]
+  );
+});
+
+test("addressing uses the atomic RPC and refreshes concurrent occupants", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+
+  assert.match(source, /supabaseDb\.rpc\("wms_commit_binding_allocation"/);
+  assert.match(source, /expected_occupants: expectedOccupants/);
+  assert.match(source, /Outro operador alterou este endereco agora/);
+  assert.match(source, /bindingCommitRpcAvailable/);
+});
+
+test("atomic addressing SQL remains invoker-secured and warehouse-scoped", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20261001001530_addressing_concurrency_fast_path.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /security invoker/i);
+  assert.doesNotMatch(migration, /security definer/i);
+  assert.match(migration, /private\.can_access_warehouse\(v_warehouse_code\)/);
+  assert.match(migration, /delete from public\.wms_bindings[\s\S]+warehouse_code = v_warehouse_code/);
+  assert.match(migration, /v_binding_location_code <> v_location_code/);
+  assert.match(migration, /revoke all on function public\.wms_commit_binding_allocation\(jsonb\) from public, anon/);
 });
