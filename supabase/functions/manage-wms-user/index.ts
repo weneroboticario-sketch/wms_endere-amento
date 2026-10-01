@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { maySupervisorManageStoreUser } from "./permissions.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +76,12 @@ Deno.serve(async (request) => {
     const profile = body.profile || {};
     const role = String(profile.role || "OPERADOR").toUpperCase();
     const warehouse = String(profile.default_warehouse_code || "").toUpperCase();
-    const mayCreate = globalAdmin || (callerProfile.role === "SUPERVISOR" && role === "OPERADOR" && allowed.includes(warehouse));
+    const mayCreate = globalAdmin || maySupervisorManageStoreUser({
+      callerRole: callerProfile.role,
+      allowedWarehouses: allowed,
+      nextRole: role,
+      nextWarehouse: warehouse
+    });
     if (!mayCreate) return json({ ok: false, error: "Sem permissao para criar este perfil." }, 403);
     if (String(body.temporaryPassword || "").length < 8) return json({ ok: false, error: "A senha temporaria deve ter ao menos 8 caracteres." }, 400);
 
@@ -99,7 +105,7 @@ Deno.serve(async (request) => {
       role,
       profile: role,
       active: profile.active !== false,
-      available_for_tasks: profile.available_for_tasks !== false,
+      available_for_tasks: role === "ATENDENTE" ? false : profile.available_for_tasks !== false,
       default_warehouse_id: textValue(profile.default_warehouse_id),
       default_warehouse_code: warehouse,
       warehouse_id: textValue(profile.warehouse_id || profile.default_warehouse_id),
@@ -137,13 +143,14 @@ Deno.serve(async (request) => {
     if (targetError || !target) return json({ ok: false, error: "Usuario nao encontrado." }, 404);
     const nextRole = String(profile.role || target.role || "OPERADOR").toUpperCase();
     const nextWarehouse = String(profile.default_warehouse_code || target.default_warehouse_code || "").toUpperCase();
-    const mayUpdate = globalAdmin || (
-      callerProfile.role === "SUPERVISOR"
-      && target.role === "OPERADOR"
-      && nextRole === "OPERADOR"
-      && allowed.includes(String(target.default_warehouse_code || "").toUpperCase())
-      && allowed.includes(nextWarehouse)
-    );
+    const mayUpdate = globalAdmin || maySupervisorManageStoreUser({
+      callerRole: callerProfile.role,
+      allowedWarehouses: allowed,
+      currentRole: target.role,
+      currentWarehouse: String(target.default_warehouse_code || ""),
+      nextRole,
+      nextWarehouse
+    });
     if (!mayUpdate) return json({ ok: false, error: "Sem permissao para alterar este perfil." }, 403);
 
     const username = String(profile.username || target.username || "");
@@ -164,7 +171,7 @@ Deno.serve(async (request) => {
       role: nextRole,
       profile: nextRole,
       active: profile.active !== false,
-      available_for_tasks: profile.available_for_tasks !== false,
+      available_for_tasks: nextRole === "ATENDENTE" ? false : profile.available_for_tasks !== false,
       default_warehouse_id: textValue(profile.default_warehouse_id),
       default_warehouse_code: nextWarehouse,
       warehouse_id: textValue(profile.warehouse_id || profile.default_warehouse_id),
@@ -198,7 +205,14 @@ Deno.serve(async (request) => {
       .select("id,auth_user_id,role,default_warehouse_code")
       .eq("id", String(body.userId || "")).maybeSingle();
     if (targetError || !target?.auth_user_id) return json({ ok: false, error: "Usuario sem identidade Auth vinculada." }, 404);
-    if (!globalAdmin && (target.role !== "OPERADOR" || !allowed.includes(String(target.default_warehouse_code || "").toUpperCase()))) {
+    if (!globalAdmin && !maySupervisorManageStoreUser({
+      callerRole: callerProfile.role,
+      allowedWarehouses: allowed,
+      currentRole: target.role,
+      currentWarehouse: String(target.default_warehouse_code || ""),
+      nextRole: target.role,
+      nextWarehouse: String(target.default_warehouse_code || "")
+    })) {
       return json({ ok: false, error: "Sem permissao para redefinir este usuario." }, 403);
     }
     const { error: resetError } = await adminClient.auth.admin.updateUserById(target.auth_user_id, { password: String(body.temporaryPassword) });

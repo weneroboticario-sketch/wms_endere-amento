@@ -74,6 +74,8 @@ async function seedFixtures(db) {
     ) values
       ('user-attendant', 'Atendente VDCG', 'attendant', 'ATENDENTE', 'ATENDENTE', true, false,
        'warehouse-vdcg', 'VDCG', 'warehouse-vdcg', 'VDCG', 'VDCG', true, '${AUTH_USERS.atendente}'),
+      ('user-attendant-vdco', 'Atendente VDCO', 'attendant-vdco', 'ATENDENTE', 'ATENDENTE', true, false,
+       'warehouse-vdco', 'VDCO', 'warehouse-vdco', 'VDCO', 'VDCO', false, null),
       ('user-operator', 'Operador VDCG', 'operator', 'OPERADOR', 'OPERADOR', true, false,
        'warehouse-vdcg', 'VDCG', 'warehouse-vdcg', 'VDCG', 'VDCG', false, '${AUTH_USERS.operador}'),
       ('user-supervisor', 'Supervisor VDCG', 'supervisor', 'SUPERVISOR', 'SUPERVISOR', true, false,
@@ -195,6 +197,14 @@ test("existing operational profiles keep their warehouse write access", async (c
     assert.equal((await db.query(`update public.wms_bindings set product_name = 'Updated' where id = '${bindingId}'`)).affectedRows, 1);
     assert.equal((await db.query(`delete from public.wms_bindings where id = '${bindingId}'`)).affectedRows, 1);
   }
+
+  await setAuthenticatedUser(db, AUTH_USERS.supervisor);
+  assert.deepEqual(
+    (await db.query("select id from public.wms_users where role = 'ATENDENTE' order by id")).rows,
+    [{ id: "user-attendant" }]
+  );
+  assert.equal((await db.query("update public.wms_users set name = 'Atendente Atualizado' where id = 'user-attendant'")).affectedRows, 1);
+  assert.equal((await db.query("update public.wms_users set name = 'Nao Permitido' where id = 'user-attendant-vdco'")).affectedRows, 0);
 });
 
 test("access request policy accepts only store roles", async (context) => {
