@@ -27,6 +27,17 @@ test("request forms expose validated client priority", () => {
   assert.match(script, /priority: priority/);
   assert.match(script, /normalizeReplenishmentPriority\(data\.priority\)/);
   assert.match(script, /replenishment-priority-badge/);
+  assert.match(script, /function applyReplenishmentPriorityRoleView\(attendantView\)/);
+  assert.match(script, /var priority = isAttendant\(\) \? normalizeReplenishmentPriority[\s\S]*? : "NORMAL";/);
+  assert.match(html, /id="replenishmentClientPriorityOption"/);
+  assert.match(html, /id="suggestionClientPriorityOption"/);
+});
+
+test("completed requests leave the active replenishment queue without losing metrics", () => {
+  assert.match(script, /var allVisible = getReplenishmentRequestsForCurrentView\(\)/);
+  assert.match(script, /var visible = allVisible\.filter\(isReplenishmentVisibleInActiveQueue\)/);
+  assert.doesNotMatch(html, /data-replenishment-filter="CONCLUIDO"/);
+  assert.doesNotMatch(html, /data-replenishment-filter="CANCELADO"/);
 });
 
 test("access request and user management expose the attendant profile", () => {

@@ -23,7 +23,7 @@ import {
   resolveRemoteBindingIds
 } from "./src/addressing-bindings.js";
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
-import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 
 (function () {
   "use strict";
@@ -8440,19 +8440,20 @@ import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "
     var attendantView = isAttendant();
     applyReplenishmentRoleView(attendantView);
     if (!attendantView) renderReplenishmentSuggestions();
-    var visible = getReplenishmentRequestsForCurrentView().slice().sort(compareReplenishmentQueueItems);
+    var allVisible = getReplenishmentRequestsForCurrentView().slice().sort(compareReplenishmentQueueItems);
     var today = new Date().toISOString().slice(0, 10);
-    setTextIfExists("replenishmentMetricPending", visible.filter(function (item) { return item.status === "PENDENTE" && !item.responsavelId; }).length);
-    setTextIfExists("replenishmentMetricSeparating", visible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
-    setTextIfExists("replenishmentMetricDoneToday", visible.filter(function (item) { return item.status === "CONCLUIDO" && String(item.finishedAt || item.updatedAt).slice(0, 10) === today; }).length);
-    setTextIfExists("replenishmentMetricNoStock", visible.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length);
+    setTextIfExists("replenishmentMetricPending", allVisible.filter(function (item) { return item.status === "PENDENTE" && !item.responsavelId; }).length);
+    setTextIfExists("replenishmentMetricSeparating", allVisible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
+    setTextIfExists("replenishmentMetricDoneToday", allVisible.filter(function (item) { return item.status === "CONCLUIDO" && String(item.finishedAt || item.updatedAt).slice(0, 10) === today; }).length);
+    setTextIfExists("replenishmentMetricNoStock", allVisible.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length);
+    var visible = allVisible.filter(isReplenishmentVisibleInActiveQueue);
     if (replenishmentState.activeFilter) {
       visible = visible.filter(function (item) { return item.status === replenishmentState.activeFilter; });
     }
     var limited = visible.slice(0, replenishmentState.renderLimit);
     $("replenishmentList").innerHTML = limited.length
       ? limited.map(attendantView ? attendantReplenishmentCardHtml : replenishmentCardHtml).join("")
-      : "<div class=\"empty-state\">" + (attendantView ? "Voce ainda nao criou pedidos neste estoque." : "Nenhum pedido de reposicao encontrado para o estoque " + escapeHtml(activeWarehouseCode()) + ".") + "</div>";
+      : "<div class=\"empty-state\">" + (attendantView ? "Nenhum pedido pendente criado por voce neste estoque." : "Nenhum pedido pendente para o estoque " + escapeHtml(activeWarehouseCode()) + ".") + "</div>";
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
     setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
   }
@@ -8464,6 +8465,19 @@ import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "
     if ($("replenishmentQueueDescription")) $("replenishmentQueueDescription").textContent = attendantView
       ? "Acompanhe o status das solicitacoes que voce criou no estoque atual."
       : "Fila operacional do estoque atual, separada das sugestoes automaticas.";
+    applyReplenishmentPriorityRoleView(attendantView);
+  }
+
+  function applyReplenishmentPriorityRoleView(attendantView) {
+    ["replenishmentClientPriorityOption", "replenishmentPriorityHelp", "suggestionClientPriorityOption", "suggestionPriorityHelp"].forEach(function (id) {
+      if ($(id)) $(id).hidden = !attendantView;
+    });
+    if (!attendantView) {
+      ["replenishmentPriority", "suggestionPriority"].forEach(function (name) {
+        var normal = document.querySelector("input[name=\"" + name + "\"][value=\"NORMAL\"]");
+        if (normal) normal.checked = true;
+      });
+    }
   }
 
   async function refreshReplenishmentSuggestions(reset) {
@@ -8741,7 +8755,7 @@ import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "
         button.textContent = "Criando pedido...";
       }
       handleReplenishmentSkuInput();
-      var priority = normalizeReplenishmentPriority(selectedRadioValue("replenishmentPriority", "NORMAL"));
+      var priority = isAttendant() ? normalizeReplenishmentPriority(selectedRadioValue("replenishmentPriority", "NORMAL")) : "NORMAL";
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
         : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value, priority]);
@@ -8884,6 +8898,7 @@ import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "
     if ($("suggestionObservationInput")) $("suggestionObservationInput").value = suggestion.alertMessage || "";
     var defaultPriority = document.querySelector("input[name=\"suggestionPriority\"][value=\"NORMAL\"]");
     if (defaultPriority) defaultPriority.checked = true;
+    applyReplenishmentPriorityRoleView(isAttendant());
     setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
     $("replenishmentSuggestionModal").hidden = false;
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").focus();
@@ -8906,7 +8921,7 @@ import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "
         button.disabled = true;
         button.textContent = "Criando...";
       }
-      var priority = normalizeReplenishmentPriority(selectedRadioValue("suggestionPriority", "NORMAL"));
+      var priority = isAttendant() ? normalizeReplenishmentPriority(selectedRadioValue("suggestionPriority", "NORMAL")) : "NORMAL";
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
         : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO-SUGESTAO", authState.currentUser && authState.currentUser.id, suggestion.sku, $("suggestionRequestQtyInput") ? $("suggestionRequestQtyInput").value : suggestion.suggestedReplenishmentQty, priority]);

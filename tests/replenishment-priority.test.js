@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareReplenishmentQueueItems, normalizeReplenishmentPriority } from "../src/replenishment.js";
+import {
+  compareReplenishmentQueueItems,
+  isReplenishmentVisibleInActiveQueue,
+  normalizeReplenishmentPriority
+} from "../src/replenishment.js";
 
 test("replenishment priority accepts only NORMAL and CLIENTE", () => {
   assert.equal(normalizeReplenishmentPriority("cliente"), "CLIENTE");
@@ -14,4 +18,13 @@ test("client requests are ordered first inside the same status", () => {
     { id: "client", status: "PENDENTE", prioridade: "CLIENTE", updatedAt: "2026-10-01T11:00:00Z" }
   ];
   assert.deepEqual(requests.sort(compareReplenishmentQueueItems).map((item) => item.id), ["client", "normal"]);
+});
+
+test("active queue hides completed, delivered and cancelled requests", () => {
+  ["CONCLUIDO", "ENTREGUE_NA_LOJA", "CANCELADO"].forEach((status) => {
+    assert.equal(isReplenishmentVisibleInActiveQueue({ status }), false);
+  });
+  ["PENDENTE", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEM_ESTOQUE"].forEach((status) => {
+    assert.equal(isReplenishmentVisibleInActiveQueue({ status }), true);
+  });
 });

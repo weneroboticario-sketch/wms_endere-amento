@@ -546,13 +546,13 @@
                   <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
                 </label>
               </div>
-              <fieldset class="replenishment-priority-field">
+              <fieldset class="replenishment-priority-field" id="replenishmentPriorityField">
                 <legend>Tipo da solicitacao</legend>
                 <div class="replenishment-priority-options">
                   <label><input name="replenishmentPriority" type="radio" value="NORMAL" checked><span>Reposicao</span></label>
-                  <label><input name="replenishmentPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
+                  <label id="replenishmentClientPriorityOption"><input name="replenishmentPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
                 </div>
-                <small>Pedidos de cliente têm preferência na fila.</small>
+                <small id="replenishmentPriorityHelp">Pedidos de cliente têm preferência na fila.</small>
               </fieldset>
               <label for="replenishmentObservationInput">Observacao</label>
               <textarea id="replenishmentObservationInput" rows="2" placeholder="Opcional"></textarea>
@@ -577,8 +577,6 @@
               <button class="secondary-button" data-replenishment-filter="EM_SEPARACAO" type="button">Em separacao</button>
               <button class="secondary-button" data-replenishment-filter="ATENDIDO_PARCIAL" type="button">Parcial</button>
               <button class="secondary-button" data-replenishment-filter="SEM_ESTOQUE" type="button">Sem estoque</button>
-              <button class="secondary-button" data-replenishment-filter="CONCLUIDO" type="button">Concluidos</button>
-              <button class="secondary-button" data-replenishment-filter="CANCELADO" type="button">Cancelados</button>
             </div>
           </section>
         </div>
@@ -1438,13 +1436,13 @@
       <div id="replenishmentSuggestionModalSummary" class="replenishment-suggestion-modal-summary"></div>
       <label for="suggestionRequestQtyInput">Quantidade solicitada</label>
       <input id="suggestionRequestQtyInput" inputmode="decimal" min="1" step="1" type="number">
-      <fieldset class="replenishment-priority-field">
+      <fieldset class="replenishment-priority-field" id="suggestionPriorityField">
         <legend>Tipo da solicitacao</legend>
         <div class="replenishment-priority-options">
           <label><input name="suggestionPriority" type="radio" value="NORMAL" checked><span>Reposicao</span></label>
-          <label><input name="suggestionPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
+          <label id="suggestionClientPriorityOption"><input name="suggestionPriority" type="radio" value="CLIENTE"><span>Cliente</span></label>
         </div>
-        <small>Pedidos de cliente têm preferência na fila.</small>
+        <small id="suggestionPriorityHelp">Pedidos de cliente têm preferência na fila.</small>
       </fieldset>
       <label for="suggestionObservationInput">Observacao</label>
       <textarea id="suggestionObservationInput" rows="2" placeholder="Opcional"></textarea>
