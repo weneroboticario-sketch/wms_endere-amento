@@ -37,6 +37,14 @@ select pg_temp.assert_true(
   'anon must not execute the atomic addressing function'
 );
 select pg_temp.assert_true(
+  has_function_privilege('authenticated', 'public.request_wms_replenishment_cancellation(text,text)', 'EXECUTE'),
+  'authenticated WMS users must reach the guarded cancellation request function'
+);
+select pg_temp.assert_true(
+  not has_function_privilege('anon', 'public.request_wms_replenishment_cancellation(text,text)', 'EXECUTE'),
+  'anon must not request replenishment cancellation'
+);
+select pg_temp.assert_true(
   exists (
     select 1
     from pg_policies
@@ -208,6 +216,18 @@ from changed \gset
 select pg_temp.assert_true(
   :attendant_update_count::integer = 0,
   'ATENDENTE must not claim or update a replenishment request'
+);
+select public.request_wms_replenishment_cancellation('rls-test-attendant-request', 'Solicitacao de teste');
+select pg_temp.assert_true(
+  exists (
+    select 1
+    from public.wms_replenishment_requests
+    where id = 'rls-test-attendant-request'
+      and status = 'PENDENTE'
+      and cancellation_requested_by_id = (select id from public.wms_users where auth_user_id = :'attendant_auth_user_id'::uuid limit 1)
+      and cancellation_request_reason = 'Solicitacao de teste'
+  ),
+  'ATENDENTE cancellation request must be recorded without changing operational status'
 );
 reset role;
 \else

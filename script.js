@@ -40,7 +40,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.10.01.006";
+  var EXPECTED_SCHEMA_VERSION = "2026.10.01.007";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -4605,7 +4605,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -4650,6 +4650,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       prioridade: normalizeReplenishmentPriority(row.prioridade),
       observacao: row.observacao || "",
       motivoCancelamento: row.motivo_cancelamento || "",
+      cancellationRequestedAt: row.cancellation_requested_at || "",
+      cancellationRequestedById: row.cancellation_requested_by_id || "",
+      cancellationRequestedByName: row.cancellation_requested_by_name || "",
+      cancellationRequestReason: row.cancellation_request_reason || "",
       startedAt: row.started_at || "",
       finishedAt: row.finished_at || "",
       durationSeconds: Number(row.duration_seconds || 0),
@@ -4700,6 +4704,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       prioridade: normalizeReplenishmentPriority(item.prioridade),
       observacao: item.observacao || "",
       motivo_cancelamento: item.motivoCancelamento || "",
+      cancellation_requested_at: item.cancellationRequestedAt || null,
+      cancellation_requested_by_id: item.cancellationRequestedById || "",
+      cancellation_requested_by_name: item.cancellationRequestedByName || "",
+      cancellation_request_reason: item.cancellationRequestReason || "",
       started_at: item.startedAt || null,
       finished_at: item.finishedAt || null,
       duration_seconds: Number(item.durationSeconds || 0),
@@ -4719,6 +4727,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       getOpenRequestBySku: getOpenRequestBySku,
       assignReplenishmentRequest: assignReplenishmentRequest,
       claimReplenishmentRequest: claimReplenishmentRequest,
+      requestReplenishmentCancellation: requestReplenishmentCancellation,
       returnReplenishmentRequestToQueue: returnReplenishmentRequestToQueue,
       startReplenishmentRequest: startReplenishmentRequest,
       updateReplenishmentQuantity: updateReplenishmentQuantity,
@@ -4937,6 +4946,22 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       .eq("id", id)
       .eq("warehouse_code", activeWarehouseCode())
       .select(replenishmentRequestSelectColumns())
+      .single();
+    if (response.error) throw response.error;
+    var saved = fromDbReplenishmentRequest(response.data);
+    upsertById(replenishmentState.requests, saved);
+    return saved;
+  }
+
+  async function requestReplenishmentCancellation(id, reason) {
+    if (!isAttendant()) throw new Error("Somente atendentes podem solicitar o cancelamento por este fluxo.");
+    var request = getReplenishmentById(id);
+    if (!request || request.solicitadoPorId !== authState.currentUser.id) throw new Error("Pedido de reposicao nao encontrado para o atendente atual.");
+    var response = await supabaseDb
+      .rpc("request_wms_replenishment_cancellation", {
+        p_request_id: id,
+        p_reason: normalizeText(reason || "")
+      })
       .single();
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
@@ -8605,6 +8630,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<span>" + escapeHtml(elapsed) + "</span>",
       "</div>",
       item.observacao ? "<div class=\"replenishment-request-message\"><span>Mensagem do solicitante</span><strong>" + escapeHtml(item.observacao) + "</strong></div>" : "",
+      replenishmentCancellationRequestHtml(item, false),
       replenishmentActionsHtml(item, canManage, canWork),
       item.motivoCancelamento ? "<p class=\"replenishment-note danger-text\">" + escapeHtml(item.motivoCancelamento) + "</p>" : "",
       "</article>"
@@ -8624,6 +8650,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<span>Quantidade <strong>" + escapeHtml(formatQty(item.requestedQty)) + "</strong></span>",
       "<span>Criado em <strong>" + escapeHtml(formatDateTime(item.createdAt)) + "</strong></span>",
       "</div>",
+      replenishmentCancellationRequestHtml(item, true),
+      item.cancellationRequestedAt ? "" : "<div class=\"replenishment-actions\"><button class=\"danger-button\" data-replenishment-request-cancellation=\"" + escapeHtml(item.id) + "\" type=\"button\">Solicitar cancelamento</button></div>",
       "</article>"
     ].join("");
   }
@@ -8632,6 +8660,21 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return normalizeReplenishmentPriority(priority) === "CLIENTE"
       ? "<span class=\"replenishment-priority-badge\">CLIENTE</span>"
       : "";
+  }
+
+  function replenishmentCancellationRequestHtml(item, attendantView) {
+    if (!item || !item.cancellationRequestedAt) return "";
+    var requester = item.cancellationRequestedByName || item.solicitadoPorNome || "Atendente";
+    var title = attendantView
+      ? "Cancelamento solicitado ao estoque."
+      : "Atendente " + requester + " solicitou o cancelamento.";
+    return [
+      "<div class=\"replenishment-cancellation-request\">",
+      "<span>Cancelamento solicitado</span>",
+      "<strong>" + escapeHtml(title) + "</strong>",
+      item.cancellationRequestReason ? "<p>Motivo: " + escapeHtml(item.cancellationRequestReason) + "</p>" : "",
+      "</div>"
+    ].join("");
   }
 
   function replenishmentMetricHtml(label, value) {
@@ -8659,7 +8702,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (canReturnReplenishmentRequest(item)) {
       actions.push("<button class=\"secondary-button\" data-replenishment-return=\"" + escapeHtml(item.id) + "\" type=\"button\">Devolver para fila</button>");
     }
-    if (canManage && item.status !== "CANCELADO" && item.status !== "CONCLUIDO") actions.push("<button class=\"danger-button\" data-replenishment-cancel=\"" + escapeHtml(item.id) + "\" type=\"button\">Cancelar</button>");
+    if (canManage && item.status !== "CANCELADO" && item.status !== "CONCLUIDO") actions.push("<button class=\"danger-button\" data-replenishment-cancel=\"" + escapeHtml(item.id) + "\" type=\"button\">" + (item.cancellationRequestedAt ? "Confirmar cancelamento" : "Cancelar") + "</button>");
     if (isGlobalAdminUser(authState.currentUser)) actions.push("<button class=\"danger-button\" data-replenishment-delete=\"" + escapeHtml(item.id) + "\" type=\"button\">Excluir teste</button>");
     return "<div class=\"replenishment-actions\">" + actions.join("") + "</div>";
   }
@@ -8798,7 +8841,23 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var target = event.target.closest("button");
     if (!target) return;
     if (isAttendant()) {
-      showToast("Atendentes podem criar e acompanhar pedidos, mas nao alterar a fila operacional.", "warning");
+      var cancellationId = target.dataset.replenishmentRequestCancellation;
+      if (!cancellationId) {
+        showToast("Atendentes podem criar, acompanhar e solicitar o cancelamento dos proprios pedidos.", "warning");
+        return;
+      }
+      var cancellationReason = window.prompt("Motivo do cancelamento (opcional):", "");
+      if (cancellationReason === null) return;
+      if (!beginTransferAction("reposicao-cancelamento:" + cancellationId, target, "Solicitando...")) return;
+      try {
+        await requestReplenishmentCancellation(cancellationId, cancellationReason);
+        await refreshReplenishmentData();
+        showToast("Cancelamento solicitado ao estoque.", "success");
+      } catch (error) {
+        setStatus("replenishmentQueueStatus", "Erro ao solicitar cancelamento: " + formatSupabaseError(error), "error");
+      } finally {
+        endTransferAction(target);
+      }
       return;
     }
     var id = target.dataset.replenishmentClaim || target.dataset.replenishmentReturn || target.dataset.replenishmentStart || target.dataset.replenishmentAttend || target.dataset.replenishmentNostock || target.dataset.replenishmentComplete || target.dataset.replenishmentCancel || target.dataset.replenishmentDelete;
@@ -8828,7 +8887,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       }
       if (target.dataset.replenishmentComplete) await completeReplenishmentRequest(id);
       if (target.dataset.replenishmentCancel) {
-        var cancelReason = window.prompt("Motivo do cancelamento:");
+        var cancellationRequest = getReplenishmentById(id);
+        var cancelReason = window.prompt("Motivo do cancelamento:", cancellationRequest ? cancellationRequest.cancellationRequestReason || "" : "");
         if (cancelReason === null) return;
         await cancelReplenishmentRequest(id, cancelReason);
       }
@@ -9180,13 +9240,20 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (!request || !authState.currentUser) return;
     if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return;
     if (!shouldNotifyCurrentUserAboutReplenishment(request)) return;
-    var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || ""].join(":");
+    var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || "", request.cancellationRequestedAt || ""].join(":");
     if (taskAlertState.notifiedReplenishments[notifyKey] && Date.now() - taskAlertState.notifiedReplenishments[notifyKey] < 30000) return;
     taskAlertState.notifiedReplenishments[notifyKey] = Date.now();
-    var title = type === "returned" ? "Pedido voltou para a fila" : type === "claimed" || type === "assigned" ? "Pedido de reposicao assumido" : "Novo pedido de reposicao";
+    var title = type === "cancellation_requested" ? "Cancelamento solicitado"
+      : type === "returned" ? "Pedido voltou para a fila"
+        : type === "claimed" || type === "assigned" ? "Pedido de reposicao assumido"
+          : "Novo pedido de reposicao";
     var body = "SKU " + request.codigoMaterial + " - " + (request.nomeMaterial || "Produto") + " (" + activeWarehouseCode() + ")";
+    if (type === "cancellation_requested") {
+      body = "Atendente " + (request.cancellationRequestedByName || request.solicitadoPorNome || "-") + " solicitou o cancelamento do SKU " + request.codigoMaterial + ".";
+      if (normalizeText(request.cancellationRequestReason)) body += " Motivo: " + normalizeText(request.cancellationRequestReason);
+    }
     if (normalizeText(request.observacao)) body += " | Mensagem: " + normalizeText(request.observacao);
-    showToast(title + ": " + request.codigoMaterial, "success");
+    showToast(title + ": " + request.codigoMaterial, type === "cancellation_requested" ? "warning" : "success");
     showBrowserNotification(title, body);
     if (isReplenishmentSoundEnabled()) {
       if (taskAlertState.audioUnlocked) playReplenishmentSound();
@@ -9583,7 +9650,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       var before = getReplenishmentById(row.id);
       var request = fromDbReplenishmentRequest(row);
       upsertById(replenishmentState.requests, request);
-      if (eventType === "INSERT" || (!before && request.id) || (before && before.responsavelId !== request.responsavelId) || (before && before.status !== request.status && request.status === "PENDENTE")) {
+      var cancellationRequested = eventType === "UPDATE" && request.cancellationRequestedAt && (!before || before.cancellationRequestedAt !== request.cancellationRequestedAt);
+      if (cancellationRequested) {
+        createReplenishmentNotification(request, "cancellation_requested");
+      } else if (eventType === "INSERT" || (!before && request.id) || (before && before.responsavelId !== request.responsavelId) || (before && before.status !== request.status && request.status === "PENDENTE")) {
         var type = request.status === "PENDENTE" && !request.responsavelId ? (before ? "returned" : "created") : request.responsavelId ? "claimed" : "created";
         createReplenishmentNotification(request, type);
       }

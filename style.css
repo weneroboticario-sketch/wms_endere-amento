@@ -5058,6 +5058,30 @@ body.role-atendente .replenishment-layout {
   overflow-wrap: anywhere;
 }
 
+.replenishment-cancellation-request {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid #e8a3a3;
+  border-radius: var(--radius);
+  background: #fff1f1;
+  color: var(--ink);
+}
+
+.replenishment-cancellation-request span {
+  color: var(--danger);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.replenishment-cancellation-request strong,
+.replenishment-cancellation-request p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .replenishment-card-footer {
   grid-column: 1 / -1;
   display: flex;

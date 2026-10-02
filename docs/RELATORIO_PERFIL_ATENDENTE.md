@@ -39,7 +39,7 @@ Alteracoes principais:
 - indice de fila por estoque, status, prioridade e data;
 - solicitacao anonima aceita somente `OPERADOR` ou `ATENDENTE`;
 - supervisor pode ler e editar operadores e atendentes apenas nos proprios estoques;
-- schema registrado como `2026.10.01.006`;
+- schema registrado como `2026.10.01.007` após a migration de solicitação de cancelamento;
 - cache do PostgREST recarregado ao final da migration.
 
 ## Front-end
@@ -85,7 +85,7 @@ O roteiro `supabase/tests/rls.sql` tambem foi ampliado para repetir as verificac
 ## Ordem de implantacao
 
 1. Aplicar a migration `20261001143352_atendente_profile_and_priority.sql`.
-2. Confirmar `wms_schema_version.version = '2026.10.01.006'`.
+2. Confirmar `wms_schema_version.version = '2026.10.01.007'`.
 3. Publicar a Edge Function `manage-wms-user` incluindo `index.ts` e `permissions.ts`.
 4. Publicar o front-end.
 5. Recarregar o aplicativo para ativar o cache estatico `wms-static-v12`.

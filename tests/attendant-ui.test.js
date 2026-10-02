@@ -18,7 +18,8 @@ test("ATENDENTE can navigate only to SKU consultation and replenishment", () => 
 test("attendant replenishment view contains only requests created by the current user", () => {
   assert.match(script, /function getReplenishmentRequestsForCurrentView\(\)[\s\S]*?request\.solicitadoPorId === authState\.currentUser\.id/);
   assert.match(script, /limited\.map\(attendantView \? attendantReplenishmentCardHtml : replenishmentCardHtml\)/);
-  assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?nao alterar a fila operacional/);
+  assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?replenishmentRequestCancellation/);
+  assert.match(script, /Atendentes podem criar, acompanhar e solicitar o cancelamento dos proprios pedidos/);
 });
 
 test("request forms expose validated client priority", () => {
@@ -61,4 +62,14 @@ test("attendant replenishment modal starts blank and hides operational stock det
   assert.match(modalSource, /if \(!isAttendant\(\)\) \{[\s\S]*?Fisico CAPTACAO[\s\S]*?Alocado CAPTACAO[\s\S]*?Localizacao CAPTACAO/);
   assert.match(modalSource, /\$\("suggestionObservationInput"\)\.value = "";/);
   assert.doesNotMatch(modalSource, /suggestion\.alertMessage \|\| ""/);
+});
+
+test("attendant can request cancellation while warehouse staff sees the request", () => {
+  assert.match(html, /data-replenishment-suggestion-close[^>]*>Nao solicitar<\/button>/);
+  assert.match(script, /data-replenishment-request-cancellation/);
+  assert.match(script, /request_wms_replenishment_cancellation/);
+  assert.match(script, /Cancelamento solicitado ao estoque/);
+  assert.match(script, /Atendente " \+ requester \+ " solicitou o cancelamento/);
+  assert.match(script, /Confirmar cancelamento/);
+  assert.match(script, /createReplenishmentNotification\(request, "cancellation_requested"\)/);
 });

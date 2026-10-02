@@ -102,10 +102,10 @@ async function seedFixtures(db) {
 
     insert into public.wms_replenishment_requests (
       id, warehouse_code, codigo_material, quantidade_solicitada,
-      quantidade_pendente, status, prioridade, solicitado_por_id
+      quantidade_pendente, status, prioridade, solicitado_por_id, solicitado_por_nome
     ) values
-      ('request-vdcg', 'VDCG', 'SKU-VDCG', 2, 2, 'PENDENTE', 'NORMAL', 'user-attendant'),
-      ('request-vdco', 'VDCO', 'SKU-VDCO', 2, 2, 'PENDENTE', 'NORMAL', 'other-user');
+      ('request-vdcg', 'VDCG', 'SKU-VDCG', 2, 2, 'PENDENTE', 'NORMAL', 'user-attendant', 'Atendente VDCG'),
+      ('request-vdco', 'VDCO', 'SKU-VDCO', 2, 2, 'PENDENTE', 'NORMAL', 'other-user', 'Atendente VDCO');
   `);
 }
 
@@ -119,8 +119,11 @@ test("ATENDENTE RLS is warehouse-scoped and blocks operational mutations", async
   assert.deepEqual(allowedWarehouses.rows[0].codes, ["VDCG"], "ATENDENTE must not gain global access from a stale flag");
   assert.equal((await db.query("select prioridade from public.wms_replenishment_requests where id = 'legacy-invalid-priority'")).rows[0].prioridade, "NORMAL");
   assert.deepEqual(
-    (await db.query("select policyname from pg_policies where tablename = 'wms_replenishment_requests' and cmd = 'UPDATE'")).rows,
-    [{ policyname: "wms_replenishment_requests_warehouse_update" }]
+    (await db.query("select policyname from pg_policies where tablename = 'wms_replenishment_requests' and cmd = 'UPDATE' order by policyname")).rows,
+    [
+      { policyname: "wms_replenishment_requests_attendant_cancellation_update" },
+      { policyname: "wms_replenishment_requests_warehouse_update" }
+    ]
   );
 
   assert.equal((await db.query("select count(*)::integer as count from public.wms_products")).rows[0].count, 2);
@@ -147,8 +150,32 @@ test("ATENDENTE RLS is warehouse-scoped and blocks operational mutations", async
     /row-level security policy/
   );
 
-  const claimResult = await db.query("update public.wms_replenishment_requests set status = 'ATRIBUIDO' where id = 'request-vdcg'");
-  assert.equal(claimResult.affectedRows, 0, "ATENDENTE must not claim a replenishment request");
+  await assert.rejects(
+    db.query("update public.wms_replenishment_requests set status = 'ATRIBUIDO' where id = 'request-vdcg'"),
+    /cannot change the operational replenishment workflow/,
+    "ATENDENTE must not claim a replenishment request"
+  );
+
+  const cancellationResult = await db.query(`
+    select id, cancellation_requested_by_id, cancellation_requested_by_name, cancellation_request_reason
+    from public.request_wms_replenishment_cancellation('request-vdcg', 'Cliente desistiu')
+  `);
+  assert.deepEqual(cancellationResult.rows, [{
+    id: "request-vdcg",
+    cancellation_requested_by_id: "user-attendant",
+    cancellation_requested_by_name: "Atendente VDCG",
+    cancellation_request_reason: "Cliente desistiu"
+  }]);
+  assert.equal(
+    (await db.query("select status from public.wms_replenishment_requests where id = 'request-vdcg'")).rows[0].status,
+    "PENDENTE",
+    "cancellation request must not change the operational status"
+  );
+  await assert.rejects(
+    db.query("select public.request_wms_replenishment_cancellation('request-vdco', '')"),
+    /Replenishment request not found/,
+    "RLS must not reveal a replenishment request from another warehouse"
+  );
 
   await assert.rejects(
     db.query(`
@@ -187,6 +214,10 @@ test("existing operational profiles keep their warehouse write access", async (c
       ) values ('${requestId}', 'VDCG', 'SKU-VDCG', 1, 1, 'PENDENTE', 'NORMAL')
     `);
     assert.equal((await db.query(`update public.wms_replenishment_requests set status = 'ATRIBUIDO' where id = '${requestId}'`)).affectedRows, 1);
+    await assert.rejects(
+      db.query(`select public.request_wms_replenishment_cancellation('${requestId}', '')`),
+      /Only an active attendant/
+    );
 
     const bindingId = `binding-${role}`;
     await db.query(`
