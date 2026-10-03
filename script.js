@@ -24,6 +24,7 @@ import {
   resolveRemoteBindingIds
 } from "./src/addressing-bindings.js";
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
+import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 
 (function () {
@@ -11100,7 +11101,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
       "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
       "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",
-      "<p><strong>Indices de idempotencia da reposicao:</strong> idx_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.idx_replenishment_requests_idempotency) + " | uq_replenishment_requests_idempotency: " + yesNoDiagnostic(replenishmentSchema.indexes.uq_replenishment_requests_idempotency) + ".</p>",
+      "<p><strong>Indice de idempotencia da reposicao:</strong> wms_replenishment_idempotency_uidx: " + yesNoDiagnostic(replenishmentSchema.indexes.wms_replenishment_idempotency_uidx) + ".</p>",
       "<p><strong>Ultimo erro de criacao de pedido:</strong> " + escapeHtml(performanceState.lastReplenishmentCreateError || "-") + (performanceState.lastReplenishmentCreateErrorAt ? " em " + escapeHtml(formatDateTime(performanceState.lastReplenishmentCreateErrorAt)) : "") + ".</p>",
       replenishmentSchema.error ? "<p><strong>Diagnostico reposicao:</strong> " + escapeHtml(replenishmentSchema.error) + "</p>" : "",
       "<p><strong>Registros carregados:</strong> " + stockState.summary.captacao + " registros CAPTACAO, " + transferState.transfers.length + " transferencias, " + transferState.items.length + " itens de transferencia, " + authState.users.length + " usuarios.</p>",
@@ -11739,8 +11740,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         updated_at: null
       },
       indexes: {
-        idx_replenishment_requests_idempotency: null,
-        uq_replenishment_requests_idempotency: null
+        wms_replenishment_idempotency_uidx: null
       },
       error: ""
     };
@@ -11748,11 +11748,16 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var rpcResponse = await supabaseDb.rpc("wms_replenishment_schema_diagnostics");
     if (!rpcResponse.error && rpcResponse.data) {
       var data = Array.isArray(rpcResponse.data) ? rpcResponse.data[0] : rpcResponse.data;
-      result.columns = Object.assign(result.columns, (data && data.columns) || {});
-      result.indexes = Object.assign(result.indexes, (data && data.indexes) || {});
-      result.ready = result.columns.idempotency_key === true &&
-        result.columns.warehouse_code === true &&
-        result.indexes.uq_replenishment_requests_idempotency === true;
+      result.columns = Object.assign(result.columns, normalizePresenceMap(data && data.columns));
+      result.indexes = Object.assign(result.indexes, normalizePresenceMap(data && data.indexes));
+      result.indexes.wms_replenishment_idempotency_uidx = [
+        "wms_replenishment_idempotency_uidx",
+        "uq_replenishment_requests_idempotency",
+        "idx_replenishment_requests_idempotency"
+      ].some(function (indexName) { return result.indexes[indexName] === true; });
+      result.ready = Object.keys(result.columns).every(function (columnName) {
+        return result.columns[columnName] === true;
+      }) && result.indexes.wms_replenishment_idempotency_uidx === true;
       return result;
     }
     if (rpcResponse.error && !isMissingRpcFunctionError(rpcResponse.error)) {
