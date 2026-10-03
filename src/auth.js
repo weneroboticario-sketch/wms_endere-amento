@@ -25,6 +25,12 @@ export async function getCurrentAuthSession(client) {
   return data.session || null;
 }
 
+export async function refreshCurrentAuthSession(client) {
+  const { data, error } = await client.auth.refreshSession();
+  if (error) throw error;
+  return data.session || null;
+}
+
 export async function signOutAuthSession(client) {
   const { error } = await client.auth.signOut({ scope: "local" });
   if (error) throw error;

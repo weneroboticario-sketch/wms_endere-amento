@@ -5,6 +5,7 @@ import {
   changeOwnPassword,
   getCurrentAuthSession,
   invokeUserAdministration,
+  refreshCurrentAuthSession,
   signInWithUsername,
   signOutAuthSession
 } from "./src/auth.js";
@@ -997,6 +998,18 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       at: nowIso()
     });
     performanceState.recentErrors = performanceState.recentErrors.slice(0, 8);
+  }
+
+  function clearPerformanceErrors(labels) {
+    labels = Array.isArray(labels) ? labels : [labels];
+    performanceState.recentErrors = performanceState.recentErrors.filter(function (entry) {
+      return labels.indexOf(entry.label) < 0;
+    });
+    Object.keys(performanceState.errorThrottle).forEach(function (key) {
+      if (labels.some(function (label) { return key.indexOf(label + ":") === 0; })) {
+        delete performanceState.errorThrottle[key];
+      }
+    });
   }
 
   async function estimateLocalCacheBytes() {
@@ -2065,7 +2078,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       return loadedFromCache;
     }
     try {
-      var productCatalogPromise = fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 })
+      var productCatalogPromise = fetchProductCatalogWithAuthRecovery()
         .then(function (rows) { return { rows: rows, error: null }; })
         .catch(function (error) { return { rows: [], error: error }; });
       var bindingRows = await fetchWarehouseRows("wms_bindings", "created_at", false);
@@ -2102,6 +2115,21 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     }
   }
 
+  async function fetchProductCatalogWithAuthRecovery() {
+    var readCatalog = function () {
+      return fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 });
+    };
+    try {
+      return await readCatalog();
+    } catch (error) {
+      if (!isSupabasePermissionError(error) || !authState.currentUser) throw error;
+      var refreshedSession = await refreshCurrentAuthSession(supabaseDb);
+      if (!refreshedSession) throw new Error("Sessao Supabase expirada. Entre novamente no sistema.");
+      authState.currentSession = refreshedSession;
+      return readCatalog();
+    }
+  }
+
   function syncProductCatalogInBackground(productCatalogPromise, requestedWarehouseCode) {
     productCatalogPromise.then(function (productResult) {
       if (activeWarehouseCode() !== requestedWarehouseCode) return false;
@@ -2117,6 +2145,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       productsTableAvailable = true;
       state.products = products;
       productsDirty = false;
+      clearPerformanceErrors(["catalogo-produtos", "catalogo-produtos-segundo-plano"]);
       return writeModuleCacheForWarehouse("coreData", requestedWarehouseCode, {
         bindings: state.bindings,
         products: state.products
@@ -17760,8 +17789,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (typeof error === "string") return error;
     var message = error.message || error.details || error.hint || error.code || JSON.stringify(error);
     var lower = String(message + " " + (error.code || "")).toLowerCase();
-    if (lower.indexOf("row-level security") >= 0 || lower.indexOf("42501") >= 0) {
-      return message + ". Aplique as migrations no Supabase para criar as policies de leitura e gravacao.";
+    if (lower.indexOf("row-level security") >= 0 || lower.indexOf("42501") >= 0 || lower.indexOf("permission denied") >= 0) {
+      return message + ". Verifique a sessao autenticada e as policies/grants do Supabase.";
     }
     if (lower.indexOf("wms_users_username_key") >= 0) {
       return message + ". Esta matricula/usuario ja existe. Use o botao Editar do cadastro existente ou informe outra matricula.";
@@ -17770,6 +17799,12 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       return message + ". O mesmo SKU ja existe nesse endereco dentro do estoque atual; o app atualiza esse vinculo usando estoque + sku + endereco como chave.";
     }
     return message;
+  }
+
+  function isSupabasePermissionError(error) {
+    var message = String((error && (error.message || error.details || error.hint)) || error || "").toLowerCase();
+    var code = String(error && error.code || "").toLowerCase();
+    return code === "42501" || message.indexOf("42501") >= 0 || message.indexOf("permission denied") >= 0 || message.indexOf("row-level security") >= 0;
   }
 
   function isMissingProductsTableError(error) {
