@@ -13,6 +13,7 @@ As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes 
 7. `20261001001530_addressing_concurrency_fast_path.sql`: gravação atômica do endereçamento, com trava por estoque/endereço e detecção de alteração concorrente.
 8. `20261001143352_atendente_profile_and_priority.sql`: perfil ATENDENTE, prioridade Cliente/Reposição e bloqueio de escritas operacionais por perfil.
 9. `20261001210406_replenishment_cancellation_request.sql`: solicitação segura de cancelamento pelo ATENDENTE, sem liberar alterações no fluxo operacional.
+10. `20261006005523_addressing_history_optional.sql`: compatibilidade do histórico auxiliar para que falhas de auditoria não bloqueiem o endereçamento atômico.
 
 Em um banco existente, aplique a sequência pelo Supabase CLI. Os comandos `create/alter ... if not exists` e `on conflict` tornam a baseline reaplicável; ainda assim, faça backup antes.
 

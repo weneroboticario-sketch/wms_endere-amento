@@ -148,6 +148,27 @@ test("addressing uses the atomic RPC and refreshes concurrent occupants", async 
   assert.match(source, /bindingCommitRpcAvailable/);
 });
 
+test("optional history errors do not block atomic addressing", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+
+  assert.match(source, /response\.error && payload\.history_items\.length && isHistorySchemaError/);
+  assert.match(source, /commit-binding-allocation-without-history/);
+  assert.match(source, /Object\.assign\(\{\}, payload, \{ history_items: \[\] \}\)/);
+});
+
+test("history compatibility migration restores the atomic audit contract", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20261006005523_addressing_history_optional.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /add column if not exists datetime timestamptz/);
+  assert.match(migration, /add column if not exists warehouse_code text/);
+  assert.match(migration, /create policy wms_history_warehouse_insert/);
+  assert.match(migration, /private\.current_wms_allowed_warehouses/);
+  assert.match(migration, /notify pgrst, 'reload schema'/);
+});
+
 test("atomic addressing SQL remains invoker-secured and warehouse-scoped", async () => {
   const migration = await readFile(
     new URL("../supabase/migrations/20261001001530_addressing_concurrency_fast_path.sql", import.meta.url),

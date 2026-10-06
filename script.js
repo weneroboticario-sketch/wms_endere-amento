@@ -42,7 +42,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.10.01.007";
+  var EXPECTED_SCHEMA_VERSION = "2026.10.05.008";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -8055,6 +8055,14 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       var response = await runSupabaseRequestWithRetry("commit-binding-allocation", function () {
         return supabaseDb.rpc("wms_commit_binding_allocation", { p_payload: payload });
       });
+      if (response.error && payload.history_items.length && isHistorySchemaError(response.error)) {
+        console.warn("Historico opcional indisponivel; repetindo o enderecamento sem auditoria legada:", response.error);
+        historySchemaAvailable = false;
+        payload = Object.assign({}, payload, { history_items: [] });
+        response = await runSupabaseRequestWithRetry("commit-binding-allocation-without-history", function () {
+          return supabaseDb.rpc("wms_commit_binding_allocation", { p_payload: payload });
+        });
+      }
       if (response.error) {
         if (isMissingBindingCommitFunction(response.error)) {
           bindingCommitRpcAvailable = false;
@@ -17897,6 +17905,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       message.indexOf("schema cache") >= 0 ||
       message.indexOf("does not exist") >= 0 ||
       message.indexOf("not found") >= 0 ||
+      message.indexOf("row-level security") >= 0 ||
+      message.indexOf("permission denied") >= 0 ||
       message.indexOf("pgrst") >= 0 ||
       message.indexOf("404") >= 0
     );
