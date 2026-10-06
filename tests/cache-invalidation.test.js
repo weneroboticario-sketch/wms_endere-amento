@@ -10,6 +10,13 @@ test("address export publishes a warehouse-scoped cache invalidation", () => {
   assert.match(source, /warehouse_code: normalizedWarehouseCode/);
 });
 
+test("capture stock import reconciles bindings and refreshes warehouse caches", () => {
+  assert.match(source, /syncBindingsFromLocatedStockImport\(sourceType, parsed\.rows, warehouseCode, now\)/);
+  assert.match(source, /stockImportOfficialLocationPlans\(rows\)/);
+  assert.match(source, /previousLocation !== plan\.locationCode/);
+  assert.match(source, /sourceType === "CAPTACAO"[\s\S]*?publishAddressCacheInvalidation\(activeWarehouseCode\(\), file\.name, parsed\.rows\.length\)/);
+});
+
 test("every warehouse module cache is invalidated before active data reloads", () => {
   assert.match(source, /WAREHOUSE_CACHE_MODULES = \["coreData", "transferData", "stockData", "replenishmentData"\]/);
   assert.match(source, /WAREHOUSE_CACHE_MODULES\.map[\s\S]*?cacheDelete\(scopedKey\)/);

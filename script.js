@@ -3190,7 +3190,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       var importResult = await saveStockImportBatch(sourceType, file.name, parsed, importMode);
       invalidateStockCacheForWarehouseSource(activeWarehouseCode(), sourceType, importResult.changedSkus || []);
       await refreshStockOperationalData();
-      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
+      if (sourceType === "CAPTACAO") {
+        await publishAddressCacheInvalidation(activeWarehouseCode(), file.name, parsed.rows.length);
+      }
+      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.locationBindingsSynced || 0) + " endereco(s) sincronizado(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
     } catch (error) {
       setStatus("stockImportStatus", "Falha na importacao: " + missingStockSchemaMessage(error), "error");
@@ -3359,7 +3362,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       var unlocatedSkuKeys = sourceType === "CAPTACAO" ? stockImportSkuKeysWithoutLocation(parsed.rows) : [];
       var unlocatedSkuKeySet = {};
       unlocatedSkuKeys.forEach(function (key) { unlocatedSkuKeySet[key] = true; });
-      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0, negative: 0, alertRows: 0, unlocatedBindingsRemoved: 0, changedSkus: [] };
+      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0, negative: 0, alertRows: 0, locationBindingsSynced: 0, locationBindingsCreated: 0, locationBindingDuplicatesRemoved: 0, unlocatedBindingsRemoved: 0, changedSkus: [] };
       parsed.rows.forEach(function (row, index) {
         var key = stockPositionOperationalKey(sourceType, row, warehouseCode);
         if (!key) return;
@@ -3420,6 +3423,11 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
       }
       setStatus("stockImportStatus", "Validando localizacoes antigas e alertas da base...", "warning");
+      var bindingSync = await syncBindingsFromLocatedStockImport(sourceType, parsed.rows, warehouseCode, now);
+      metrics.locationBindingsSynced = bindingSync.synced;
+      metrics.locationBindingsCreated = bindingSync.created;
+      metrics.locationBindingDuplicatesRemoved = bindingSync.duplicatesRemoved;
+      metrics.changedSkus = metrics.changedSkus.concat(bindingSync.changedSkus);
       metrics.unlocatedBindingsRemoved = await clearBindingsForUnlocatedStockImport(sourceType, parsed.rows, warehouseCode, batchId, now);
       metrics.alertRows = await generateNegativeStockAlerts(warehouseCode, sourceType, batchId, now);
       setStatus("stockImportStatus", "Finalizando lote da importacao...", "warning");
@@ -3435,7 +3443,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         errorRows: parsed.errors.length,
         status: "COMPLETED",
         importMode: importMode,
-        notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
+        notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.locationBindingsSynced + " endereco(s) sincronizado(s), " + metrics.locationBindingsCreated + " endereco(s) criado(s), " + metrics.locationBindingDuplicatesRemoved + " duplicidade(s) removida(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
       }));
       updateLocalStockBatchProgress(batchId, {
         imported_rows: parsed.rows.length,
@@ -3596,6 +3604,160 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
     invalidateStockCacheForWarehouseSource(warehouseCode, sourceType, removedSkuList);
     return removedBindings.length;
+  }
+
+  function stockImportOfficialLocationPlans(rows) {
+    var grouped = {};
+    (rows || []).forEach(function (row) {
+      var sku = normalizeSku(row && row.codigoMaterial);
+      var skuKey = normalizeSkuKey(sku);
+      var parsed = normalizeLocation(row && row.codigoEndereco);
+      if (!skuKey || !parsed.valid) return;
+      if (!grouped[skuKey]) grouped[skuKey] = { sku: sku, locations: {}, row: row };
+      grouped[skuKey].locations[parsed.code] = parsed;
+      grouped[skuKey].row = row;
+    });
+    return Object.keys(grouped).map(function (skuKey) {
+      var group = grouped[skuKey];
+      var locationCodes = Object.keys(group.locations);
+      if (locationCodes.length !== 1) return null;
+      return {
+        skuKey: skuKey,
+        sku: group.sku,
+        row: group.row,
+        parsed: group.locations[locationCodes[0]],
+        locationCode: locationCodes[0]
+      };
+    }).filter(Boolean);
+  }
+
+  function importedLocationAreaCode(locationCode, warehouseCode, fallbackAreaCode) {
+    var normalizedLocation = locationKeyFromCode(locationCode);
+    var template = buildLinhaSeparacaoTemplateRows(warehouseCode).find(function (row) {
+      return locationKeyFromCode(row.locationCode) === normalizedLocation;
+    });
+    var code = Number(template ? template.area : fallbackAreaCode || 1);
+    return getAreaByCode(code) ? code : 1;
+  }
+
+  async function syncBindingsFromLocatedStockImport(sourceType, rows, warehouseCode, now) {
+    var emptyResult = { synced: 0, created: 0, duplicatesRemoved: 0, changedSkus: [] };
+    if (sourceType !== "CAPTACAO") return emptyResult;
+    var plans = stockImportOfficialLocationPlans(rows);
+    if (!plans.length) return emptyResult;
+
+    var remoteRows = await fetchWarehouseRows("wms_bindings", "created_at", false);
+    var workingBindings = (remoteRows || []).map(fromDbBinding).filter(function (binding) {
+      return bindingMatchesWarehouseCode(binding, warehouseCode);
+    });
+    var upsertById = {};
+    var deleteById = {};
+    var result = { synced: 0, created: 0, duplicatesRemoved: 0, changedSkus: [] };
+
+    function replaceWorkingBinding(binding) {
+      var index = workingBindings.findIndex(function (item) { return item.id === binding.id; });
+      if (index >= 0) workingBindings[index] = binding;
+      else workingBindings.push(binding);
+      upsertById[binding.id] = binding;
+      delete deleteById[binding.id];
+    }
+
+    function markBindingForDelete(binding) {
+      if (!binding || !binding.id || deleteById[binding.id]) return;
+      deleteById[binding.id] = true;
+      delete upsertById[binding.id];
+      result.duplicatesRemoved += 1;
+    }
+
+    plans.forEach(function (plan) {
+      var duplicatesBefore = result.duplicatesRemoved;
+      var matches = workingBindings.filter(function (binding) {
+        if (deleteById[binding.id]) return false;
+        return splitSkuValues(binding.sku).some(function (candidate) {
+          return normalizeSkuKey(candidate) === plan.skuKey;
+        });
+      });
+      var simpleMatches = matches.filter(function (binding) { return splitSkuValues(binding.sku).length <= 1; });
+      var officialMatches = simpleMatches.filter(function (binding) {
+        return locationKeyFromBinding(binding) === plan.locationCode;
+      }).sort(sortByDateDesc);
+      var keep = officialMatches[0] || simpleMatches.slice().sort(sortByDateDesc)[0] || null;
+
+      simpleMatches.forEach(function (binding) {
+        if (!keep || binding.id !== keep.id) markBindingForDelete(binding);
+      });
+
+      matches.filter(function (binding) { return splitSkuValues(binding.sku).length > 1; }).forEach(function (binding) {
+        var remainingSkus = splitSkuValues(binding.sku).filter(function (candidate) {
+          return normalizeSkuKey(candidate) !== plan.skuKey;
+        });
+        if (!remainingSkus.length) {
+          markBindingForDelete(binding);
+          return;
+        }
+        replaceWorkingBinding(Object.assign({}, binding, {
+          sku: remainingSkus.join(";"),
+          sourceSkuValue: remainingSkus.join(";"),
+          updatedAt: now
+        }));
+      });
+
+      var createdBinding = !keep;
+      if (createdBinding) {
+        var areaCode = importedLocationAreaCode(plan.locationCode, warehouseCode, 1);
+        keep = createBinding(plan.sku, plan.parsed, areaCode, plan.row.nomeMaterial || findProductName(plan.sku) || "");
+        keep.createdAt = now;
+        result.created += 1;
+      }
+
+      var previousLocation = locationKeyFromBinding(keep);
+      var nextAreaCode = importedLocationAreaCode(plan.locationCode, warehouseCode, keep.areaCode || 1);
+      var nextBinding = Object.assign({}, keep, {
+        sku: plan.sku,
+        sourceSkuValue: plan.sku,
+        rua: plan.parsed.rua,
+        rack: plan.parsed.rack,
+        linha: plan.parsed.linha,
+        letra: plan.parsed.letra,
+        locationCode: plan.locationCode,
+        areaCode: nextAreaCode,
+        areaName: (getAreaByCode(nextAreaCode) || getAreaByCode(1)).name,
+        productName: plan.row.nomeMaterial || keep.productName || findProductName(plan.sku) || "",
+        warehouseId: warehouseIdForCode(warehouseCode),
+        warehouseCode: normalizeWarehouseCode(warehouseCode),
+        updatedAt: now
+      });
+      var bindingChanged = createdBinding ||
+        previousLocation !== plan.locationCode ||
+        Number(keep.rua || 0) !== Number(nextBinding.rua || 0) ||
+        Number(keep.rack || 0) !== Number(nextBinding.rack || 0) ||
+        Number(keep.linha || 0) !== Number(nextBinding.linha || 0) ||
+        normalizeText(keep.letra) !== normalizeText(nextBinding.letra) ||
+        Number(keep.areaCode || 1) !== Number(nextBinding.areaCode || 1) ||
+        normalizeText(keep.productName) !== normalizeText(nextBinding.productName);
+      if (bindingChanged) replaceWorkingBinding(nextBinding);
+      if (previousLocation !== plan.locationCode) result.synced += 1;
+      if (bindingChanged || result.duplicatesRemoved > duplicatesBefore) result.changedSkus.push(plan.sku);
+    });
+
+    var deleteIds = Object.keys(deleteById);
+    if (deleteIds.length) await deleteBindingsByIds(deleteIds);
+    var upserts = Object.keys(upsertById).filter(function (id) { return !deleteById[id]; }).map(function (id) {
+      return toDbBinding(upsertById[id]);
+    });
+    if (upserts.length) await upsertInChunks("wms_bindings", upserts, "id");
+
+    state.bindings = expandBindingsWithMultipleSkus(workingBindings.filter(function (binding) {
+      return !deleteById[binding.id];
+    })).filter(function (binding) {
+      return bindingMatchesWarehouseCode(binding, warehouseCode);
+    });
+    await writeModuleCacheForWarehouse("coreData", warehouseCode, {
+      bindings: state.bindings,
+      products: state.products
+    });
+    result.changedSkus = unique(result.changedSkus.filter(Boolean));
+    return result;
   }
 
   function stockImportSkuKeysWithoutLocation(rows) {
