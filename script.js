@@ -3191,7 +3191,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       invalidateStockCacheForWarehouseSource(activeWarehouseCode(), sourceType, importResult.changedSkus || []);
       await refreshStockOperationalData();
       if (sourceType === "CAPTACAO") {
-        await publishAddressCacheInvalidation(activeWarehouseCode(), file.name, parsed.rows.length);
+        await publishAddressCacheInvalidation(activeWarehouseCode(), file.name, parsed.rows.length, "IMPORTACAO_BASE");
       }
       setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.locationBindingsSynced || 0) + " endereco(s) sincronizado(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
@@ -4343,6 +4343,82 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     };
   }
 
+  function latestBindingBySkuForWarehouse(bindings, warehouseCode) {
+    var latestBySku = {};
+    (bindings || []).filter(function (binding) {
+      return bindingMatchesWarehouseCode(binding, warehouseCode);
+    }).slice().sort(sortByDateDesc).forEach(function (binding) {
+      var parsed = normalizeLocation(locationKeyFromBinding(binding));
+      if (!parsed.valid) return;
+      splitSkuValues(binding.sku).forEach(function (sku) {
+        var skuKey = normalizeSkuKey(sku);
+        if (!skuKey || latestBySku[skuKey]) return;
+        latestBySku[skuKey] = { binding: binding, parsed: parsed };
+      });
+    });
+    return latestBySku;
+  }
+
+  async function syncCaptureStockLocationsFromBindings(positions, warehouseCode) {
+    var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var remoteBindings = await fetchWarehouseRows("wms_bindings", "updated_at", false);
+    var now = nowIso();
+    var normalizedBindings = (remoteBindings || []).map(fromDbBinding);
+    var bindingBySku = latestBindingBySkuForWarehouse(normalizedBindings, normalizedWarehouseCode);
+    var missingBindings = [];
+    (positions || []).forEach(function (position) {
+      if (normalizeText(position.sourceType).toUpperCase() !== "CAPTACAO") return;
+      var skuKey = normalizeSkuKey(position.codigoMaterial);
+      if (!skuKey || bindingBySku[skuKey]) return;
+      var parsed = normalizeLocation(stockPositionLocation(position));
+      if (!parsed.valid) return;
+      var areaCode = importedLocationAreaCode(parsed.code, normalizedWarehouseCode, 1);
+      var binding = createBinding(position.codigoMaterial, parsed, areaCode, position.nomeMaterial || findProductName(position.codigoMaterial) || "");
+      binding.warehouseId = warehouseIdForCode(normalizedWarehouseCode);
+      binding.warehouseCode = normalizedWarehouseCode;
+      binding.createdAt = now;
+      binding.updatedAt = now;
+      missingBindings.push(binding);
+      normalizedBindings.push(binding);
+      bindingBySku[skuKey] = { binding: binding, parsed: parsed };
+    });
+    if (missingBindings.length) {
+      await upsertInChunks("wms_bindings", missingBindings.map(toDbBinding), "id");
+    }
+    var changedRows = [];
+    var synchronizedRows = (positions || []).map(function (position) {
+      if (normalizeText(position.sourceType).toUpperCase() !== "CAPTACAO") return position;
+      var plan = bindingBySku[normalizeSkuKey(position.codigoMaterial)];
+      if (!plan) return position;
+      var parsed = plan.parsed;
+      var next = Object.assign({}, position, {
+        estacao: formatLinhaSeparacaoStationName(normalizedWarehouseCode, parsed.rua),
+        rack: String(parsed.rack),
+        linha: String(parsed.linha),
+        coluna: parsed.letra,
+        codigoEndereco: parsed.code,
+        updatedAt: now
+      });
+      next.recordHash = calculateStockRecordHash(next, "CAPTACAO");
+      if (stockPositionLocation(position) === parsed.code &&
+        normalizeHeader(position.estacao) === normalizeHeader(next.estacao) &&
+        normalizeHeader(position.rack) === normalizeHeader(next.rack) &&
+        normalizeHeader(position.linha) === normalizeHeader(next.linha) &&
+        normalizeHeader(position.coluna) === normalizeHeader(next.coluna)) return position;
+      changedRows.push(toDbStockPosition(next));
+      return next;
+    });
+    if (changedRows.length) await upsertStockPositionRows(changedRows);
+    return {
+      rows: synchronizedRows,
+      updated: changedRows.length,
+      created: missingBindings.length,
+      addressed: synchronizedRows.filter(function (position) {
+        return normalizeText(position.sourceType).toUpperCase() === "CAPTACAO" && !!stockPositionLocation(position);
+      }).length
+    };
+  }
+
   async function getStockAlerts(kind) {
     var positions = await fetchActiveStockPositions("");
     var grouped = {};
@@ -4628,12 +4704,22 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   async function exportCurrentStock() {
     try {
       var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
-      setStatus("stockExportStatus", "Preparando exportacao da base atual...", "warning");
+      var warehouseCode = activeWarehouseCode();
+      setStatus("stockExportStatus", "Atualizando todos os enderecos antes da exportacao...", "warning");
       var rows = await fetchActiveStockPositions(sourceType);
-      writeWorkbookFromSheets("Base_Estoque_" + activeWarehouseCode() + "_" + dateForFileName(new Date()) + ".xlsx", [
+      var addressSync = sourceType === "LOJA"
+        ? { rows: rows, updated: 0, created: 0, addressed: 0 }
+        : await syncCaptureStockLocationsFromBindings(rows, warehouseCode);
+      rows = addressSync.rows;
+      var fileName = "Base_Estoque_" + warehouseCode + "_" + dateForFileName(new Date()) + ".xlsx";
+      writeWorkbookFromSheets(fileName, [
         { name: "Base", rows: rows.map(stockPositionExportRow) }
       ]);
-      setStatus("stockExportStatus", rows.length + " linha(s) exportada(s).", "success");
+      invalidateStockCacheForWarehouseSource(warehouseCode, sourceType || "CAPTACAO", rows.map(function (position) {
+        return position.codigoMaterial;
+      }));
+      await publishAddressCacheInvalidation(warehouseCode, fileName, rows.length, "EXPORTACAO_BASE");
+      setStatus("stockExportStatus", rows.length + " linha(s) exportada(s), " + addressSync.addressed + " endereco(s) conferido(s), " + addressSync.updated + " atualizado(s) na base e " + addressSync.created + " vinculo(s) recuperado(s).", "success");
     } catch (error) {
       setStatus("stockExportStatus", missingStockSchemaMessage(error), "error");
     }
@@ -9540,8 +9626,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return normalizeText(row && row.event_type).toUpperCase() === ADDRESS_CACHE_INVALIDATION_EVENT;
   }
 
-  async function publishAddressCacheInvalidation(warehouseCode, fileName, rowCount) {
+  async function publishAddressCacheInvalidation(warehouseCode, fileName, rowCount, operationType) {
     var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
+    var normalizedOperationType = normalizeText(operationType || "EXPORTACAO_ENDERECAMENTO").toUpperCase();
     var createdAt = nowIso();
     var signal = {
       id: randomId("cache-address"),
@@ -9554,8 +9641,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       entity_id: fileName || "",
       transfer_id: "",
       event_type: ADDRESS_CACHE_INVALIDATION_EVENT,
-      title: "Enderecamento exportado",
-      message: "Atualizar caches do estoque " + normalizedWarehouseCode + ".",
+      title: normalizedOperationType === "IMPORTACAO_BASE" ? "Base de estoque importada" : normalizedOperationType === "EXPORTACAO_BASE" ? "Base de estoque exportada" : "Enderecamento exportado",
+      message: "Atualizar todos os enderecos e caches do estoque " + normalizedWarehouseCode + ".",
       read: true,
       seen: true,
       archived: true,
@@ -9566,6 +9653,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       request_id: "",
       payload: {
         scope: "ALL_WAREHOUSE_CACHES",
+        operation_type: normalizedOperationType,
         file_name: fileName || "",
         row_count: Number(rowCount || 0)
       }
@@ -15345,7 +15433,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var savedBeforeCacheRefresh = await saveData();
     var cacheRefreshPublished = false;
     if (savedBeforeCacheRefresh) {
-      cacheRefreshPublished = await publishAddressCacheInvalidation(exportWarehouseCode, fileName, exportRows.length);
+      cacheRefreshPublished = await publishAddressCacheInvalidation(exportWarehouseCode, fileName, exportRows.length, "EXPORTACAO_ENDERECAMENTO");
     }
     var exportMessage = "Excel do estoque " + exportWarehouseCode + " exportado no modelo LinhaSeparacao, com uma linha por localização e SKUs separados por ponto e vírgula." +
       (resolvedLocationChanges ? " As localizações antigas de " + resolvedLocationChanges + " SKU(s) foram removidas da exportação." : "") +

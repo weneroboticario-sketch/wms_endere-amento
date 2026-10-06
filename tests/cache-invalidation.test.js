@@ -6,7 +6,7 @@ const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
 test("address export publishes a warehouse-scoped cache invalidation", () => {
   assert.match(source, /ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED"/);
-  assert.match(source, /await saveData\(\)[\s\S]*?publishAddressCacheInvalidation\(exportWarehouseCode, fileName, exportRows\.length\)/);
+  assert.match(source, /await saveData\(\)[\s\S]*?publishAddressCacheInvalidation\(exportWarehouseCode, fileName, exportRows\.length, "EXPORTACAO_ENDERECAMENTO"\)/);
   assert.match(source, /warehouse_code: normalizedWarehouseCode/);
 });
 
@@ -14,7 +14,15 @@ test("capture stock import reconciles bindings and refreshes warehouse caches", 
   assert.match(source, /syncBindingsFromLocatedStockImport\(sourceType, parsed\.rows, warehouseCode, now\)/);
   assert.match(source, /stockImportOfficialLocationPlans\(rows\)/);
   assert.match(source, /previousLocation !== plan\.locationCode/);
-  assert.match(source, /sourceType === "CAPTACAO"[\s\S]*?publishAddressCacheInvalidation\(activeWarehouseCode\(\), file\.name, parsed\.rows\.length\)/);
+  assert.match(source, /sourceType === "CAPTACAO"[\s\S]*?publishAddressCacheInvalidation\(activeWarehouseCode\(\), file\.name, parsed\.rows\.length, "IMPORTACAO_BASE"\)/);
+});
+
+test("stock export writes every current addressing location back to the stock base", () => {
+  assert.match(source, /syncCaptureStockLocationsFromBindings\(rows, warehouseCode\)/);
+  assert.match(source, /latestBindingBySkuForWarehouse\([\s\S]*?sortByDateDesc/);
+  assert.match(source, /if \(missingBindings\.length\)[\s\S]*?upsertInChunks\("wms_bindings"/);
+  assert.match(source, /if \(changedRows\.length\) await upsertStockPositionRows\(changedRows\)/);
+  assert.match(source, /publishAddressCacheInvalidation\(warehouseCode, fileName, rows\.length, "EXPORTACAO_BASE"\)/);
 });
 
 test("every warehouse module cache is invalidated before active data reloads", () => {
