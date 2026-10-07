@@ -2,18 +2,25 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#102634">
+  <meta name="color-scheme" content="light">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="WMS">
+  <meta name="format-detection" content="telephone=no">
   <meta name="description" content="Sistema WMS com Base CAPTACAO, transferencias e reposicao em HTML, CSS e JavaScript puro.">
   <title>WMS Base CAPTACAO</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="style.css">
   <script defer src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script type="module" src="/script.js"></script>
 </head>
 <body class="auth-locked">
+  <a class="skip-link" href="#main-content">Pular para o conteúdo principal</a>
   <div class="offline-banner" id="offlineBanner" hidden>Voce esta offline. Os dados podem estar desatualizados e acoes criticas precisam de conexao.</div>
   <section class="login-shell" id="loginShell">
     <form class="login-card" id="loginForm" autocomplete="off" data-form-type="other">
@@ -68,7 +75,7 @@
   </section>
   <div class="app-shell">
     <header class="mobile-topbar">
-      <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu">☰</button>
+      <button class="icon-button" id="menuToggle" type="button" aria-label="Abrir menu" aria-controls="nav-menu" aria-expanded="false">☰</button>
       <div>
         <strong>WMS Estoque</strong>
         <span id="mobileModuleSubtitle">Base CAPTACAO</span>
@@ -85,7 +92,7 @@
         </div>
       </div>
 
-      <nav class="menu grouped-menu" aria-label="Menu principal">
+      <nav class="menu grouped-menu" id="nav-menu" aria-label="Menu principal">
         <div class="menu-section">
           <p class="menu-label">Operacao</p>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
@@ -133,7 +140,7 @@
       </div>
     </aside>
 
-    <main class="content">
+    <main class="content" id="main-content" tabindex="-1">
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
       <div class="user-strip app-header">
         <div class="app-header-title">
