@@ -6003,20 +6003,40 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     }, 80);
   }
 
+  var PASSWORD_RESET_REQUEST_MARKER = "[RESET_PASSWORD]";
+
+  function isPasswordResetAccessRequest(request) {
+    return normalizeText(request && request.notes).toUpperCase().indexOf(PASSWORD_RESET_REQUEST_MARKER) === 0;
+  }
+
   function showAccessRequestForm() {
     $("loginForm").hidden = true;
+    if ($("forgotPasswordForm")) $("forgotPasswordForm").hidden = true;
     $("accessRequestForm").hidden = false;
     resetAccessRequestForm();
     window.setTimeout(function () { $("requestNameInput").focus(); }, 60);
+  }
+
+  function showForgotPasswordForm() {
+    if (!$("forgotPasswordForm")) return;
+    $("loginForm").hidden = true;
+    $("accessRequestForm").hidden = true;
+    $("forgotPasswordForm").hidden = false;
+    resetForgotPasswordForm();
+    window.setTimeout(function () {
+      if ($("forgotPasswordUsernameInput")) $("forgotPasswordUsernameInput").focus();
+    }, 60);
   }
 
   function showLoginForm(clearStatus) {
     if (!$("loginForm") || !$("accessRequestForm")) return;
     $("loginForm").hidden = false;
     $("accessRequestForm").hidden = true;
+    if ($("forgotPasswordForm")) $("forgotPasswordForm").hidden = true;
     if (clearStatus !== false) {
       setStatus("loginStatus", "", "");
       setStatus("accessRequestStatus", "", "");
+      if ($("forgotPasswordStatus")) setStatus("forgotPasswordStatus", "", "");
     }
   }
 
@@ -6026,6 +6046,39 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
     if ($("requestRoleInput")) $("requestRoleInput").value = "OPERADOR";
     setStatus("accessRequestStatus", "", "");
+  }
+
+  function resetForgotPasswordForm() {
+    if ($("forgotPasswordUsernameInput")) $("forgotPasswordUsernameInput").value = "";
+    if ($("forgotPasswordStatus")) setStatus("forgotPasswordStatus", "", "");
+  }
+
+  async function submitForgotPasswordRequest() {
+    var username = normalizeText($("forgotPasswordUsernameInput") ? $("forgotPasswordUsernameInput").value : "").toLowerCase();
+    if (!username) {
+      setStatus("forgotPasswordStatus", "Preencha matricula ou usuario.", "error");
+      return;
+    }
+    var now = new Date().toISOString();
+    var requestRow = {
+      id: randomId("req"),
+      created_at: now,
+      updated_at: now,
+      name: username,
+      username: username,
+      matricula: username,
+      role_requested: "OPERADOR",
+      job_title: "Redefinicao de senha",
+      notes: PASSWORD_RESET_REQUEST_MARKER + " Solicitacao de redefinicao de senha.",
+      status: "PENDENTE"
+    };
+    var response = await supabaseDb.from("wms_access_requests").insert(requestRow);
+    if (response.error) {
+      setStatus("forgotPasswordStatus", "Erro ao enviar solicitacao: " + formatSupabaseError(response.error), "error");
+      return;
+    }
+    resetForgotPasswordForm();
+    setStatus("forgotPasswordStatus", "Solicitacao enviada. O administrador ira redefinir sua senha.", "success");
   }
 
   async function submitAccessRequest() {
@@ -7177,6 +7230,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       return;
     }
     pending.forEach(function (request) {
+      var isPasswordResetRequest = isPasswordResetAccessRequest(request);
       var row = document.createElement("tr");
       var requesterCell = document.createElement("td");
       var requesterName = document.createElement("strong");
@@ -7187,7 +7241,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       requesterCell.append(requesterName, document.createElement("br"), requesterLogin);
 
       var roleCell = document.createElement("td");
-      roleCell.textContent = request.jobTitle || "-";
+      roleCell.textContent = isPasswordResetRequest ? "Redefinicao de senha" : (request.jobTitle || "-");
       var dateCell = document.createElement("td");
       dateCell.textContent = formatDateTime(request.createdAt);
       var statusCell = document.createElement("td");
@@ -7199,17 +7253,26 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       var actionCell = document.createElement("td");
       var actions = document.createElement("div");
       actions.className = "row-actions";
-      var approveButton = document.createElement("button");
-      approveButton.className = "edit-small";
-      approveButton.dataset.requestApprove = request.id;
-      approveButton.type = "button";
-      approveButton.textContent = "Aprovar";
-      var rejectButton = document.createElement("button");
-      rejectButton.className = "remove-small";
-      rejectButton.dataset.requestReject = request.id;
-      rejectButton.type = "button";
-      rejectButton.textContent = "Recusar";
-      actions.append(approveButton, rejectButton);
+      if (isPasswordResetRequest) {
+        var resetButton = document.createElement("button");
+        resetButton.className = "edit-small";
+        resetButton.dataset.requestResetPassword = request.id;
+        resetButton.type = "button";
+        resetButton.textContent = "Redefinir senha";
+        actions.append(resetButton);
+      } else {
+        var approveButton = document.createElement("button");
+        approveButton.className = "edit-small";
+        approveButton.dataset.requestApprove = request.id;
+        approveButton.type = "button";
+        approveButton.textContent = "Aprovar";
+        var rejectButton = document.createElement("button");
+        rejectButton.className = "remove-small";
+        rejectButton.dataset.requestReject = request.id;
+        rejectButton.type = "button";
+        rejectButton.textContent = "Recusar";
+        actions.append(approveButton, rejectButton);
+      }
       actionCell.appendChild(actions);
 
       row.append(requesterCell, roleCell, dateCell, statusCell, actionCell);
@@ -7235,6 +7298,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var supervisorSaveId = actionButton.dataset.userSupervisorSave;
     var approveId = actionButton.dataset.requestApprove;
     var rejectId = actionButton.dataset.requestReject;
+    var requestResetPasswordId = actionButton.dataset.requestResetPassword;
     if (editId) editUser(editId);
     if (resetId) await resetUserPassword(resetId);
     if (toggleId) await toggleUserActive(toggleId);
@@ -7250,6 +7314,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     }
     if (approveId) await approveAccessRequest(approveId);
     if (rejectId) await rejectAccessRequest(rejectId);
+    if (requestResetPasswordId) await processPasswordResetRequest(requestResetPasswordId);
   }
 
   function editUser(id) {
@@ -7317,25 +7382,26 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   async function resetUserPassword(id) {
     var user = authState.users.find(function (item) { return item.id === id; });
-    if (!user) return;
+    if (!user) return false;
     if (!canManageUserRecord(user)) {
       showToast("Voce nao possui permissao para redefinir este usuario.", "error");
-      return;
+      return false;
     }
     var password = window.prompt("Nova senha para " + user.name + ":");
-    if (!password) return;
+    if (!password) return false;
     if (password.length < 8) {
       showToast("A senha temporaria deve ter ao menos 8 caracteres.", "error");
-      return;
+      return false;
     }
     try {
       await invokeUserAdministration(supabaseDb, { action: "reset-password", userId: user.id, temporaryPassword: password });
     } catch (error) {
       showToast("Nao foi possivel redefinir a senha: " + formatSupabaseError(error), "error");
-      return;
+      return false;
     }
     await recordAuthHistory("Senha redefinida", user.username, "", user.name);
     showToast("Senha redefinida.", "success");
+    return true;
   }
 
   async function toggleUserActive(id) {
@@ -7364,10 +7430,57 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     renderUsers();
   }
 
+  function findUserByAccessRequest(request) {
+    var requestUsername = normalizeText(request && request.username).toLowerCase();
+    var requestMatricula = normalizeText(request && request.matricula).toLowerCase();
+    return authState.users.find(function (item) {
+      var username = normalizeText(item.username).toLowerCase();
+      var matricula = normalizeText(item.matricula).toLowerCase();
+      if (requestUsername && username === requestUsername) return true;
+      if (requestMatricula && matricula === requestMatricula) return true;
+      return false;
+    }) || null;
+  }
+
+  async function processPasswordResetRequest(id) {
+    if (!isAdminOrSupervisor()) return;
+    var request = authState.accessRequests.find(function (item) { return item.id === id; });
+    if (!request || request.status !== "PENDENTE" || !isPasswordResetAccessRequest(request)) return;
+    var user = findUserByAccessRequest(request);
+    if (!user) {
+      showToast("Usuario da solicitacao nao foi encontrado para redefinicao.", "error");
+      return;
+    }
+    var resetSuccess = await resetUserPassword(user.id);
+    if (!resetSuccess) return;
+    var now = new Date().toISOString();
+    var response = await supabaseDb
+      .from("wms_access_requests")
+      .update({
+        status: "APROVADA",
+        approved_by: authState.currentUser.username,
+        approved_at: now,
+        updated_at: now,
+        notes: PASSWORD_RESET_REQUEST_MARKER + " Senha redefinida por " + authState.currentUser.username + "."
+      })
+      .eq("id", request.id);
+    if (response.error) {
+      showToast("Senha redefinida, mas a solicitacao nao foi atualizada.", "warning");
+    }
+    await recordAuthHistory("Solicitação de redefinicao atendida", user.username, "", user.name);
+    await loadAccessRequests();
+    renderUsers();
+    showToast("Solicitacao de redefinicao concluida.", "success");
+  }
+
   async function approveAccessRequest(id) {
     if (!isAdminOrSupervisor()) return;
     var request = authState.accessRequests.find(function (item) { return item.id === id; });
     if (!request || request.status !== "PENDENTE") return;
+    if (isPasswordResetAccessRequest(request)) {
+      showToast("Use a acao de redefinir senha para esta solicitacao.", "warning");
+      return;
+    }
     var duplicate = authState.users.find(function (item) {
       return String(item.username).toLowerCase() === String(request.username).toLowerCase();
     });
@@ -7432,6 +7545,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (!isAdminOrSupervisor()) return;
     var request = authState.accessRequests.find(function (item) { return item.id === id; });
     if (!request || request.status !== "PENDENTE") return;
+    if (isPasswordResetAccessRequest(request)) {
+      showToast("Solicitacao de redefinicao deve ser tratada pela acao de redefinir senha.", "warning");
+      return;
+    }
     var reason = window.prompt("Motivo da recusa (opcional):") || "";
     var now = new Date().toISOString();
     var response = await supabaseDb
@@ -7586,11 +7703,19 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       handleLogin();
     });
     $("showAccessRequestButton").addEventListener("click", showAccessRequestForm);
+    if ($("showForgotPasswordButton")) $("showForgotPasswordButton").addEventListener("click", showForgotPasswordForm);
     $("backToLoginButton").addEventListener("click", function () { showLoginForm(true); });
+    if ($("backToLoginFromForgotButton")) $("backToLoginFromForgotButton").addEventListener("click", function () { showLoginForm(true); });
     $("accessRequestForm").addEventListener("submit", function (event) {
       event.preventDefault();
       submitAccessRequest();
     });
+    if ($("forgotPasswordForm")) {
+      $("forgotPasswordForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        submitForgotPasswordRequest();
+      });
+    }
     ["logoutButton", "topLogoutButton", "mobileLogoutButton"].forEach(function (id) {
       $(id).addEventListener("click", logout);
     });

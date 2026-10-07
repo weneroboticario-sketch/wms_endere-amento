@@ -32,8 +32,26 @@
       <input id="loginPasswordInput" class="secret-input" name="wms_login_secret" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Digite sua senha">
       <button class="primary-button wide-button" id="loginButton" type="button">Entrar</button>
       <button class="secondary-button wide-button" id="showAccessRequestButton" type="button">Solicitar acesso</button>
-      <button class="link-button" type="button">Esqueci minha senha</button>
+      <button class="link-button" id="showForgotPasswordButton" type="button">Esqueci minha senha</button>
       <div id="loginStatus" class="inline-status"></div>
+    </form>
+    <form class="login-card access-request-card" id="forgotPasswordForm" autocomplete="off" data-form-type="other" hidden>
+      <div class="brand login-brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <h1>WMS Estoque</h1>
+          <p>Recuperacao de senha</p>
+        </div>
+      </div>
+      <p class="eyebrow">Acesso ao sistema</p>
+      <h2>Recuperar senha</h2>
+      <label for="forgotPasswordUsernameInput">Matricula ou usuario</label>
+      <input id="forgotPasswordUsernameInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: 12345">
+      <div class="button-row">
+        <button class="primary-button" id="submitForgotPasswordButton" type="submit">Solicitar redefinicao</button>
+        <button class="secondary-button" id="backToLoginFromForgotButton" type="button">Voltar</button>
+      </div>
+      <div id="forgotPasswordStatus" class="inline-status"></div>
     </form>
     <form class="login-card access-request-card" id="accessRequestForm" autocomplete="off" data-form-type="other" hidden>
       <div class="brand login-brand">
