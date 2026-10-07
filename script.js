@@ -422,6 +422,47 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return document.getElementById(id);
   }
 
+  // Agrupa chamadas sucessivas (ex.: digitacao em filtros) em uma unica execucao apos `wait` ms.
+  var SEARCH_DEBOUNCE_MS = 250;
+  function debounce(fn, wait) {
+    var timer = null;
+    return function () {
+      var context = this;
+      var args = arguments;
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        timer = null;
+        fn.apply(context, args);
+      }, wait);
+    };
+  }
+
+  // Tela solicitada via atalho do PWA (?screen=...), validada contra as permissoes do usuario.
+  function requestedInitialScreen() {
+    var fallback = defaultScreenForUser();
+    try {
+      var params = new window.URLSearchParams(window.location.search);
+      var requested = params.get("screen");
+      if (!requested) return fallback;
+      params.delete("screen");
+      var query = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (query ? "?" + query : "") + window.location.hash);
+      var target = document.getElementById(requested);
+      if (!target || !target.classList.contains("screen")) return fallback;
+      if (isRemovedScreen(requested) || !canAccessScreen(requested)) return fallback;
+      return requested;
+    } catch (error) {
+      return fallback;
+    }
+  }
+
+  function setMenuExpanded(expanded) {
+    var toggle = $("menuToggle");
+    if (!toggle) return;
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.setAttribute("aria-label", expanded ? "Fechar menu" : "Abrir menu");
+  }
+
   function initLocalCache() {
     if (!("indexedDB" in window)) {
       localCacheState.available = false;
@@ -6086,7 +6127,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       canAccessScreen("reposicao") ? hydrateReplenishmentDataFromCache() : Promise.resolve(false)
     ]);
     renderAll();
-    var initialScreenPromise = showScreen(defaultScreenForUser());
+    var initialScreenPromise = showScreen(requestedInitialScreen());
     var replenishmentPreload = canAccessScreen("reposicao")
       ? ensureReplenishmentDataLoaded().then(function () { renderOperatorTasksAlert(); })
       : Promise.resolve(false);
@@ -7711,8 +7752,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       });
     });
 
+    setMenuExpanded(false);
     $("menuToggle").addEventListener("click", function () {
-      $("sidebar").classList.toggle("open");
+      setMenuExpanded($("sidebar").classList.toggle("open"));
     });
   }
 
@@ -7741,6 +7783,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       item.classList.toggle("active", item.dataset.screen === screenId);
     });
     $("sidebar").classList.remove("open");
+    setMenuExpanded(false);
     updateModuleSubtitle(screenId);
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
@@ -7832,8 +7875,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         renderUsers();
       });
     });
+    var debouncedRenderUsers = debounce(renderUsers, SEARCH_DEBOUNCE_MS);
     ["userSearchInput", "userWarehouseFilter", "userRoleFilter", "userSupervisorFilter", "userStatusFilter", "userAvailabilityFilter"].forEach(function (id) {
-      if ($(id)) $(id).addEventListener("input", renderUsers);
+      if ($(id)) $(id).addEventListener("input", debouncedRenderUsers);
       if ($(id)) $(id).addEventListener("change", renderUsers);
     });
     if ($("userRoleInput")) $("userRoleInput").addEventListener("change", function () {
@@ -7923,7 +7967,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if ($("exportReplenishmentSuggestionButton")) $("exportReplenishmentSuggestionButton").addEventListener("click", exportReplenishmentSuggestions);
     if ($("refreshStockBaseButton")) $("refreshStockBaseButton").addEventListener("click", refreshStockOperationalData);
     if ($("historyFilterButton")) $("historyFilterButton").addEventListener("click", renderHistory);
-    if ($("historyFilterInput")) $("historyFilterInput").addEventListener("input", renderHistory);
+    if ($("historyFilterInput")) $("historyFilterInput").addEventListener("input", debounce(renderHistory, SEARCH_DEBOUNCE_MS));
     document.querySelectorAll(".transfer-tab").forEach(function (button) {
       button.addEventListener("click", function () {
         activateTransferTab(button.dataset.transferTab);
@@ -8005,8 +8049,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     document.querySelectorAll("[data-replenishment-suggestion-close]").forEach(function (button) {
       button.addEventListener("click", closeReplenishmentSuggestionModal);
     });
+    var debouncedRenderTransferPanel = debounce(renderTransferPanel, SEARCH_DEBOUNCE_MS);
     ["transferStatusFilter", "transferResponsibleFilter", "transferEstablishmentFilter", "transferCodeFilter"].forEach(function (id) {
-      $(id).addEventListener("input", renderTransferPanel);
+      $(id).addEventListener("input", debouncedRenderTransferPanel);
       $(id).addEventListener("change", renderTransferPanel);
     });
     if ($("conferenceTransferSelect")) $("conferenceTransferSelect").addEventListener("change", renderTransferConferenceAdminPanel);
@@ -8048,7 +8093,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("clearEstablishmentButton").addEventListener("click", resetEstablishmentForm);
     $("establishmentsRows").addEventListener("click", handleTransferActionClick);
     $("establishmentSearchButton").addEventListener("click", renderEstablishments);
-    $("establishmentSearchInput").addEventListener("input", renderEstablishments);
+    $("establishmentSearchInput").addEventListener("input", debounce(renderEstablishments, SEARCH_DEBOUNCE_MS));
     $("backToTransfersButton").addEventListener("click", function () {
       activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
       renderTransfers();

@@ -12,6 +12,7 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes("node_modules/@supabase")) return "supabase";
           if (id.includes("node_modules/dompurify")) return "security";
+          if (id.includes("node_modules/jsbarcode")) return "barcode";
           if (id.includes("/src/auth.js") || id.includes("/src/supabase-client.js") || id.includes("/src/warehouses.js")) {
             return "wms-core";
           }

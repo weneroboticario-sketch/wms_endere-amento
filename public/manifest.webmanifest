@@ -1,19 +1,68 @@
 {
+  "id": "/",
   "name": "WMS Estoque",
   "short_name": "WMS",
   "description": "Sistema WMS de enderecamento, transferencias e conferencias.",
+  "lang": "pt-BR",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f3f6fa",
   "theme_color": "#102634",
   "orientation": "portrait-primary",
+  "categories": [
+    "business",
+    "productivity",
+    "utilities"
+  ],
   "icons": [
     {
       "src": "/icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Consultar SKU",
+      "short_name": "SKU",
+      "description": "Abrir a consulta de SKU",
+      "url": "/?screen=consultaSku",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Transferencias",
+      "short_name": "Transferencias",
+      "description": "Abrir o painel de transferencias",
+      "url": "/?screen=transferencias",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
+    },
+    {
+      "name": "Painel",
+      "short_name": "Painel",
+      "description": "Abrir o painel principal",
+      "url": "/?screen=dashboard",
+      "icons": [
+        {
+          "src": "/icon.svg",
+          "sizes": "any",
+          "type": "image/svg+xml"
+        }
+      ]
     }
   ]
 }
