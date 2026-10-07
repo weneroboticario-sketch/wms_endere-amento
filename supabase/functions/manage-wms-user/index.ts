@@ -14,10 +14,9 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function authEmail(username: string, domain: string) {
-  const local = String(username || "").trim().toLowerCase().replace(/[^a-z0-9._+-]/g, "-");
-  if (!local) throw new Error("Matricula/usuario obrigatorio.");
-  return `${local}@${domain}`;
+function isDeliverableEmail(value: unknown) {
+  const email = String(value || "").trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.endsWith(".local");
 }
 
 function textValue(value: unknown, fallback = "") {
@@ -39,7 +38,6 @@ Deno.serve(async (request) => {
   const url = Deno.env.get("SUPABASE_URL") || "";
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  const domain = (Deno.env.get("WMS_AUTH_EMAIL_DOMAIN") || "wms.local").toLowerCase();
   const authorization = request.headers.get("Authorization") || "";
   if (!url || !anonKey || !serviceRoleKey || !authorization) return json({ ok: false, error: "Configuracao de autenticacao incompleta." }, 500);
 
@@ -85,7 +83,8 @@ Deno.serve(async (request) => {
     if (!mayCreate) return json({ ok: false, error: "Sem permissao para criar este perfil." }, 403);
     if (String(body.temporaryPassword || "").length < 8) return json({ ok: false, error: "A senha temporaria deve ter ao menos 8 caracteres." }, 400);
 
-    const email = authEmail(String(profile.username || profile.matricula || ""), domain);
+    const email = textValue(profile.auth_email || profile.email).toLowerCase();
+    if (!isDeliverableEmail(email)) return json({ ok: false, error: "Informe um email real de acesso e recuperacao." }, 400);
     const { data: created, error: createError } = await adminClient.auth.admin.createUser({
       email,
       password: String(body.temporaryPassword),
@@ -138,7 +137,7 @@ Deno.serve(async (request) => {
   if (action === "update-user") {
     const profile = body.profile || {};
     const { data: target, error: targetError } = await adminClient.from("wms_users")
-      .select("id,auth_user_id,role,default_warehouse_code,username")
+      .select("id,auth_user_id,auth_email,role,default_warehouse_code,username")
       .eq("id", String(profile.id || "")).maybeSingle();
     if (targetError || !target) return json({ ok: false, error: "Usuario nao encontrado." }, 404);
     const nextRole = String(profile.role || target.role || "OPERADOR").toUpperCase();
@@ -154,7 +153,8 @@ Deno.serve(async (request) => {
     if (!mayUpdate) return json({ ok: false, error: "Sem permissao para alterar este perfil." }, 403);
 
     const username = String(profile.username || target.username || "");
-    const email = authEmail(username, domain);
+    const email = textValue(profile.auth_email || target.auth_email).toLowerCase();
+    if (!isDeliverableEmail(email)) return json({ ok: false, error: "Informe um email real de acesso e recuperacao." }, 400);
     if (target.auth_user_id) {
       const authPatch: Record<string, unknown> = { email, email_confirm: true, user_metadata: { username, name: String(profile.name || "") } };
       if (body.temporaryPassword) {

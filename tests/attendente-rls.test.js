@@ -244,13 +244,13 @@ test("access request policy accepts only store roles", async (context) => {
   await db.exec("set role anon");
 
   await db.query(`
-    insert into public.wms_access_requests (id, name, username, role_requested, status, warehouse_code)
-    values ('access-attendant', 'Atendente', 'access-attendant', 'ATENDENTE', 'PENDENTE', 'VDCG')
+    insert into public.wms_access_requests (id, name, username, email, role_requested, status, warehouse_code)
+    values ('access-attendant', 'Atendente', 'access-attendant', 'atendente@example.com', 'ATENDENTE', 'PENDENTE', 'VDCG')
   `);
   await assert.rejects(
     db.query(`
-      insert into public.wms_access_requests (id, name, username, role_requested, status, warehouse_code)
-      values ('access-admin', 'Admin', 'access-admin', 'ADMINISTRADOR', 'PENDENTE', 'VDCG')
+      insert into public.wms_access_requests (id, name, username, email, role_requested, status, warehouse_code)
+      values ('access-admin', 'Admin', 'access-admin', 'admin@example.com', 'ADMINISTRADOR', 'PENDENTE', 'VDCG')
     `),
     /row-level security policy/
   );

@@ -4,7 +4,10 @@ import {
   AUTH_EMAIL_DOMAIN,
   changeOwnPassword,
   getCurrentAuthSession,
+  isDeliverableRecoveryEmail,
   invokeUserAdministration,
+  normalizeRecoveryEmail,
+  requestPasswordRecovery,
   refreshCurrentAuthSession,
   signInWithUsername,
   signOutAuthSession
@@ -42,7 +45,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.10.05.008";
+  var EXPECTED_SCHEMA_VERSION = "2026.10.06.009";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -51,7 +54,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    importar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -391,6 +393,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var protectedAppShell = null;
   var protectedAppShellMarker = null;
   var sessionInactivityTimer = null;
+  var passwordRecoveryActive = false;
 
   document.addEventListener("DOMContentLoaded", async function () {
     installHtmlSecurity();
@@ -404,6 +407,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     fillSupabaseForm();
     fillTaskSoundSetting();
     initSupabaseClient();
+    bindPasswordRecoveryAuthEvents();
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
@@ -918,7 +922,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       await Promise.all([ensureCoreDataLoaded(), ensureReplenishmentDataLoaded()]);
       return true;
     }
-    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "importar", "manutencao", "baseEstoque"].indexOf(screenId) >= 0) {
+    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "manutencao", "baseEstoque"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
@@ -5646,6 +5650,112 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     };
   }
 
+  function passwordRecoveryRedirectUrl() {
+    return window.location.origin + window.location.pathname + "?password-recovery=1";
+  }
+
+  function isPasswordRecoveryReturnUrl() {
+    var search = new window.URLSearchParams(window.location.search);
+    var hash = new window.URLSearchParams(String(window.location.hash || "").replace(/^#/, ""));
+    return search.get("password-recovery") === "1" || hash.get("type") === "recovery";
+  }
+
+  function bindPasswordRecoveryAuthEvents() {
+    passwordRecoveryActive = isPasswordRecoveryReturnUrl();
+    if (!supabaseDb || !supabaseDb.auth) return;
+    supabaseDb.auth.onAuthStateChange(function (event, session) {
+      if (event !== "PASSWORD_RECOVERY") return;
+      window.setTimeout(function () {
+        activatePasswordRecovery(session);
+      }, 0);
+    });
+  }
+
+  function activatePasswordRecovery(session) {
+    passwordRecoveryActive = true;
+    authState.currentUser = null;
+    authState.currentSession = session || null;
+    setAuthenticatedShellActive(false);
+    document.body.classList.add("auth-locked");
+    document.body.classList.remove("auth-unlocked");
+    showLoginForm(false);
+    showPasswordRecoveryModal();
+  }
+
+  function showPasswordRecoveryModal() {
+    var modal = $("passwordRecoveryModal");
+    if (!modal) return;
+    $("passwordRecoveryNewInput").value = "";
+    $("passwordRecoveryConfirmInput").value = "";
+    setStatus("passwordRecoveryStatus", "", "");
+    modal.hidden = false;
+    window.setTimeout(function () { $("passwordRecoveryNewInput").focus(); }, 60);
+  }
+
+  function showPasswordRecoveryRequestForm() {
+    $("loginForm").hidden = true;
+    $("accessRequestForm").hidden = true;
+    $("passwordRecoveryRequestForm").hidden = false;
+    $("passwordRecoveryEmailInput").value = normalizeRecoveryEmail($("loginUserInput").value);
+    setStatus("passwordRecoveryRequestStatus", "", "");
+    window.setTimeout(function () { $("passwordRecoveryEmailInput").focus(); }, 60);
+  }
+
+  async function submitPasswordRecoveryRequest() {
+    var email = normalizeRecoveryEmail($("passwordRecoveryEmailInput").value);
+    if (!isDeliverableRecoveryEmail(email)) {
+      setStatus("passwordRecoveryRequestStatus", "Informe um e-mail válido cadastrado no usuário.", "error");
+      return;
+    }
+    var button = $("sendPasswordRecoveryButton");
+    button.disabled = true;
+    button.textContent = "Enviando...";
+    try {
+      await requestPasswordRecovery(supabaseDb, email, passwordRecoveryRedirectUrl());
+      setStatus("passwordRecoveryRequestStatus", "Se o e-mail estiver cadastrado, o link de recuperação será enviado. Verifique também a caixa de spam.", "success");
+    } catch (error) {
+      setStatus("passwordRecoveryRequestStatus", "Não foi possível enviar agora: " + formatSupabaseError(error), "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Enviar link de recuperação";
+    }
+  }
+
+  async function completePasswordRecovery() {
+    var password = $("passwordRecoveryNewInput").value || "";
+    var confirmation = $("passwordRecoveryConfirmInput").value || "";
+    if (password.length < 8) {
+      setStatus("passwordRecoveryStatus", "A nova senha deve ter pelo menos 8 caracteres.", "error");
+      return;
+    }
+    if (password !== confirmation) {
+      setStatus("passwordRecoveryStatus", "As senhas não conferem.", "error");
+      return;
+    }
+    var button = $("saveRecoveredPasswordButton");
+    button.disabled = true;
+    button.textContent = "Salvando...";
+    try {
+      await changeOwnPassword(supabaseDb, password);
+      await invokeUserAdministration(supabaseDb, { action: "complete-password-change" }).catch(function (error) {
+        console.warn("Senha atualizada, mas o perfil não confirmou a troca:", error);
+      });
+      await signOutAuthSession(supabaseDb).catch(function () {});
+      passwordRecoveryActive = false;
+      $("passwordRecoveryModal").hidden = true;
+      var cleanUrl = new window.URL(window.location.href);
+      cleanUrl.searchParams.delete("password-recovery");
+      cleanUrl.hash = "";
+      window.history.replaceState({}, document.title, cleanUrl.pathname + cleanUrl.search);
+      showLogin("Senha atualizada. Entre com seu e-mail e a nova senha.", "success");
+    } catch (error) {
+      setStatus("passwordRecoveryStatus", "Não foi possível atualizar a senha: " + formatSupabaseError(error), "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "Salvar nova senha";
+    }
+  }
+
   async function initAuth() {
     document.body.classList.add("auth-locked");
     document.body.classList.remove("auth-unlocked");
@@ -5659,6 +5769,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       savedSession = await getCurrentAuthSession(supabaseDb);
     } catch (error) {
       console.warn("Nao foi possivel restaurar a sessao Auth:", error);
+    }
+    if (passwordRecoveryActive && savedSession && savedSession.user) {
+      activatePasswordRecovery(savedSession);
+      return;
     }
     if (!savedSession || !savedSession.user) {
       showLogin("", "");
@@ -5810,7 +5924,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return [
       user && user.name,
       user && user.username,
-      user && user.matricula
+      user && user.matricula,
+      user && user.authEmail
     ].some(function (value) {
       return normalizeText(value).toLowerCase().indexOf(token) >= 0;
     });
@@ -5882,7 +5997,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       response = await runSupabaseRequestWithRetry("solicitacoes-acesso", function () {
         return supabaseDb
           .from("wms_access_requests")
-          .select("id,created_at,updated_at,name,username,matricula,role_requested,job_title,notes,status,approved_by,approved_at,rejected_by,rejected_at,rejection_reason,warehouse_code")
+          .select("id,created_at,updated_at,name,username,matricula,email,role_requested,job_title,notes,status,approved_by,approved_at,rejected_by,rejected_at,rejection_reason,warehouse_code")
           .order("created_at", { ascending: false });
       });
     } catch (error) {
@@ -6011,84 +6126,40 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function showAccessRequestForm() {
     $("loginForm").hidden = true;
-    if ($("forgotPasswordForm")) $("forgotPasswordForm").hidden = true;
+    $("passwordRecoveryRequestForm").hidden = true;
     $("accessRequestForm").hidden = false;
     resetAccessRequestForm();
     window.setTimeout(function () { $("requestNameInput").focus(); }, 60);
   }
 
-  function showForgotPasswordForm() {
-    if (!$("forgotPasswordForm")) return;
-    $("loginForm").hidden = true;
-    $("accessRequestForm").hidden = true;
-    $("forgotPasswordForm").hidden = false;
-    resetForgotPasswordForm();
-    window.setTimeout(function () {
-      if ($("forgotPasswordUsernameInput")) $("forgotPasswordUsernameInput").focus();
-    }, 60);
-  }
-
   function showLoginForm(clearStatus) {
-    if (!$("loginForm") || !$("accessRequestForm")) return;
+    if (!$("loginForm") || !$("accessRequestForm") || !$("passwordRecoveryRequestForm")) return;
     $("loginForm").hidden = false;
     $("accessRequestForm").hidden = true;
-    if ($("forgotPasswordForm")) $("forgotPasswordForm").hidden = true;
+    $("passwordRecoveryRequestForm").hidden = true;
     if (clearStatus !== false) {
       setStatus("loginStatus", "", "");
       setStatus("accessRequestStatus", "", "");
-      if ($("forgotPasswordStatus")) setStatus("forgotPasswordStatus", "", "");
     }
   }
 
   function resetAccessRequestForm() {
-    ["requestNameInput", "requestUsernameInput", "requestJobInput", "requestNotesInput"].forEach(function (id) {
+    ["requestNameInput", "requestUsernameInput", "requestEmailInput", "requestJobInput", "requestNotesInput"].forEach(function (id) {
       $(id).value = "";
     });
     if ($("requestRoleInput")) $("requestRoleInput").value = "OPERADOR";
     setStatus("accessRequestStatus", "", "");
   }
 
-  function resetForgotPasswordForm() {
-    if ($("forgotPasswordUsernameInput")) $("forgotPasswordUsernameInput").value = "";
-    if ($("forgotPasswordStatus")) setStatus("forgotPasswordStatus", "", "");
-  }
-
-  async function submitForgotPasswordRequest() {
-    var username = normalizeText($("forgotPasswordUsernameInput") ? $("forgotPasswordUsernameInput").value : "").toLowerCase();
-    if (!username) {
-      setStatus("forgotPasswordStatus", "Preencha matricula ou usuario.", "error");
-      return;
-    }
-    var now = new Date().toISOString();
-    var requestRow = {
-      id: randomId("req"),
-      created_at: now,
-      updated_at: now,
-      name: username,
-      username: username,
-      matricula: username,
-      role_requested: "OPERADOR",
-      job_title: "Redefinicao de senha",
-      notes: PASSWORD_RESET_REQUEST_MARKER + " Solicitacao de redefinicao de senha.",
-      status: "PENDENTE"
-    };
-    var response = await supabaseDb.from("wms_access_requests").insert(requestRow);
-    if (response.error) {
-      setStatus("forgotPasswordStatus", "Erro ao enviar solicitacao: " + formatSupabaseError(response.error), "error");
-      return;
-    }
-    resetForgotPasswordForm();
-    setStatus("forgotPasswordStatus", "Solicitacao enviada. O administrador ira redefinir sua senha.", "success");
-  }
-
   async function submitAccessRequest() {
     var name = normalizeText($("requestNameInput").value);
     var username = normalizeText($("requestUsernameInput").value).toLowerCase();
+    var email = normalizeRecoveryEmail($("requestEmailInput").value);
     var jobTitle = normalizeText($("requestJobInput").value);
     var notes = normalizeText($("requestNotesInput").value);
     var requestedRole = normalizeAccessRequestRole($("requestRoleInput") ? $("requestRoleInput").value : "OPERADOR");
-    if (!name || !username) {
-      setStatus("accessRequestStatus", "Preencha nome e usuario.", "error");
+    if (!name || !username || !isDeliverableRecoveryEmail(email)) {
+      setStatus("accessRequestStatus", "Preencha nome, usuário e um e-mail válido.", "error");
       return;
     }
     var now = new Date().toISOString();
@@ -6099,6 +6170,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       name: name,
       username: username,
       matricula: username,
+      email: email,
       role_requested: requestedRole,
       job_title: jobTitle,
       notes: notes,
@@ -6310,6 +6382,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       name: row.name || "",
       username: row.username || "",
       matricula: row.matricula || row.username || "",
+      email: row.email || "",
       authUserId: row.auth_user_id || "",
       authEmail: row.auth_email || "",
       mustChangePassword: row.must_change_password === true,
@@ -6440,6 +6513,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var id = $("userEditId").value;
     var name = normalizeText($("userNameInput").value);
     var username = normalizeText($("userUsernameInput").value).toLowerCase();
+    var authEmail = normalizeRecoveryEmail($("userAuthEmailInput").value);
     var password = $("userPasswordInput").value || "";
     var role = $("userRoleInput").value;
     var active = $("userActiveInput").checked;
@@ -6481,8 +6555,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
     }
-    if (!name || !username || ROLES.indexOf(role) === -1) {
-      setStatus("userFormStatus", "Preencha nome, usuario e perfil.", "error");
+    if (!name || !username || !isDeliverableRecoveryEmail(authEmail) || ROLES.indexOf(role) === -1) {
+      setStatus("userFormStatus", "Preencha nome, usuário, e-mail real e perfil.", "error");
       return;
     }
     var duplicateUser = authState.users.find(function (item) {
@@ -6490,6 +6564,13 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
     if (duplicateUser) {
       setStatus("userFormStatus", "Matricula/usuario ja cadastrado para " + duplicateUser.name + ". Clique em Editar nesse usuario para alterar o cadastro.", "error");
+      return;
+    }
+    var duplicateEmail = authState.users.find(function (item) {
+      return normalizeRecoveryEmail(item.authEmail) === authEmail && item.id !== id;
+    });
+    if (duplicateEmail) {
+      setStatus("userFormStatus", "E-mail já cadastrado para " + duplicateEmail.name + ".", "error");
       return;
     }
     if (!defaultWarehouseCode || !warehouseExistsAndActive(defaultWarehouseCode)) {
@@ -6518,6 +6599,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       name: name,
       username: username,
       matricula: username,
+      auth_email: authEmail,
       role: role,
       active: active,
       available_for_tasks: availableForTasks,
@@ -6558,6 +6640,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       return;
     }
     var savedUser = fromDbUser(confirmResponse.data);
+    if (normalizeRecoveryEmail(savedUser.authEmail) !== authEmail) {
+      setStatus("userFormStatus", "O Supabase não confirmou o e-mail de recuperação informado.", "error");
+      return;
+    }
     if (!savedUser.warehouseAccessConfirmed && role !== "ADMINISTRADOR") {
       setStatus("userFormStatus", multiWarehouseSchemaMessage("wms_users"), "error");
       return;
@@ -6594,6 +6680,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("userNameInput").value = "";
     $("userUsernameInput").value = "";
     $("userUsernameInput").disabled = false;
+    $("userAuthEmailInput").value = "";
     $("userPasswordInput").value = "";
     renderUserRoleOptions("OPERADOR");
     $("userActiveInput").checked = true;
@@ -6862,6 +6949,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       ["Arquivados", users.filter(function (user) { return user.archived === true; }).length],
       ["Sem estoque", users.filter(function (user) { return !user.defaultWarehouseCode; }).length],
       ["Sem supervisor", users.filter(function (user) { return isStoreStaffRole(user.role) && !user.supervisorId; }).length],
+      ["Sem e-mail", users.filter(function (user) { return !isDeliverableRecoveryEmail(user.authEmail); }).length],
       ["Disponíveis", users.filter(function (user) { return user.active && user.archived !== true && user.availableForTasks; }).length],
       ["Indisponíveis", users.filter(function (user) { return !user.availableForTasks; }).length],
       ["Login antigo", oldLogin],
@@ -6916,6 +7004,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<span class=\"role-badge\">" + escapeHtml(user.role) + "</span>",
       "</div>",
       "<div class=\"user-card-meta\">",
+      "<span>E-mail <strong>" + escapeHtml(isDeliverableRecoveryEmail(user.authEmail) ? user.authEmail : "Não cadastrado") + "</strong></span>",
       "<span>Estoque <strong>" + escapeHtml(user.defaultWarehouseCode || "-") + "</strong></span>",
       "<span>Permitidos <strong>" + escapeHtml((allowedWarehouseCodesForUser(user) || []).join(", ") || "-") + "</strong></span>",
       "<span>Supervisor <strong>" + escapeHtml(user.supervisorName || "Sem supervisor") + "</strong></span>",
@@ -7237,7 +7326,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       requesterName.textContent = request.name || "-";
       var requesterLogin = document.createElement("span");
       requesterLogin.className = "muted";
-      requesterLogin.textContent = request.username || "-";
+      requesterLogin.textContent = [request.username || "-", request.email || "E-mail não informado"].join(" · ");
       requesterCell.append(requesterName, document.createElement("br"), requesterLogin);
 
       var roleCell = document.createElement("td");
@@ -7346,6 +7435,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("userNameInput").value = user.name;
     $("userUsernameInput").value = user.username;
     $("userUsernameInput").disabled = false;
+    $("userAuthEmailInput").value = isDeliverableRecoveryEmail(user.authEmail) ? user.authEmail : "";
     $("userPasswordInput").value = "";
   }
 
@@ -7502,6 +7592,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       name: request.name,
       username: request.username,
       matricula: request.matricula || request.username,
+      auth_email: request.email,
       role: approvedRole,
       active: true,
       available_for_tasks: approvedRole !== "ATENDENTE",
@@ -7703,19 +7794,21 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       handleLogin();
     });
     $("showAccessRequestButton").addEventListener("click", showAccessRequestForm);
-    if ($("showForgotPasswordButton")) $("showForgotPasswordButton").addEventListener("click", showForgotPasswordForm);
+    $("forgotPasswordButton").addEventListener("click", showPasswordRecoveryRequestForm);
     $("backToLoginButton").addEventListener("click", function () { showLoginForm(true); });
-    if ($("backToLoginFromForgotButton")) $("backToLoginFromForgotButton").addEventListener("click", function () { showLoginForm(true); });
+    $("backFromPasswordRecoveryButton").addEventListener("click", function () { showLoginForm(true); });
+    $("passwordRecoveryRequestForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitPasswordRecoveryRequest();
+    });
+    $("passwordRecoveryForm").addEventListener("submit", function (event) {
+      event.preventDefault();
+      completePasswordRecovery();
+    });
     $("accessRequestForm").addEventListener("submit", function (event) {
       event.preventDefault();
       submitAccessRequest();
     });
-    if ($("forgotPasswordForm")) {
-      $("forgotPasswordForm").addEventListener("submit", function (event) {
-        event.preventDefault();
-        submitForgotPasswordRequest();
-      });
-    }
     ["logoutButton", "topLogoutButton", "mobileLogoutButton"].forEach(function (id) {
       $(id).addEventListener("click", logout);
     });
@@ -7820,7 +7913,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
 
     if ($("exportExcelButton")) $("exportExcelButton").addEventListener("click", exportExcel);
-    $("importExcelButton").addEventListener("click", importExcel);
     if ($("importCaptureStockButton")) $("importCaptureStockButton").addEventListener("click", function () { importStockFromInput("CAPTACAO"); });
     if ($("importStoreStockButton")) $("importStoreStockButton").addEventListener("click", function () { importStockFromInput("LOJA"); });
     if ($("exportCaptureStockTemplateButton")) $("exportCaptureStockTemplateButton").addEventListener("click", function () { exportStockTemplate("CAPTACAO"); });
@@ -17756,77 +17848,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (button.dataset.establishmentToggle) await toggleEstablishment(button.dataset.establishmentToggle);
   }
 
-  async function importExcel() {
-    if (!ensureActiveWarehouse()) {
-      setStatus("importStatus", "Selecione um estoque antes de importar.", "error");
-      return;
-    }
-    if (!window.XLSX) {
-      setStatus("importStatus", "Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
-      return;
-    }
-    var files = Array.from($("excelFileInput").files || []);
-    if (!files.length) {
-      setStatus("importStatus", "Selecione uma ou duas planilhas Excel.", "error");
-      return;
-    }
-
-    if (!isSupabaseReady()) {
-      setStatus("importStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
-      return;
-    }
-
-    var actionButton = $("importExcelButton");
-    if (!beginTransferAction("import-addresses", actionButton, "Importando...")) return;
-    try {
-      setStatus("importStatus", "Lendo planilha e preparando importacao...", "warning");
-      var workbooks = await Promise.all(files.map(readWorkbookFile));
-      var parsed = collectImportData(workbooks);
-      if (!parsed.addressRows.length && !Object.keys(parsed.products).length) {
-        setStatus("importStatus", "Nenhuma aba reconhecida. Selecione LinhaSeparacao e/ou MaterialLinhaSeparacao.", "error");
-        return;
-      }
-      if (parsed.addressRows.length && !(await ensureWarehouseSeparatedTable("wms_bindings", "importStatus"))) return;
-      mergeProducts(parsed.products);
-      var oldBindingsCount = state.bindings.length;
-      if (parsed.addressRows.length) {
-        state.bindings = [];
-      }
-      var result = importRows(parsed.addressRows);
-      var importDetails = parsed.addressRows.length
-        ? result.created + " endereco(s) novos, " + oldBindingsCount + " endereco(s) antigos substituido(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s), " + Object.keys(parsed.products).length + " produto(s) lido(s)."
-        : Object.keys(parsed.products).length + " produto(s) lido(s); enderecamentos atuais mantidos.";
-      addHistory("Excel importado", "", "", importDetails);
-
-      setStatus("importStatus", "Gravando no Supabase. Aguarde...", "warning");
-      if (parsed.addressRows.length) {
-        setStatus("importStatus", "Apagando enderecamentos antigos no Supabase...", "warning");
-        await clearRemoteWarehouseRows("wms_bindings", "id");
-      }
-      var saved = await saveData();
-      if (!saved) {
-        setStatus("importStatus", "Falha ao gravar a importacao no Supabase. Veja a mensagem em Configuracoes.", "error");
-        return;
-      }
-
-      await verifyImportedBindings(result.changedIds);
-      await loadData();
-      renderAll();
-      if (parsed.addressRows.length) {
-        setStatus("importStatus", "Importacao salva no Supabase: base antiga substituida por " + result.created + " endereco(s), " + result.skipped + " duplicado(s), " + result.invalid + " invalido(s).", "success");
-      } else {
-        setStatus("importStatus", "Produtos importados no Supabase. Enderecamentos atuais mantidos.", "success");
-      }
-    } catch (error) {
-      var message = explainImportError(error);
-      console.error("Falha na importacao:", error);
-      setStatus("importStatus", "Falha na importacao: " + message, "error");
-      updateSupabaseStatus("Falha na importacao: " + message, "error");
-    } finally {
-      endTransferAction(actionButton);
-    }
-  }
-
   function readWorkbookFile(file) {
     return new Promise(function (resolve, reject) {
       var reader = new FileReader();
@@ -17844,63 +17865,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
   }
 
-  function collectImportData(workbooks) {
-    var data = { products: {}, addressRows: [] };
-    workbooks.forEach(function (entry) {
-      entry.workbook.SheetNames.forEach(function (sheetName) {
-        var sheet = entry.workbook.Sheets[sheetName];
-        var rows = window.XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
-        rows.forEach(function (row) {
-          var skuValues = splitSkuValues(getByAliases(row, ["Codigo Material", "Cod Material"]));
-          var productName = normalizeText(getByAliases(row, ["Desc Material", "Descricao Material", "Descrição Material", "Nome Produto", "Produto"]));
-          skuValues.forEach(function (skuValue) {
-            if (skuValue && productName) data.products[skuValue] = productName;
-          });
-
-          var station = getByAliases(row, ["Nome estacao", "Estacao", "Estação"]);
-          var rack = getByAliases(row, ["Nr Rack", "Rack"]);
-          var line = getByAliases(row, ["Linha", "Linha prod alocado"]);
-          var column = getByAliases(row, ["Coluna", "Coluna prod alocado"]);
-          var hasAddress = [station, rack, line, column].some(function (value) {
-            return normalizeText(value) !== "";
-          });
-          if (!skuValues.length || !hasAddress) return;
-
-          skuValues.forEach(function (skuValue) {
-            data.addressRows.push({
-              sku: skuValue,
-              productName: productName,
-              station: station,
-              rack: rack,
-              line: line,
-              column: column,
-              areaCode: Number(getByAliases(row, ["Area Linha Separação", "Area Linha Separaçao", "Area Linha Separacao"])) || 1
-            });
-          });
-        });
-      });
-    });
-    return data;
-  }
-
-  function mergeProducts(products) {
-    Object.keys(products).forEach(function (sku) {
-      state.products[sku] = products[sku];
-      productsDirty = true;
-      var normalizedWithoutZeros = normalizeSkuKey(sku);
-      if (normalizedWithoutZeros && normalizedWithoutZeros !== sku) {
-        state.products[normalizedWithoutZeros] = products[sku];
-        productsDirty = true;
-      }
-    });
-    state.bindings.forEach(function (binding) {
-      var productName = findProductName(binding.sku);
-      if (productName) {
-        binding.productName = productName;
-      }
-    });
-  }
-
   function refreshProductNamesForBindings(bindings) {
     var changed = false;
     bindings.forEach(function (binding) {
@@ -17911,93 +17875,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       }
     });
     if (changed) saveData();
-  }
-
-  function validateColumns(rows) {
-    if (!rows.length) return { valid: false, message: "Planilha vazia." };
-    var available = Object.keys(rows[0]).map(normalizeHeader);
-    var required = ["Nome estacao", "Nr Rack", "Linha", "Coluna", "Codigo Material"].map(normalizeHeader);
-    for (var i = 0; i < required.length; i += 1) {
-      if (available.indexOf(required[i]) === -1) {
-        return { valid: false, message: "Coluna obrigatoria ausente." };
-      }
-    }
-    return { valid: true };
-  }
-
-  function importRows(rows) {
-    var result = { created: 0, updated: 0, skipped: 0, invalid: 0, changedIds: [] };
-    var usedPairs = {};
-    rows.forEach(function (row) {
-      var parsed = buildLocationFromParts(row.station, row.rack, row.line, row.column);
-      var areaCode = getAreaByCode(row.areaCode) ? row.areaCode : 1;
-      var area = getAreaByCode(areaCode);
-      if (!row.sku || !area || !parsed.valid) {
-        result.invalid += 1;
-        return;
-      }
-      var locationKey = locationKeyFromCode(parsed.code);
-      var skuKey = normalizeSkuKey(row.sku);
-      var pairKey = skuKey + "\u0001" + locationKey;
-      if (usedPairs[pairKey]) {
-        result.skipped += 1;
-        return;
-      }
-      usedPairs[pairKey] = true;
-      var existing = state.bindings.find(function (binding) {
-        return locationKeyFromBinding(binding) === locationKey && normalizeSkuKey(binding.sku) === skuKey;
-      });
-      if (existing) {
-        var newName = row.productName || findProductName(row.sku) || "";
-        existing.sku = row.sku;
-        existing.rua = parsed.rua;
-        existing.rack = parsed.rack;
-        existing.linha = parsed.linha;
-        existing.letra = parsed.letra;
-        existing.locationCode = parsed.code;
-        existing.areaCode = areaCode;
-        existing.areaName = area.name;
-        existing.productName = newName;
-        existing.updatedAt = new Date().toISOString();
-        result.updated += 1;
-        result.changedIds.push(existing.id);
-        return;
-      }
-      var newBinding = createBinding(row.sku, parsed, areaCode, row.productName || findProductName(row.sku) || "");
-      state.bindings.push(newBinding);
-      result.changedIds.push(newBinding.id);
-      result.created += 1;
-    });
-    return result;
-  }
-
-  async function verifyImportedBindings(ids) {
-    var sampleIds = Array.from(new Set(ids || [])).slice(0, 20);
-    if (!sampleIds.length) return;
-    var response = await supabaseDb
-      .from("wms_bindings")
-      .select("id")
-      .eq("warehouse_code", activeWarehouseCode())
-      .in("id", sampleIds);
-    if (response.error) throw response.error;
-    var found = (response.data || []).length;
-    if (found !== sampleIds.length) {
-      throw new Error("Supabase gravou " + found + " de " + sampleIds.length + " registros verificados em wms_bindings.");
-    }
-  }
-
-  function explainImportError(error) {
-    var message = formatSupabaseError(error);
-    var lower = message.toLowerCase();
-    if (lower.indexOf("wms_bindings_sku_location_idx") >= 0 || lower.indexOf("wms_bindings_sku_location_key") >= 0) {
-      var label = activeWarehouseCodes().length ? activeWarehouseCodes().join(", ") : "os estoques ativos";
-      return "O Supabase ainda esta com a regra antiga de enderecamento sem estoque. Aplique as migrations para remover o indice antigo e permitir " + label + " separados. Erro original: " + message;
-    }
-    if (lower.indexOf("duplicate key value") >= 0 && lower.indexOf("wms_bindings") >= 0) {
-      return "A importacao encontrou uma duplicidade no banco. Aplique as migrations para garantir o indice por estoque (warehouse_code, sku, location_code). Erro original: " + message;
-    }
-    if (isMissingWarehouseColumnError(error)) return multiWarehouseSchemaMessage("wms_bindings") + " Erro original: " + message;
-    return message;
   }
 
   function renderHistory() {

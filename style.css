@@ -3429,6 +3429,20 @@ tbody tr:hover td {
   grid-template-columns: 1fr 1fr;
 }
 
+.password-change-form {
+  display: grid;
+  gap: 10px;
+}
+
+.password-change-form h2,
+.password-change-form p {
+  margin-bottom: 0;
+}
+
+.password-change-form .decision-actions {
+  margin-top: 4px;
+}
+
 #replenishmentSuggestionForm .decision-actions {
   position: sticky;
   bottom: 0;

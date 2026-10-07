@@ -8,7 +8,7 @@ const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 test("ATENDENTE can navigate only to SKU consultation and replenishment", () => {
   assert.match(script, /consultaSku: \[[^\]]*"ATENDENTE"[^\]]*\]/);
   assert.match(script, /reposicao: \[[^\]]*"ATENDENTE"[^\]]*\]/);
-  ["dashboard", "bipagem", "etiquetas", "exportar", "importar", "transferencias", "usuarios", "baseEstoque"].forEach((screen) => {
+  ["dashboard", "bipagem", "etiquetas", "exportar", "transferencias", "usuarios", "baseEstoque"].forEach((screen) => {
     const line = script.match(new RegExp(`${screen}: \\[[^\\]]*\\]`));
     assert.ok(line, `missing permission declaration for ${screen}`);
     assert.doesNotMatch(line[0], /ATENDENTE/);

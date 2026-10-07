@@ -26,32 +26,14 @@
       </div>
       <p class="eyebrow">Acesso ao sistema</p>
       <h2>Entrar</h2>
-      <label for="loginUserInput">Matrícula ou usuário</label>
+      <label for="loginUserInput">E-mail, matrícula ou usuário</label>
       <input id="loginUserInput" name="wms_login_identifier" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: admin">
       <label for="loginPasswordInput">Senha</label>
       <input id="loginPasswordInput" class="secret-input" name="wms_login_secret" type="password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Digite sua senha">
       <button class="primary-button wide-button" id="loginButton" type="button">Entrar</button>
       <button class="secondary-button wide-button" id="showAccessRequestButton" type="button">Solicitar acesso</button>
-      <button class="link-button" id="showForgotPasswordButton" type="button">Esqueci minha senha</button>
+      <button class="link-button" id="forgotPasswordButton" type="button">Esqueci minha senha</button>
       <div id="loginStatus" class="inline-status"></div>
-    </form>
-    <form class="login-card access-request-card" id="forgotPasswordForm" autocomplete="off" data-form-type="other" hidden>
-      <div class="brand login-brand">
-        <div class="brand-mark">W</div>
-        <div>
-          <h1>WMS Estoque</h1>
-          <p>Recuperacao de senha</p>
-        </div>
-      </div>
-      <p class="eyebrow">Acesso ao sistema</p>
-      <h2>Recuperar senha</h2>
-      <label for="forgotPasswordUsernameInput">Matricula ou usuario</label>
-      <input id="forgotPasswordUsernameInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: 12345">
-      <div class="button-row">
-        <button class="primary-button" id="submitForgotPasswordButton" type="submit">Solicitar redefinicao</button>
-        <button class="secondary-button" id="backToLoginFromForgotButton" type="button">Voltar</button>
-      </div>
-      <div id="forgotPasswordStatus" class="inline-status"></div>
     </form>
     <form class="login-card access-request-card" id="accessRequestForm" autocomplete="off" data-form-type="other" hidden>
       <div class="brand login-brand">
@@ -67,6 +49,8 @@
       <input id="requestNameInput" type="text" placeholder="Seu nome completo">
       <label for="requestUsernameInput">Matrícula ou usuário</label>
       <input id="requestUsernameInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: 12345">
+      <label for="requestEmailInput">E-mail de acesso e recuperação</label>
+      <input id="requestEmailInput" type="email" autocomplete="email" placeholder="nome@empresa.com.br" required>
       <p class="muted">A senha temporária será definida pelo responsável no momento da aprovação.</p>
       <label for="requestRoleInput">Quero trabalhar como</label>
       <select id="requestRoleInput">
@@ -82,6 +66,23 @@
         <button class="secondary-button" id="backToLoginButton" type="button">Voltar para login</button>
       </div>
       <div id="accessRequestStatus" class="inline-status"></div>
+    </form>
+    <form class="login-card" id="passwordRecoveryRequestForm" autocomplete="on" hidden>
+      <div class="brand login-brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <h1>WMS Estoque</h1>
+          <p>Recuperação de senha</p>
+        </div>
+      </div>
+      <p class="eyebrow">Acesso ao sistema</p>
+      <h2>Recuperar senha</h2>
+      <p class="muted">Informe o e-mail cadastrado no seu usuário. Enviaremos um link seguro para criar uma nova senha.</p>
+      <label for="passwordRecoveryEmailInput">E-mail cadastrado</label>
+      <input id="passwordRecoveryEmailInput" type="email" autocomplete="email" placeholder="nome@empresa.com.br" required>
+      <button class="primary-button wide-button" id="sendPasswordRecoveryButton" type="submit">Enviar link de recuperação</button>
+      <button class="secondary-button wide-button" id="backFromPasswordRecoveryButton" type="button">Voltar para login</button>
+      <div id="passwordRecoveryRequestStatus" class="inline-status"></div>
     </form>
   </section>
   <div class="app-shell">
@@ -121,7 +122,6 @@
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
           <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
-          <button class="menu-item" data-icon="IMP" data-screen="importar" type="button">Importar Excel</button>
           <button class="menu-item" data-icon="ETQ" data-screen="etiquetas" type="button" hidden>Etiquetas</button>
         </div>
         <div class="menu-section">
@@ -446,21 +446,6 @@
             <span>Codigo Material</span>
             <span>Conferencia Obrigatoria</span>
           </div>
-        </section>
-      </section>
-
-      <section class="screen" id="importar">
-        <div class="page-title">
-          <div>
-            <p class="eyebrow">Planilha</p>
-            <h2>Importar Excel</h2>
-          </div>
-        </div>
-        <section class="panel narrow-panel">
-          <label for="excelFileInput">Arquivos .xlsx LinhaSeparacao e MaterialLinhaSeparacao</label>
-          <input id="excelFileInput" type="file" accept=".xlsx,.xls" multiple>
-          <button class="primary-button wide-button" id="importExcelButton" type="button">Importar planilha</button>
-          <div id="importStatus" class="inline-status"></div>
         </section>
       </section>
 
@@ -993,6 +978,8 @@
               <input id="userNameInput" type="text" placeholder="Nome do usuário">
               <label for="userUsernameInput">Matrícula ou usuário</label>
               <input id="userUsernameInput" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="Ex.: 12345">
+              <label for="userAuthEmailInput">E-mail de acesso e recuperação</label>
+              <input id="userAuthEmailInput" type="email" autocomplete="email" placeholder="nome@empresa.com.br" required>
               <label for="userPasswordInput">Senha inicial / nova senha</label>
               <input id="userPasswordInput" class="secret-input" type="password" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Obrigatória para novo usuário (mín. 8 caracteres)">
               <label for="userRoleInput">Perfil</label>
@@ -1041,7 +1028,7 @@
                 <button class="user-tab" data-user-tab="todos" type="button">Todos</button>
               </div>
               <div class="user-filter-grid">
-                <label>Buscar<input id="userSearchInput" type="search" placeholder="Nome, usuário ou matrícula"></label>
+                <label>Buscar<input id="userSearchInput" type="search" placeholder="Nome, usuário, matrícula ou e-mail"></label>
                 <label>Estoque/VD<select id="userWarehouseFilter"></select></label>
                 <label>Perfil<select id="userRoleFilter"></select></label>
                 <label>Supervisor<select id="userSupervisorFilter"></select></label>
@@ -1463,6 +1450,19 @@
         <button class="primary-button" type="submit">Confirmar pedido</button>
         <button class="secondary-button" data-replenishment-suggestion-close type="button">Nao solicitar</button>
       </div>
+    </form>
+  </div>
+  <div class="decision-modal" id="passwordRecoveryModal" hidden role="dialog" aria-modal="true" aria-labelledby="passwordRecoveryTitle">
+    <form class="decision-card password-change-form" id="passwordRecoveryForm">
+      <p class="eyebrow">Recuperação de senha</p>
+      <h2 id="passwordRecoveryTitle">Defina sua nova senha</h2>
+      <p class="muted">O link foi validado. Crie uma senha com pelo menos 8 caracteres.</p>
+      <label for="passwordRecoveryNewInput">Nova senha</label>
+      <input id="passwordRecoveryNewInput" type="password" minlength="8" autocomplete="new-password" required>
+      <label for="passwordRecoveryConfirmInput">Confirmar nova senha</label>
+      <input id="passwordRecoveryConfirmInput" type="password" minlength="8" autocomplete="new-password" required>
+      <div id="passwordRecoveryStatus" class="inline-status"></div>
+      <button class="primary-button wide-button" id="saveRecoveredPasswordButton" type="submit">Salvar nova senha</button>
     </form>
   </div>
   <div class="labels-print-sheet" id="labelsPrintSheet" aria-hidden="true"></div>

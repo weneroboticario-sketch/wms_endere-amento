@@ -12,6 +12,15 @@ export function syntheticEmailFor(identifier, domain) {
   return `${safeLocalPart}@${String(domain || DEFAULT_AUTH_DOMAIN).trim().toLowerCase()}`;
 }
 
+export function normalizeRecoveryEmail(value) {
+  return String(value || "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+export function isDeliverableRecoveryEmail(value) {
+  const email = normalizeRecoveryEmail(value);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !email.endsWith(".local");
+}
+
 export async function signInWithUsername(client, username, password, domain) {
   return client.auth.signInWithPassword({
     email: syntheticEmailFor(username, domain),
@@ -40,6 +49,15 @@ export async function changeOwnPassword(client, password) {
   const { data, error } = await client.auth.updateUser({ password: String(password || "") });
   if (error) throw error;
   return data.user;
+}
+
+export async function requestPasswordRecovery(client, email, redirectTo) {
+  const normalizedEmail = normalizeRecoveryEmail(email);
+  const { data, error } = await client.auth.resetPasswordForEmail(normalizedEmail, {
+    redirectTo: String(redirectTo || "")
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function invokeUserAdministration(client, payload) {
