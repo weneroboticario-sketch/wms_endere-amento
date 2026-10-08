@@ -282,10 +282,12 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   var taskCenterState = {
     tasks: [],
+    archivedTasks: [],
     historyByTaskId: {},
     tablesAvailable: true,
     loading: false,
-    selectedTaskId: ""
+    selectedTaskId: "",
+    viewMode: "ativas"
   };
   var stockState = {
     batches: [],
@@ -5063,6 +5065,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       blockReason: row.motivo_bloqueio || "",
       cancelReason: row.motivo_cancelamento || "",
       executionResult: row.resultado_execucao || {},
+      archived: !!row.arquivada,
+      archivedBy: row.arquivada_por || "",
+      archivedAt: row.data_arquivamento || "",
       createdAt: row.data_criacao || nowIso(),
       startedAt: row.data_inicio || "",
       finishedAt: row.data_conclusao || "",
@@ -5095,17 +5100,31 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (taskCenterState.loading && !options.force) return false;
     taskCenterState.loading = true;
     try {
-      var taskQuery = supabaseDb
+      var taskColumns = "id,codigo_visivel,tipo,titulo,descricao,estoque_id,localizacao_alvo,sku_alvo,quantidade_planejada,referencia_tipo,referencia_id,criado_por,delegado_por,atribuido_para,prioridade,prazo_sla,status,motivo_bloqueio,motivo_cancelamento,resultado_execucao,data_criacao,data_inicio,data_conclusao,tempo_execucao_segundos,arquivada,arquivada_por,data_arquivamento";
+      var activeTaskQuery = supabaseDb
         .from("operacao_tarefas")
-        .select("id,codigo_visivel,tipo,titulo,descricao,estoque_id,localizacao_alvo,sku_alvo,quantidade_planejada,referencia_tipo,referencia_id,criado_por,delegado_por,atribuido_para,prioridade,prazo_sla,status,motivo_bloqueio,motivo_cancelamento,resultado_execucao,data_criacao,data_inicio,data_conclusao,tempo_execucao_segundos")
+        .select(taskColumns)
+        .eq("arquivada", false)
         .order("data_criacao", { ascending: false })
         .limit(300);
-      if (authState.currentUser.role === "OPERADOR") taskQuery = taskQuery.eq("atribuido_para", authState.currentUser.id);
-      var tasksResponse = await taskQuery;
-      if (tasksResponse.error) throw tasksResponse.error;
-      taskCenterState.tasks = (tasksResponse.data || []).map(fromDbOperationalTask);
+      if (authState.currentUser.role === "OPERADOR") activeTaskQuery = activeTaskQuery.eq("atribuido_para", authState.currentUser.id);
+      var activeTasksResponse = await activeTaskQuery;
+      if (activeTasksResponse.error) throw activeTasksResponse.error;
+      taskCenterState.tasks = (activeTasksResponse.data || []).map(fromDbOperationalTask);
 
-      var ids = taskCenterState.tasks.map(function (task) { return task.id; }).filter(Boolean);
+      taskCenterState.archivedTasks = [];
+      if (isAdminOrSupervisor()) {
+        var archivedTasksResponse = await supabaseDb
+          .from("operacao_tarefas")
+          .select(taskColumns)
+          .eq("arquivada", true)
+          .order("data_criacao", { ascending: false })
+          .limit(300);
+        if (archivedTasksResponse.error) throw archivedTasksResponse.error;
+        taskCenterState.archivedTasks = (archivedTasksResponse.data || []).map(fromDbOperationalTask);
+      }
+
+      var ids = taskCenterState.tasks.concat(taskCenterState.archivedTasks).map(function (task) { return task.id; }).filter(Boolean);
       taskCenterState.historyByTaskId = {};
       if (ids.length) {
         var historyResponse = await supabaseDb
@@ -8046,8 +8065,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     ["taskCenterStatusFilter", "taskCenterTypeFilter", "taskCenterPriorityFilter", "taskCenterResponsibleFilter"].forEach(function (id) {
       if ($(id)) $(id).addEventListener("change", renderTaskCenter);
     });
+    if ($("taskCenterSearchInput")) $("taskCenterSearchInput").addEventListener("input", renderTaskCenter);
     if ($("taskCenterCreateForm")) $("taskCenterCreateForm").addEventListener("submit", handleTaskCenterCreateSubmit);
-    if ($("taskCenterRows")) $("taskCenterRows").addEventListener("click", handleTaskCenterActionClick);
+    if ($("taskCenterSection")) $("taskCenterSection").addEventListener("click", handleTaskCenterActionClick);
     if ($("taskCenterRows")) $("taskCenterRows").addEventListener("change", handleTransferMergeSelectionChange);
     $("transferDashboardAlert").addEventListener("click", async function (event) {
       if (event.target.closest("[data-address-conflicts-open]")) {
@@ -11483,6 +11503,80 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return tone[priority] || "pending";
   }
 
+  function isFinalOperationalTaskStatus(status) {
+    return status === "CONCLUIDA" || status === "CANCELADA";
+  }
+
+  function isTaskOverdue(task) {
+    if (!task || !task.sla || isFinalOperationalTaskStatus(task.status)) return false;
+    var deadline = Date.parse(task.sla || "");
+    if (!deadline || Number.isNaN(deadline)) return false;
+    return deadline < Date.now();
+  }
+
+  function normalizeTaskSearchText(task) {
+    return [
+      task.visibleCode || "",
+      task.title || "",
+      task.targetSku || "",
+      task.referenceType || "",
+      task.referenceId || "",
+      task.description || ""
+    ].join(" ").toLowerCase();
+  }
+
+  function getTaskCenterFilters() {
+    return {
+      status: normalizeText($("taskCenterStatusFilter") ? $("taskCenterStatusFilter").value : "").toUpperCase(),
+      type: normalizeText($("taskCenterTypeFilter") ? $("taskCenterTypeFilter").value : "").toUpperCase(),
+      priority: normalizeText($("taskCenterPriorityFilter") ? $("taskCenterPriorityFilter").value : "").toUpperCase(),
+      responsible: normalizeText($("taskCenterResponsibleFilter") ? $("taskCenterResponsibleFilter").value : ""),
+      search: normalizeText($("taskCenterSearchInput") ? $("taskCenterSearchInput").value : "").toLowerCase()
+    };
+  }
+
+  function getTaskCenterBaseListForView() {
+    if (taskCenterState.viewMode === "arquivadas") return taskCenterState.archivedTasks.slice();
+    return taskCenterState.tasks.slice();
+  }
+
+  function filterTaskCenterList(baseRows, filters) {
+    filters = filters || getTaskCenterFilters();
+    return (baseRows || []).filter(function (task) {
+      if (filters.status && task.status !== filters.status) return false;
+      if (filters.type && task.type !== filters.type) return false;
+      if (filters.priority && task.priority !== filters.priority) return false;
+      if (filters.responsible && task.assignedTo !== filters.responsible) return false;
+      if (filters.search && normalizeTaskSearchText(task).indexOf(filters.search) < 0) return false;
+      return true;
+    });
+  }
+
+  function applyTaskCenterViewModeButtons() {
+    document.querySelectorAll("[data-task-view]").forEach(function (button) {
+      var isActive = button.dataset.taskView === taskCenterState.viewMode;
+      button.classList.toggle("active", isActive);
+    });
+  }
+
+  function renderTaskCenterSummary() {
+    if (!$("taskCenterSummary")) return;
+    var activeTasks = taskCenterState.tasks || [];
+    var archivedTasks = taskCenterState.archivedTasks || [];
+    var emAndamento = activeTasks.filter(function (task) { return task.status === "EM_ANDAMENTO"; }).length;
+    var bloqueadas = activeTasks.filter(function (task) { return task.status === "BLOQUEADA"; }).length;
+    var aguardando = activeTasks.filter(function (task) { return task.status === "AGUARDANDO_VALIDACAO"; }).length;
+    var atrasadas = activeTasks.filter(isTaskOverdue).length;
+    $("taskCenterSummary").innerHTML = [
+      summaryChip("Ativas", activeTasks.length),
+      summaryChip("Em andamento", emAndamento, emAndamento ? "result-changed" : "result-ok"),
+      summaryChip("Bloqueadas", bloqueadas, bloqueadas ? "result-missing" : "result-ok"),
+      summaryChip("Aguardando validação", aguardando, aguardando ? "result-changed" : "result-ok"),
+      summaryChip("Atrasadas", atrasadas, atrasadas ? "result-missing" : "result-ok"),
+      summaryChip("Arquivadas", archivedTasks.length)
+    ].join("");
+  }
+
   function renderTaskCenter() {
     if (!$("taskCenterRows")) return;
     if (!isAdminOrSupervisor()) {
@@ -11490,45 +11584,47 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       return;
     }
     renderTaskCenterResponsibleOptions();
-    var statusFilter = normalizeText($("taskCenterStatusFilter") ? $("taskCenterStatusFilter").value : "").toUpperCase();
-    var typeFilter = normalizeText($("taskCenterTypeFilter") ? $("taskCenterTypeFilter").value : "").toUpperCase();
-    var priorityFilter = normalizeText($("taskCenterPriorityFilter") ? $("taskCenterPriorityFilter").value : "").toUpperCase();
-    var responsibleFilter = normalizeText($("taskCenterResponsibleFilter") ? $("taskCenterResponsibleFilter").value : "");
-    var rows = taskCenterState.tasks.filter(function (task) {
-      if (statusFilter && task.status !== statusFilter) return false;
-      if (typeFilter && task.type !== typeFilter) return false;
-      if (priorityFilter && task.priority !== priorityFilter) return false;
-      if (responsibleFilter && task.assignedTo !== responsibleFilter) return false;
-      return true;
-    });
+    renderTaskCenterSummary();
+    applyTaskCenterViewModeButtons();
+    var filters = getTaskCenterFilters();
+    var rows = filterTaskCenterList(getTaskCenterBaseListForView(), filters);
     if (!rows.length) {
-      $("taskCenterRows").innerHTML = '<div class="empty-state">Nenhuma tarefa para os filtros selecionados.</div>';
+      $("taskCenterRows").innerHTML = taskCenterState.viewMode === "arquivadas"
+        ? '<div class="empty-state">Nenhuma tarefa arquivada para os filtros selecionados.</div>'
+        : '<div class="empty-state">Nenhuma tarefa para os filtros selecionados.</div>';
       return;
     }
-    $("taskCenterRows").innerHTML = rows.map(taskCenterCardHtml).join("");
+    var archivedView = taskCenterState.viewMode === "arquivadas";
+    $("taskCenterRows").innerHTML = rows.map(function (task) {
+      return taskCenterCardHtml(task, archivedView);
+    }).join("");
   }
 
-  function taskCenterCardHtml(task) {
+  function taskCenterCardHtml(task, archivedView) {
     var operators = getTaskAssignableUsers().filter(function (user) {
       return userCanAccessWarehouse(user, task.warehouseCode || activeWarehouseCode());
     });
-    var canEdit = task.status !== "CONCLUIDA" && task.status !== "CANCELADA";
+    var isFinalStatus = isFinalOperationalTaskStatus(task.status);
+    var canEdit = !archivedView && !isFinalStatus;
     var historyCount = (taskCenterState.historyByTaskId[task.id] || []).length;
     var elapsed = task.executionSeconds && task.executionSeconds > 0 ? formatDuration(task.executionSeconds) : "-";
     var referenceLabel = task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa";
+    var overdueBadge = isTaskOverdue(task) ? '<span class="status-badge danger">Atrasada</span>' : "";
     return [
       '<article class="transfer-board-card">',
       '<div class="transfer-board-main">',
-      '<div class="transfer-board-top"><span class="transfer-source-pill">' + escapeHtml(taskTypeLabel(task.type)) + '</span><span class="status-badge ' + taskPriorityClass(task.priority) + '">' + escapeHtml(task.priority) + '</span></div>',
+      '<div class="transfer-board-top"><span class="transfer-source-pill">' + escapeHtml(taskTypeLabel(task.type)) + '</span><span class="status-badge ' + taskPriorityClass(task.priority) + '">' + escapeHtml(task.priority) + '</span>' + overdueBadge + '</div>',
       '<div class="transfer-board-title"><strong>' + escapeHtml(task.visibleCode || task.id) + '</strong><small>' + escapeHtml(task.title || "-") + '</small></div>',
-      '<div class="transfer-board-meta"><span><small>Status</small><strong>' + escapeHtml(task.status) + '</strong></span><span><small>Estoque</small><strong>' + escapeHtml(task.warehouseCode || "-") + '</strong></span><span><small>Referência</small><strong>' + escapeHtml(referenceLabel) + '</strong></span><span><small>Tempo</small><strong>' + escapeHtml(elapsed) + '</strong></span><span><small>Histórico</small><strong>' + historyCount + ' evento(s)</strong></span></div>',
+      '<div class="transfer-board-meta"><span><small>Status</small><strong>' + escapeHtml(task.status) + '</strong></span><span><small>Estoque</small><strong>' + escapeHtml(task.warehouseCode || "-") + '</strong></span><span><small>Referência</small><strong>' + escapeHtml(referenceLabel) + '</strong></span><span><small>Tempo</small><strong>' + escapeHtml(elapsed) + '</strong></span><span><small>SLA</small><strong>' + escapeHtml(task.sla ? formatDateTime(task.sla) : "-") + '</strong></span><span><small>Histórico</small><strong>' + historyCount + ' evento(s)</strong></span></div>',
       '<div class="transfer-board-note">Responsável atual: ' + escapeHtml(task.assignedName || "Não atribuído") + '</div>',
       '</div>',
       '<div class="row-actions transfer-action-stack transfer-board-actions">',
-      canEdit ? ('<label class="transfer-reassign-control"><span>Atribuir</span><select data-task-assign="' + task.id + '">' + taskResponsibleOptionsHtml(task.assignedTo, operators) + '</select></label>') : '',
-      canEdit ? ('<button class="edit-small" data-task-conclude="' + task.id + '" type="button">Concluir</button>') : '',
-      canEdit ? ('<button class="edit-small" data-task-validate="' + task.id + '" type="button">Validar</button>') : '',
-      canEdit ? ('<button class="remove-small" data-task-cancel="' + task.id + '" type="button">Cancelar</button>') : '',
+      (canEdit ? ('<label class="transfer-reassign-control"><span>Atribuir</span><select data-task-assign="' + task.id + '">' + taskResponsibleOptionsHtml(task.assignedTo, operators) + '</select></label>') : ''),
+      (canEdit ? ('<button class="edit-small" data-task-conclude="' + task.id + '" type="button">Concluir</button>') : ''),
+      (canEdit ? ('<button class="edit-small" data-task-validate="' + task.id + '" type="button">Validar</button>') : ''),
+      (canEdit ? ('<button class="remove-small" data-task-cancel="' + task.id + '" type="button">Cancelar</button>') : ''),
+      (!archivedView && isFinalStatus ? ('<button class="secondary-button" data-task-archive="' + task.id + '" type="button">Arquivar</button>') : ''),
+      (archivedView && isAdminOrSupervisor() ? ('<button class="secondary-button" data-task-unarchive="' + task.id + '" type="button">Desarquivar</button>') : ''),
       '<button class="secondary-button" data-task-history="' + task.id + '" type="button">Histórico</button>',
       '</div>',
       '</article>'
@@ -18132,8 +18228,33 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   async function handleTaskCenterActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.taskView) {
+      taskCenterState.viewMode = button.dataset.taskView === "arquivadas" ? "arquivadas" : "ativas";
+      var panel = $("taskCenterDetailsPanel");
+      if (panel) panel.hidden = true;
+      taskCenterState.selectedTaskId = "";
+      renderTaskCenter();
+      return;
+    }
+    if (button.dataset.taskExport !== undefined) {
+      exportarTaskCenterCsv();
+      return;
+    }
     if (button.dataset.taskHistory) {
       showTaskHistory(button.dataset.taskHistory);
+      return;
+    }
+    if (button.dataset.taskArchive) {
+      var confirmArchive = window.confirm('Arquivar esta tarefa? Ela sairá da lista ativa e poderá ser consultada em "Arquivadas".');
+      if (!confirmArchive) return;
+      var archiveNote = window.prompt("Observação do arquivamento (opcional):", "");
+      await callTaskRpc("arquivar_tarefa", { p_tarefa_id: button.dataset.taskArchive, p_observacao: normalizeText(archiveNote) || null });
+      return;
+    }
+    if (button.dataset.taskUnarchive) {
+      var confirmUnarchive = window.confirm("Desarquivar esta tarefa? Ela voltará para a lista ativa.");
+      if (!confirmUnarchive) return;
+      await callTaskRpc("desarquivar_tarefa", { p_tarefa_id: button.dataset.taskUnarchive });
       return;
     }
     if (button.dataset.taskConclude) {
@@ -18217,19 +18338,159 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return true;
   }
 
+  function taskResultText(resultObj) {
+    if (!resultObj || typeof resultObj !== "object") return "";
+    try {
+      return JSON.stringify(resultObj);
+    } catch (error) {
+      return String(resultObj || "");
+    }
+  }
+
+  function escapeTaskCsvValue(value) {
+    var text = value === null || value === undefined ? "" : String(value);
+    text = text.replace(/\r?\n|\r/g, " ");
+    text = text.replace(/"/g, '""');
+    return '"' + text + '"';
+  }
+
+  function formatTaskCsvTimestamp(value) {
+    if (!value) return "";
+    var date = new Date(value);
+    if (!date || Number.isNaN(date.getTime())) return "";
+    return date.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  }
+
+  function exportarTaskCenterCsv() {
+    var filters = getTaskCenterFilters();
+    var rows = filterTaskCenterList(getTaskCenterBaseListForView(), filters);
+    var mode = taskCenterState.viewMode === "arquivadas" ? "arquivadas" : "ativas";
+    var headers = [
+      "Código",
+      "Tipo",
+      "Título",
+      "Status",
+      "Prioridade",
+      "Estoque",
+      "Responsável",
+      "Referência",
+      "Criado em",
+      "Concluído em",
+      "Tempo",
+      "SLA",
+      "Descrição",
+      "Resultado",
+      "Motivo bloqueio",
+      "Motivo cancelamento",
+      "Arquivada",
+      "Arquivada em"
+    ];
+    var lines = [headers.join(";")];
+    rows.forEach(function (task) {
+      lines.push([
+        escapeTaskCsvValue(task.visibleCode || task.id || ""),
+        escapeTaskCsvValue(task.type || ""),
+        escapeTaskCsvValue(task.title || ""),
+        escapeTaskCsvValue(task.status || ""),
+        escapeTaskCsvValue(task.priority || ""),
+        escapeTaskCsvValue(task.warehouseCode || ""),
+        escapeTaskCsvValue(task.assignedName || task.assignedTo || ""),
+        escapeTaskCsvValue((task.referenceType && task.referenceId) ? (task.referenceType + " #" + task.referenceId) : "Avulsa"),
+        escapeTaskCsvValue(formatDateTime(task.createdAt)),
+        escapeTaskCsvValue(formatDateTime(task.finishedAt)),
+        escapeTaskCsvValue(task.executionSeconds ? formatDuration(task.executionSeconds) : "-"),
+        escapeTaskCsvValue(task.sla ? formatDateTime(task.sla) : "-"),
+        escapeTaskCsvValue(task.description || ""),
+        escapeTaskCsvValue(taskResultText(task.executionResult || {})),
+        escapeTaskCsvValue(task.blockReason || ""),
+        escapeTaskCsvValue(task.cancelReason || ""),
+        escapeTaskCsvValue(task.archived ? "Sim" : "Não"),
+        escapeTaskCsvValue(task.archivedAt ? formatDateTime(task.archivedAt) : "")
+      ].join(";"));
+    });
+    var content = "\uFEFF" + lines.join("\n");
+    var blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "central-de-tarefas-" + mode + "-" + formatTaskCsvTimestamp(nowIso()) + ".csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    showToast("Exportação concluída: " + rows.length + " tarefa(s).", "success");
+  }
+
+  function formatTaskResult(resultObj) {
+    if (!resultObj || typeof resultObj !== "object") return "-";
+    var labels = {
+      origem: "Origem",
+      transfer_status: "Status da transferência",
+      codigo_transferencia: "Código da transferência",
+      observacao_conclusao: "Observação da conclusão",
+      observacao_validacao: "Observação da validação",
+      observacao_arquivamento: "Observação do arquivamento",
+      observacao_inicio: "Observação de início",
+      observacao_atribuicao: "Observação da atribuição",
+      reposicao_status: "Status da reposição",
+      codigo_material: "Código do material",
+      nome_material: "Material",
+      responsavel_nome: "Responsável"
+    };
+    var entries = Object.keys(resultObj).map(function (key) {
+      return {
+        label: labels[key] || key,
+        value: resultObj[key]
+      };
+    }).filter(function (entry) {
+      return entry.value !== null && entry.value !== undefined && String(entry.value) !== "";
+    });
+    if (!entries.length) return "-";
+    return '<ul class="compact-list">' + entries.map(function (entry) {
+      var text = typeof entry.value === "object" ? JSON.stringify(entry.value) : String(entry.value);
+      return '<li><strong>' + escapeHtml(entry.label) + ':</strong> ' + escapeHtml(text) + '</li>';
+    }).join("") + "</ul>";
+  }
+
+  function getTaskById(taskId) {
+    return taskCenterState.tasks.concat(taskCenterState.archivedTasks).find(function (entry) { return entry.id === taskId; }) || null;
+  }
+
+  function getTaskUserName(userId) {
+    if (!userId) return "-";
+    var user = authState.users.find(function (entry) { return entry.id === userId; }) || null;
+    return user ? (user.name || user.username || user.id) : userId;
+  }
+
   function showTaskHistory(taskId) {
-    var task = taskCenterState.tasks.find(function (entry) { return entry.id === taskId; });
+    var task = getTaskById(taskId);
     var panel = $("taskCenterDetailsPanel");
     if (!panel || !task) return;
     panel.hidden = false;
     taskCenterState.selectedTaskId = taskId;
+    var slaLabel = task.sla ? formatDateTime(task.sla) + (isTaskOverdue(task) ? " (Atrasada)" : "") : "-";
+    var archiveLabel = task.archived
+      ? ("Sim (por " + getTaskUserName(task.archivedBy) + " em " + formatDateTime(task.archivedAt) + ")")
+      : "Não";
     $("taskCenterDetailsSummary").innerHTML = [
       "<div><span>Código</span><strong>" + escapeHtml(task.visibleCode || task.id) + "</strong></div>",
       "<div><span>Título</span><strong>" + escapeHtml(task.title || "-") + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(task.status) + "</strong></div>",
+      "<div><span>Tipo</span><strong>" + escapeHtml(task.type || "-") + "</strong></div>",
+      "<div><span>Prioridade</span><strong>" + escapeHtml(task.priority || "-") + "</strong></div>",
+      "<div><span>Estoque</span><strong>" + escapeHtml(task.warehouseCode || "-") + "</strong></div>",
+      "<div><span>Responsável atual</span><strong>" + escapeHtml(task.assignedName || "Não atribuído") + "</strong></div>",
+      "<div><span>Criado em</span><strong>" + escapeHtml(formatDateTime(task.createdAt)) + "</strong></div>",
+      "<div><span>Iniciado em</span><strong>" + escapeHtml(formatDateTime(task.startedAt)) + "</strong></div>",
+      "<div><span>Concluído em</span><strong>" + escapeHtml(formatDateTime(task.finishedAt)) + "</strong></div>",
       "<div><span>Tempo</span><strong>" + escapeHtml(task.executionSeconds ? formatDuration(task.executionSeconds) : "-") + "</strong></div>",
+      "<div><span>SLA</span><strong>" + escapeHtml(slaLabel) + "</strong></div>",
+      "<div><span>Descrição</span><strong>" + escapeHtml(task.description || "-") + "</strong></div>",
+      "<div><span>Alvo (localização)</span><strong>" + escapeHtml(task.targetLocation || "-") + "</strong></div>",
+      "<div><span>SKU alvo</span><strong>" + escapeHtml(task.targetSku || "-") + "</strong></div>",
+      "<div><span>Quantidade planejada</span><strong>" + escapeHtml((task.plannedQty !== null && task.plannedQty !== undefined && task.plannedQty !== "") ? String(task.plannedQty) : "-") + "</strong></div>",
       "<div><span>Referência</span><strong>" + escapeHtml((task.referenceType && task.referenceId) ? (task.referenceType + " #" + task.referenceId) : "Avulsa") + "</strong></div>",
-      "<div><span>Resultado</span><strong>" + escapeHtml(JSON.stringify(task.executionResult || {})) + "</strong></div>"
+      "<div><span>Resultado da execução</span><strong>" + formatTaskResult(task.executionResult || {}) + "</strong></div>",
+      "<div><span>Arquivada</span><strong>" + escapeHtml(archiveLabel) + "</strong></div>"
     ].join("");
     var history = (taskCenterState.historyByTaskId[taskId] || []).slice().sort(function (a, b) {
       return Date.parse(b.eventAt || "") - Date.parse(a.eventAt || "");
