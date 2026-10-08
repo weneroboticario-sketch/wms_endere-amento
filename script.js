@@ -6160,7 +6160,14 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       setStatus("loginStatus", "Informe usuario e senha.", "error");
       return;
     }
-    var authResponse = await signInWithUsername(supabaseDb, login, password, AUTH_EMAIL_DOMAIN);
+    var authLoginIdentifier = login;
+    if (login.indexOf("@") === -1) {
+      var resolvedLogin = await supabaseDb.rpc("wms_resolve_login_email", { p_identifier: login });
+      if (!resolvedLogin.error && resolvedLogin.data && String(resolvedLogin.data).trim()) {
+        authLoginIdentifier = String(resolvedLogin.data).trim();
+      }
+    }
+    var authResponse = await signInWithUsername(supabaseDb, authLoginIdentifier, password, AUTH_EMAIL_DOMAIN);
     if (authResponse.error || !authResponse.data || !authResponse.data.session) {
       setStatus("loginStatus", "Usuario ou senha invalidos", "error");
       return;
