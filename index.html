@@ -636,6 +636,7 @@
           <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="taskCenterSection" type="button">Gerenciamento de Tarefas</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="finalizedTransfersSection" type="button">Finalizadas</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="establishmentsSection" type="button">Estabelecimentos</button>
         </div>
@@ -785,6 +786,121 @@
               <summary>Concluídas</summary>
               <div id="completedTransfersList" class="transfer-card-grid"></div>
             </details>
+          </section>
+        </section>
+
+        <section class="transfer-section" id="taskCenterSection" hidden>
+          <div class="dashboard-layout transfer-filters">
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Central de Tarefas</h3>
+                <span class="panel-mini-label">Supervisão</span>
+              </div>
+              <div class="transfer-filter-grid">
+                <label>Status
+                  <select id="taskCenterStatusFilter">
+                    <option value="">Todos</option>
+                    <option value="PENDENTE">PENDENTE</option>
+                    <option value="ATRIBUIDA">ATRIBUIDA</option>
+                    <option value="EM_ANDAMENTO">EM_ANDAMENTO</option>
+                    <option value="BLOQUEADA">BLOQUEADA</option>
+                    <option value="AGUARDANDO_VALIDACAO">AGUARDANDO_VALIDACAO</option>
+                    <option value="CONCLUIDA">CONCLUIDA</option>
+                    <option value="CANCELADA">CANCELADA</option>
+                  </select>
+                </label>
+                <label>Tipo
+                  <select id="taskCenterTypeFilter">
+                    <option value="">Todos</option>
+                    <option value="TRANSFERENCIA">TRANSFERENCIA</option>
+                    <option value="REPOSICAO">REPOSICAO</option>
+                    <option value="ENDERECAMENTO">ENDERECAMENTO</option>
+                    <option value="INVENTARIO">INVENTARIO</option>
+                    <option value="AUDITORIA">AUDITORIA</option>
+                    <option value="ORGANIZACAO">ORGANIZACAO</option>
+                    <option value="AVULSA">AVULSA</option>
+                  </select>
+                </label>
+                <label>Prioridade
+                  <select id="taskCenterPriorityFilter">
+                    <option value="">Todas</option>
+                    <option value="BAIXA">BAIXA</option>
+                    <option value="NORMAL">NORMAL</option>
+                    <option value="ALTA">ALTA</option>
+                    <option value="URGENTE">URGENTE</option>
+                  </select>
+                </label>
+                <label>Responsável
+                  <select id="taskCenterResponsibleFilter"></select>
+                </label>
+              </div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-header">
+                <h3>Nova tarefa avulsa</h3>
+              </div>
+              <form id="taskCenterCreateForm" autocomplete="off">
+                <label>Título
+                  <input id="taskCenterTitleInput" type="text" maxlength="120" placeholder="Ex.: Organizar área de alto giro" required>
+                </label>
+                <label>Tipo
+                  <select id="taskCenterCreateTypeInput">
+                    <option value="AVULSA">AVULSA</option>
+                    <option value="ENDERECAMENTO">ENDERECAMENTO</option>
+                    <option value="INVENTARIO">INVENTARIO</option>
+                    <option value="AUDITORIA">AUDITORIA</option>
+                    <option value="ORGANIZACAO">ORGANIZACAO</option>
+                  </select>
+                </label>
+                <label>Prioridade
+                  <select id="taskCenterCreatePriorityInput">
+                    <option value="NORMAL">NORMAL</option>
+                    <option value="BAIXA">BAIXA</option>
+                    <option value="ALTA">ALTA</option>
+                    <option value="URGENTE">URGENTE</option>
+                  </select>
+                </label>
+                <label>Responsável (mesmo estoque)
+                  <select id="taskCenterCreateResponsibleInput"></select>
+                </label>
+                <label>Descrição
+                  <textarea id="taskCenterDescriptionInput" rows="3" placeholder="Detalhes operacionais"></textarea>
+                </label>
+                <div class="button-row">
+                  <button class="primary-button" id="taskCenterCreateButton" type="submit">Criar tarefa</button>
+                </div>
+                <div id="taskCenterCreateStatus" class="inline-status"></div>
+              </form>
+            </section>
+          </div>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h3>Lista de tarefas</h3>
+            </div>
+            <div id="taskCenterRows" class="transfer-board-list"></div>
+            <div id="taskCenterStatus" class="inline-status"></div>
+          </section>
+
+          <section class="panel" id="taskCenterDetailsPanel" hidden>
+            <div class="panel-header">
+              <h3>Detalhes e histórico</h3>
+            </div>
+            <div id="taskCenterDetailsSummary" class="transfer-work-summary"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Status</th>
+                    <th>Responsável</th>
+                    <th>Observação</th>
+                  </tr>
+                </thead>
+                <tbody id="taskCenterHistoryRows"></tbody>
+              </table>
+            </div>
           </section>
         </section>
 
