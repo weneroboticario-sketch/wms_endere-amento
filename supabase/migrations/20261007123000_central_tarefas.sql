@@ -853,7 +853,12 @@ begin
     coalesce(new.solicitado_por_id, private.current_wms_profile_id()),
     case when nullif(coalesce(new.responsavel_id, ''), '') is not null then coalesce(new.solicitado_por_id, private.current_wms_profile_id()) else null end,
     nullif(coalesce(new.responsavel_id, ''), ''),
-    coalesce(new.prioridade::public.prioridade_tarefa_enum, 'NORMAL'::public.prioridade_tarefa_enum),
+    case upper(coalesce(new.prioridade, 'NORMAL'))
+      when 'BAIXA' then 'BAIXA'::public.prioridade_tarefa_enum
+      when 'ALTA' then 'ALTA'::public.prioridade_tarefa_enum
+      when 'URGENTE' then 'URGENTE'::public.prioridade_tarefa_enum
+      else 'NORMAL'::public.prioridade_tarefa_enum
+    end,
     case when nullif(coalesce(new.responsavel_id, ''), '') is not null and v_status = 'PENDENTE' then 'ATRIBUIDA' else v_status end,
     case when v_status in ('EM_ANDAMENTO','CONCLUIDA') then coalesce(new.started_at, now()) else null end,
     case when v_status = 'CONCLUIDA' then coalesce(new.finished_at, now()) else null end,
