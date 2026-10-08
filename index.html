@@ -833,6 +833,9 @@
                 <label>Responsável
                   <select id="taskCenterResponsibleFilter"></select>
                 </label>
+                <label>Buscar
+                  <input id="taskCenterSearchInput" type="text" placeholder="Buscar por código, título, SKU ou referência" autocomplete="off">
+                </label>
               </div>
             </section>
 
@@ -878,7 +881,13 @@
           <section class="panel">
             <div class="panel-header">
               <h3>Lista de tarefas</h3>
+              <button class="secondary-button" data-task-export type="button">Exportar CSV</button>
             </div>
+            <div class="transfer-tabs task-center-view-toggle">
+              <button class="secondary-button active" id="taskCenterViewAtivas" data-task-view="ativas" type="button">Ativas</button>
+              <button class="secondary-button" id="taskCenterViewArquivadas" data-task-view="arquivadas" type="button">Arquivadas</button>
+            </div>
+            <div id="taskCenterSummary" class="transfer-work-summary"></div>
             <div id="taskCenterRows" class="transfer-board-list"></div>
             <div id="taskCenterStatus" class="inline-status"></div>
           </section>
