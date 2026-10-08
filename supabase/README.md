@@ -15,6 +15,7 @@ As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes 
 9. `20261001210406_replenishment_cancellation_request.sql`: solicitação segura de cancelamento pelo ATENDENTE, sem liberar alterações no fluxo operacional.
 10. `20261006005523_addressing_history_optional.sql`: compatibilidade do histórico auxiliar para que falhas de auditoria não bloqueiem o endereçamento atômico.
 11. `20261007010406_email_password_recovery.sql`: e-mail real obrigatório nas solicitações de acesso e suporte ao fluxo de recuperação de senha.
+12. `20261008184900_fix_task_reference_upsert.sql`: corrige o índice utilizado pela integração da Central de Tarefas, evitando que o início de transferências e as atualizações de reposição sejam bloqueados. Não altera permissões nem dados operacionais.
 
 Em um banco existente, aplique a sequência pelo Supabase CLI. Os comandos `create/alter ... if not exists` e `on conflict` tornam a baseline reaplicável; ainda assim, faça backup antes.
 
