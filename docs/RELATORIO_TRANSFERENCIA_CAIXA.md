@@ -26,7 +26,7 @@ WMS Estoque (wms-endere-amento). Sem alteracoes no CP Alamo ou nas policies do b
 
 ## Publicacao
 
-Publicar o frontend do projeto Vercel wms-endere-amento. Cache estatico v25. Nao requer migration.
+Publicar o frontend do projeto Vercel wms-endere-amento. Cache estatico v27 e runtime v14. Nao requer migration nova. Inclui as atualizacoes ja existentes no origin/main, preservando a Central de Tarefas e a resolucao de login.
 
 ## Limites
 
