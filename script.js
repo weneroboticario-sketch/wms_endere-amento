@@ -13482,7 +13482,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "<div><span>Rota</span><strong>" + escapeHtml(transferRouteLabel(transfer)) + "</strong></div>",
       "<div><span>Status</span><strong>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</strong></div>",
       "<div><span>Progresso</span><strong>" + transferProgressText(stats, mode) + "</strong></div>",
-      "<div><span>Tempo</span><strong>" + formatDuration(secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, new Date().toISOString())) + "</strong></div>"
+      "<div><span>Tempo</span><strong>" + formatDuration(secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, transfer.finishedAt || new Date().toISOString())) + "</strong></div>"
     ].join("");
     renderTransferStepSummary(transfer, stats, mode, items);
     renderTransferFinalSummary(transfer, stats, items, mode);
@@ -13946,7 +13946,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function renderTransferStepSummary(transfer, stats, mode, items) {
     if (!$("transferStepSummary")) return;
-    var nextItem = getTransferActiveItem(items, mode);
+    var nextItem = mode === "FINALIZACAO" ? null : getTransferActiveItem(items, mode);
     var mergedSourceText = transfer.isMerged && transfer.mergedFromIds.length ? transfer.mergedFromIds.map(function (id) {
       var source = getTransferById(id);
       return source ? (source.code || source.name || id) : id;
@@ -13990,7 +13990,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       summaryChip("Itens corretos", correct, "result-ok"),
       summaryChip("Divergências", divergent, divergent ? "result-changed" : "result-ok"),
       summaryChip("Sem localização", noLocation, noLocation ? "result-missing" : "result-ok"),
-      summaryChip("Tempo total", formatDuration(secondsBetween(transfer.startedAt || transfer.createdAt, new Date().toISOString()))),
+      summaryChip("Tempo total", formatDuration(secondsBetween(transfer.startedAt || transfer.createdAt, transfer.finishedAt || new Date().toISOString()))),
       summaryChip("Responsável", transfer.responsibleName || "-")
     ].join("");
   }
@@ -14575,13 +14575,13 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var extraItems = items.filter(function (item) { return item.isExtra; });
     var totalItems = originalItems.length;
     var pendingSeparation = originalItems.filter(function (item) { return !isTransferItemSeparationClosed(item) && Number(item.separatedQty || 0) < Number(item.requestedQty || 0); }).length;
-    var pendingPacking = originalItems.filter(function (item) { return !isTransferItemNotSent(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); }).length;
+    var pendingPacking = originalItems.filter(function (item) { return !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); }).length;
     var separatedItems = originalItems.filter(function (item) { return isTransferItemSeparationClosed(item) || Number(item.separatedQty || 0) >= Number(item.requestedQty || 0); }).length;
     var packedItems = originalItems.filter(function (item) { return isTransferItemNotSent(item) || (Number(item.packedQty || 0) >= Number(item.separatedQty || 0) && Number(item.separatedQty || 0) > 0); }).length;
     var noLocationItems = originalItems.filter(function (item) { return !transferLocationStatus(item).hasLocation; }).length;
     var requested = originalItems.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
-    var packed = items.reduce(function (sum, item) { return sum + Math.min(Number(item.packedQty || 0), Number(item.requestedQty || item.packedQty || 0)); }, 0);
-    var separated = items.reduce(function (sum, item) { return sum + Math.min(Number(item.separatedQty || 0), Number(item.requestedQty || item.separatedQty || 0)); }, 0);
+    var packed = items.reduce(function (sum, item) { return sum + Number(item.packedQty || 0); }, 0);
+    var separated = items.reduce(function (sum, item) { return sum + Number(item.separatedQty || 0); }, 0);
     var extraQty = extraItems.reduce(function (sum, item) { return sum + Number(item.extraQty || item.separatedQty || item.packedQty || 0); }, 0);
     var missingQty = originalItems.reduce(function (sum, item) { return sum + Math.max(0, Number(item.requestedQty || 0) - Math.max(Number(item.separatedQty || 0), Number(item.packedQty || 0))); }, 0);
     var excessQty = items.reduce(function (sum, item) { return sum + Number(item.excessQty || 0); }, 0);
