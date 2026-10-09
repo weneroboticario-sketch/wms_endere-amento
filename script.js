@@ -6160,7 +6160,14 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       setStatus("loginStatus", "Informe usuario e senha.", "error");
       return;
     }
-    var authResponse = await signInWithUsername(supabaseDb, login, password, AUTH_EMAIL_DOMAIN);
+    var authLoginIdentifier = login;
+    if (login.indexOf("@") === -1) {
+      var resolvedLogin = await supabaseDb.rpc("wms_resolve_login_email", { p_identifier: login });
+      if (!resolvedLogin.error && resolvedLogin.data && String(resolvedLogin.data).trim()) {
+        authLoginIdentifier = String(resolvedLogin.data).trim();
+      }
+    }
+    var authResponse = await signInWithUsername(supabaseDb, authLoginIdentifier, password, AUTH_EMAIL_DOMAIN);
     if (authResponse.error || !authResponse.data || !authResponse.data.session) {
       setStatus("loginStatus", "Usuario ou senha invalidos", "error");
       return;
@@ -11430,13 +11437,14 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var stats = getTransferStats(transfer.id);
     var action = isFinalTransferStatus(transfer.status) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
-      "<article class=\"transfer-card\">",
-      "<span class=\"eyebrow\">Transferência</span>",
+      "<article class=\"transfer-card transfer-card--transfer transfer-ui-v20261008\">",
+      "<div class=\"transfer-card-head\"><span class=\"eyebrow\">Transferência</span><span class=\"transfer-card-status\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></div>",
       "<h3>" + escapeHtml(transferDisplayName(transfer)) + "</h3>",
-      "<span>Origem: " + escapeHtml(transferRouteOriginLabel(transfer)) + "</span>",
-      "<span>Destino: " + escapeHtml(transferRouteDestinationLabel(transfer)) + "</span>",
-      "<span>Status: " + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span>",
-      "<span>Itens: " + stats.totalItems + "</span>",
+      "<div class=\"transfer-card-meta\">",
+      "<span><b>Origem</b>" + escapeHtml(transferRouteOriginLabel(transfer)) + "</span>",
+      "<span><b>Destino</b>" + escapeHtml(transferRouteDestinationLabel(transfer)) + "</span>",
+      "</div>",
+      "<div class=\"transfer-card-kpis\"><span><b>Itens</b>" + stats.totalItems + "</span><span><b>Conferidos</b>" + stats.checkedItems + "</span></div>",
       "<div class=\"transfer-progress\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span>" + stats.progress + "%</span></div>",
       "<button class=\"primary-button\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">" + action + "</button>",
       "</article>"
@@ -13811,30 +13819,53 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var mode = transferState.activeWorkMode;
     var statusKey = transferItemStatusLabel(item);
     var statusLabel = displayTransferStatusLabel(statusKey);
-    var itemClass = "transfer-work-item status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
+    var itemClass = "transfer-work-item transfer-detail-v20261008 status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
     var productName = shortProductName(item.description || "");
-    var boxInfo = isBoxQuantityItem(item) ? "<span>Un/CX <b>" + (Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</b></span><span>Total UN <b>" + (Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-") + "</b></span>" : "";
+    var location = transferLocationStatus(item);
+    var locationBadgeClass = location.hasLocation ? "ok" : "alert";
+    var locationBadgeLabel = location.hasLocation ? (location.code || [location.rua, location.rack, location.linha, location.letra].filter(Boolean).join("-")) : (location.warning || "Sem localização cadastrada.");
+    var flags = [];
+    if (!item.isExtra && mode !== "MONTAGEM" && qty.requested > 0 && qty.separated <= 0) flags.push("Não pego");
+    if (!item.isExtra && mode === "MONTAGEM" && qty.separated > 0 && qty.packed <= 0) flags.push("Não pego");
+    if (item.stockAlertMessage) flags.push(item.stockAlertMessage);
+    var uniqueFlags = unique(flags.filter(Boolean));
+    var flagsHtml = uniqueFlags.length
+      ? "<div class=\"transfer-item-flags\">" + uniqueFlags.map(function (label) {
+          var normalized = normalizeText(label).toLowerCase();
+          var flagClass = normalized.indexOf("não pego") >= 0 || normalized.indexOf("nao pego") >= 0 || normalized.indexOf("falt") >= 0 ? "danger" : normalized.indexOf("encontrado na captação") >= 0 || normalized.indexOf("encontrado na captacao") >= 0 ? "warning" : "info";
+          return "<span class=\"transfer-flag-badge " + flagClass + "\">" + escapeHtml(label) + "</span>";
+        }).join("") + "</div>"
+      : "";
+    var qtyCells = mode === "MONTAGEM" ? [
+      { label: "Solicitado", value: formatQty(qty.requested) + " " + (item.unit || "UN") },
+      { label: "Separado", value: formatQty(qty.separated) },
+      { label: "Na caixa", value: formatQty(qty.packed) },
+      { label: "Restante", value: formatQty(qty.pendingPacking) },
+      { label: "Un/CX", value: Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-" },
+      { label: "Total UN", value: Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-" }
+    ] : [
+      { label: "Solicitado", value: formatQty(qty.requested) + " " + (item.unit || "UN") },
+      { label: "Separado", value: formatQty(qty.separated) },
+      { label: "Pendente", value: formatQty(qty.pendingSeparation) },
+      { label: "Saldo loja", value: transferStockValueLabel(item.storeAvailable, null) },
+      { label: "Retirar captação", value: formatQty(item.suggestedCaptureQty || 0) },
+      { label: "Saldo captação", value: transferStockValueLabel(item.captureAvailable, item) },
+      { label: "Retirar loja", value: formatQty(item.suggestedStoreQty || 0) },
+      { label: "Faltante", value: formatQty(item.quantityShortage || 0) }
+    ];
+    var qtyRows = qtyCells.map(function (entry) {
+      return "<span class=\"transfer-item-metric\"><small>" + escapeHtml(entry.label) + "</small><b>" + escapeHtml(entry.value) + "</b></span>";
+    }).join("");
     var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item, "compact");
-    var qtyRows = mode === "MONTAGEM" ? [
-      "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
-      "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
-      "<span>Na caixa <b>" + formatQty(qty.packed) + "</b></span>",
-      "<span>Restante <b>" + formatQty(qty.pendingPacking) + "</b></span>",
-      boxInfo
-    ].join("") : [
-      "<span>Solicitado <b>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</b></span>",
-      "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
-      "<span>Pendente <b>" + formatQty(qty.pendingSeparation) + "</b></span>",
-      "<span>Status <b>" + escapeHtml(displayTransferStatusLabel(transferItemStatusLabel(item))) + "</b></span>"
-    ].join("");
     return [
       "<article class=\"" + itemClass + "\" data-transfer-work-item=\"" + item.id + "\">",
-      "<div class=\"transfer-work-item-head\"><strong>SKU " + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
-      productName ? "<p>" + escapeHtml(productName) + "</p>" : "",
-      "<div class=\"transfer-qty-row\">",
+      "<div class=\"transfer-work-item-head\"><strong class=\"transfer-item-sku\">SKU " + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
+      "<div class=\"transfer-item-product\">" + (productName ? escapeHtml(productName) : "Produto sem descrição") + "</div>",
+      "<div class=\"transfer-item-context\"><span class=\"transfer-location-chip " + locationBadgeClass + "\">" + escapeHtml(locationBadgeLabel) + "</span></div>",
+      flagsHtml,
+      "<div class=\"transfer-qty-row transfer-qty-grid\">",
       qtyRows,
       "</div>",
-      mode === "MONTAGEM" ? "" : "<small>" + escapeHtml(transferCompactLocationLabel(item)) + "</small>",
       stockGuidance,
       transferWorkItemActionsHtml(item, mode),
       "</article>"
@@ -13846,14 +13877,18 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var origin = transferOriginSuggestionLabel(item.originSuggested);
     var originResolved = ["CAPTACAO", "LOJA", "CAPTACAO_E_LOJA", "LOJA_E_CAPTACAO"].indexOf(item.originSuggested) >= 0;
     var tone = originResolved && !item.stockAlert ? "ok" : item.originSuggested === "VERIFICAR" || item.originSuggested === "SEM_SALDO" || item.originSuggested === "SEM_SALDO_CAPTACAO" || item.originSuggested === "NAO_ENCONTRADO_CAPTACAO" || Number(item.quantityShortage || 0) > 0 ? "danger" : "warning";
-    var captureLocation = transferCaptureLocationCode(item) || "-";
+    var captureLocation = transferCaptureLocationCode(item) || "Sem localização";
     return [
-      "<div class=\"transfer-stock-guidance " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
-      "<strong>Retirar: " + escapeHtml(origin) + "</strong>",
-      "<span>Retirar captação " + formatQty(item.suggestedCaptureQty || 0) + " | retirar loja " + formatQty(item.suggestedStoreQty || 0) + " | faltante " + formatQty(item.quantityShortage || 0) + "</span>",
-      "<span>Saldo loja " + transferStockValueLabel(item.storeAvailable, null) + "</span>",
-      "<span>Saldo captação " + transferStockValueLabel(item.captureAvailable, item) + "</span>",
-      "<span>Local CAPTACAO: " + escapeHtml(captureLocation) + "</span>",
+      "<div class=\"transfer-stock-guidance transfer-stock-guidance-structured " + escapeHtml(tone) + (variant ? " " + escapeHtml(variant) : "") + "\">",
+      "<strong class=\"transfer-pick-instruction\">Pegar: " + escapeHtml(origin || "Verificar") + "</strong>",
+      "<div class=\"transfer-pick-grid\">",
+      "<span><small>Retirar captação</small><b>" + formatQty(item.suggestedCaptureQty || 0) + "</b></span>",
+      "<span><small>Retirar loja</small><b>" + formatQty(item.suggestedStoreQty || 0) + "</b></span>",
+      "<span><small>Faltante</small><b>" + formatQty(item.quantityShortage || 0) + "</b></span>",
+      "<span><small>Saldo loja</small><b>" + escapeHtml(transferStockValueLabel(item.storeAvailable, null)) + "</b></span>",
+      "<span><small>Saldo captação</small><b>" + escapeHtml(transferStockValueLabel(item.captureAvailable, item)) + "</b></span>",
+      "<span><small>Local CAPTAÇÃO</small><b>" + escapeHtml(captureLocation) + "</b></span>",
+      "</div>",
       item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "",
       "</div>"
     ].join("");
