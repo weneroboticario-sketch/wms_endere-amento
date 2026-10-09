@@ -13,6 +13,7 @@ import {
   signOutAuthSession
 } from "./src/auth.js";
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
+import { buildPackedProductRows, packedProductCsv, parseTransferQuantity } from "./src/transfer-export.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
 import {
   formatLinhaSeparacaoStationName,
@@ -8078,6 +8079,16 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       updateTransferBoxTotalPreview();
     });
     $("confirmTransferItemButton").addEventListener("click", confirmTransferItem);
+    $("zeroTransferItemButton").addEventListener("click", function () {
+      var item = getTransferItems(transferState.activeTransferId).find(function (entry) { return entry.id === transferState.selectedItemId; });
+      if (!item) return;
+      transferState.manualSeparationQty = true;
+      $("transferScanInput").value = item.sku;
+      $("transferQuantityInput").value = "0";
+      confirmTransferItem();
+    });
+    $("exportPackedExcelButton").addEventListener("click", function () { exportPackedTransfer("xlsx"); });
+    $("exportPackedCsvButton").addEventListener("click", function () { exportPackedTransfer("csv"); });
     $("finishSeparationButton").addEventListener("click", finishSeparation);
     $("startPackingButton").addEventListener("click", startPacking);
     $("finishPackingButton").addEventListener("click", finishPacking);
@@ -13069,6 +13080,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
       $("transferWorkRows").innerHTML = "";
+      $("transferPackedExports").hidden = true;
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
       if ($("transferProductList")) $("transferProductList").innerHTML = "";
       if ($("transferStepSummary")) $("transferStepSummary").innerHTML = "";
@@ -13090,6 +13102,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("transferWorkSection").classList.toggle("transfer-mode-separacao", mode === "SEPARACAO");
     $("transferWorkSection").classList.toggle("transfer-mode-finalizacao", mode === "FINALIZACAO");
     var finalized = isFinalTransferStatus(transfer.status);
+    $("transferPackedExports").hidden = !canExportPackedTransfer(transfer);
     if ($("refreshTransferStockButton")) $("refreshTransferStockButton").hidden = !isAdminOrSupervisor();
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
     var activeItem = getTransferActiveItem(items, mode);
@@ -13112,7 +13125,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     renderTransferFinalSummary(transfer, stats, items, mode);
     var requiresScan = mode === "MONTAGEM";
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
-    var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
+    var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
     var showFinalBoxes = !finalized && mode === "MONTAGEM";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
@@ -13128,6 +13141,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     $("confirmTransferItemButton").textContent = mode === "SEPARACAO" ? "Confirmar quantidade diferente" : mode === "MONTAGEM" ? "Confirmar item na caixa" : "Atualizar item";
     $("transferScanInput").disabled = finalized || !requiresScan;
     $("transferQuantityInput").disabled = finalized;
+    $("zeroTransferItemButton").hidden = finalized || !selectedForQty || ["SEPARACAO", "MONTAGEM"].indexOf(mode) < 0;
     renderTransferBoxFields();
     $("confirmCurrentCollectButton").hidden = finalized || mode !== "SEPARACAO" || allSeparated;
     $("differentSeparationQtyButton").hidden = finalized || mode !== "SEPARACAO" || allSeparated;
@@ -13169,7 +13183,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   function isTransferItemPendingForMode(item, mode) {
     if (mode === "SEPARACAO" && isTransferItemSeparationClosed(item)) return false;
     if (isTransferItemNotSent(item)) return false;
-    if (mode === "MONTAGEM") return !item.isExtra && Number(item.packedQty || 0) < Number(item.separatedQty || 0);
+    if (mode === "MONTAGEM") return !item.isExtra && !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0);
     if (mode === "FINALIZACAO") return false;
     return !item.isExtra && Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
   }
@@ -13300,13 +13314,17 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (!item) return false;
     if (mode === "FINALIZACAO") return true;
     if (isTransferItemNotSent(item)) return false;
-    if (mode === "MONTAGEM") return Number(item.packedQty || 0) < Number(item.separatedQty || 0);
+    if (mode === "MONTAGEM") return !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0);
     return !isTransferItemSeparationClosed(item) && Number(item.separatedQty || 0) < Number(item.requestedQty || 0);
   }
 
   function isTransferItemNotSent(item) {
     var status = normalizeText(item && item.status).toUpperCase();
     return ["FALTA_TOTAL", "NAO_ATENDIDO", "PENDENTE_NAO_ATENDIDO"].indexOf(status) >= 0;
+  }
+
+  function isTransferItemPackingClosed(item) {
+    return isTransferItemNotSent(item) || (item.status === "ENVIADO" && Boolean(item.pendingReason));
   }
 
   function isTransferItemSeparationClosed(item) {
@@ -13626,7 +13644,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     var label = mode === "MONTAGEM" ? "Quantidade na caixa" : "Quantidade separada";
     var value = window.prompt(label + " para o SKU " + item.sku + ":", formatInputQty(current));
     if (value === null) return;
-    var qty = parseQuantity(value);
+    var qty = parseTransferQuantity(value);
     if (qty < 0 || !Number.isFinite(qty)) {
       setStatus("transferWorkStatus", "Informe uma quantidade valida.", "error");
       return;
@@ -13646,6 +13664,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   async function saveTransferItemOperationalQty(item, transfer, mode, qty, button) {
     var actionKey = "edit-transfer-item:" + item.id + ":" + mode;
     if (!beginTransferAction(actionKey, button, "Salvando...")) return;
+    item = Object.assign({}, item);
     try {
       var now = new Date().toISOString();
       var update = { updated_at: now };
@@ -13681,8 +13700,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         divergence_type: item.divergenceType || "",
         status: item.status
       }, transferItemAuditDbFields(item));
-      var response = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, update);
-      if (response.error) throw response.error;
+      await saveTransferItemChecked(item, update);
       invalidateTransferStatsCache();
       await persistTransferLightSummary(transfer, mode === "MONTAGEM" ? "ITEM_PACKED" : "ITEM_SEPARATED", { sku: item.sku });
       await loadTransferData();
@@ -14498,6 +14516,48 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       }
     );
     showToast("XML da transferência exportado.", "success");
+  }
+
+  function canExportPackedTransfer(transfer) {
+    return transfer && transferBelongsToActiveWarehouse(transfer) && !isXmlConferenceTransfer(transfer) &&
+      ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "FINALIZADA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(transfer.status) >= 0;
+  }
+
+  async function exportPackedTransfer(format) {
+    var transfer = getTransferById(transferState.activeTransferId);
+    if (!canExportPackedTransfer(transfer)) return;
+    var button = $(format === "csv" ? "exportPackedCsvButton" : "exportPackedExcelButton");
+    if (!beginTransferAction("export-packed:" + transfer.id, button, "Exportando...")) return;
+    try {
+      var warehouseCode = activeWarehouseCode();
+      // Never export stale cached quantities if the current database read fails.
+      var latest = await supabaseDb.from("wms_transfers").select("status").eq("id", transfer.id).eq("warehouse_code", warehouseCode).single();
+      if (latest.error) throw latest.error;
+      if (!canExportPackedTransfer(Object.assign({}, transfer, { status: latest.data.status }))) throw new Error("A transferencia foi reaberta. Finalize a conferencia antes de exportar.");
+      var items = await fetchTransferItemsForTransfer(transfer.id, warehouseCode);
+      if (warehouseCode !== activeWarehouseCode()) throw new Error("O estoque ativo mudou. Abra novamente a transferencia.");
+      var rows = buildPackedProductRows(items.map(fromDbTransferItem));
+      if (!rows.length) throw new Error("Nenhum produto foi colocado na caixa. Nao ha quantidades para exportar.");
+      var fileName = "PRODUTOSBAIXAS_" + sanitizeFileName(transfer.code || transfer.id);
+      if (format === "csv") downloadTextFile(fileName + ".csv", packedProductCsv(rows), "text/csv;charset=utf-8");
+      else writeWorkbookFromSheets(fileName + ".xlsx", [{ name: "Produtos", rows: rows, cols: [{ wch: 20 }, { wch: 16 }] }]);
+      showToast("Arquivo gerado com " + rows.length + " produto(s) e as quantidades na caixa.", "success");
+    } catch (error) {
+      showToast("Nao foi possivel exportar: " + formatSupabaseError(error), "error");
+    } finally {
+      endTransferAction(button);
+    }
+  }
+
+  async function saveTransferItemChecked(item, update) {
+    var query = supabaseDb.from("wms_transfer_items").update(update).eq("id", item.id)
+      .eq("transfer_id", item.transferId).eq("warehouse_code", activeWarehouseCode());
+    if (item.updatedAt) query = query.eq("updated_at", item.updatedAt);
+    var response = await query.select("id,updated_at").maybeSingle();
+    if (response.error) throw response.error;
+    if (!response.data) throw new Error("Item alterado por outro colaborador ou sem permissao. Atualize a transferencia antes de continuar.");
+    item.updatedAt = response.data.updated_at;
+    applyLocalTransferItemUpdate(item);
   }
 
   function buildTransferConferenceXml(transfer, items, assignment) {
@@ -17033,8 +17093,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function readFinalBoxCountInput() {
     var input = $("transferFinalBoxesInput");
-    var qty = input ? parseQuantity(input.value) : 0;
-    return Number.isFinite(qty) && qty > 0 && Math.floor(qty) === qty ? qty : 0;
+    var qty = input ? parseTransferQuantity(input.value) : NaN;
+    return Number.isFinite(qty) && qty >= 0 && Math.floor(qty) === qty ? qty : null;
   }
 
   async function locateTransferItem() {
@@ -17257,7 +17317,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (mode === "MONTAGEM") renderTransferBoxFields();
     var qtyRaw = normalizeText($("transferQuantityInput").value);
     var hasQtyInput = qtyRaw !== "";
-    var qty = parseQuantity(qtyRaw);
+    var qty = parseTransferQuantity(qtyRaw);
     if (!hasQtyInput && mode === "SEPARACAO") {
       qty = Math.max(0, Number(item.requestedQty || 0) - Number(item.separatedQty || 0)) || Number(item.requestedQty || 0);
     }
@@ -17266,13 +17326,13 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       $("transferQuantityInput").focus();
       return;
     }
-    if (mode !== "SEPARACAO" && (!qty || qty <= 0)) {
-      setStatus("transferWorkStatus", "Informe uma quantidade maior que zero.", "error");
+    if (mode !== "SEPARACAO" && !hasQtyInput) {
+      setStatus("transferWorkStatus", "Informe a quantidade que esta na caixa, ou zero para nao enviar.", "error");
       $("transferQuantityInput").focus();
       return;
     }
     var pendingInfo = null;
-    if (mode === "SEPARACAO" && qty === 0) {
+    if (qty === 0) {
       pendingInfo = requestTransferPendingReason(item);
       if (!pendingInfo) {
         setStatus("transferWorkStatus", "Informe o motivo para registrar quantidade zero.", "warning");
@@ -17285,10 +17345,26 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     }
     var actionButton = mode === "MONTAGEM" || transferState.manualSeparationQty ? $("confirmTransferItemButton") : $("confirmCurrentCollectButton");
     if (!beginTransferAction("confirm-item:" + transfer.id + ":" + item.id + ":" + mode, actionButton, "Salvando...")) return;
+    item = Object.assign({}, item);
+    var itemSaved = false;
     try {
     var now = new Date().toISOString();
     var inputType = mode === "SEPARACAO" ? (transferState.manualSeparationQty ? "AJUSTE_QUANTIDADE" : "CONFIRMACAO_COLETA") : detectTransferInputType();
-    if (mode === "MONTAGEM") {
+    if (mode === "MONTAGEM" && qty === 0) {
+      item.pendingReason = pendingInfo.reason;
+      item.pendingObservation = pendingInfo.observation;
+      item.missingQty = Math.max(0, Number(item.requestedQty || 0) - Number(item.packedQty || 0));
+      item.divergenceType = item.missingQty > 0 ? "FALTA_DE_ITEM" : "";
+      item.status = Number(item.packedQty || 0) > 0 ? "ENVIADO" : "NAO_ATENDIDO";
+      await saveTransferItemChecked(item, Object.assign({
+        quantidade_faltante: item.missingQty,
+        status: item.status,
+        status_operacional: transferOperationalStatusForItem(item),
+        status_divergencia: transferDivergenceStatusForItem(item),
+        updated_at: now
+      }, transferItemAuditDbFields(item)));
+      itemSaved = true;
+    } else if (mode === "MONTAGEM") {
       var boxPacking = readTransferBoxPackingInput(item, qty);
       if (!boxPacking.valid) {
         setStatus("transferWorkStatus", boxPacking.message, "error");
@@ -17342,8 +17418,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));
-      var packResponse = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, packUpdate);
-      if (packResponse.error) throw packResponse.error;
+      await saveTransferItemChecked(item, packUpdate);
+      itemSaved = true;
       if (isBoxQuantityItem(item) && !boxPacking.mixed) await saveProductPackagingPattern(item);
       if (packExcess > 0) await registerTransferDivergence(transfer, item, "QUANTIDADE_EXCEDENTE", packExpected, item.packedQty, packExcess, inputType, "Excesso registrado na montagem da caixa.");
       if (isBoxQuantityItem(item) && (unitDiff !== 0 || boxPatternDiff !== 0) && item.packedQty >= item.separatedQty) {
@@ -17385,8 +17461,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         status: item.status,
         updated_at: now
       }, transferItemAuditDbFields(item));
-      var sepResponse = await updateRowWithSchemaFallback("wms_transfer_items", "id", item.id, sepUpdate);
-      if (sepResponse.error) throw sepResponse.error;
+      await saveTransferItemChecked(item, sepUpdate);
+      itemSaved = true;
       if (sepExcess > 0) await registerTransferDivergence(transfer, item, "QUANTIDADE_EXCEDENTE", sepExpected, item.separatedQty, sepExcess, inputType, "Excesso registrado na separacao.");
       if (sepMissing > 0 && !item.isExtra) await registerTransferDivergence(transfer, item, "FALTA_DE_ITEM", sepExpected, item.separatedQty, -sepMissing, inputType, "Pendencia registrada: " + (item.pendingReason || "Sem motivo informado") + (item.pendingObservation ? " - " + item.pendingObservation : ""));
     }
@@ -17400,6 +17476,11 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     renderTransfers();
     setStatus("transferWorkStatus", mode === "MONTAGEM" ? "Item confirmado na caixa." : "Item marcado como separado.", "success");
     if (mode === "MONTAGEM") $("transferScanInput").focus();
+    } catch (error) {
+      clearTransferInputs();
+      await loadTransferItemsForTransfer(transfer.id, { force: true });
+      renderTransfers();
+      setStatus("transferWorkStatus", (itemSaved ? "Quantidade salva. Falha ao atualizar o resumo; nao repita a bipagem. " : "Nao foi possivel confirmar. Confira a quantidade atual antes de repetir. ") + formatSupabaseError(error), "error");
     } finally {
       endTransferAction(actionButton);
     }
@@ -17426,7 +17507,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       "Outro"
     ];
     var message = [
-      "Este produto foi solicitado, mas sera enviado com quantidade zero. Informe o motivo.",
+      "Encerrar este item sem adicionar unidades. A quantidade ja colocada na caixa sera mantida. Informe o motivo.",
       "",
       "SKU: " + (item && item.sku || "-"),
       "Produto: " + (item && item.description || "-"),
@@ -17484,6 +17565,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     transferState.manualSeparationQty = false;
     renderTransfers();
     setStatus("transferWorkStatus", "Separação concluída. Bipe o SKU e informe a quantidade.", "success");
+    } catch (error) {
+      await loadTransferData();
+      renderTransfers();
+      setStatus("transferWorkStatus", "Nao foi possivel concluir a separacao: " + formatSupabaseError(error), "error");
     } finally {
       endTransferAction(actionButton);
     }
@@ -17504,14 +17589,15 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   async function finishPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
-    if (!transfer) return;
+    if (!transfer || isFinalTransferStatus(transfer.status)) return;
     var finalBoxCount = readFinalBoxCountInput();
-    if (!finalBoxCount) {
-      setStatus("transferWorkStatus", "Informe a quantidade final de caixas para finalizar.", "error");
+    var hasPackedItems = getTransferItems(transfer.id).some(function (item) { return Number(item.packedQty || 0) > 0; });
+    if (finalBoxCount === null || (hasPackedItems && finalBoxCount === 0) || (!hasPackedItems && finalBoxCount > 0)) {
+      setStatus("transferWorkStatus", hasPackedItems ? "Informe a quantidade final de caixas, maior que zero." : "Nenhum item na caixa. Informe zero caixas para finalizar sem envio.", "error");
       if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").focus();
       return;
     }
-    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && !isTransferItemNotSent(item) && item.packedQty < item.separatedQty; });
+    var pending = getTransferItems(transfer.id).filter(function (item) { return !item.isExtra && !isTransferItemPackingClosed(item) && item.packedQty < item.separatedQty; });
     var boxWithoutUnits = getTransferItems(transfer.id).filter(function (item) {
       return !item.isExtra && isBoxQuantityItem(item) && Number(item.packedQty || 0) > 0 && getTransferPackedUnits(item) <= 0;
     });
@@ -17581,6 +17667,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     transferState.activeWorkMode = "FINALIZACAO";
     renderTransfers();
     setStatus("transferWorkStatus", hasDivergence ? "Transferência pronta para nota com divergência." : "Transferência pronta para nota.", hasDivergence ? "warning" : "success");
+    } catch (error) {
+      await loadTransferData();
+      renderTransfers();
+      setStatus("transferWorkStatus", "Nao foi possivel concluir a transferencia: " + formatSupabaseError(error), "error");
     } finally {
       endTransferAction(actionButton);
     }

@@ -18,7 +18,19 @@ export function randomId(prefix = "id") {
 }
 
 export function sanitizeHtml(value) {
-  return DOMPurify.sanitize(value === null || value === undefined ? "" : String(value), {
+  const html = value === null || value === undefined ? "" : String(value);
+  // Table fragments need a table parsing context, including under Trusted Types.
+  const tag = /^\s*<(tr|td|th|thead|tbody|tfoot|colgroup|col)(?:\s|>)/i.exec(html)?.[1]?.toLowerCase();
+  const wrappers = {
+    tr: ["<table><tbody>", "</tbody></table>"],
+    td: ["<table><tbody><tr>", "</tr></tbody></table>"],
+    th: ["<table><tbody><tr>", "</tr></tbody></table>"],
+    thead: ["<table>", "</table>"], tbody: ["<table>", "</table>"],
+    tfoot: ["<table>", "</table>"], colgroup: ["<table>", "</table>"],
+    col: ["<table><colgroup>", "</colgroup></table>"]
+  };
+  const wrapper = wrappers[tag];
+  const clean = DOMPurify.sanitize(wrapper ? wrapper[0] + html + wrapper[1] : html, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["script", "iframe", "object", "embed"],
     FORBID_ATTR: ["srcdoc"],
@@ -27,6 +39,11 @@ export function sanitizeHtml(value) {
     // policy while dynamic WMS panels are being rendered.
     RETURN_TRUSTED_TYPE: false
   });
+  if (!wrapper) return clean;
+  const container = tag === "tr" ? "tbody" : ["td", "th"].includes(tag) ? "tr" : tag === "col" ? "colgroup" : "table";
+  const start = clean.indexOf("<" + container + ">");
+  const end = clean.lastIndexOf("</" + container + ">");
+  return start >= 0 && end > start ? clean.slice(start + container.length + 2, end) : "";
 }
 
 export function installHtmlSecurity() {

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types default dompurify"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verificacao da transferencia</title><link rel="stylesheet" href="/style.css"></head>
+<body><main id="transferencias" style="padding:16px;max-width:1200px;margin:auto">
+<h1>Transferencia conferida</h1><p id="checks">Verificando...</p>
+<div class="table-wrap"><table class="admin-progress-table"><thead><tr><th>SKU</th><th>Produto</th><th>Localizacao</th><th>Prevista</th><th>Na caixa</th><th>Diferenca</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table></div>
+<script type="module">
+import { installHtmlSecurity } from '/src/utils.js';
+installHtmlSecurity();
+const rows = document.getElementById('rows');
+rows.innerHTML = '<tr><td data-label="SKU">00123</td><td data-label="Produto">KIT PRESENTE</td><td data-label="Localizacao">R01-RK01-L02-C</td><td data-label="Prevista">10</td><td data-label="Na caixa">3</td><td data-label="Diferenca">-7</td><td data-label="Status">Parcial</td></tr><tr><td data-label="SKU">94886</td><td data-label="Produto">ESTOJO DE PRODUTOS</td><td data-label="Localizacao">Sem localizacao</td><td data-label="Prevista">2</td><td data-label="Na caixa">0</td><td data-label="Diferenca">-2</td><td data-label="Status">Nao enviado</td></tr><tr><td data-label="SKU">87532</td><td data-label="Produto">PRODUTO CONFERIDO</td><td data-label="Localizacao">R02-RK01-L01-A</td><td data-label="Prevista">3</td><td data-label="Na caixa">3</td><td data-label="Diferenca">0</td><td data-label="Status">Enviado</td></tr>';
+const probe = document.createElement('tbody');
+probe.innerHTML = '<tr><td onclick="alert(1)"><img src="x" onerror="alert(1)"><script>alert(1)<\/script>Teste</td></tr>';
+const safe = !probe.querySelector('script,[onclick],[onerror]') && probe.querySelectorAll('tr').length === 1;
+document.getElementById('checks').textContent = rows.rows.length === 3 && rows.rows[0].cells.length === 7 && safe ? 'OK: tabela preservada e conteudo inseguro removido.' : 'FALHA na renderizacao';
+</script></main></body></html>

@@ -5691,3 +5691,42 @@ body.role-atendente .replenishment-layout {
     font-size: 9pt;
   }
 }
+
+/* Keep transfer reports in a shared column grid, including small viewports. */
+#transferencias .table-wrap { overflow-x: auto; max-width: 100%; }
+#transferencias .table-wrap table {
+  display: table;
+  width: 100%;
+  min-width: 880px;
+  table-layout: auto;
+  border-collapse: collapse;
+}
+#transferencias .table-wrap table thead { display: table-header-group; }
+#transferencias .table-wrap table tbody { display: table-row-group; }
+#transferencias .table-wrap table tr {
+  display: table-row;
+  width: auto;
+  padding: 0;
+  margin: 0;
+  border-radius: 0;
+}
+#transferencias .table-wrap table th,
+#transferencias .table-wrap table td,
+#transferencias .table-wrap table td[data-label] {
+  display: table-cell;
+  width: auto;
+  padding: 10px 12px;
+  min-width: 80px;
+  max-width: 280px;
+  vertical-align: top;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+  border: 1px solid var(--line);
+  line-height: 1.4;
+}
+#transferencias .table-wrap table td::before { display: none; }
+#transferencias .table-wrap table td:nth-child(2) { min-width: 180px; }
+#transferencias .table-wrap table td.transfer-location-cell { min-width: 220px; }
+.transfer-packed-exports { margin: 12px 0; flex-wrap: wrap; }
