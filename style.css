@@ -2092,6 +2092,11 @@ tbody tr:hover td {
 .transfer-card {
   display: grid;
   gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 8px 20px rgba(10, 34, 50, 0.04);
 }
 
 .completed-tasks-panel {
@@ -2115,6 +2120,46 @@ tbody tr:hover td {
 
 .transfer-card .transfer-progress {
   min-width: 0;
+}
+
+.transfer-card--transfer .transfer-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.transfer-card--transfer .transfer-card-status {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e7f0f8;
+  color: #24435a;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.transfer-card--transfer .transfer-card-meta,
+.transfer-card--transfer .transfer-card-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.transfer-card--transfer .transfer-card-meta span,
+.transfer-card--transfer .transfer-card-kpis span {
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f4f8fc;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transfer-card--transfer .transfer-card-meta span b,
+.transfer-card--transfer .transfer-card-kpis span b {
+  color: var(--ink);
+  font-size: 0.72rem;
 }
 
 .transfer-action-stack {
@@ -2951,6 +2996,135 @@ tbody tr:hover td {
 .transfer-work-item small {
   color: var(--muted);
   font-weight: 700;
+}
+
+.transfer-item-sku {
+  font-size: 1rem;
+  letter-spacing: 0.01em;
+}
+
+.transfer-item-product {
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.transfer-item-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.transfer-location-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+
+.transfer-location-chip.ok {
+  background: #e7f8ef;
+  color: #116647;
+  border-color: #b8e4cf;
+}
+
+.transfer-location-chip.alert {
+  background: #fff3e8;
+  color: #9c4a00;
+  border-color: #f2cfb0;
+}
+
+.transfer-item-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.transfer-flag-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.transfer-flag-badge.info {
+  background: #e8f0f7;
+  color: #23445d;
+}
+
+.transfer-flag-badge.warning {
+  background: #fff0cc;
+  color: #8a5b00;
+}
+
+.transfer-flag-badge.danger {
+  background: #ffe3e3;
+  color: #9f1f1f;
+}
+
+.transfer-qty-grid {
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+}
+
+.transfer-item-metric {
+  min-height: 56px;
+}
+
+.transfer-item-metric small {
+  display: block;
+  font-size: 0.69rem;
+  font-weight: 800;
+  color: #5b7284;
+  text-transform: uppercase;
+  letter-spacing: 0.015em;
+}
+
+.transfer-item-metric b {
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.transfer-stock-guidance-structured {
+  gap: 8px;
+}
+
+.transfer-pick-instruction {
+  display: block;
+  font-size: 0.84rem;
+  letter-spacing: 0.01em;
+}
+
+.transfer-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 6px;
+}
+
+.transfer-pick-grid span {
+  display: grid;
+  gap: 2px;
+  padding: 7px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+}
+
+.transfer-pick-grid small {
+  font-size: 0.66rem;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.transfer-pick-grid b {
+  font-size: 0.92rem;
+  color: var(--ink);
 }
 
 .admin-progress-ok {
