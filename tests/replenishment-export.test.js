@@ -9,17 +9,13 @@ test("exports actual quantities, preserves zeros, aggregates codes without repea
     request("1"), request("1"), request("2", { status: "ENTREGUE_NA_LOJA", quantidade_atendida: 2 }),
     request("3", { quantidade_atendida: 0 }), request("4", { status: "ATENDIDO_PARCIAL" }),
     request("5", { warehouse_code: "VDCO" }), request("6", { is_deleted: true }),
-    request("7", { status: "CANCELADO" }), request("8", { status: "SEM_ESTOQUE" })
+    request("7", { status: "CANCELADO" }), request("8", { status: "SEM_ESTOQUE" }),
+    request("9", { export_batch_id: "previous-batch" })
   ], "VDCG"), [["00178", 5]]);
 });
 
-test("completion period includes the whole last day and validates date order", () => {
-  assert.deepEqual(buildReplenishmentExportRows([
-    request("1", { finished_at: "2026-10-08T23:59:59" }),
-    request("2", { finished_at: "2026-10-09T23:59:59" }),
-    request("3", { finished_at: "2026-10-10T00:00:00" })
-  ], "VDCG", "2026-10-09", "2026-10-09"), [["00178", 3]]);
-  assert.throws(() => buildReplenishmentExportRows([], "VDCG", "2026-10-10", "2026-10-09"));
+test("a new attended request for an exported SKU remains eligible", () => {
+  assert.deepEqual(buildReplenishmentExportRows([request("1", { export_batch_id: "old" }), request("2")], "VDCG"), [["00178", 3]]);
   assert.throws(() => buildReplenishmentExportRows([request("1", { quantidade_atendida: "invalid" })], "VDCG"));
 });
 

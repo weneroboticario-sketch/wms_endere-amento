@@ -2,6 +2,10 @@
 
 As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes antigos fora desta sequência.
 
+## Exportacao De Reposicao
+
+`20261010122825_replenishment_export_batches.sql`: registra lotes e selo de exportacao por pedido, bloqueia nova exportacao do mesmo pedido e preserva o arquivo para baixar novamente. Aplicar antes do frontend. Exclusiva do WMS Enderecamento.
+
 ## Ordem
 
 1. `20260923000000_legacy_baseline.sql`: baseline idempotente para uma instalação nova.

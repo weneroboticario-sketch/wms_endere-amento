@@ -47,7 +47,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.10.06.009";
+  var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -4901,6 +4901,48 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return true;
   }
 
+  var replenishmentExportHistory = [];
+  var replenishmentExportHistoryWarehouse = "";
+  var pendingReplenishmentExport = null;
+
+  async function loadReplenishmentExportHistory() {
+    if (!isSupabaseReady() || !canUseNetwork() || !authState.currentUser || isAttendant()) return;
+    var warehouse = activeWarehouseCode();
+    var response = await supabaseDb.from("wms_replenishment_export_batches")
+      .select("id,warehouse_code,created_at,requests")
+      .eq("warehouse_code", warehouse).order("created_at", { ascending: false }).limit(20);
+    if (activeWarehouseCode() !== warehouse) return;
+    if (response.error) {
+      setStatus("replenishmentExportStatus", formatSupabaseError(response.error), "error");
+      return;
+    }
+    replenishmentExportHistory = response.data || [];
+    replenishmentExportHistoryWarehouse = warehouse;
+    $("replenishmentExportHistory").innerHTML = replenishmentExportHistory.length
+      ? replenishmentExportHistory.map(function (batch) {
+        var rows = buildReplenishmentExportRows(batch.requests, warehouse);
+        return "<details><summary>" + escapeHtml(formatDateTime(batch.created_at)) + " - " + rows.length + " material(is) <span class=\"status-badge active\">Transferencia feita</span></summary>" +
+          "<div class=\"table-wrapper\"><table><thead><tr><th>Material</th><th>Quantidade atendida</th><th>Selo</th></tr></thead><tbody>" +
+          rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td><td>" + row[1] + "</td><td>Transferencia feita</td></tr>"; }).join("") +
+          "</tbody></table></div><button class=\"secondary-button\" type=\"button\" data-replenishment-export-download=\"" + escapeHtml(batch.id) + "\">Baixar arquivo novamente</button></details>";
+      }).join("")
+      : "<div class=\"empty-state\">Nenhuma exportacao registrada neste estoque.</div>";
+  }
+
+  async function downloadReplenishmentExportBatch(batch, workbook) {
+    if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
+    if (!workbook) {
+      var response = await fetch("/templates/materiais-reposicao.xlsx");
+      if (!response.ok) throw new Error("Nao foi possivel carregar o modelo de materiais.");
+      workbook = window.XLSX.read(await response.arrayBuffer(), { type: "array" });
+    }
+    var rows = buildReplenishmentExportRows(batch.requests, batch.warehouse_code);
+    fillReplenishmentTemplate(window.XLSX, workbook, rows);
+    if (activeWarehouseCode() !== batch.warehouse_code) throw new Error("O estoque mudou. Abra o historico no estoque desejado.");
+    window.XLSX.writeFile(workbook, "Materiais_Reposicao_" + batch.warehouse_code + "_" + batch.id + ".xlsx");
+    return rows;
+  }
+
   async function exportCompletedReplenishments(event) {
     event.preventDefault();
     if (!authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
@@ -4908,49 +4950,34 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (button.disabled) return;
     var warehouse = activeWarehouseCode();
     var userId = authState.currentUser.id;
-    var from = $("replenishmentExportFrom").value;
-    var through = $("replenishmentExportThrough").value;
     button.disabled = true;
     try {
-      buildReplenishmentExportRows([], warehouse, from, through);
       if (!isSupabaseReady() || !canUseNetwork()) throw new Error("Conecte-se ao Supabase para exportar os pedidos atualizados.");
       if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
-      setStatus("replenishmentExportStatus", "Buscando pedidos concluidos de " + warehouse + "...", "warning");
-      var cutoff = nowIso();
-      var requests = [];
-      var lastId = "";
-      // Read all pages directly, independently of the queue's 120-row cache.
-      while (true) {
-        var query = supabaseDb.from("wms_replenishment_requests")
-          .select("id,warehouse_code,codigo_material,quantidade_atendida,status,is_deleted,finished_at,updated_at")
-          .eq("warehouse_code", warehouse)
-          .in("status", ["CONCLUIDO", "ENTREGUE_NA_LOJA"])
-          .or("is_deleted.is.null,is_deleted.eq.false")
-          .gt("quantidade_atendida", 0)
-          .lte("updated_at", cutoff)
-          .order("id", { ascending: true }).limit(500);
-        if (lastId) query = query.gt("id", lastId);
-        var result = await query;
-        if (result.error) throw result.error;
-        var page = result.data || [];
-        if (!page.length) break;
-        requests = requests.concat(page);
-        lastId = page[page.length - 1].id;
-      }
-      var rows = buildReplenishmentExportRows(requests, warehouse, from, through);
-      if (!rows.length) throw new Error("Nenhum pedido concluido com quantidade atendida neste periodo e estoque.");
       var response = await fetch("/templates/materiais-reposicao.xlsx");
       if (!response.ok) throw new Error("Nao foi possivel carregar o modelo de materiais.");
       var workbook = window.XLSX.read(await response.arrayBuffer(), { type: "array" });
-      fillReplenishmentTemplate(window.XLSX, workbook, rows);
+      fillReplenishmentTemplate(window.XLSX, workbook, []);
       if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== userId) {
         throw new Error("O estoque ou usuario mudou. Exporte novamente no estoque desejado.");
       }
-      window.XLSX.writeFile(workbook, "Materiais_Reposicao_" + warehouse + "_" + (from || "inicio") + "_" + (through || cutoff.slice(0, 10)) + ".xlsx");
-      setStatus("replenishmentExportStatus", rows.length + " material(is) exportado(s) de " + warehouse + ". Quantidade atendida total: " + rows.reduce(function (sum, row) { return sum + row[1]; }, 0) + ".", "success");
+      if (!pendingReplenishmentExport || pendingReplenishmentExport.warehouse !== warehouse || pendingReplenishmentExport.userId !== userId) {
+        pendingReplenishmentExport = { id: randomId(), warehouse: warehouse, userId: userId };
+      }
+      setStatus("replenishmentExportStatus", "Registrando exportacao dos pedidos concluidos...", "warning");
+      var result = await supabaseDb.rpc("create_wms_replenishment_export", { p_warehouse_code: warehouse, p_batch_id: pendingReplenishmentExport.id });
+      if (result.error) {
+        if (result.error.code === "P0002") pendingReplenishmentExport = null;
+        throw result.error;
+      }
+      var batch = Array.isArray(result.data) ? result.data[0] : result.data;
+      var rows = await downloadReplenishmentExportBatch(batch, workbook);
+      pendingReplenishmentExport = null;
+      setStatus("replenishmentExportStatus", rows.length + " material(is) exportado(s). Selo registrado: Transferencia feita. Esses pedidos nao entram na proxima exportacao.", "success");
     } catch (error) {
       setStatus("replenishmentExportStatus", formatSupabaseError(error), "error");
     } finally {
+      await loadReplenishmentExportHistory();
       button.disabled = false;
     }
   }
@@ -8150,6 +8177,19 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     });
     if ($("replenishmentForm")) $("replenishmentForm").addEventListener("submit", handleCreateReplenishment);
     if ($("replenishmentExportForm")) $("replenishmentExportForm").addEventListener("submit", exportCompletedReplenishments);
+    if ($("refreshReplenishmentExportsButton")) $("refreshReplenishmentExportsButton").addEventListener("click", loadReplenishmentExportHistory);
+    if ($("replenishmentExportHistory")) $("replenishmentExportHistory").addEventListener("click", async function (event) {
+      var button = event.target.closest("[data-replenishment-export-download]");
+      if (!button || button.disabled) return;
+      var batch = replenishmentExportHistory.find(function (item) { return item.id === button.dataset.replenishmentExportDownload; });
+      if (!batch) return;
+      button.disabled = true;
+      try {
+        await downloadReplenishmentExportBatch(batch);
+        setStatus("replenishmentExportStatus", "Arquivo baixado novamente. Nenhum pedido novo foi marcado.", "success");
+      } catch (error) { setStatus("replenishmentExportStatus", formatSupabaseError(error), "error"); }
+      finally { button.disabled = false; }
+    });
     if ($("replenishmentSkuInput")) {
       $("replenishmentSkuInput").addEventListener("input", handleReplenishmentSkuInput);
       $("replenishmentSkuInput").addEventListener("keydown", function (event) {
@@ -9201,6 +9241,11 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function applyReplenishmentRoleView(attendantView) {
     if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
+    if (!attendantView && replenishmentExportHistoryWarehouse !== activeWarehouseCode()) {
+      replenishmentExportHistoryWarehouse = activeWarehouseCode();
+      $("replenishmentExportHistory").innerHTML = "";
+      loadReplenishmentExportHistory();
+    }
     if ($("replenishmentLeaderPanel")) $("replenishmentLeaderPanel").hidden = attendantView;
     if ($("replenishmentSuggestionsPanel")) $("replenishmentSuggestionsPanel").hidden = attendantView;
     if ($("replenishmentQueueTitle")) $("replenishmentQueueTitle").textContent = attendantView ? "Meus pedidos deste estoque" : "Pedidos em andamento";

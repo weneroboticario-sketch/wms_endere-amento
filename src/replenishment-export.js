@@ -1,23 +1,11 @@
-export function buildReplenishmentExportRows(requests, warehouseCode, from = "", through = "") {
-  const start = from ? new Date(from + "T00:00:00").getTime() : -Infinity;
-  const endDate = through ? new Date(through + "T00:00:00") : null;
-  if (endDate) endDate.setDate(endDate.getDate() + 1);
-  const end = endDate ? endDate.getTime() : Infinity;
-  if (Number.isNaN(start) || Number.isNaN(end) || start >= end) {
-    throw new Error("Confira o periodo de conclusao.");
-  }
+export function buildReplenishmentExportRows(requests, warehouseCode) {
   const totals = new Map();
   const seen = new Set();
   for (const request of requests) {
-    if (request.warehouse_code !== warehouseCode || request.is_deleted === true ||
+    if (request.warehouse_code !== warehouseCode || request.is_deleted === true || request.export_batch_id ||
         !["CONCLUIDO", "ENTREGUE_NA_LOJA"].includes(request.status)) continue;
     if (seen.has(request.id)) continue;
     seen.add(request.id);
-    if (from || through) {
-      const completed = new Date(request.finished_at || request.updated_at).getTime();
-      if (!Number.isFinite(completed)) throw new Error("Pedido sem data de conclusao valida.");
-      if (completed < start || completed >= end) continue;
-    }
     const quantity = Number(request.quantidade_atendida ?? 0);
     if (!Number.isFinite(quantity) || quantity < 0) throw new Error("Quantidade atendida invalida.");
     if (quantity === 0) continue;
