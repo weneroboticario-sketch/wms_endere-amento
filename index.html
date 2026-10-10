@@ -584,6 +584,16 @@
           </section>
         </div>
 
+        <section class="panel" id="replenishmentExportPanel" hidden>
+          <h3>Exportar reposicoes concluidas</h3>
+          <form id="replenishmentExportForm" class="form-grid">
+            <label>Conclusao a partir de<input id="replenishmentExportFrom" type="date"></label>
+            <label>Conclusao ate<input id="replenishmentExportThrough" type="date"></label>
+            <div class="button-row"><button class="secondary-button" id="exportCompletedReplenishmentButton" type="submit">Exportar materiais (.xlsx)</button></div>
+          </form>
+          <div id="replenishmentExportStatus" class="inline-status" role="status"></div>
+        </section>
+
         <section class="panel replenishment-queue-panel">
           <div class="panel-header">
             <div>

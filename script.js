@@ -14,6 +14,7 @@ import {
 } from "./src/auth.js";
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
 import { buildPackedProductRows, packedProductCsv, parseTransferQuantity } from "./src/transfer-export.js";
+import { buildReplenishmentExportRows, fillReplenishmentTemplate } from "./src/replenishment-export.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
 import {
   formatLinhaSeparacaoStationName,
@@ -4900,6 +4901,60 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return true;
   }
 
+  async function exportCompletedReplenishments(event) {
+    event.preventDefault();
+    if (!authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
+    var button = $("exportCompletedReplenishmentButton");
+    if (button.disabled) return;
+    var warehouse = activeWarehouseCode();
+    var userId = authState.currentUser.id;
+    var from = $("replenishmentExportFrom").value;
+    var through = $("replenishmentExportThrough").value;
+    button.disabled = true;
+    try {
+      buildReplenishmentExportRows([], warehouse, from, through);
+      if (!isSupabaseReady() || !canUseNetwork()) throw new Error("Conecte-se ao Supabase para exportar os pedidos atualizados.");
+      if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
+      setStatus("replenishmentExportStatus", "Buscando pedidos concluidos de " + warehouse + "...", "warning");
+      var cutoff = nowIso();
+      var requests = [];
+      var lastId = "";
+      // Read all pages directly, independently of the queue's 120-row cache.
+      while (true) {
+        var query = supabaseDb.from("wms_replenishment_requests")
+          .select("id,warehouse_code,codigo_material,quantidade_atendida,status,is_deleted,finished_at,updated_at")
+          .eq("warehouse_code", warehouse)
+          .in("status", ["CONCLUIDO", "ENTREGUE_NA_LOJA"])
+          .or("is_deleted.is.null,is_deleted.eq.false")
+          .gt("quantidade_atendida", 0)
+          .lte("updated_at", cutoff)
+          .order("id", { ascending: true }).limit(500);
+        if (lastId) query = query.gt("id", lastId);
+        var result = await query;
+        if (result.error) throw result.error;
+        var page = result.data || [];
+        if (!page.length) break;
+        requests = requests.concat(page);
+        lastId = page[page.length - 1].id;
+      }
+      var rows = buildReplenishmentExportRows(requests, warehouse, from, through);
+      if (!rows.length) throw new Error("Nenhum pedido concluido com quantidade atendida neste periodo e estoque.");
+      var response = await fetch("/templates/materiais-reposicao.xlsx");
+      if (!response.ok) throw new Error("Nao foi possivel carregar o modelo de materiais.");
+      var workbook = window.XLSX.read(await response.arrayBuffer(), { type: "array" });
+      fillReplenishmentTemplate(window.XLSX, workbook, rows);
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== userId) {
+        throw new Error("O estoque ou usuario mudou. Exporte novamente no estoque desejado.");
+      }
+      window.XLSX.writeFile(workbook, "Materiais_Reposicao_" + warehouse + "_" + (from || "inicio") + "_" + (through || cutoff.slice(0, 10)) + ".xlsx");
+      setStatus("replenishmentExportStatus", rows.length + " material(is) exportado(s) de " + warehouse + ". Quantidade atendida total: " + rows.reduce(function (sum, row) { return sum + row[1]; }, 0) + ".", "success");
+    } catch (error) {
+      setStatus("replenishmentExportStatus", formatSupabaseError(error), "error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function replenishmentRequestSelectColumns() {
     return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
@@ -8094,6 +8149,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
       if (event.target.closest("[data-open-replenishments]")) showScreen("reposicao");
     });
     if ($("replenishmentForm")) $("replenishmentForm").addEventListener("submit", handleCreateReplenishment);
+    if ($("replenishmentExportForm")) $("replenishmentExportForm").addEventListener("submit", exportCompletedReplenishments);
     if ($("replenishmentSkuInput")) {
       $("replenishmentSkuInput").addEventListener("input", handleReplenishmentSkuInput);
       $("replenishmentSkuInput").addEventListener("keydown", function (event) {
@@ -9144,6 +9200,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   function applyReplenishmentRoleView(attendantView) {
+    if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
     if ($("replenishmentLeaderPanel")) $("replenishmentLeaderPanel").hidden = attendantView;
     if ($("replenishmentSuggestionsPanel")) $("replenishmentSuggestionsPanel").hidden = attendantView;
     if ($("replenishmentQueueTitle")) $("replenishmentQueueTitle").textContent = attendantView ? "Meus pedidos deste estoque" : "Pedidos em andamento";
