@@ -102,14 +102,15 @@ A migration deve entrar antes do front e da Edge Function. Assim o navegador nun
 6. Tentar acessar uma URL/tela operacional e confirmar o redirecionamento para Consulta SKU.
 7. Repetir a consulta com dados existentes somente no VDCO e confirmar que nenhum registro operacional e retornado.
 
-## Validacao pendente em producao
+## Situacao verificada em 13/10/2026
 
-Nao foram executados nesta entrega:
+A restricao inicial de implantacao foi superada pelas autorizacoes posteriores.
+No projeto de producao `bzqulgdtfpcmkyaldssy`, a policy de leitura de produtos
+inclui ATENDENTE e existem cinco atendentes ativos. A Edge Function
+`manage-wms-user` esta ACTIVE, versao 2. O frontend com o perfil foi publicado.
+As melhorias seguintes de cancelamento, progresso e exportacao tambem foram implantadas.
 
-- migration no projeto Supabase real;
-- deploy real da Edge Function;
-- publicacao real do front-end;
-- login real com identidade Auth ATENDENTE;
-- teste visual em aparelhos reais com dados de producao.
-
-Essas acoes ficaram deliberadamente fora da execucao para respeitar a exigencia de revisar o plano antes de alterar policies de producao.
+Os numeros de schema e cache da ordem acima descrevem a primeira entrega;
+versoes posteriores aplicam suas proprias migrations e caches.
+O roteiro com login real ATENDENTE e teste em aparelhos fisicos ainda depende
+de verificacao operacional; esta auditoria nao utilizou senhas dos colaboradores.

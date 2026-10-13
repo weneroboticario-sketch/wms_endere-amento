@@ -1,0 +1,11 @@
+{
+  "name": "Gestão Operacional - CP Álamo",
+  "short_name": "CP Álamo",
+  "description": "Gestão operacional das lojas do CP Álamo.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f6fa",
+  "theme_color": "#102634",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

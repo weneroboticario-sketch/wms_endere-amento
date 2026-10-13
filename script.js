@@ -37,6 +37,22 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 (function () {
   "use strict";
 
+  if (window.location.hostname === "wms-dourados.vercel.app") {
+    window.location.replace("https://wms-cpalamo.vercel.app" + window.location.pathname + window.location.search + window.location.hash);
+    return;
+  }
+  var IS_CP_ALAMO = window.location.hostname === "wms-cpalamo.vercel.app" ||
+    window.location.hostname.indexOf("wms-dourados-") === 0 ||
+    String(import.meta.env.VITE_SUPABASE_URL || "").indexOf("ztxdqvxvkfgfqowaiaep") >= 0;
+  if (IS_CP_ALAMO) {
+    document.title = "Gestão Operacional";
+    document.querySelectorAll(".brand h1, .mobile-topbar strong").forEach(function (element) {
+      element.textContent = "Gestão Operacional";
+    });
+    document.querySelectorAll(".login-brand p").forEach(function (element) { element.textContent = "CP Álamo"; });
+    document.querySelector("link[rel=manifest]").setAttribute("href", "/manifest-cpalamo.webmanifest");
+  }
+
   var globalDashboardController = null;
   var operationalCatalogPromise = null;
 
@@ -3109,6 +3125,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function renderStockBase() {
     if (!$("stockBaseSummary")) return;
+    setTextIfExists("stockImportTitle", activeWarehouseCode() + " - Importar base operacional");
     $("stockBaseSummary").innerHTML = [
       stockSummaryCard("Loja", stockState.summary.loja || 0),
       stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
@@ -6467,7 +6484,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if ($("topWarehouseCode")) $("topWarehouseCode").textContent = globalScope ? "Visao Geral" : code;
     if ($("sidebarWarehouseCode")) $("sidebarWarehouseCode").textContent = globalScope ? "Visao Geral" : "Estoque: " + code;
     if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").hidden = !isGlobalAdministrator(authState.currentUser) || globalScope;
-    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "Visao Geral - Alamo" : "Controle WMS";
+    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "Visao Geral - Alamo" : IS_CP_ALAMO ? "Gestão Operacional" : "Controle WMS";
     var select = $("activeWarehouseSelect");
     if (!select) return;
     var allowed = allowedWarehouseCodesForUser(authState.currentUser);
@@ -9255,8 +9272,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function applyReplenishmentRoleView(attendantView) {
-    if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
-    if (!attendantView && replenishmentExportHistoryWarehouse !== activeWarehouseCode()) {
+    if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
+    if (!IS_CP_ALAMO && !attendantView && replenishmentExportHistoryWarehouse !== activeWarehouseCode()) {
       replenishmentExportHistoryWarehouse = activeWarehouseCode();
       $("replenishmentExportHistory").innerHTML = "";
       loadReplenishmentExportHistory();

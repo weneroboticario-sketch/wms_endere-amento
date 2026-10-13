@@ -11,3 +11,5 @@ O navegador nao consegue confirmar que o usuario recebeu ou importou um arquivo.
 Aplicacao: migration `20261010122825_replenishment_export_batches.sql` no projeto `bzqulgdtfpcmkyaldssy`, seguida do deploy do frontend. Nao altera o CP Alamo.
 
 Validacao: testes focados em PostgreSQL local (PGlite) com papel authenticated, isolamento de estoque, bloqueio ATENDENTE, selo unico, nova solicitacao do mesmo material e recuperacao do mesmo lote. RPC verificada no Supabase de producao dentro de transacao encerrada com ROLLBACK, sem marcar pedidos reais.
+
+Em 13/10/2026, o arquivo antigo encontrado foi conciliado por correspondencia exata de dez IDs, dez materiais e 60 unidades. O lote `legacy-vdcg-20261010-001448` preserva os valores e a data da exportacao original. Esses pedidos deixam de ser elegiveis; novas solicitacoes permanecem elegiveis. A prova, o hash do arquivo e as verificacoes atomicas estao em `scripts/reconcile-known-legacy-export.sql`. Nao se presume transferencia fisica: o selo registra a exportacao do arquivo, conforme o fluxo acordado. Outros arquivos antigos nao encontrados nao sao marcados automaticamente.
