@@ -3425,7 +3425,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       });
       if (upsertRows.length) {
         setStatus("stockImportStatus", "Gravando " + upsertRows.length + " item(ns) alterado(s) no Supabase...", "warning");
-        await upsertStockPositionRows(upsertRows, function (progress) {
+        await upsertStockImportPositions(upsertRows, warehouseCode, sourceType, batchId, function (progress) {
           setStatus("stockImportStatus", "Gravando " + progress.processed + " de " + progress.total + " item(ns) alterado(s) no Supabase...", "warning");
           updateLocalStockBatchProgress(batchId, {
             imported_rows: metrics.unchanged + progress.processed,
@@ -3581,6 +3581,23 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         attemptedMissingColumns[missingColumn] = true;
         payload.forEach(function (row) { delete row[missingColumn]; });
       }
+    }
+  }
+
+  async function upsertStockImportPositions(rows, warehouseCode, sourceType, batchId, onProgress) {
+    var chunkSize = 200;
+    for (var i = 0; i < rows.length; i += chunkSize) {
+      var chunk = rows.slice(i, i + chunkSize);
+      var response = await runSupabaseRequestWithRetry("upsert-stock-import-positions", function () {
+        return supabaseDb.rpc("wms_upsert_import_positions", {
+          p_warehouse_code: warehouseCode,
+          p_source_type: sourceType,
+          p_batch_id: batchId,
+          p_rows: chunk
+        });
+      });
+      if (response.error) throw response.error;
+      if (onProgress) onProgress({ processed: Math.min(i + chunk.length, rows.length), total: rows.length });
     }
   }
 
