@@ -28,4 +28,3 @@ test("login does not query warehouses before a Supabase connection exists", asyn
   const context = vm.createContext({isSupabaseReady: () => false, loadWarehouses: () => assert.fail("Unexpected query")});
   assert.equal(await vm.runInContext(code + "ensureWarehouses()", context), false);
 });
-
