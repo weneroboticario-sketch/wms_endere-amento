@@ -42,7 +42,7 @@ test("overview isolates a failed source and does not load stock positions or tra
   const data=await service.getGlobalOverview();
   assert.equal(data.warehouses.length,1);
   assert.equal(data.errors.replenishment,"Unavailable");
-  assert.ok(data.tasks);assert.ok(data.transfers);assert.equal(sections.length,7);
+  assert.ok(data.tasks);assert.ok(data.transfers);assert.equal(sections.length,8);
 });
 test("an event in tasks does not cancel an in-flight transfer query",async()=>{
   let finish;
