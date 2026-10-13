@@ -56,7 +56,7 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
     diagnostics.queries++;
     const started=Date.now();
     const { data, error } = await client.rpc("wms_global_dashboard", {
-      p_section: section,
+      p_section: section === "imports" ? "imports_period" : section,
       p_filters: { ...filters, stalled_hours: config.stalledHours, stale_hours: config.staleHours },
       p_limit: limit,
       p_offset: offset

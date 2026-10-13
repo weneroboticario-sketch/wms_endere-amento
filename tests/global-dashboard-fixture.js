@@ -34,7 +34,7 @@ const client={from:query,auth:{getSession:async()=>({data:{session}}),refreshSes
   if(section==="team")return {data:{rows:match(team.rows),users:team.users},error:null};
   if(section==="users")return {data:{rows:team.users,total:1},error:null};
   if(section==="captacao")return {data:{rows:match(batches)},error:null};
-  if(section==="imports")return {data:{rows:match(batches.map(b=>({...b,status:"COMPLETED",source_type:"CAPTACAO",total:1,today:1,average_seconds:45,duration_samples:1})))},error:null};
+  if(section==="imports"||section==="imports_period")return {data:{rows:match(batches.map(b=>({...b,status:"COMPLETED",source_type:"CAPTACAO",total:1,today:1,average_seconds:45,duration_samples:1})))},error:null};
   if(section==="activity")return {data:{rows:match(operational).slice(0,20)},error:null};
   if(section==="transfer_items")return {data:{rows:[{id:"item",sku:"00178",descricao:"Perfume",quantidade_solicitada:5,quantidade_separada:4,quantidade_lacrada:4}],total:1},error:null};
   if(section==="alerts")return {data:{rows:[],total:0},error:null};

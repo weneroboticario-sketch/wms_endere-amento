@@ -55,6 +55,7 @@ test("global dashboard authenticates only the two control users and reads active
     const overview = await read("overview");
     await db.exec("reset role");
     await db.exec(await readFile(new URL("../supabase/migrations/20261013205124_global_dashboard_executive.sql",import.meta.url),"utf8"));
+    await db.exec(await readFile(new URL("../supabase/migrations/20261013213851_global_dashboard_import_period.sql",import.meta.url),"utf8"));
     await db.exec("set role authenticated");
     const after = await read("overview");
     for (const domain of ["tasks","replenishment","transfers"]) assert.deepEqual(after[domain].summary,overview[domain].summary);
@@ -76,6 +77,8 @@ test("global dashboard authenticates only the two control users and reads active
     assert.equal((await read("replenishment",{query:"Missing"})).rows.length,0);
     assert.equal((await read("captacao")).rows.find(r=>r.warehouse_code==="14177").file_name,"base.xlsx");
     assert.equal((await read("imports")).rows.length,1);
+    assert.equal((await read("imports_period",{since:new Date(Date.now()-86400000).toISOString()})).rows.length,1);
+    assert.equal((await read("imports_period",{until:new Date(Date.now()-7200000).toISOString()})).rows.length,0);
     assert.equal((await read("users",{warehouse:"14177"})).rows.length,3);
     assert.equal((await read("transfer_items",{id:"TR-1"})).rows.length,0);
     assert.ok((await read("alerts")).rows.length>=2);

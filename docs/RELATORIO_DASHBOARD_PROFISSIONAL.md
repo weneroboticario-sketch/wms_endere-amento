@@ -49,6 +49,11 @@ existem nos registros. Sem eventos validos, o painel informa dados insuficientes
 Hoje e 7 dias selecionam o periodo global para manter os componentes coerentes.
 O feed descreve a situacao registrada, sem inventar nomes ou transicoes.
 
+Migration adicional 20261013213851_global_dashboard_import_period.sql cria
+imports_period. O painel usa essa secao para respeitar o intervalo exato selecionado,
+sem a janela minima de sete dias da secao imports antiga, que continua compativel.
+Nenhum processo de importacao utiliza ou e alterado por essa consulta.
+
 ## Seguranca e desempenho
 
 RPC publica SECURITY INVOKER. Implementacao privada com autorizacao explicita
