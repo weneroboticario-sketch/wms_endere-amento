@@ -31,9 +31,35 @@ import {
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
+import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
 (function () {
   "use strict";
+
+  var globalDashboardController = null;
+  var operationalCatalogPromise = null;
+
+  async function ensureOperationalCatalog() {
+    if (!operationalCatalogPromise) operationalCatalogPromise = loadBuiltinProducts().then(function (products) { BUILTIN_PRODUCTS = products; });
+    await operationalCatalogPromise;
+  }
+
+  function isGlobalDashboardScope() {
+    return isGlobalView(authState.currentUser, activeWarehouseCode());
+  }
+
+  function ensureGlobalDashboard() {
+    if (!globalDashboardController) {
+      globalDashboardController = mountGlobalDashboard({
+        root: $("globalDashboard"), client: supabaseDb,
+        getUser: function () { return authState.currentUser; },
+        getWarehouse: activeWarehouseCode, openWarehouse: switchActiveWarehouse,
+        onSync: function (live) { setSyncStatus(live ? "Visao Geral atualizada" : "Atualizacao periodica", live ? "success" : "warning"); }
+      });
+    }
+    return globalDashboardController;
+  }
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
@@ -418,7 +444,6 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     registerServiceWorker();
     bindConnectivityEvents();
     await loadSupabaseConfig();
-    BUILTIN_PRODUCTS = await loadBuiltinProducts();
     fillSupabaseForm();
     fillTaskSoundSetting();
     initSupabaseClient();
@@ -910,6 +935,12 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
+    if (screenId === "globalDashboard") {
+      ensureGlobalDashboard().start();
+      await ensureGlobalDashboard().refresh();
+      return true;
+    }
+    if (isGlobalDashboardScope() && screenId === "saudeSistema") return true;
     if (screenId === "usuarios") {
       var managementResults = await Promise.all([
         ensureUsersLoaded({ repair: false, force: true }),
@@ -6263,6 +6294,13 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
+    if (isGlobalDashboardScope()) {
+      resetSessionInactivityTimeout();
+      await showScreen("globalDashboard");
+      if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
+      return;
+    }
+    await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
       canAccessScreen("reposicao") ? hydrateReplenishmentDataFromCache() : Promise.resolve(false)
@@ -6409,27 +6447,41 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     }
     if (code === activeWarehouseCode()) return;
     stopLeaderLiveSync();
+    stopTaskPolling();
     await pauseLocalCacheForContextChange("warehouse-switch");
     setActiveWarehouse(code);
     resetLazyModuleState(true);
+    applyRolePermissions();
+    if (isGlobalDashboardScope()) {
+      await showScreen("globalDashboard");
+      return;
+    }
+    await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
       canAccessScreen("reposicao") ? hydrateReplenishmentDataFromCache() : Promise.resolve(false)
     ]);
     await showScreen(defaultScreenForUser());
+    startTaskPolling();
     if (!realtimeState.active || realtimeState.warehouseCode !== activeWarehouseCode()) startLeaderLiveSync();
     showToast("Estoque ativo: " + code + ".", "success");
   }
 
   function renderActiveWarehouseUi() {
     var code = activeWarehouseCode();
-    if ($("topWarehouseCode")) $("topWarehouseCode").textContent = code;
-    if ($("sidebarWarehouseCode")) $("sidebarWarehouseCode").textContent = "Estoque: " + code;
+    var globalScope = isGlobalDashboardScope();
+    document.body.classList.toggle("global-dashboard-scope", globalScope);
+    if ($("topWarehouseLabel")) $("topWarehouseLabel").textContent = globalScope ? "Escopo" : "Estoque atual";
+    if ($("topWarehouseCode")) $("topWarehouseCode").textContent = globalScope ? "Visao Geral" : code;
+    if ($("sidebarWarehouseCode")) $("sidebarWarehouseCode").textContent = globalScope ? "Visao Geral" : "Estoque: " + code;
+    if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").hidden = !isGlobalAdministrator(authState.currentUser) || globalScope;
+    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "Visao Geral - Alamo" : "Controle WMS";
     var select = $("activeWarehouseSelect");
     if (!select) return;
     var allowed = allowedWarehouseCodesForUser(authState.currentUser);
     select.innerHTML = allowed.map(function (warehouseCode) {
-      return "<option value=\"" + escapeHtml(warehouseCode) + "\">" + escapeHtml(warehouseCode + " - " + warehouseNameForCode(warehouseCode)) + "</option>";
+      var label = warehouseCode === "DOURADOS" && isGlobalAdministrator(authState.currentUser) ? "Visao Geral" : warehouseCode + " - " + warehouseNameForCode(warehouseCode);
+      return "<option value=\"" + escapeHtml(warehouseCode) + "\">" + escapeHtml(label) + "</option>";
     }).join("");
     select.value = code;
     select.hidden = allowed.length <= 1;
@@ -6493,6 +6545,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
+    if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
   }
@@ -6545,6 +6598,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "globalDashboard") return isGlobalDashboardScope();
+    if (isGlobalDashboardScope()) return screenId === "saudeSistema";
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
@@ -7960,6 +8015,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }
 
@@ -7968,6 +8024,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   function bindEvents() {
+    if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").addEventListener("click", function () { switchActiveWarehouse("DOURADOS"); });
     $("loginForm").addEventListener("submit", function (event) {
       event.preventDefault();
       handleLogin();
@@ -9066,6 +9123,10 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 
   function renderAll() {
     var activeScreen = getActiveScreenId();
+    if (activeScreen === "globalDashboard") {
+      if ($("operatorTaskAlert")) $("operatorTaskAlert").hidden = true;
+      return;
+    }
     if (activeScreen === "dashboard") renderDashboard();
     if (activeScreen === "transferencias") renderTransfers();
     if (activeScreen === "reposicao") renderReplenishment();
@@ -10197,6 +10258,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   function startLeaderLiveSync() {
     stopLeaderLiveSync();
     if (!isSupabaseReady() || !authState.currentUser || !canUseNetwork()) return;
+    if (isGlobalDashboardScope()) { ensureGlobalDashboard().start(); return; }
     realtimeState.active = true;
     realtimeState.warehouseCode = activeWarehouseCode();
     realtimeState.failureCount = 0;
@@ -10262,6 +10324,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   function stopLeaderLiveSync() {
+    if (globalDashboardController) globalDashboardController.stop();
     realtimeState.active = false;
     realtimeState.refreshPending = false;
     realtimeState.refreshRunning = false;
@@ -12064,8 +12127,32 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     };
   }
 
+  function renderGlobalDashboardDiagnostics() {
+    var host = $("globalDashboardDiagnostics");
+    if (!isGlobalAdministrator(authState.currentUser)) { if (host) host.hidden = true; return; }
+    if (!host) {
+      host = document.createElement("section");
+      host.id = "globalDashboardDiagnostics";
+      host.className = "global-health-diagnostics panel";
+      $("saudeSistema").prepend(host);
+    }
+    host.hidden = false;
+    var info = globalDashboardController ? globalDashboardController.diagnostics : {};
+    host.innerHTML = "<h3>Dashboard Global</h3><dl>" + [
+      ["Tempo de carregamento", Number(info.durationMs || 0) + " ms"],
+      ["Consultas realizadas", info.queries || 0], ["Leituras do cache", info.cacheHits || 0],
+      ["Ultima atualizacao", info.lastRefresh ? formatDateTime(info.lastRefresh) : "Sem registro"],
+      ["Realtime", info.realtime || "Parado"], ["RPC disponivel", info.rpcAvailable ? "Sim" : "Ainda nao verificada"],
+      ["Ultima falha", info.lastError || "Nenhuma"], ["Cache", "30 segundos; invalidacao por dominio"],
+      ["Fonte mais lenta", (info.slowestSource || "Sem registro") + " (" + Number(info.slowestMs || 0) + " ms)"],
+      ["Consultas por estoque", "Agregadas no banco; sem tempo individual por estoque"]
+    ].map(function (item) { return "<dt>" + escapeHtml(item[0]) + "</dt><dd>" + escapeHtml(String(item[1])) + "</dd>"; }).join("") + "</dl>";
+  }
+
   async function renderSystemHealth(forceRefresh) {
     if (!$("healthSummary")) return;
+    renderGlobalDashboardDiagnostics();
+    if (isGlobalDashboardScope()) return;
     renderHealthWarehouseFilter();
     if (forceRefresh || !healthState.lastReport) {
       await refreshSystemHealth();
@@ -12090,6 +12177,11 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
   }
 
   async function refreshSystemHealth() {
+    if (isGlobalDashboardScope()) {
+      await ensureGlobalDashboard().refresh(true);
+      renderGlobalDashboardDiagnostics();
+      return;
+    }
     if (healthState.loading) return;
     healthState.loading = true;
     setStatus("healthStatus", "Gerando diagnóstico técnico do WMS...", "warning");
