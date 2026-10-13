@@ -51,7 +51,7 @@ test("retrying a partial import reuses the existing row ID when address metadata
     setStatus: () => {}, stockImportSkuKeysWithoutLocation: () => [],
     calculateStockRecordHash: () => "new", stockPositionChanged: () => true,
     toDbStockPosition: row => row,
-    upsertStockPositionRows: async rows => written.push(...rows),
+    upsertStockImportPositions: async rows => written.push(...rows),
     stockPositionLocation: row => row.codigoEndereco,
     updateStockRowsByIds: async () => {},
     syncBindingsFromLocatedStockImport: async () => ({ synced: 0, created: 0, duplicatesRemoved: 0, changedSkus: [] }),
