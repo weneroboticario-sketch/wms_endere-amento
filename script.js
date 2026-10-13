@@ -2035,34 +2035,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   async function ensureWarehouses() {
-    warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
-    warehouseState.tableAvailable = true;
     if (!isSupabaseReady()) return false;
-    try {
-      var now = new Date().toISOString();
-      var rows = WAREHOUSE_SEED.map(function (warehouse) {
-        return {
-          id: warehouse.id,
-          code: warehouse.code,
-          name: warehouse.name,
-          active: warehouse.active !== false,
-          notes: warehouse.notes || "",
-          updated_at: now
-        };
-      });
-      await upsertInChunks("wms_warehouses", rows, "code");
-      await loadWarehouses();
-      return true;
-    } catch (error) {
-      warehouseState.tableAvailable = !isMissingWarehouseTableError(error);
-      warehouseState.warehouses = WAREHOUSE_SEED.map(fromDbWarehouse);
-      if (!warehouseState.tableAvailable) {
-        console.warn("Tabela wms_warehouses ausente; usando estoques locais ate executar o schema.", error);
-      } else {
-        console.warn("Nao foi possivel preparar estoques:", error);
-      }
-      return false;
-    }
+    // Login must read the configured warehouses without requiring write access.
+    return loadWarehouses();
   }
 
   async function loadWarehouses() {
