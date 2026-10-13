@@ -119,6 +119,7 @@
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
+          <button class="menu-item" data-icon="DAS" data-screen="globalDashboard" type="button" hidden>Visão Geral</button>
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
           <button class="menu-item" data-icon="EXP" data-screen="exportar" type="button">Exportar Excel</button>
@@ -167,9 +168,10 @@
           <strong id="topUserRole">-</strong>
         </div>
         <div class="header-pill warehouse-pill">
-          <span>Estoque atual</span>
+          <span id="topWarehouseLabel">Estoque atual</span>
           <strong id="topWarehouseCode">VDCG</strong>
           <select id="activeWarehouseSelect" hidden></select>
+          <button id="returnGlobalDashboardButton" type="button" hidden>Voltar para Visão Geral</button>
         </div>
         <div class="header-pill task-pill">
           <span>Tarefas</span>
@@ -188,6 +190,7 @@
 
       <section class="task-alert" id="operatorTaskAlert" hidden></section>
 
+      <section class="screen" id="globalDashboard" hidden></section>
       <section class="screen active" id="dashboard">
         <div class="page-title">
           <div>
