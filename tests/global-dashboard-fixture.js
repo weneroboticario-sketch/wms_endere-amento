@@ -29,6 +29,7 @@ const client={from:query,auth:{getSession:async()=>({data:{session}}),refreshSes
   const section=args.p_section,filters=args.p_filters;
   if(window.globalFixture.failSection===section)return {data:null,error:{message:"Fixture unavailable"}};
   const match=rows=>rows.filter(r=>!filters.warehouse||r.warehouse_code===filters.warehouse);
+  if(section==="executive")return {data:{queue:match(warehouses.filter(w=>w.code!=="DOURADOS").map(w=>({warehouse_code:w.code,minutes_0_15:1,minutes_15_30:2,minutes_30_60:1,minutes_60_plus:3,oldest_at:new Date(Date.now()-7200000).toISOString()}))),trends:[{day:now.slice(0,10),domain:"replenishment",created:6,finished:4}],attention:{replenishment:match(operational).slice(0,10),tasks:[],transfers:[]}},error:null};
   if(section.endsWith("_summary"))return {data:{summary:match(summary(section==="transfers_summary"?"EM_SEPARACAO":"PENDENTE"))},error:null};
   if(section==="team")return {data:{rows:match(team.rows),users:team.users},error:null};
   if(section==="users")return {data:{rows:team.users,total:1},error:null};

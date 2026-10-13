@@ -69,16 +69,18 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
     cache.set(key, { at: Date.now(), data });
     return data;
   }
-  async function overview(filters = {}, force = false) {
+  async function overview(filters = {}, force = false, onProgress) {
     authorize();
     const start = Date.now();
     const warehouseResponse = await client.from("wms_warehouses").select("code,name,active").eq("active", true).neq("code", GLOBAL_SCOPE_CODE).order("name");
     if (warehouseResponse.error) throw warehouseResponse.error;
-    const sections = { tasks: "tasks_summary", replenishment: "replenishment_summary", transfers: "transfers_summary", team: "team", captacao: "captacao", imports: "imports", alerts: "alerts_summary" };
+    const sections = { tasks: "tasks_summary", replenishment: "replenishment_summary", transfers: "transfers_summary", team: "team", captacao: "captacao", imports: "imports", alerts: "alerts_summary", executive: "executive" };
     const data = { warehouses: operationalWarehouses(warehouseResponse.data || []).filter(w => !filters.warehouse || w.code === filters.warehouse), errors: {} };
+    onProgress?.(data);
     await Promise.all(Object.entries(sections).map(async ([key, section]) => {
       try { data[key] = await read(section, filters, 30, 0, force); }
       catch (error) { data.errors[key] = error.message || String(error); }
+      onProgress?.(data);
     }));
     diagnostics.durationMs = Date.now() - start;
     diagnostics.lastRefresh = new Date().toISOString();
@@ -99,8 +101,8 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
     getDomainSummary: (domain, filters) => read(domain + "_summary", filters, 50, 0, true),
     getDetails: read,
     invalidate(domain) {
-      const sections=["tasks","tasks_summary","replenishment","replenishment_summary","transfers","transfers_summary","transfer_items","team","users","captacao","imports","alerts","alerts_summary","activity","overview"];
-      const affected=section=>!domain || section===domain || section===domain+"_summary" || ["overview","alerts","alerts_summary","activity"].includes(section) ||
+      const sections=["tasks","tasks_summary","replenishment","replenishment_summary","transfers","transfers_summary","transfer_items","team","users","captacao","imports","alerts","alerts_summary","activity","overview","executive"];
+      const affected=section=>!domain || section===domain || section===domain+"_summary" || ["overview","alerts","alerts_summary","activity"].includes(section) || (section==="executive"&&["tasks","replenishment","transfers","team"].includes(domain)) ||
         (["tasks","replenishment","transfers","team"].includes(domain)&&["team","users"].includes(section)) || (domain==="captacao"&&section==="imports") || (domain==="transfers"&&section==="transfer_items");
       for(const section of sections)if(affected(section))versions.set(section,(versions.get(section)||0)+1);
       for (const key of cache.keys()) {

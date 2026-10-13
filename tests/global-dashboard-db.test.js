@@ -53,6 +53,18 @@ test("global dashboard authenticates only the two control users and reads active
     await db.exec("select set_config('test.uid','00000000-0000-0000-0000-000000000001',false);set role authenticated;");
     const read = async (section,filters={}) => (await db.query("select public.wms_global_dashboard($1,$2::jsonb,30,0) as data",[section,JSON.stringify(filters)])).rows[0].data;
     const overview = await read("overview");
+    await db.exec("reset role");
+    await db.exec(await readFile(new URL("../supabase/migrations/20261013205124_global_dashboard_executive.sql",import.meta.url),"utf8"));
+    await db.exec("set role authenticated");
+    const after = await read("overview");
+    for (const domain of ["tasks","replenishment","transfers"]) assert.deepEqual(after[domain].summary,overview[domain].summary);
+    const executive=await read("executive");
+    assert.equal(executive.queue[0].minutes_0_15,1);
+    assert.equal(executive.queue[0].warehouse_code,"22796");
+    assert.ok(executive.trends.some(r=>r.domain==="replenishment"&&r.created===1));
+    assert.equal((await read("executive",{warehouse:"14177"})).queue.length,0);
+    assert.equal(executive.attention.transfers[0].unassigned,true);
+    assert.deepEqual((await read("executive",{warehouse:"14177"})).attention.transfers,[]);
     assert.deepEqual(overview.warehouses.map(w=>w.code).sort(),["14177","22796"]);
     assert.equal(overview.tasks.summary[0].overdue,1);
     assert.equal(overview.replenishment.summary.length,1);
@@ -72,6 +84,7 @@ test("global dashboard authenticates only the two control users and reads active
     await db.exec("select set_config('test.uid','00000000-0000-0000-0000-000000000002',false)");
     assert.equal((await read("overview")).warehouses.length,2);
     for(const suffix of ["3","4","5","6"]){await db.exec(`select set_config('test.uid','00000000-0000-0000-0000-00000000000${suffix}',false)`);await assert.rejects(read("overview"),/nao autorizada/);}
+    await assert.rejects(read("executive"),/nao autorizada/);
     await db.exec("select set_config('test.uid','',false)");await assert.rejects(read("overview"),/nao autorizada/);
     await db.exec("reset role;update wms_users set active=false where id='admin';select set_config('test.uid','00000000-0000-0000-0000-000000000001',false);set role authenticated");
     await assert.rejects(read("overview"),/nao autorizada/);

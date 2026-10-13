@@ -1,4 +1,61 @@
 .global-filters{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:12px}
+#globalDashboard{color:#26343b;letter-spacing:0}
+#globalDashboard button:focus-visible{outline:3px solid #168b99;outline-offset:3px}
+#globalDashboard .global-primary-metrics{grid-template-columns:repeat(6,minmax(0,1fr));margin:20px 0;gap:10px}
+#globalDashboard .global-kpi{display:flex;flex-direction:column;align-items:flex-start;text-align:left;min-height:126px;padding:14px;background:#fff;border:1px solid #cfdae0;border-top:3px solid #4d8583;border-radius:6px;color:#24363e;box-shadow:0 2px 3px #16283306}
+#globalDashboard .global-kpi.ATENCAO{border-top-color:#b77e10}
+#globalDashboard .global-kpi.CRITICO{border-top-color:#b4545c}
+#globalDashboard .global-kpi.SEM_DADOS{border-top-color:#8b969d}
+.global-kpi span{font-size:12px;font-weight:600;min-height:34px;line-height:1.4}
+.global-kpi strong{font-size:28px;line-height:1.2;margin:8px 0}
+.global-kpi small{font-size:11px;color:#53636c;line-height:1.45}
+.global-priority-band{padding-top:12px;margin-top:0}
+[data-global-priorities]{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.global-priority{border:1px solid #e2d9be;border-left:3px solid #be850e;background:#fff;padding:12px;border-radius:6px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.global-priority.CRITICO{border-left-color:#b54e56;background:#fffafb}
+.global-priority>div{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.global-priority strong{font-size:13px;overflow-wrap:anywhere}
+.global-priority p{font-size:13px;margin:0;line-height:1.45}
+.global-priority small{font-size:11px;color:#69757a}
+#globalDashboard .global-priority button{border:0;background:transparent;text-align:left;color:#096b76;font-weight:600;padding:8px 0 0;margin-top:auto;font-size:12px}
+.global-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.global-section-heading h3{margin:0}
+#globalDashboard .global-section-heading>button,#globalDashboard [data-board-all],#globalDashboard [data-jump="alerts"]{background:transparent;border:1px solid #b8cbd0;color:#126371;padding:7px 12px;border-radius:5px;font-size:12px}
+#globalDashboard .global-domain-metrics{grid-template-columns:repeat(6,minmax(0,1fr))}
+.global-domain-metrics article{background:#fff;box-shadow:none;padding:10px;min-height:78px}
+.global-context{font-size:12px;line-height:1.6;color:#62717a;margin:14px 0}
+.global-band h4{font-size:13px;margin:20px 0 12px;font-weight:650}
+.global-warehouse-grid,.global-base-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}
+.global-warehouse{border:1px solid #cfdbe0;border-top:3px solid #468369;background:#fff;border-radius:6px;padding:14px;min-width:0;display:flex;flex-direction:column}
+.global-warehouse.ATENCAO{border-top-color:#bf8d28}.global-warehouse.CRITICO{border-top-color:#b9545b}.global-warehouse.SEM_DADOS{border-top-color:#909ca2}
+.global-warehouse header,.global-base>div{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.global-warehouse header strong{font-size:15px;display:block;overflow-wrap:anywhere}
+.global-warehouse small,.global-base small{display:block;font-size:11px;color:#63757d;line-height:1.65}
+.global-warehouse dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:9px;font-size:12px;margin:18px 0 0}
+.global-warehouse dt{color:#63747c}.global-warehouse dd{margin:0;overflow-wrap:anywhere}
+#globalDashboard .global-warehouse>button{border:0;border-top:1px solid #e0e7ea;background:transparent;color:#106975;text-align:left;padding:10px 0 0;font-size:12px;margin-top:auto}
+.global-ranking{border-bottom:1px solid #d5e0e4;padding-bottom:10px}
+.global-ranking ol{list-style-position:inside;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;counter-reset:rank}
+.global-ranking li{list-style:none;counter-increment:rank;min-width:0}
+#globalDashboard .global-ranking button{padding:8px 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;text-align:left;border:0;background:transparent;width:100%;color:#30434d}
+.global-ranking button::before{content:counter(rank) ".";font-size:13px;color:#77858b}
+.global-ranking strong{font-size:12px;overflow-wrap:anywhere}.global-ranking small{flex-basis:100%;font-size:11px;color:#687880;line-height:1.4}
+.global-attention-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}
+#globalDashboard .global-attention-list button{padding:12px 0;border:0;border-bottom:1px solid #d8e2e5;display:flex;flex-direction:column;text-align:left;gap:5px;background:transparent;color:#30454e;min-width:0}
+.global-attention-list strong{font-size:13px;overflow-wrap:anywhere}.global-attention-list span{font-size:12px}.global-attention-list small{font-size:11px;color:#64767e}
+#globalDashboard progress{width:100%;height:8px;accent-color:#237c84;display:block;margin:6px 0}
+#globalDashboard .global-base{text-align:left;border:1px solid #d1dfe3;background:#fff;border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:7px;color:#314750}
+.global-base strong{font-size:14px;overflow-wrap:anywhere}.global-base p{font-size:12px;color:#5d707a;margin:0;line-height:1.5}
+.global-section-error{padding:12px;background:#f9ecec;color:#8c4147;font-size:13px;line-height:1.6;border-left:3px solid #bc7075}
+#globalDashboard .global-section-error button{border:0;background:transparent;text-decoration:underline;color:inherit;padding:4px 8px}
+.global-period-switch{display:flex;border:1px solid #c0d2d8;border-radius:5px;overflow:hidden}
+#globalDashboard .global-period-switch button{border:0;background:#fff;font-size:12px;padding:7px 12px;color:#46616e;border-radius:0}
+#globalDashboard .global-period-switch button[aria-pressed=true]{background:#176a74;color:#fff}
+.global-skeletons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:6px 0}
+.global-skeleton{height:84px;background:#e5ecef;border-radius:5px;border:1px solid #dbe5e9}
+@media(max-width:1250px){#globalDashboard .global-primary-metrics,#globalDashboard .global-domain-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}[data-global-priorities]{grid-template-columns:repeat(3,minmax(0,1fr))}.global-ranking ol{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){.global-warehouse-grid,.global-base-grid{grid-template-columns:repeat(2,minmax(0,1fr))}[data-global-priorities]{grid-template-columns:repeat(2,minmax(0,1fr))}.global-ranking ol{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){#globalDashboard .global-primary-metrics,#globalDashboard .global-domain-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.global-warehouse-grid,.global-base-grid,.global-attention-list,[data-global-priorities],.global-ranking ol{grid-template-columns:minmax(0,1fr)}.global-priority>div{justify-content:space-between}.global-skeletons{grid-template-columns:minmax(0,1fr)}.global-warehouse dl{grid-template-columns:100px minmax(0,1fr)}}
 .global-dashboard-scope #saudeSistema> :not(.global-health-diagnostics):not(.page-title){display:none}
 .global-health-diagnostics dl{display:grid;grid-template-columns:minmax(100px,200px) minmax(0,1fr);gap:10px;font-size:13px}.global-health-diagnostics dd{margin:0;overflow-wrap:anywhere}
 #globalDashboard label{display:grid;gap:5px;font-size:12px;font-weight:600;min-width:0}
