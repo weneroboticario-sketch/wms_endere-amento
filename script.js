@@ -3258,7 +3258,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         });
       });
     });
+    var inputRowCount = result.rows.length;
     result.rows = dedupeStockRows(sourceType, result.rows);
+    result.ignored += inputRowCount - result.rows.length;
     return result;
   }
 
@@ -3996,14 +3998,9 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     if (!sku) return "";
     var normalizedSource = normalizeText(sourceType || row.sourceType || row.source_type || "").toUpperCase() || "CAPTACAO";
     var parts = [normalizeWarehouseCode(warehouseCode || row.warehouseCode || row.warehouse_code || activeWarehouseCode()), normalizedSource, sku];
-    if (normalizedSource === "CAPTACAO") {
-      parts.push(normalizeHeader(row.estacao || ""));
-      parts.push(normalizeHeader(row.rack || ""));
-      parts.push(normalizeHeader(row.linha || ""));
-      parts.push(normalizeHeader(row.coluna || ""));
-      parts.push(normalizeHeader(row.codigoEndereco || row.codigo_endereco || ""));
-    }
-    return parts.join("|");
+    // Match the active-position unique index; descriptive address fields are not identity.
+    parts.push(String(row.codigoEndereco || row.codigo_endereco || ""));
+    return JSON.stringify(parts);
   }
 
   function calculateStockRecordHash(row, sourceType) {
@@ -4318,7 +4315,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
           .select(stockPositionSelectColumns())
           .eq("warehouse_code", activeWarehouseCode())
           .eq("active", true)
-          .order("codigo_material", { ascending: true });
+          .order("codigo_material", { ascending: true })
+          .order("id", { ascending: true });
         if (sourceType) query = query.eq("source_type", sourceType);
         return query.range(from, from + pageSize - 1);
       });
@@ -4329,7 +4327,8 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
             .select(stockPositionLegacySelectColumns())
             .eq("warehouse_code", activeWarehouseCode())
             .eq("active", true)
-            .order("codigo_material", { ascending: true });
+            .order("codigo_material", { ascending: true })
+            .order("id", { ascending: true });
           if (sourceType) fallbackQuery = fallbackQuery.eq("source_type", sourceType);
           return fallbackQuery.range(from, from + pageSize - 1);
         });
@@ -4378,33 +4377,11 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     return latestBySku;
   }
 
-  async function syncCaptureStockLocationsFromBindings(positions, warehouseCode) {
+  async function prepareStockExportRows(positions, warehouseCode) {
     var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     var remoteBindings = await fetchWarehouseRows("wms_bindings", "updated_at", false);
-    var now = nowIso();
     var normalizedBindings = (remoteBindings || []).map(fromDbBinding);
     var bindingBySku = latestBindingBySkuForWarehouse(normalizedBindings, normalizedWarehouseCode);
-    var missingBindings = [];
-    (positions || []).forEach(function (position) {
-      if (normalizeText(position.sourceType).toUpperCase() !== "CAPTACAO") return;
-      var skuKey = normalizeSkuKey(position.codigoMaterial);
-      if (!skuKey || bindingBySku[skuKey]) return;
-      var parsed = normalizeLocation(stockPositionLocation(position));
-      if (!parsed.valid) return;
-      var areaCode = importedLocationAreaCode(parsed.code, normalizedWarehouseCode, 1);
-      var binding = createBinding(position.codigoMaterial, parsed, areaCode, position.nomeMaterial || findProductName(position.codigoMaterial) || "");
-      binding.warehouseId = warehouseIdForCode(normalizedWarehouseCode);
-      binding.warehouseCode = normalizedWarehouseCode;
-      binding.createdAt = now;
-      binding.updatedAt = now;
-      missingBindings.push(binding);
-      normalizedBindings.push(binding);
-      bindingBySku[skuKey] = { binding: binding, parsed: parsed };
-    });
-    if (missingBindings.length) {
-      await upsertInChunks("wms_bindings", missingBindings.map(toDbBinding), "id");
-    }
-    var changedRows = [];
     var synchronizedRows = (positions || []).map(function (position) {
       if (normalizeText(position.sourceType).toUpperCase() !== "CAPTACAO") return position;
       var plan = bindingBySku[normalizeSkuKey(position.codigoMaterial)];
@@ -4415,23 +4392,12 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
         rack: String(parsed.rack),
         linha: String(parsed.linha),
         coluna: parsed.letra,
-        codigoEndereco: parsed.code,
-        updatedAt: now
+        codigoEndereco: parsed.code
       });
-      next.recordHash = calculateStockRecordHash(next, "CAPTACAO");
-      if (stockPositionLocation(position) === parsed.code &&
-        normalizeHeader(position.estacao) === normalizeHeader(next.estacao) &&
-        normalizeHeader(position.rack) === normalizeHeader(next.rack) &&
-        normalizeHeader(position.linha) === normalizeHeader(next.linha) &&
-        normalizeHeader(position.coluna) === normalizeHeader(next.coluna)) return position;
-      changedRows.push(toDbStockPosition(next));
       return next;
     });
-    if (changedRows.length) await upsertStockPositionRows(changedRows);
     return {
       rows: synchronizedRows,
-      updated: changedRows.length,
-      created: missingBindings.length,
       addressed: synchronizedRows.filter(function (position) {
         return normalizeText(position.sourceType).toUpperCase() === "CAPTACAO" && !!stockPositionLocation(position);
       }).length
@@ -4724,21 +4690,17 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
     try {
       var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
       var warehouseCode = activeWarehouseCode();
-      setStatus("stockExportStatus", "Atualizando todos os enderecos antes da exportacao...", "warning");
+      setStatus("stockExportStatus", "Carregando estoque e enderecos para exportacao...", "warning");
       var rows = await fetchActiveStockPositions(sourceType);
       var addressSync = sourceType === "LOJA"
-        ? { rows: rows, updated: 0, created: 0, addressed: 0 }
-        : await syncCaptureStockLocationsFromBindings(rows, warehouseCode);
+        ? { rows: rows, addressed: 0 }
+        : await prepareStockExportRows(rows, warehouseCode);
       rows = addressSync.rows;
       var fileName = "Base_Estoque_" + warehouseCode + "_" + dateForFileName(new Date()) + ".xlsx";
       writeWorkbookFromSheets(fileName, [
         { name: "Base", rows: rows.map(stockPositionExportRow) }
       ]);
-      invalidateStockCacheForWarehouseSource(warehouseCode, sourceType || "CAPTACAO", rows.map(function (position) {
-        return position.codigoMaterial;
-      }));
-      await publishAddressCacheInvalidation(warehouseCode, fileName, rows.length, "EXPORTACAO_BASE");
-      setStatus("stockExportStatus", rows.length + " linha(s) exportada(s), " + addressSync.addressed + " endereco(s) conferido(s), " + addressSync.updated + " atualizado(s) na base e " + addressSync.created + " vinculo(s) recuperado(s).", "success");
+      setStatus("stockExportStatus", rows.length + " linha(s) exportada(s), " + addressSync.addressed + " endereco(s) conferido(s).", "success");
     } catch (error) {
       setStatus("stockExportStatus", missingStockSchemaMessage(error), "error");
     }
