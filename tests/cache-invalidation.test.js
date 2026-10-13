@@ -17,12 +17,12 @@ test("capture stock import reconciles bindings and refreshes warehouse caches", 
   assert.match(source, /sourceType === "CAPTACAO"[\s\S]*?publishAddressCacheInvalidation\(activeWarehouseCode\(\), file\.name, parsed\.rows\.length, "IMPORTACAO_BASE"\)/);
 });
 
-test("stock export writes every current addressing location back to the stock base", () => {
-  assert.match(source, /syncCaptureStockLocationsFromBindings\(rows, warehouseCode\)/);
+test("stock export reads current addressing without writing to the stock base", () => {
+  assert.match(source, /prepareStockExportRows\(rows, warehouseCode\)/);
   assert.match(source, /latestBindingBySkuForWarehouse\([\s\S]*?sortByDateDesc/);
-  assert.match(source, /if \(missingBindings\.length\)[\s\S]*?upsertInChunks\("wms_bindings"/);
-  assert.match(source, /if \(changedRows\.length\) await upsertStockPositionRows\(changedRows\)/);
-  assert.match(source, /publishAddressCacheInvalidation\(warehouseCode, fileName, rows\.length, "EXPORTACAO_BASE"\)/);
+  const exportSource = source.slice(source.indexOf("  async function prepareStockExportRows("), source.indexOf("  async function getStockAlerts("));
+  assert.doesNotMatch(exportSource, /upsert|\.insert\(|\.update\(/);
+  assert.doesNotMatch(source, /publishAddressCacheInvalidation\(warehouseCode, fileName, rows\.length, "EXPORTACAO_BASE"\)/);
 });
 
 test("every warehouse module cache is invalidated before active data reloads", () => {
