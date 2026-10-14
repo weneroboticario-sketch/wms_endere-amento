@@ -112,6 +112,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     ["dashboard", "consultaSku", "baseEstoque", "transferencias", "reposicao"].forEach(function (screen) { SCREEN_PERMISSIONS[screen].push("COMPRAS"); });
     SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    SCREEN_PERMISSIONS.demoMode = ["ADMINISTRADOR"];
     var roleOption = document.createElement("option"); roleOption.value = "COMPRAS"; roleOption.textContent = "Compras";
     document.getElementById("userRoleInput").appendChild(roleOption);
   }
@@ -1604,7 +1605,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       supabaseDb = null;
       return false;
     }
-    supabaseDb = createWmsSupabaseClient(supabaseConfig.url, supabaseConfig.key);
+    supabaseDb = createWmsSupabaseClient(supabaseConfig.url, supabaseConfig.key,function () { return IS_CP_ALAMO && document.body.classList.contains("demo-mode-active"); });
     productsTableAvailable = true;
     historySchemaAvailable = true;
     return true;
@@ -6445,6 +6446,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function logout() {
     stopTaskPolling();
     stopLeaderLiveSync();
+    if (cpDemoController) cpDemoController.stop();
+    document.body.classList.remove("demo-mode-active");
+    if($("activeWarehouseSelect"))$("activeWarehouseSelect").inert=false;
     Object.keys(cpWorkflowViews).forEach(function (key) {
       var content = $(key + "Content");
       if (content) content.replaceWith(content.cloneNode(false));
@@ -6637,6 +6641,37 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   var cpWorkflowViews = {};
   var cpWorkflowLoading = {};
+  var cpDemoController = null;
+  function demoAllowedWarehouseCodes() {
+    if (!isAdmin()) return [];
+    return isGlobalAdmin()?allowedWarehouseCodesForUser(authState.currentUser):parseWarehouseCodes(authState.currentUser.allowedWarehouseCodes || authState.currentUser.defaultWarehouseCode || authState.currentUser.warehouseCode);
+  }
+  async function openDemoModeScreen() {
+    if (!IS_CP_ALAMO || !isAdmin() || getActiveScreenId()!=="demoMode") return;
+    await ensureWarehousesLoaded();
+    if (!isAdmin() || getActiveScreenId()!=="demoMode") return;
+    if (!cpDemoController) {
+      var demo = await import("./src/demo-mode.js");
+      cpDemoController = demo.mountDemoMode({
+        root:$("demoModeContent"),user:function () { return authState.currentUser; },
+        active:function () { return IS_CP_ALAMO && isAdmin() && getActiveScreenId()==="demoMode"; },
+        warehouse:activeWarehouseCode,
+        warehouses:function () { var allowed=demoAllowedWarehouseCodes();return warehouseState.warehouses.filter(function (w) { return w.active!==false && allowed.indexOf(w.code)>=0; }); },
+        readSku:async function (sku,code) {
+          if (!isAdmin() || !cpDemoController.isDemoMode() || getActiveScreenId()!=="demoMode" || demoAllowedWarehouseCodes().indexOf(code)<0) throw new Error("Consulta DEMO nao autorizada.");
+          var result=await supabaseDb.from("wms_stock_positions").select("codigo_material,nome_material,total_disponivel,codigo_endereco")
+            .eq("warehouse_code",code).eq("source_type","CAPTACAO").eq("active",true).eq("codigo_material",normalizeSku(sku)).limit(1).maybeSingle();
+          if (result.error)throw result.error;
+          return result.data?{sku:result.data.codigo_material,name:result.data.nome_material,available:Number(result.data.total_disponivel || 0),location:result.data.codigo_endereco}:null;
+        },
+        exit:function () { showScreen(defaultScreenForUser()); }
+      });
+    }
+    if (!isAdmin() || getActiveScreenId()!=="demoMode") return;
+    stopTaskPolling();stopLeaderLiveSync();
+    if($("activeWarehouseSelect"))$("activeWarehouseSelect").inert=true;
+    document.body.classList.add("demo-mode-active");cpDemoController.activate();
+  }
   async function openCpWorkflowScreen(screenId) {
     if (!IS_CP_ALAMO || !canAccessScreen(screenId)) return;
     await ensureWarehousesLoaded();
@@ -6717,6 +6752,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "demoMode") return IS_CP_ALAMO && isAdmin();
     if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0);
@@ -8086,6 +8122,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       showToast("Acesso não autorizado.", "error");
       screenId = defaultScreenForUser();
     }
+    if (screenId!=="demoMode" && document.body.classList.contains("demo-mode-active")) {
+      if(cpDemoController)cpDemoController.stop();
+      if($("activeWarehouseSelect"))$("activeWarehouseSelect").inert=false;
+      document.body.classList.remove("demo-mode-active");startTaskPolling();startLeaderLiveSync();
+    }
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") {
       activateTransferTab("myTransfersSection");
     }
@@ -8105,6 +8146,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     renderAll();
     if (screenId === "usuarios") renderUsers();
     try {
+      if (screenId === "demoMode") await openDemoModeScreen();
       if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
@@ -8136,6 +8178,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "demoMode") return "Demonstracao";
     if (screenId === "fiscalWorkflow") return "Compras / NF";
     if (screenId === "reverseLogistics") return "Logistica Reversa";
     if (screenId === "globalDashboard") return "Central de Controle";

@@ -6,3 +6,4 @@ tmp/
 .env.local
 .env.*.local
 artifacts/cp-workflow-views/
+artifacts/demo-mode/
