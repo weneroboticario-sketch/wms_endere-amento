@@ -33,6 +33,7 @@ import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
+import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 
 (function () {
   "use strict";
@@ -3087,25 +3088,28 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function loadStockOperationalData() {
     var startedAt = performance.now();
     stockState.batches = [];
-    stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
+    stockState.summary = { loja: 0, captacao: 0, pulmao: 0, updatedAt: "" };
     if (!isSupabaseReady()) return false;
     try {
       if (!stockState.importing) {
         await Promise.all([
           closeInterruptedStockImportBatches("LOJA", 10),
-          closeInterruptedStockImportBatches("CAPTACAO", 10)
+          closeInterruptedStockImportBatches("CAPTACAO", 10),
+          pulmaoBaseEnabled() ? closeInterruptedStockImportBatches("PULMAO", 10) : Promise.resolve()
         ]);
       }
       var stockResults = await Promise.all([
         loadStockImportBatchRows(),
         countActiveStockPositions("LOJA"),
-        countActiveStockPositions("CAPTACAO")
+        countActiveStockPositions("CAPTACAO"),
+        pulmaoBaseEnabled() ? countActiveStockPositions("PULMAO") : Promise.resolve(0)
       ]);
       var batchResponse = stockResults[0];
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
       stockState.summary.loja = stockResults[1];
       stockState.summary.captacao = stockResults[2];
+      stockState.summary.pulmao = stockResults[3];
       stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
       stockState.tablesAvailable = true;
       recordPerformanceMetric("lastStockLoadMs", startedAt);
@@ -3152,6 +3156,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
       stockSummaryCard("Ultima importacao", stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-")
     ].join("");
+    if (pulmaoBaseEnabled()) $("stockBaseSummary").innerHTML += stockSummaryCard("Pulmao ativo", stockState.summary.pulmao || 0);
+    renderPulmaoStockControls();
     renderStockBatchRows();
   }
 
@@ -3223,6 +3229,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function importStockFromInput(sourceType) {
     if (!ensureActiveWarehouse()) return;
+    if (sourceType === "PULMAO" && !pulmaoBaseEnabled()) { setStatus("stockImportStatus","Pulmao indisponivel neste estoque.","error"); return; }
     if (!window.XLSX) {
       setStatus("stockImportStatus", "Biblioteca xlsx nao carregada.", "error");
       return;
@@ -3231,13 +3238,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       setStatus("stockImportStatus", "Supabase nao conectado. " + describeSupabaseConfigProblem(), "error");
       return;
     }
-    var input = sourceType === "CAPTACAO" ? $("captureStockFileInput") : $("storeStockFileInput");
+    var input = sourceType === "PULMAO" ? $("pulmaoStockFileInput") : sourceType === "CAPTACAO" ? $("captureStockFileInput") : $("storeStockFileInput");
     var file = input && input.files ? input.files[0] : null;
     if (!file) {
       setStatus("stockImportStatus", "Selecione a planilha de " + stockSourceLabel(sourceType) + ".", "error");
       return;
     }
-    var button = sourceType === "CAPTACAO" ? $("importCaptureStockButton") : $("importStoreStockButton");
+    var button = sourceType === "PULMAO" ? $("importPulmaoStockButton") : sourceType === "CAPTACAO" ? $("importCaptureStockButton") : $("importStoreStockButton");
     if (!beginTransferAction("import-stock-" + sourceType, button, "Importando...")) return;
     try {
       stockState.importing = true;
@@ -3272,20 +3279,20 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     workbook.SheetNames.forEach(function (sheetName) {
       var rows = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: false });
       rows.forEach(function (row) {
-        var sku = firstSkuValue(getByAliases(row, sourceType === "CAPTACAO" ? ["Cod Material", "Codigo Material", "Código Material"] : ["Codigo Material", "Código Material", "Cod Material"]));
-        var name = normalizeText(getByAliases(row, sourceType === "CAPTACAO" ? ["Desc Material", "Descricao Material", "Descrição Material", "Nome Material"] : ["Nome Material", "Desc Material", "Descricao Material", "Descrição Material"]));
+        var sku = firstSkuValue(getByAliases(row, (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? ["Cod Material", "Codigo Material", "Código Material"] : ["Codigo Material", "Código Material", "Cod Material"]));
+        var name = normalizeText(getByAliases(row, (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? ["Desc Material", "Descricao Material", "Descrição Material", "Nome Material"] : ["Nome Material", "Desc Material", "Descricao Material", "Descrição Material"]));
         if (!sku) {
           result.ignored += 1;
           return;
         }
-        var station = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Estacao", "Estação", "Nome estacao", "Nome estação"])) : "";
-        var rack = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Rack", "Nr Rack"])) : "";
-        var line = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Linha prod alocado", "Linha", "Linha Produto Alocado"])) : "";
-        var column = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Coluna prod alocado", "Coluna", "Coluna Produto Alocado"])) : "";
-        var addressText = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Endereco", "Endereço", "Codigo Endereco", "Código Endereco", "Codigo do Endereco", "Código do Endereço", "Localizacao", "Localização", "Localizacao captacao", "Localização captação"])) : "";
-        var locationStatus = sourceType === "CAPTACAO" ? normalizeText(getByAliases(row, ["Status localizacao", "Status localização", "Situacao localizacao", "Situação localização"])) : "";
-        var location = sourceType === "CAPTACAO" ? buildStockImportLocation(station, rack, line, column, addressText) : { valid: false };
-        var rowHasLocationColumns = sourceType === "CAPTACAO" && stockImportRowHasLocationColumns(row);
+        var station = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Estacao", "Estação", "Nome estacao", "Nome estação"])) : "";
+        var rack = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Rack", "Nr Rack"])) : "";
+        var line = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Linha prod alocado", "Linha", "Linha Produto Alocado"])) : "";
+        var column = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Coluna prod alocado", "Coluna", "Coluna Produto Alocado"])) : "";
+        var addressText = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Endereco", "Endereço", "Codigo Endereco", "Código Endereco", "Codigo do Endereco", "Código do Endereço", "Localizacao", "Localização", "Localizacao captacao", "Localização captação"])) : "";
+        var locationStatus = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? normalizeText(getByAliases(row, ["Status localizacao", "Status localização", "Situacao localizacao", "Situação localização"])) : "";
+        var location = (sourceType === "CAPTACAO" || sourceType === "PULMAO") ? buildStockImportLocation(station, rack, line, column, addressText) : { valid: false };
+        var rowHasLocationColumns = (sourceType === "CAPTACAO" || sourceType === "PULMAO") && stockImportRowHasLocationColumns(row);
         result.rows.push({
           codigoMaterial: normalizeSku(sku) || normalizeText(sku),
           nomeMaterial: name,
@@ -3297,7 +3304,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
           linha: line,
           coluna: column,
           codigoEndereco: location.valid ? location.code : "",
-          semLocalizacao: sourceType === "CAPTACAO" && rowHasLocationColumns && !location.valid && stockImportRowMeansNoLocation(station, rack, line, column, addressText, locationStatus),
+          semLocalizacao: (sourceType === "CAPTACAO" || sourceType === "PULMAO") && rowHasLocationColumns && !location.valid && stockImportRowMeansNoLocation(station, rack, line, column, addressText, locationStatus),
           isSellable: isSellableStockProduct(name)
         });
       });
@@ -4171,8 +4178,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
+    var sources = pulmaoBaseEnabled(warehouse) ? ["CAPTACAO","LOJA","PULMAO"] : ["CAPTACAO","LOJA"];
     var missing = cleanSkus.filter(function (sku) {
-      return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || !stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
+      return sources.some(function (source) { return !stockState.positionCache[stockCacheKey(warehouse, source, sku)]; });
     });
     if (missing.length) {
       var response = await supabaseDb
@@ -4180,7 +4188,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         .select(stockPositionSelectColumns())
         .eq("warehouse_code", warehouse)
         .eq("active", true)
-        .in("source_type", ["CAPTACAO", "LOJA"])
+        .in("source_type", sources)
         .in("codigo_material", missing)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error && isMissingColumnError(response.error)) {
@@ -4189,14 +4197,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
           .select(stockPositionLegacySelectColumns())
           .eq("warehouse_code", warehouse)
           .eq("active", true)
-          .in("source_type", ["CAPTACAO", "LOJA"])
+          .in("source_type", sources)
           .in("codigo_material", missing)
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
       missing.forEach(function (sku) {
-        stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] = [];
-        stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] = [];
+        sources.forEach(function (source) { stockState.positionCache[stockCacheKey(warehouse, source, sku)] = []; });
       });
       (response.data || []).map(fromDbStockPosition).forEach(function (position) {
         var key = stockCacheKey(warehouse, position.sourceType, position.codigoMaterial);
@@ -4205,9 +4212,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       });
     }
     return cleanSkus.reduce(function (all, sku) {
-      return all
-        .concat(stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || [])
-        .concat(stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] || []);
+      return all.concat(sources.flatMap(function (source) { return stockState.positionCache[stockCacheKey(warehouse, source, sku)] || []; }));
     }, []);
   }
 
@@ -4217,7 +4222,16 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function getStockSuggestion(sku, requestedQty) {
     var positions = await getStockPositionsForSkus([sku]);
-    return buildStockSuggestion(sku, requestedQty, positions);
+    var suggestion = buildStockSuggestion(sku, requestedQty, positions);
+    if (pulmaoBaseEnabled()) {
+      var pulmao = summarizePulmao(positions);
+      suggestion.pulmaoFound = pulmao.found;
+      suggestion.pulmaoAvailable = pulmao.available;
+      suggestion.pulmaoLocation = pulmao.locations;
+      suggestion.pulmaoPositions = pulmao.rows;
+      if (!suggestion.name && pulmao.found) suggestion.name = pulmao.rows[0].nomeMaterial || "";
+    }
+    return suggestion;
   }
 
   async function getTransferStockSuggestion(args) {
@@ -4371,8 +4385,42 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     return /\b(ML|G|GR|GRS|KG|MG|L|LT|LITRO|LITROS)\b/.test(text) || /\d+\s*(ML|G|GR|GRS|KG|MG|L|LT)\b/.test(text);
   }
 
+  function pulmaoBaseEnabled(warehouseCode) {
+    return IS_CP_ALAMO && hasPulmaoBase(warehouseCode || activeWarehouseCode());
+  }
+
+  function renderPulmaoStockControls() {
+    var enabled = pulmaoBaseEnabled();
+    ["stockPulmaoImportGroup","exportPulmaoStockTemplateButton","separationSourceLabel"].forEach(function (id) {
+      if ($(id)) $(id).hidden = !enabled;
+    });
+    var option = $("stockPulmaoSourceOption");
+    if (option) { option.hidden = !enabled; option.disabled = !enabled; }
+    var filter = $("stockExportSourceFilter");
+    if (filter) {
+      filter.options[0].textContent = enabled ? "Todas as bases" : "Ambas";
+      if (!enabled && filter.value === "PULMAO") filter.value = "";
+    }
+    if (!enabled && $("separationSourceInput")) $("separationSourceInput").value = "CAPTACAO";
+  }
+
   function stockSourceLabel(sourceType) {
-    return sourceType === "LOJA" ? "Loja" : "Captacao";
+    return sourceType === "PULMAO" ? "Pulmao" : sourceType === "LOJA" ? "Loja" : "Captacao";
+  }
+
+  async function exportSelectedPulmaoRows(warehouseCode) {
+    if (!pulmaoBaseEnabled(warehouseCode)) throw new Error("Pulmao indisponivel neste estoque.");
+    var positions = await fetchActiveStockPositions("PULMAO");
+    if (activeWarehouseCode() !== warehouseCode) throw new Error("Estoque alterado durante a exportacao. Tente novamente.");
+    var rows = buildPulmaoSeparationRows(positions, normalizeLocation, function (rua,rack,area,linha,coluna,sku) {
+      return linhaSeparacaoRow(rua,rack,area,linha,coluna,sku,warehouseCode);
+    });
+    if (!rows.length) throw new Error("Nenhum endereco valido na base Pulmao.");
+    writeWorkbookFromSheets("LinhaSeparacao_" + warehouseCode + "_Pulmao_" + dateForFileName(new Date()) + ".xlsx", [
+      { name:"LinhaSeparacao", rows:[REQUIRED_COLUMNS].concat(rows) },
+      { name:"Saldos", rows:positions.map(stockPositionExportRow) }
+    ]);
+    setStatus("exportStatus", rows.length + " endereco(s) do Pulmao exportado(s).", "success");
   }
 
   async function fetchActiveStockPositions(sourceType) {
@@ -4748,7 +4796,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function exportStockTemplate(sourceType) {
     try {
-      var headers = sourceType === "CAPTACAO"
+      var headers = (sourceType === "CAPTACAO" || sourceType === "PULMAO")
         ? [["Codigo Material", "Nome Material", "Total fisico", "Total alocado", "Total disponivel", "Estacao", "Rack", "Linha", "Coluna"]]
         : [["Codigo Material", "Nome Material", "Total fisico", "Total alocado", "Total disponivel"]];
       writeWorkbookFromSheets("Modelo_Base_" + stockSourceLabel(sourceType) + "_" + dateForFileName(new Date()) + ".xlsx", [{ name: stockSourceLabel(sourceType), rows: headers }]);
@@ -4762,13 +4810,14 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     try {
       var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
       var warehouseCode = activeWarehouseCode();
+      if (sourceType === "PULMAO" && !pulmaoBaseEnabled()) throw new Error("Pulmao indisponivel neste estoque.");
       setStatus("stockExportStatus", "Carregando estoque e enderecos para exportacao...", "warning");
       var rows = await fetchActiveStockPositions(sourceType);
-      var addressSync = sourceType === "LOJA"
+      var addressSync = (sourceType === "LOJA" || sourceType === "PULMAO")
         ? { rows: rows, addressed: 0 }
         : await prepareStockExportRows(rows, warehouseCode);
       rows = addressSync.rows;
-      var fileName = "Base_Estoque_" + warehouseCode + "_" + dateForFileName(new Date()) + ".xlsx";
+      var fileName = "Base_Estoque_" + warehouseCode + "_" + (sourceType ? stockSourceLabel(sourceType) + "_" : "") + dateForFileName(new Date()) + ".xlsx";
       writeWorkbookFromSheets(fileName, [
         { name: "Base", rows: rows.map(stockPositionExportRow) }
       ]);
@@ -8379,6 +8428,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if ($("exportExcelButton")) $("exportExcelButton").addEventListener("click", exportExcel);
     if ($("importCaptureStockButton")) $("importCaptureStockButton").addEventListener("click", function () { importStockFromInput("CAPTACAO"); });
     if ($("importStoreStockButton")) $("importStoreStockButton").addEventListener("click", function () { importStockFromInput("LOJA"); });
+    if ($("importPulmaoStockButton")) $("importPulmaoStockButton").addEventListener("click", function () { importStockFromInput("PULMAO"); });
+    if ($("exportPulmaoStockTemplateButton")) $("exportPulmaoStockTemplateButton").addEventListener("click", function () { exportStockTemplate("PULMAO"); });
+    if ($("separationSourceInput")) $("separationSourceInput").addEventListener("change", function () {
+      if ($("exportExcelButton")) $("exportExcelButton").textContent = $("separationSourceInput").value === "LOJA" ? "Exportar Estoque Loja" : "Exportar LinhaSeparacao";
+    });
     if ($("exportCaptureStockTemplateButton")) $("exportCaptureStockTemplateButton").addEventListener("click", function () { exportStockTemplate("CAPTACAO"); });
     if ($("exportStoreStockTemplateButton")) $("exportStoreStockTemplateButton").addEventListener("click", function () { exportStockTemplate("LOJA"); });
     if ($("exportCurrentStockButton")) $("exportCurrentStockButton").addEventListener("click", exportCurrentStock);
@@ -9325,6 +9379,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function renderAll() {
+    renderPulmaoStockControls();
     var activeScreen = getActiveScreenId();
     if (activeScreen === "globalDashboard") {
       if ($("operatorTaskAlert")) $("operatorTaskAlert").hidden = true;
@@ -15822,11 +15877,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     }
     if (requestSeq !== skuSearchRequestSeq) return;
     addHistory("SKU consultado", sku, "", stockSuggestion && stockSuggestion.baseFound !== false ? "Consulta CAPTACAO encontrou o produto." : "Produto não encontrado na base da CAPTAÇÃO.");
-    var hasStockData = stockSuggestion && stockSuggestion.baseFound !== false;
+    var hasStockData = stockSuggestion && (stockSuggestion.baseFound !== false || stockSuggestion.pulmaoFound);
     if (isAttendant()) {
       setStatus("skuSearchStatus", stockError ? "Nao foi possivel consultar a quantidade disponivel agora." : "Quantidade disponivel consultada.", stockError ? "error" : "success");
     } else if (!hasStockData) {
       setStatus("skuSearchStatus", stockError || "Produto não encontrado na base da CAPTAÇÃO.", stockError ? "error" : "warning");
+    } else if (stockSuggestion.pulmaoFound && stockSuggestion.baseFound === false) {
+      setStatus("skuSearchStatus", "Produto encontrado somente no Pulmao.", "success");
     } else if (!stockSuggestion.captureLocation) {
       setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO, sem localização cadastrada.", "warning");
     } else {
@@ -15923,6 +15980,15 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       grid.appendChild(skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)));
       grid.appendChild(skuHubTile("Captacao alocado", formatQty(suggestion.captureAllocated)));
       grid.appendChild(skuHubTile("Captacao disponivel", formatQty(suggestion.captureAvailable)));
+    }
+    if (pulmaoBaseEnabled()) {
+      grid.appendChild(skuHubTile("Pulmao disponivel", suggestion.pulmaoFound ? formatQty(suggestion.pulmaoAvailable) : "Nao importado"));
+      if (!attendantView) {
+        grid.appendChild(skuHubTile("Localizacao Pulmao", suggestion.pulmaoLocation || "Sem localizacao"));
+        (suggestion.pulmaoPositions || []).forEach(function (position) {
+          grid.appendChild(skuHubTile("Pulmao: " + (position.codigoEndereco || "Sem endereco"), formatQty(position.totalDisponivel) + " un."));
+        });
+      }
     }
     card.appendChild(grid);
 
@@ -16396,6 +16462,20 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if (!ensureActiveWarehouse()) return;
     if (!window.XLSX) {
       showToast("Biblioteca xlsx nao carregada. Verifique a conexao com a internet.", "error");
+      return;
+    }
+    var selectedSource = pulmaoBaseEnabled() && $("separationSourceInput") ? $("separationSourceInput").value : "CAPTACAO";
+    if (selectedSource !== "CAPTACAO") {
+      if (!beginTransferAction("export-selected-base", $("exportExcelButton"), "Exportando...")) return;
+      try {
+        if (selectedSource === "PULMAO") await exportSelectedPulmaoRows(activeWarehouseCode());
+        else {
+          var lojaRows = await fetchActiveStockPositions("LOJA");
+          writeWorkbookFromSheets("Base_Estoque_" + activeWarehouseCode() + "_Loja_" + dateForFileName(new Date()) + ".xlsx", [{name:"Loja",rows:lojaRows.map(stockPositionExportRow)}]);
+          setStatus("exportStatus", lojaRows.length + " produto(s) da Loja exportado(s).", "success");
+        }
+      } catch(error) { setStatus("exportStatus", missingStockSchemaMessage(error), "error"); }
+      finally { endTransferAction($("exportExcelButton")); }
       return;
     }
     if (!(await ensureWarehouseSeparatedTable("wms_bindings", "exportStatus"))) return;
