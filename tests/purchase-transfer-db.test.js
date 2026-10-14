@@ -23,6 +23,7 @@ async function database() {
     grant select,insert,update,delete on all tables in schema public to authenticated;`);
   await db.exec(await readFile(new URL("../supabase/migrations/20261014032016_purchase_transfer_multi_sku.sql",import.meta.url),"utf8"));
   await db.exec(await readFile(new URL("../supabase/migrations/20261014034555_purchase_transfer_scoped_user_columns.sql",import.meta.url),"utf8"));
+  await db.exec(await readFile(new URL("../supabase/migrations/20261014134729_purchase_origin_minimum.sql",import.meta.url),"utf8"));
   await db.exec(`revoke select on public.wms_users from authenticated;
     do $$declare columns text;begin
       select string_agg(quote_ident(column_name),',') into columns from information_schema.columns
@@ -32,6 +33,39 @@ async function database() {
   await db.exec("select set_config('test.role','COMPRAS',false);set role authenticated");return db;
 }
 const create=(db,items,key="test-action-001",origin="A",responsible="stock")=>db.query("select wms_create_purchase_transfer($1,'b',$2,'NORMAL','',$3,$4) result",[origin,responsible,JSON.stringify(items),key]);
+
+test("minimum origin is inclusive, aggregated before pagination and read only",async()=>{
+  const db=await database();try{
+    await db.exec("reset role");
+    for(let n=0;n<85;n++){
+      const sku="MIN"+String(n).padStart(3,"0");
+      await db.query("insert into wms_stock_positions(id,warehouse_code,source_type,codigo_material,total_disponivel) values($1,'B','LOJA',$2,0),($3,'A','CAPTACAO',$2,$4)",["d"+n,sku,"o"+n,n<40?19:20]);
+    }
+    await db.exec("insert into wms_stock_positions(id,warehouse_code,source_type,codigo_material,total_disponivel) values('extra','A','CAPTACAO','MIN040',1),('unknown','B','LOJA','UNKNOWN',0)");
+    await db.exec("set role authenticated");
+    const query=async(min,page=0)=>(await db.query("select wms_purchase_store_needs_by_origin('B','A','MIN','NEED','ZERO',3,$1,$2) result",[page,min])).rows[0].result;
+    const first=await query(20),second=await query(20,1);
+    assert.equal(first.total,45);assert.equal(first.rows.length,40);assert.equal(second.rows.length,5);
+    assert.ok(first.rows.every(r=>Number(r.available)>=20 && Number(r.need)===3));
+    assert.equal(Number(first.rows.find(r=>r.sku==="MIN040").available),21);
+    assert.equal(new Set([...first.rows,...second.rows].map(r=>r.sku)).size,45);
+    assert.equal((await query(19)).total,85);
+    assert.equal((await query(21)).total,1);
+    const all=(await db.query("select wms_purchase_store_needs_by_origin('B','A') result")).rows[0].result;
+    const legacy=(await db.query("select wms_purchase_store_needs('B','A') result")).rows[0].result;
+    assert.equal(all.total,legacy.total);
+    const positive=(await db.query("select wms_purchase_store_needs_by_origin('B','A','','NEED','ZERO',3,0,1) result")).rows[0].result;
+    assert.equal(positive.total,86);
+    await assert.rejects(query(-1),/Parametros invalidos/);
+    await assert.rejects(query(1.5),/Parametros invalidos/);
+    await assert.rejects(db.query("select wms_purchase_store_needs_by_origin('B','C')"),/nao autorizada/);
+    await assert.rejects(db.query("select wms_purchase_store_needs_by_origin('C','A')"),/nao autorizada/);
+    assert.equal((await db.query("select count(*)::int n from wms_transfers")).rows[0].n,0);
+    assert.equal(Number((await db.query("select total_disponivel from wms_stock_positions where id='one'")).rows[0].total_disponivel),50);
+    await db.exec("select set_config('test.role','OPERADOR',false)");
+    await assert.rejects(query(20),/nao autorizada/);
+  }finally{await db.close();}
+});
 test("criacao atomica, retry idempotente, snapshot e nenhuma reserva",async()=>{
   const db=await database();try{
     const items=[{sku:"01302",requested_quantity:20,store_need_quantity:30}];
