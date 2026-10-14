@@ -100,6 +100,7 @@
         <div class="brand-mark">W</div>
         <div>
           <h1>WMS Estoque</h1>
+          <p class="cpalamo-only" hidden>Operação CP Álamo</p>
           <p id="sidebarModuleSubtitle">Base CAPTACAO</p>
         </div>
       </div>
@@ -152,7 +153,7 @@
 
       <div class="sidebar-note">
         <span class="status-dot"></span>
-        Dados salvos no Supabase
+        Dados sincronizados
       </div>
     </aside>
 
@@ -163,11 +164,11 @@
           <span>Plataforma operacional</span>
           <strong>Controle WMS</strong>
         </div>
-        <div class="header-pill">
+        <div class="header-pill header-user-pill">
           <span>Usuario</span>
           <strong id="topUserName">-</strong>
         </div>
-        <div class="header-pill">
+        <div class="header-pill header-role-pill">
           <span>Perfil</span>
           <strong id="topUserRole">-</strong>
         </div>
@@ -217,7 +218,8 @@
           <button class="primary-button" data-screen-target="consultaSku" type="button">Consultar CAPTACAO</button>
         </div>
 
-        <div class="metric-grid">
+        <h3 class="dashboard-group-title">Estoque</h3>
+        <div class="metric-grid dashboard-stock-metrics">
           <article class="metric-card">
             <span>SKUs CAPTACAO</span>
             <strong id="metricSkus">0</strong>
@@ -234,6 +236,9 @@
             <span>Ultima atualizacao</span>
             <strong id="metricUpdated">-</strong>
           </article>
+        </div>
+        <h3 class="dashboard-group-title">Operação</h3>
+        <div class="metric-grid dashboard-operation-metrics">
           <article class="metric-card compact-metric">
             <span>Transferencias abertas</span>
             <strong id="metricTransfersOpen">0</strong>

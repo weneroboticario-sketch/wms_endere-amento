@@ -46,11 +46,11 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     window.location.hostname.indexOf("wms-dourados-") === 0 ||
     String(import.meta.env.VITE_SUPABASE_URL || "").indexOf("ztxdqvxvkfgfqowaiaep") >= 0;
   if (IS_CP_ALAMO) {
-    document.title = "Gestão Operacional";
+    document.title = "WMS Álamo";
     document.querySelectorAll(".brand h1, .mobile-topbar strong").forEach(function (element) {
-      element.textContent = "Gestão Operacional";
+      element.textContent = "WMS Álamo";
     });
-    document.querySelectorAll(".login-brand p").forEach(function (element) { element.textContent = "CP Álamo"; });
+    document.querySelectorAll(".login-brand p").forEach(function (element) { element.textContent = "Operação CP Álamo"; });
     document.querySelector("link[rel=manifest]").setAttribute("href", "/manifest-cpalamo.webmanifest");
   }
 
@@ -6585,7 +6585,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if ($("topWarehouseCode")) $("topWarehouseCode").textContent = globalScope ? "Visao Geral" : code;
     if ($("sidebarWarehouseCode")) $("sidebarWarehouseCode").textContent = globalScope ? "Visao Geral" : "Estoque: " + code;
     if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").hidden = !isGlobalAdministrator(authState.currentUser) || globalScope;
-    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "Visao Geral - Alamo" : IS_CP_ALAMO ? "Gestão Operacional" : "Controle WMS";
+    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "WMS Álamo - Visão Geral" : IS_CP_ALAMO ? "WMS Álamo" : "Controle WMS";
     var select = $("activeWarehouseSelect");
     if (!select) return;
     var allowed = allowedWarehouseCodesForUser(authState.currentUser);
@@ -16113,11 +16113,11 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     return [
       "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
       "<div class=\"sku-card-head\">",
-      "<div><strong>" + escapeHtml(binding.sku) + "</strong><span>" + escapeHtml(productName) + "</span></div>",
+      "<div><strong class=\"operational-code\">" + escapeHtml(binding.sku) + "</strong><span class=\"operational-description\">" + escapeHtml(productName) + "</span></div>",
       latest ? "<span class=\"latest-pill\">Mais recente</span>" : "",
       hasConflict ? "<span class=\"status-badge pending\">SKU em conflito</span>" : "",
       "</div>",
-      "<div class=\"sku-location-code\">" + escapeHtml(binding.locationCode) + "</div>",
+      "<div class=\"sku-location-code location-code\">" + escapeHtml(binding.locationCode) + "</div>",
       "<div class=\"sku-location-grid\">",
       "<span>Rua<strong>" + pad2(binding.rua) + "</strong></span>",
       "<span>Rack<strong>" + binding.rack + "</strong></span>",
