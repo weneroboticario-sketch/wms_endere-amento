@@ -5,3 +5,4 @@ tmp/
 .env
 .env.local
 .env.*.local
+artifacts/cp-workflow-views/

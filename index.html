@@ -116,6 +116,8 @@
           <p class="menu-label">Processos</p>
           <button class="menu-item transfer-full-menu" data-icon="TRF" data-screen="transferencias" type="button">Transferencias</button>
           <button class="menu-item" data-icon="REP" data-screen="reposicao" type="button">Pedidos de Reposicao <span class="menu-badge" id="replenishmentMenuBadge" hidden>0</span></button>
+          <button class="menu-item cpalamo-only" data-icon="NF" data-screen="fiscalWorkflow" type="button" hidden>Compras / NF</button>
+          <button class="menu-item cpalamo-only" data-icon="REV" data-screen="reverseLogistics" type="button" hidden>Logistica Reversa</button>
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
@@ -191,6 +193,14 @@
       <section class="task-alert" id="operatorTaskAlert" hidden></section>
 
       <section class="screen" id="globalDashboard" hidden></section>
+      <section class="screen" id="fiscalWorkflow" hidden>
+        <div class="page-title"><div><p class="eyebrow">Processos</p><h2>Compras / NF</h2></div></div>
+        <div id="fiscalWorkflowContent"></div><div id="fiscalWorkflowStatus" class="inline-status" role="status"></div>
+      </section>
+      <section class="screen" id="reverseLogistics" hidden>
+        <div class="page-title"><div><p class="eyebrow">Processos</p><h2>Logistica Reversa</h2></div></div>
+        <div id="reverseLogisticsContent"></div><div id="reverseLogisticsStatus" class="inline-status" role="status"></div>
+      </section>
       <section class="screen active" id="dashboard">
         <div class="page-title">
           <div>
@@ -956,6 +966,7 @@
         </section>
 
         <section class="transfer-section" id="transferWorkSection" hidden>
+          <div class="button-row cpalamo-only" hidden><button class="secondary-button" data-screen-target="fiscalWorkflow" type="button">Documento fiscal / Compras</button></div>
           <section class="panel transfer-execution-panel">
             <div class="panel-header">
               <h3 id="transferWorkTitle">Separação</h3>

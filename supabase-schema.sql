@@ -1,0 +1,24 @@
+-- New CP Alamo installation: run with psql -v ON_ERROR_STOP=1 -f supabase-schema.sql.
+-- Requires Supabase Auth/Storage schemas. Existing installations use migrations only.
+\ir supabase/migrations/20260923000000_legacy_baseline.sql
+\ir supabase/migrations/20260924012751_auth_profile_foundation.sql
+\ir supabase/migrations/20260924012758_rls_security_hardening.sql
+\ir supabase/migrations/20260924014042_operational_data_integrity.sql
+\ir supabase/migrations/20260924115056_user_supervision_compatibility.sql
+\ir supabase/migrations/20260930184528_allow_operator_binding_delete.sql
+\ir supabase/migrations/20261001001530_addressing_concurrency_fast_path.sql
+\ir supabase/migrations/20261001143352_atendente_profile_and_priority.sql
+\ir supabase/migrations/20261001210406_replenishment_cancellation_request.sql
+\ir supabase/migrations/20261006005523_addressing_history_optional.sql
+\ir supabase/migrations/20261007010406_email_password_recovery.sql
+\ir supabase/migrations/20261007123000_central_tarefas.sql
+\ir supabase/migrations/20261008120000_tarefas_arquivamento.sql
+\ir supabase/migrations/20261008150000_wms_resolve_login_email.sql
+\ir supabase/migrations/20261008184900_fix_task_reference_upsert.sql
+\ir supabase/migrations/20261013150858_global_admin_overview.sql
+\ir supabase/migrations/20261013205124_global_dashboard_executive.sql
+\ir supabase/migrations/20261013210945_stock_import_active_key_upsert.sql
+\ir supabase/migrations/20261013213851_global_dashboard_import_period.sql
+\ir supabase/migrations/20261013233105_cpalamo_display_name.sql
+\ir supabase/migrations/20261014003034_purchases_invoice_workflow.sql
+\ir supabase/migrations/20261014003039_reverse_logistics_monthly_targets.sql

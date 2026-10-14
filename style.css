@@ -5904,3 +5904,27 @@ body.role-atendente .replenishment-layout {
 #transferencias .table-wrap table td:nth-child(2) { min-width: 180px; }
 #transferencias .table-wrap table td.transfer-location-cell { min-width: 220px; }
 .transfer-packed-exports { margin: 12px 0; flex-wrap: wrap; }
+
+#fiscalWorkflowContent, #reverseLogisticsContent { display: grid; gap: 16px; min-width: 0; width: 100%; }
+#fiscalWorkflowContent > *, #reverseLogisticsContent > * { min-width: 0; }
+#fiscalWorkflowContent .table-wrapper, #reverseLogisticsContent .table-wrapper { overflow-x: auto; width: 100%; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+#fiscalWorkflowContent table, #reverseLogisticsContent table { display: table; width: 100%; min-width: 760px; border-collapse: collapse; table-layout: auto; }
+#fiscalWorkflowContent thead, #reverseLogisticsContent thead { display: table-header-group; }
+#fiscalWorkflowContent tbody, #reverseLogisticsContent tbody { display: table-row-group; }
+#fiscalWorkflowContent tr, #reverseLogisticsContent tr { display: table-row; }
+#fiscalWorkflowContent th, #fiscalWorkflowContent td, #reverseLogisticsContent th, #reverseLogisticsContent td { display: table-cell; padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+#fiscalWorkflowContent small { display: block; margin-top: 4px; }
+#fiscalWorkflowContent .stock-summary-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+#fiscalWorkflowContent form, #reverseLogisticsContent form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 12px 0; }
+#fiscalWorkflowContent label, #reverseLogisticsContent label { display: grid; gap: 6px; min-width: 0; }
+#fiscalWorkflowContent input, #fiscalWorkflowContent select, #reverseLogisticsContent input, #reverseLogisticsContent select { min-width: 0; max-width: 100%; }
+#fiscalWorkflowContent td, #reverseLogisticsContent td { white-space: nowrap; word-break: normal; overflow-wrap: normal; }
+#fiscalWorkflowContent .button-row, #reverseLogisticsContent .button-row { flex-wrap: wrap; gap: 10px; }
+#fiscalDetail, #reverseDetail { border-top: 1px solid var(--line); padding-top: 16px; }
+#fiscalHistoryRows { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  #fiscalWorkflowContent .stock-summary-grid { grid-template-columns: minmax(0,1fr); }
+  #fiscalQueueFilter { grid-column: 1 / -1; }
+  #fiscalWorkflowContent form, #reverseLogisticsContent form { grid-template-columns: minmax(0,1fr); }
+  #fiscalWorkflowContent .button-row > label, #reverseLogisticsContent .button-row > label { flex: 1 1 180px; }
+}

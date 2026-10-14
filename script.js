@@ -89,7 +89,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
+  var EXPECTED_SCHEMA_VERSION = IS_CP_ALAMO ? "2026.10.14.002" : "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -107,6 +107,14 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     baseEstoque: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     configuracoes: ["ADMINISTRADOR"]
   };
+  if (IS_CP_ALAMO) {
+    ROLES.push("COMPRAS");
+    ["dashboard", "consultaSku", "baseEstoque", "transferencias", "reposicao"].forEach(function (screen) { SCREEN_PERMISSIONS[screen].push("COMPRAS"); });
+    SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    var roleOption = document.createElement("option"); roleOption.value = "COMPRAS"; roleOption.textContent = "Compras";
+    document.getElementById("userRoleInput").appendChild(roleOption);
+  }
   var TRANSFER_STATUSES = [
     "PENDENTE",
     "ATRIBUIDA",
@@ -131,6 +139,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     "CANCELADA"
   ];
   var FINAL_TRANSFER_STATUSES = ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "FINALIZADA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "UNIFICADA", "ARQUIVADA_POR_UNIFICACAO"];
+  if (IS_CP_ALAMO) TRANSFER_STATUSES.push("NF_EM_PREPARACAO", "NF_ANEXADA", "LIBERADA_PARA_ENVIO", "DESPACHADA", "RECEBIDA");
   var MERGEABLE_TRANSFER_STATUSES = ["PENDENTE", "ATRIBUIDA", "AGUARDANDO_SEPARACAO"];
   var REPLENISHMENT_STATUSES = ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "SEPARADO", "ENTREGUE_NA_LOJA", "CONCLUIDO", "ATENDIDO_PARCIAL", "SEM_ESTOQUE", "CANCELADO"];
   var FINAL_REPLENISHMENT_STATUSES = ["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE", "CANCELADO"];
@@ -954,6 +963,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if (screenId === "globalDashboard") {
       ensureGlobalDashboard().start();
       await ensureGlobalDashboard().refresh();
+      refreshCpDashboardSummary();
       return true;
     }
     if (isGlobalDashboardScope() && screenId === "saudeSistema") return true;
@@ -1675,6 +1685,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function transferSummarySelectColumns() {
     return [
       "id",
+      "request_origin", "requires_invoice", "invoice_stage", "status_changed_at",
       "codigo_transferencia",
       "nome_transferencia",
       "estabelecimento_id",
@@ -2520,6 +2531,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var deletedAt = row.deleted_at || "";
     return {
       id: row.id,
+      requestOrigin: row.request_origin || "LEGADO",
+      requiresInvoice: row.requires_invoice === true,
+      invoiceStage: row.invoice_stage || "",
       code: row.codigo_transferencia || "",
       name: row.nome_transferencia || "",
       establishmentId: row.estabelecimento_id || "",
@@ -3126,6 +3140,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function renderStockBase() {
     if (!$("stockBaseSummary")) return;
     setTextIfExists("stockImportTitle", activeWarehouseCode() + " - Importar base operacional");
+    if (IS_CP_ALAMO) document.querySelector("#baseEstoque .stock-base-layout > .panel").hidden = isPurchasesUser();
     $("stockBaseSummary").innerHTML = [
       stockSummaryCard("Loja", stockState.summary.loja || 0),
       stockSummaryCard("CAPTACAO ativa", stockState.summary.captacao || 0),
@@ -4985,7 +5000,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return (IS_CP_ALAMO ? "request_origin,requires_invoice,invoice_stage," : "") + "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -4997,6 +5012,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var status = REPLENISHMENT_STATUSES.indexOf(row.status) >= 0 ? row.status : "PENDENTE";
     return {
       id: row.id,
+      requestOrigin: row.request_origin || "LEGADO",
+      requiresInvoice: row.requires_invoice === true,
+      invoiceStage: row.invoice_stage || "",
       createdAt: row.created_at || nowIso(),
       updatedAt: row.updated_at || row.created_at || nowIso(),
       warehouseCode: rowWarehouseCode(row),
@@ -5573,6 +5591,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function completeReplenishmentRequest(id) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (IS_CP_ALAMO && request.requiresInvoice) {
+      await showScreen("fiscalWorkflow");
+      showToast("Conclua conferencia, caixas e NF no painel Compras / NF.", "warning");
+      return request;
+    }
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     if (Number(request.attendedQty || 0) < Number(request.requestedQty || 0)) throw new Error("Ainda ha quantidade pendente. Use Atender para parcial ou Sem estoque com motivo.");
     var now = nowIso();
@@ -5609,6 +5632,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function canClaimReplenishmentRequest(request) {
+    if (isPurchasesUser()) return false;
     if (!authState.currentUser || !request || request.isDeleted) return false;
     if (isAttendant()) return false;
     if (request.status !== "PENDENTE") return false;
@@ -6417,6 +6441,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function logout() {
     stopTaskPolling();
     stopLeaderLiveSync();
+    Object.keys(cpWorkflowViews).forEach(function (key) {
+      var content = $(key + "Content");
+      if (content) content.replaceWith(content.cloneNode(false));
+    });
+    cpWorkflowViews = {}; cpWorkflowLoading = {};
+    cpDashboardSummaryAt=0;cpDashboardSummaryWarehouse="";
+    document.querySelectorAll(".cp-workflow-summary").forEach(function (host) { host.remove(); });
     await pauseLocalCacheForContextChange("logout");
     if (sessionInactivityTimer) window.clearTimeout(sessionInactivityTimer);
     sessionInactivityTimer = null;
@@ -6547,7 +6578,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-compras");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
@@ -6561,6 +6592,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function applyRolePermissions() {
     var visibleScreens = 0;
+    document.querySelectorAll(".cpalamo-only").forEach(function (element) { element.hidden = !IS_CP_ALAMO; });
     document.querySelectorAll(".admin-only").forEach(function (element) {
       element.hidden = !isAdmin();
     });
@@ -6596,6 +6628,79 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     return authState.currentUser && authState.currentUser.role === "ADMINISTRADOR";
   }
 
+  function isPurchasesUser() { return IS_CP_ALAMO && authState.currentUser && authState.currentUser.role === "COMPRAS"; }
+
+  var cpWorkflowViews = {};
+  var cpWorkflowLoading = {};
+  async function openCpWorkflowScreen(screenId) {
+    if (!IS_CP_ALAMO || !canAccessScreen(screenId)) return;
+    await ensureWarehousesLoaded();
+    if (!cpWorkflowViews[screenId]) {
+      if (!cpWorkflowLoading[screenId]) cpWorkflowLoading[screenId] = (async function () {
+        var context = {
+          client: function () { return supabaseDb; }, user: function () { return authState.currentUser; },
+          warehouse: activeWarehouseCode, global: isGlobalDashboardScope,
+          warehouses: function () { var allowed = allowedWarehouseCodesForUser(authState.currentUser); return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; }); },
+          diagnostic: recordPerformanceError,
+          changed: function () { scheduleTransferRealtimeRefresh("fiscal-workflow", 100); },
+          openTransfer: async function (id) {
+            var result = await supabaseDb.from("wms_transfers").select("*").eq("id", id).single();
+            if (result.error) return showToast(formatSupabaseError(result.error), "error");
+            if (result.data.warehouse_code !== activeWarehouseCode()) await switchActiveWarehouse(result.data.warehouse_code);
+            applyLocalTransferUpdate(fromDbTransfer(result.data)); transferState.activeTransferId = id;
+            await showScreen("transferencias"); await loadTransferItemsForTransfer(id, { force: true });
+            activateTransferTab("transferWorkSection"); renderTransferWork();
+          }
+        };
+        if (screenId === "fiscalWorkflow") {
+          var fiscal = await import("./src/purchases-workflow.js"); cpWorkflowViews[screenId] = fiscal.createPurchasesWorkflow(context);
+        } else {
+          var reverse = await import("./src/reverse-logistics.js"); cpWorkflowViews[screenId] = reverse.createReverseLogistics(context);
+        }
+      })();
+      await cpWorkflowLoading[screenId];
+    }
+    await cpWorkflowViews[screenId].refresh();
+  }
+
+  function refreshCpWorkflowView() {
+    if (!IS_CP_ALAMO || !authState.currentUser || !canUseNetwork()) return;
+    var view = cpWorkflowViews[getActiveScreenId()];
+    if (view) view.refresh();
+    if (["dashboard","globalDashboard"].indexOf(getActiveScreenId())>=0) refreshCpDashboardSummary();
+  }
+
+  var cpDashboardSummaryPending = false;
+  var cpDashboardSummaryAt = 0;
+  var cpDashboardSummaryWarehouse = "";
+  async function refreshCpDashboardSummary() {
+    if (!IS_CP_ALAMO || !authState.currentUser || !isSupabaseReady() || !canUseNetwork()) return;
+    var code = activeWarehouseCode();
+    var actor = authState.currentUser.id;
+    if (cpDashboardSummaryPending || (cpDashboardSummaryWarehouse===code && Date.now()-cpDashboardSummaryAt<30000)) return;
+    var screen = $(getActiveScreenId());
+    if (!screen || ["dashboard","globalDashboard"].indexOf(screen.id)<0) return;
+    var host = screen.querySelector(".cp-workflow-summary");
+    if (!host) { host=document.createElement("section");host.className="cp-workflow-summary";screen.appendChild(host); }
+    cpDashboardSummaryPending=true;
+    try {
+      var date=new Date();var month=date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-01";
+      var result=await Promise.all([
+        supabaseDb.rpc("wms_fiscal_summary",{p_warehouse:isGlobalDashboardScope()?null:code}),
+        supabaseDb.rpc("wms_reverse_summary",{p_month:month,p_unit:isGlobalDashboardScope()?null:code})
+      ]);
+      if (!authState.currentUser || authState.currentUser.id!==actor || activeWarehouseCode()!==code) return;
+      if(result[0].error || result[1].error)throw result[0].error || result[1].error;
+      host.innerHTML="<h3>Compras e Logistica Reversa</h3><div class=\"metric-grid\">"+Object.entries(result[0].data || {}).map(function(pair){return "<article class=\"metric-card\"><span>"+escapeHtml(pair[0])+"</span><strong>"+Number(pair[1])+"</strong></article>";}).join("")+"</div><div class=\"table-wrap\"><table><thead><tr><th>Unidade</th><th>Meta mensal</th><th>Caixas realizadas</th><th>Percentual</th><th>Pendencias</th></tr></thead><tbody>"+(result[1].data || []).map(function(row){return "<tr><td>"+escapeHtml(row.unit_code)+"</td><td>"+Number(row.target_boxes)+"</td><td>"+Number(row.completed_boxes)+"</td><td>"+(Number(row.target_boxes)>0?(Number(row.completed_boxes)/Number(row.target_boxes)*100).toFixed(1)+"%":"Meta nao definida")+"</td><td>"+Number(row.pending)+"</td></tr>";}).join("")+"</tbody></table></div>";
+      cpDashboardSummaryAt=Date.now();cpDashboardSummaryWarehouse=code;
+    }catch(error){recordPerformanceError("cp-workflow-summary",error);host.textContent="Indicadores fiscais indisponiveis no momento.";}
+    finally{cpDashboardSummaryPending=false;}
+  }
+
+  if (IS_CP_ALAMO) window.setInterval(function () {
+    if (document.visibilityState === "visible") refreshCpWorkflowView();
+  }, 30000);
+
   function isGlobalAdmin() {
     return isGlobalAdminUser(authState.currentUser);
   }
@@ -6607,8 +6712,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
-    if (isGlobalDashboardScope()) return screenId === "saudeSistema";
+    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0);
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
@@ -6952,8 +7058,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function syncUserAvailabilityForRole(role) {
     var input = $("userAvailableInput");
     if (!input) return;
-    input.disabled = role === "ATENDENTE";
-    if (role === "ATENDENTE") input.checked = false;
+    input.disabled = role === "ATENDENTE" || role === "COMPRAS";
+    if (input.disabled) input.checked = false;
   }
 
   function renderUserWarehouseInputs(user) {
@@ -7994,6 +8100,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     renderAll();
     if (screenId === "usuarios") renderUsers();
     try {
+      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
       recordPerformanceError("tela-" + screenId, error);
@@ -8024,6 +8131,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "fiscalWorkflow") return "Compras / NF";
+    if (screenId === "reverseLogistics") return "Logistica Reversa";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }
@@ -9153,13 +9262,14 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function renderDashboard() {
+    refreshCpDashboardSummary();
     var captacaoTotal = Number((stockState.summary && stockState.summary.captacao) || 0);
     $("metricSkus").textContent = captacaoTotal || "-";
     $("metricLocations").textContent = captacaoTotal || "-";
     $("metricBindings").textContent = stockState.batches ? stockState.batches.length : 0;
     $("metricUpdated").textContent = stockState.summary && stockState.summary.updatedAt ? formatDateTime(stockState.summary.updatedAt) : "-";
     setTextIfExists("metricTransfersOpen", getVisibleTransfers().filter(function (transfer) {
-      return transfer.status !== "CANCELADA" && !isFinalTransferStatus(transfer.status);
+      return transfer.status !== "CANCELADA" && !isFinalTransferStatus(transfer.status, transfer);
     }).length);
     setTextIfExists("metricUsersActive", visibleUsersForManagement().filter(function (user) {
       return user.active !== false && user.archived !== true;
@@ -9400,7 +9510,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function replenishmentCardHtml(item) {
     var canManage = isAdminOrSupervisor();
-    var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
+    var canWork = !isPurchasesUser() && authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
     var queueLabel = item.status === "PENDENTE" && !item.responsavelId ? "Na fila" : displayReplenishmentStatus(item.status);
     var location = replenishmentCaptureLocationLabel(item);
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
@@ -9419,6 +9529,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       "<div class=\"replenishment-card-footer\">",
       "<span class=\"status-badge " + statusBadgeClass(item.status) + "\">" + escapeHtml(queueLabel) + "</span>",
       replenishmentPriorityBadgeHtml(item.prioridade),
+      IS_CP_ALAMO ? "<span>Origem: " + escapeHtml(item.requestOrigin === "COMPRAS" ? "Compras" : item.requestOrigin === "LEGADO" ? "Legado" : "Estoque") + "</span>" : "",
       "<span>Solicitado por <strong>" + escapeHtml(item.solicitadoPorNome || "-") + "</strong></span>",
       "<span>Responsavel <strong>" + escapeHtml(item.responsavelNome || "-") + "</strong></span>",
       "<span>" + escapeHtml(elapsed) + "</span>",
@@ -9853,7 +9964,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if (!authState.currentUser) return [];
     var transfers = getVisibleTransfers().filter(function (transfer) {
       if (transfer.status === "CANCELADA") return false;
-      if (isFinalTransferStatus(transfer.status)) return false;
+      if (isFinalTransferStatus(transfer.status, transfer)) return false;
       if (authState.currentUser.role === "OPERADOR") {
         return transfer.responsibleId === authState.currentUser.id;
       }
@@ -10530,6 +10641,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       }
       recordPerformanceMetric("lastTransferQueryMs", startedAt);
       renderTransferRealtimeViews();
+      refreshCpWorkflowView();
       realtimeState.failureCount = 0;
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
@@ -10587,6 +10699,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     document.querySelectorAll(".transfer-tab").forEach(function (button) {
       var target = button.dataset.transferTab;
       var visible = target === "myTransfersSection" || isAdminOrSupervisor();
+      if (isPurchasesUser()) visible = ["transferPanelSection", "newTransferSection", "myTransfersSection", "finalizedTransfersSection"].indexOf(target) >= 0;
       if (target === "taskCenterSection") visible = isAdminOrSupervisor();
       if (target === "transferConferenceSection") visible = false;
       if (target === "establishmentsSection") visible = isAdmin();
@@ -10684,7 +10797,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var query = normalizeText($("transferCodeFilter").value).toLowerCase();
       transfers = transfers.filter(function (transfer) {
         if (status && transfer.status !== status) return false;
-        if (!status && (isFinalTransferStatus(transfer.status) || transfer.status === "CANCELADA")) return false;
+        if (!status && (isFinalTransferStatus(transfer.status, transfer) || transfer.status === "CANCELADA")) return false;
         if (responsible && transfer.responsibleId !== responsible) return false;
         if (establishment && transfer.establishmentId !== establishment) return false;
         if (query) {
@@ -10694,7 +10807,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         return true;
       });
     }
-    var operationalTransfers = getVisibleTransfers().filter(function (item) { return !isFinalTransferStatus(item.status); });
+    var operationalTransfers = getVisibleTransfers().filter(function (item) { return !isFinalTransferStatus(item.status, item); });
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     setTextIfExists("transferMetricBox", operationalTransfers.filter(function (item) { return ["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(item.status) >= 0; }).length);
@@ -10729,6 +10842,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       "<article class=\"transfer-board-card " + stage.className + "\">",
       "<div class=\"transfer-board-main\">",
       "<div class=\"transfer-board-top\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><span class=\"transfer-stage-chip\">" + escapeHtml(stage.label) + "</span></div>",
+      IS_CP_ALAMO ? "<small>Origem da solicitacao: " + escapeHtml(transfer.requestOrigin === "COMPRAS" ? "Compras" : transfer.requestOrigin === "LEGADO" ? "Legado" : "Estoque") + "</small>" : "",
       "<div class=\"transfer-board-title\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
       "<div class=\"transfer-route-flow\"><div><span>Sai de</span><strong>" + escapeHtml(origin) + "</strong></div><span class=\"route-arrow\">&rarr;</span><div><span>Vai para</span><strong>" + escapeHtml(destination) + "</strong></div></div>",
       "</div>",
@@ -10902,7 +11016,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       && transfer.status !== "CANCELADA"
       && transfer.status !== "UNIFICADA"
       && transfer.status !== "ARQUIVADA_POR_UNIFICACAO"
-      && !isFinalTransferStatus(transfer.status);
+      && !isFinalTransferStatus(transfer.status, transfer);
   }
 
   function mergeBlockedMessage(transfer) {
@@ -11582,7 +11696,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function myTransferCardHtml(transfer) {
     var stats = getTransferStats(transfer.id);
-    var action = isFinalTransferStatus(transfer.status) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
+    var action = isFinalTransferStatus(transfer.status, transfer) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
       "<article class=\"transfer-card transfer-card--transfer transfer-ui-v20261008\">",
       "<div class=\"transfer-card-head\"><span class=\"eyebrow\">Transferência</span><span class=\"transfer-card-status\">" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></div>",
@@ -11628,8 +11742,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var visible = getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA";
     });
-    var transfers = visible.filter(function (transfer) { return !isFinalTransferStatus(transfer.status); });
-    var completed = visible.filter(function (transfer) { return isFinalTransferStatus(transfer.status); });
+    var transfers = visible.filter(function (transfer) { return !isFinalTransferStatus(transfer.status, transfer); });
+    var completed = visible.filter(function (transfer) { return isFinalTransferStatus(transfer.status, transfer); });
     var operatorTasks = getMyOperationalTasks();
     var openOperationalTasks = operatorTasks.filter(function (task) { return ["CONCLUIDA", "CANCELADA"].indexOf(task.status) < 0; });
     var doneOperationalTasks = operatorTasks.filter(function (task) { return ["CONCLUIDA", "CANCELADA"].indexOf(task.status) >= 0; });
@@ -11814,11 +11928,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function renderFinalizedTransfers() {
     if (!$("finalizedTransferRows")) return;
-    if (!isAdminOrSupervisor()) {
+    if (!isAdminOrSupervisor() && !isPurchasesUser()) {
       $("finalizedTransferRows").innerHTML = "";
       return;
     }
-    var transfers = getVisibleTransfers().filter(function (transfer) { return isFinalTransferStatus(transfer.status); });
+    var transfers = getVisibleTransfers().filter(function (transfer) { return isFinalTransferStatus(transfer.status, transfer); });
     var visibleTransfers = transfers.slice(0, TRANSFER_FINALIZED_RENDER_LIMIT);
     $("finalizedTransferRows").innerHTML = visibleTransfers.length
       ? visibleTransfers.map(finalizedTransferRowHtml).join("") + renderTableLimitNotice(transfers.length, visibleTransfers.length, 9, "transferências finalizadas")
@@ -12234,7 +12348,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     });
     var imports = buildHealthImportReport(batches);
     var runtime = buildHealthRuntimeReport(startedAt);
-    var openTransfers = transfers.filter(function (transfer) { return !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && transfer.status !== "CANCELADA"; });
+    var openTransfers = transfers.filter(function (transfer) { return !transfer.isDeleted && !isFinalTransferStatus(transfer.status, transfer) && transfer.status !== "CANCELADA"; });
     var openRequests = requests.filter(function (request) {
       return !request.isDeleted && ["PENDENTE", "ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL"].indexOf(request.status) >= 0;
     });
@@ -12503,7 +12617,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       });
     });
     transferState.transfers.filter(function (transfer) {
-      return healthRowMatchesWarehouse(transfer, selectedCodes, true) && !transfer.isDeleted && !isFinalTransferStatus(transfer.status) && healthDateOlderThanHours(transfer.lastActionAt || transfer.updatedAt || transfer.createdAt, 8);
+      return healthRowMatchesWarehouse(transfer, selectedCodes, true) && !transfer.isDeleted && !isFinalTransferStatus(transfer.status, transfer) && healthDateOlderThanHours(transfer.lastActionAt || transfer.updatedAt || transfer.createdAt, 8);
     }).slice(0, 5).forEach(function (transfer) {
       rows.push({ title: "Transferência parada", detail: (transfer.name || transfer.code || transfer.id) + " | Status: " + transfer.status, count: "Atenção", level: "warning" });
     });
@@ -13629,7 +13743,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     $("transferWorkSection").classList.toggle("transfer-mode-montagem", mode === "MONTAGEM");
     $("transferWorkSection").classList.toggle("transfer-mode-separacao", mode === "SEPARACAO");
     $("transferWorkSection").classList.toggle("transfer-mode-finalizacao", mode === "FINALIZACAO");
-    var finalized = isFinalTransferStatus(transfer.status);
+    var finalized = isFinalTransferStatus(transfer.status, transfer) || isPurchasesUser() ||
+      (transfer.requiresInvoice && transfer.invoiceStage && transfer.invoiceStage !== "CORRECAO_SOLICITADA");
     $("transferPackedExports").hidden = !canExportPackedTransfer(transfer);
     if ($("refreshTransferStockButton")) $("refreshTransferStockButton").hidden = !isAdminOrSupervisor();
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
@@ -13727,7 +13842,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function getTransferWorkMode(transfer) {
     if (!transfer) return "SEPARACAO";
-    if (isFinalTransferStatus(transfer.status) || ["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(transfer.status) >= 0) return "FINALIZACAO";
+    if (transfer.requiresInvoice && transfer.invoiceStage && transfer.invoiceStage !== "CORRECAO_SOLICITADA") return "FINALIZACAO";
+    if (isFinalTransferStatus(transfer.status, transfer) || ["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(transfer.status) >= 0) return "FINALIZACAO";
     if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(transfer.status) >= 0) return "MONTAGEM";
     return "SEPARACAO";
   }
@@ -14079,7 +14195,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function transferWorkItemActionsHtml(item, mode) {
     var transfer = getTransferById(item.transferId);
-    if (!transfer || isFinalTransferStatus(transfer.status) || item.isExtra) return "";
+    if (!transfer || isFinalTransferStatus(transfer.status, transfer) || item.isExtra) return "";
     if (mode === "SEPARACAO" && Number(item.separatedQty || 0) > 0) {
       return [
         "<div class=\"transfer-card-actions\">",
@@ -14194,7 +14310,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function editTransferItemQuantity(itemId, mode, button) {
     var item = transferState.items.find(function (entry) { return entry.id === itemId; });
     var transfer = item ? getTransferById(item.transferId) : null;
-    if (!item || !transfer || isFinalTransferStatus(transfer.status)) return;
+    if (!item || !transfer || isFinalTransferStatus(transfer.status, transfer)) return;
     var current = mode === "MONTAGEM" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
     var label = mode === "MONTAGEM" ? "Quantidade na caixa" : "Quantidade separada";
     var value = window.prompt(label + " para o SKU " + item.sku + ":", formatInputQty(current));
@@ -14210,7 +14326,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function resetTransferItemQuantity(itemId, mode, button) {
     var item = transferState.items.find(function (entry) { return entry.id === itemId; });
     var transfer = item ? getTransferById(item.transferId) : null;
-    if (!item || !transfer || isFinalTransferStatus(transfer.status)) return;
+    if (!item || !transfer || isFinalTransferStatus(transfer.status, transfer)) return;
     var message = mode === "MONTAGEM" ? "Remover este SKU da caixa?" : "Desfazer a coleta deste SKU?";
     if (!window.confirm(message)) return;
     await saveTransferItemOperationalQty(item, transfer, mode, 0, button);
@@ -14434,7 +14550,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function renderTransferFinalReport(transfer) {
     if (!$("transferFinalReportPanel")) return;
-    var visible = isAdminOrSupervisor() && isFinalTransferStatus(transfer.status);
+    var visible = isAdminOrSupervisor() && isFinalTransferStatus(transfer.status, transfer);
     $("transferFinalReportPanel").hidden = !visible;
     if (!visible) return;
     var report = getTransferFinalReport(transfer);
@@ -14601,7 +14717,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var activeTransfers = transferState.transfers.filter(function (transfer) {
       return isOperationalTransferRecord(transfer) && transferBelongsToActiveWarehouse(transfer);
     });
-    if (isAdminOrSupervisor()) return activeTransfers;
+    if (isAdminOrSupervisor() || isPurchasesUser()) return activeTransfers;
     return activeTransfers.filter(function (transfer) {
       return transfer.responsibleId === authState.currentUser.id;
     });
@@ -14830,7 +14946,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     }
   }
 
-  function isFinalTransferStatus(status) {
+  function isFinalTransferStatus(status, transfer) {
+    if (IS_CP_ALAMO && transfer && transfer.requiresInvoice && ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA"].indexOf(status) >= 0) return false;
     return FINAL_TRANSFER_STATUSES.indexOf(status) >= 0;
   }
 
@@ -14974,7 +15091,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function canCancelTransfer(transfer) {
-    if (isFinalTransferStatus(transfer.status)) return false;
+    if (isFinalTransferStatus(transfer.status, transfer)) return false;
     if (!isAdmin()) return ["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA", "PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA"].indexOf(transfer.status) < 0;
     return transfer.status !== "CANCELADA";
   }
@@ -15295,7 +15412,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function conferenceTransferXml() {
     var transfer = getTransferById(transferState.activeTransferId);
-    if (transfer && isFinalTransferStatus(transfer.status)) {
+    if (transfer && isFinalTransferStatus(transfer.status, transfer)) {
       setStatus("xmlConferenceStatus", "Esta conferência já foi enviada. Abra o relatório para consultar o resultado.", "warning");
       return;
     }
@@ -16858,7 +16975,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function createTransferFromForm(event) {
     event.preventDefault();
     if (!ensureActiveWarehouse()) return;
-    if (!isAdminOrSupervisor()) {
+    if (!isAdminOrSupervisor() && !isPurchasesUser()) {
       setStatus("transferImportStatus", "Acesso restrito.", "error");
       return;
     }
@@ -16891,6 +17008,10 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var responsible = authState.users.find(function (user) { return user.id === group.responsibleId; });
       var transferId = randomId("trf-" + groupIndex);
       var transfer = buildImportedTransferRecord(group, responsible, transferId, buildTransferCode(group, groupIndex), buildTransferName(group), now);
+      if (IS_CP_ALAMO) {
+        transfer.requestOrigin=isPurchasesUser()?"COMPRAS":"ESTOQUE";
+        transfer.requiresInvoice=!!isPurchasesUser();transfer.invoiceStage="";
+      }
       transfer.requestId = creationRequestId;
       transfer.idempotencyKey = creationRequestId + ":GRUPO-" + (groupIndex + 1);
       transfer.importBatchId = creationRequestId;
@@ -17199,7 +17320,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function findDuplicateTransferImportGroups(groups) {
     var activeSignatures = {};
     getVisibleTransfers().forEach(function (transfer) {
-      if (transfer.status === "CANCELADA" || isFinalTransferStatus(transfer.status)) return;
+      if (transfer.status === "CANCELADA" || isFinalTransferStatus(transfer.status, transfer)) return;
       activeSignatures[existingTransferSignature(transfer)] = transferDisplayName(transfer) || transfer.code || transfer.id;
     });
     return groups.map(function (group) {
@@ -17424,6 +17545,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function openTransferWork(transferId, options) {
     options = options || {};
+    if (isPurchasesUser()) options = Object.assign({}, options, { viewOnly: true });
     var transfer = getTransferById(transferId);
     if (!transfer) {
       await ensureTransferDataLoaded();
@@ -17433,7 +17555,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       showToast("Transferencia nao encontrada no estoque atual.", "error");
       return;
     }
-    if (!isAdminOrSupervisor() && transfer.responsibleId !== authState.currentUser.id) {
+    if (!isAdminOrSupervisor() && !isPurchasesUser() && transfer.responsibleId !== authState.currentUser.id) {
       showToast("Você não tem acesso a esta transferência.", "error");
       return;
     }
@@ -17484,7 +17606,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         return;
       }
     }
-    if (transferItemsNeedStockSnapshot(getTransferItems(transferId))) {
+    if (!options.viewOnly && transferItemsNeedStockSnapshot(getTransferItems(transferId))) {
       await refreshTransferStockSuggestion(transferId, { persist: true, render: false });
     } else {
       await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
@@ -17496,7 +17618,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       if (transferState.activeWorkMode === "MONTAGEM") $("transferScanInput").focus();
       else if ($("transferCurrentItem")) $("transferCurrentItem").scrollIntoView({ block: "start", behavior: "smooth" });
     }, 80);
-    if (isFinalTransferStatus(transfer.status)) {
+    if (isFinalTransferStatus(transfer.status, transfer)) {
       setStatus("transferWorkStatus", "Tarefa finalizada. Confira o resultado no relatório do líder.", transfer.status === "CONCLUIDA_SEM_DIVERGENCIA" ? "success" : "warning");
     }
   }
@@ -17656,7 +17778,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   async function locateTransferItem() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
-    if (isFinalTransferStatus(transfer.status)) {
+    if (isFinalTransferStatus(transfer.status, transfer)) {
       setStatus("transferWorkStatus", "Esta tarefa ja foi finalizada.", "warning");
       return;
     }
@@ -17842,7 +17964,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function confirmTransferItem() {
     var transfer = getTransferById(transferState.activeTransferId);
-    if (transfer && isFinalTransferStatus(transfer.status)) {
+    if (transfer && isFinalTransferStatus(transfer.status, transfer)) {
       setStatus("transferWorkStatus", "Esta tarefa ja foi finalizada.", "warning");
       return;
     }
@@ -18145,7 +18267,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function finishPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
-    if (!transfer || isFinalTransferStatus(transfer.status)) return;
+    if (!transfer || isFinalTransferStatus(transfer.status, transfer)) return;
     var finalBoxCount = readFinalBoxCountInput();
     var hasPackedItems = getTransferItems(transfer.id).some(function (item) { return Number(item.packedQty || 0) > 0; });
     if (finalBoxCount === null || (hasPackedItems && finalBoxCount === 0) || (!hasPackedItems && finalBoxCount > 0)) {

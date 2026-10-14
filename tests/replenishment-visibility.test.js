@@ -22,7 +22,7 @@ test("the menu badge follows the replenishment queue visible to the current role
 });
 
 test("operators who are not responsible cannot change an in-progress request", () => {
-  assert.match(source, /var canWork = authState\.currentUser && \(item\.responsavelId === authState\.currentUser\.id \|\| canManage\);/);
+  assert.match(source, /var canWork = !isPurchasesUser\(\) && authState\.currentUser && \(item\.responsavelId === authState\.currentUser\.id \|\| canManage\);/);
 });
 
 test("operators can claim pending requests and then work on their own request", () => {
