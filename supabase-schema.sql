@@ -23,3 +23,5 @@
 \ir supabase/migrations/20261014003034_purchases_invoice_workflow.sql
 \ir supabase/migrations/20261014003039_reverse_logistics_monthly_targets.sql
 \ir supabase/migrations/20261014020000_admin_purchases_request_mode.sql
+\ir supabase/migrations/20261014032016_purchase_transfer_multi_sku.sql
+\ir supabase/migrations/20261014034555_purchase_transfer_scoped_user_columns.sql
