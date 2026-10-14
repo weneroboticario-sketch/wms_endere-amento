@@ -452,6 +452,9 @@
         </div>
         <section class="panel narrow-panel">
           <p class="muted">Exporta o estoque atual no modelo LinhaSeparacao, com uma linha por localização. Quando houver mais de um produto no endereço, os códigos serão separados por ponto e vírgula.</p>
+          <label id="separationSourceLabel" for="separationSourceInput" hidden>Base de origem
+            <select id="separationSourceInput"><option value="CAPTACAO">CAPTACAO</option><option value="LOJA">Loja</option><option value="PULMAO">Pulmao</option></select>
+          </label>
           <button class="primary-button wide-button" id="exportExcelButton" type="button">Exportar LinhaSeparacao</button>
           <div id="exportStatus" class="inline-status"></div>
           <div class="excel-columns">
@@ -491,6 +494,11 @@
             <label for="storeStockFileInput">Estoque Loja</label>
             <input id="storeStockFileInput" type="file" accept=".xlsx,.xls">
             <button class="secondary-button wide-button" id="importStoreStockButton" type="button">Importar Estoque Loja</button>
+            <div id="stockPulmaoImportGroup" hidden>
+              <label for="pulmaoStockFileInput">Base Pulmao</label>
+              <input id="pulmaoStockFileInput" type="file" accept=".xlsx,.xls">
+              <button class="secondary-button wide-button" id="importPulmaoStockButton" type="button">Importar Pulmao</button>
+            </div>
             <div id="stockImportStatus" class="inline-status"></div>
           </section>
 
@@ -504,10 +512,12 @@
               <option value="">Ambas</option>
               <option value="CAPTACAO">Captacao</option>
               <option value="LOJA">Loja</option>
+              <option id="stockPulmaoSourceOption" value="PULMAO" hidden>Pulmao</option>
             </select>
             <div class="button-row stock-export-actions">
               <button class="secondary-button" id="exportCaptureStockTemplateButton" type="button">Exportar Modelo CAPTACAO</button>
               <button class="secondary-button" id="exportStoreStockTemplateButton" type="button">Exportar Modelo Loja</button>
+              <button class="secondary-button" id="exportPulmaoStockTemplateButton" type="button" hidden>Exportar Modelo Pulmao</button>
               <button class="secondary-button" id="exportCurrentStockButton" type="button">Exportar Base Atual</button>
               <button class="secondary-button" id="exportStockAlertsButton" type="button">Exportar Alertas</button>
               <button class="secondary-button" id="exportStockNoLocationButton" type="button">Exportar Produtos sem Localizacao</button>
