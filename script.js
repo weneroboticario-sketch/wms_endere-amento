@@ -112,6 +112,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     ROLES.push("COMPRAS");
     ["dashboard", "consultaSku", "baseEstoque", "transferencias", "reposicao"].forEach(function (screen) { SCREEN_PERMISSIONS[screen].push("COMPRAS"); });
     SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    SCREEN_PERMISSIONS.expedition = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.demoMode = ["ADMINISTRADOR"];
     SCREEN_PERMISSIONS.purchaseTransfer = ["ADMINISTRADOR", "COMPRAS"];
@@ -6765,6 +6766,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
           var builder = await import("./src/purchase-transfer-builder.js"); cpWorkflowViews[screenId] = builder.createPurchaseTransferBuilder(context);
         } else if (screenId === "fiscalWorkflow") {
           var fiscal = await import("./src/purchases-workflow.js"); cpWorkflowViews[screenId] = fiscal.createPurchasesWorkflow(context);
+        } else if (screenId === "expedition") {
+          var expedition = await import("./src/expedition-workflow.js"); cpWorkflowViews[screenId] = expedition.createExpeditionWorkflow(context);
         } else {
           var reverse = await import("./src/reverse-logistics.js"); cpWorkflowViews[screenId] = reverse.createReverseLogistics(context);
         }
@@ -6802,6 +6805,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       ]);
       if (!authState.currentUser || authState.currentUser.id!==actor || activeWarehouseCode()!==code) return;
       if(result[0].error || result[1].error)throw result[0].error || result[1].error;
+      var existingExecutiveHost = host.querySelector(".cp-transfer-executive");
       host.innerHTML="<h3>Compras e Logistica Reversa</h3><div class=\"metric-grid\">"+Object.entries(result[0].data || {}).map(function(pair){return "<article class=\"metric-card\"><span>"+escapeHtml(pair[0])+"</span><strong>"+Number(pair[1])+"</strong></article>";}).join("")+"</div><div class=\"table-wrap\"><table><thead><tr><th>Unidade</th><th>Meta mensal</th><th>Caixas realizadas</th><th>Percentual</th><th>Pendencias</th></tr></thead><tbody>"+(result[1].data || []).map(function(row){return "<tr><td>"+escapeHtml(row.unit_code)+"</td><td>"+Number(row.target_boxes)+"</td><td>"+Number(row.completed_boxes)+"</td><td>"+(Number(row.target_boxes)>0?(Number(row.completed_boxes)/Number(row.target_boxes)*100).toFixed(1)+"%":"Meta nao definida")+"</td><td>"+Number(row.pending)+"</td></tr>";}).join("")+"</tbody></table></div>";
       if (canAccessScreen("purchaseTransfer")) {
         var attention = await supabaseDb.rpc("wms_purchase_attention", { p_target: 3 });
@@ -6818,6 +6822,20 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
           });
         }
       }
+      var executiveHost = existingExecutiveHost;
+      if (executiveHost) host.appendChild(executiveHost);
+      if (!executiveHost) {
+        executiveHost = document.createElement("section"); executiveHost.className = "cp-transfer-executive"; host.appendChild(executiveHost);
+        var executiveModule = await import("./src/expedition-workflow.js");
+        executiveHost.controller = executiveModule.createTransferExecutive(executiveHost, {
+          client: function () { return supabaseDb; }, user: function () { return authState.currentUser; },
+          warehouses: function () {
+            var allowed = allowedWarehouseCodesForUser(authState.currentUser);
+            return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; });
+          }
+        }, function () { return isGlobalDashboardScope() ? null : activeWarehouseCode(); }, false);
+      }
+      await executiveHost.controller.refresh();
       cpDashboardSummaryAt=Date.now();cpDashboardSummaryWarehouse=code;
     }catch(error){recordPerformanceError("cp-workflow-summary",error);host.textContent="Indicadores fiscais indisponiveis no momento.";}
     finally{cpDashboardSummaryPending=false;}
@@ -6839,9 +6857,9 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "demoMode") return IS_CP_ALAMO && isAdmin();
-    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0) return false;
+    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
-    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0);
+    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0);
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
@@ -8253,7 +8271,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if (screenId === "usuarios") renderUsers();
     try {
       if (screenId === "demoMode") await openDemoModeScreen();
-      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
+      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
       recordPerformanceError("tela-" + screenId, error);
@@ -8286,6 +8304,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   function updateModuleSubtitleLabel(screenId) {
     if (screenId === "demoMode") return "Demonstracao";
     if (screenId === "fiscalWorkflow") return "Compras / NF";
+    if (screenId === "expedition") return "Gestao de Expedicao";
     if (screenId === "purchaseTransfer") return "Necessidade das Lojas";
     if (screenId === "reverseLogistics") return "Logistica Reversa";
     if (screenId === "globalDashboard") return "Central de Controle";

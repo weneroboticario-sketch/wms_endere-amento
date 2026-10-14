@@ -8,3 +8,4 @@ tmp/
 artifacts/cp-workflow-views/
 artifacts/demo-mode/
 artifacts/purchase-builder/
+/test-results/

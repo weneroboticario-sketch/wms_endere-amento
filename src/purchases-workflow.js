@@ -22,9 +22,9 @@ export function fiscalActions(stage, role, domain) {
   if (buyer && ["PRONTA_PARA_NOTA", "NF_EM_PREPARACAO", "NF_ANEXADA"].includes(stage)) actions.push(["CORRECTION", "Devolver para correcao"]);
   if (buyer && stage === "NF_ANEXADA") actions.push(["RELEASE", "Liberar para envio"]);
   if (stock && domain === "REPOSICAO" && ["", "CORRECAO_SOLICITADA"].includes(stage)) actions.push(["READY", "Conferencia e caixas prontas"]);
-  if (stock && stage === "LIBERADA_PARA_ENVIO") actions.push(["DISPATCH", "Confirmar despacho"]);
-  if (stock && stage === "DESPACHADA") actions.push(["RECEIVE", "Confirmar recebimento"]);
-  if (stock && stage === "RECEBIDA") actions.push(["COMPLETE", "Concluir processo"]);
+  if (stock && domain === "REPOSICAO" && stage === "LIBERADA_PARA_ENVIO") actions.push(["DISPATCH", "Confirmar despacho"]);
+  if (stock && domain === "REPOSICAO" && stage === "DESPACHADA") actions.push(["RECEIVE", "Confirmar recebimento"]);
+  if (stock && domain === "REPOSICAO" && stage === "RECEBIDA") actions.push(["COMPLETE", "Concluir processo"]);
   if (["ADMINISTRADOR", "SUPERVISOR"].includes(role) && ["LIBERADA_PARA_ENVIO", "DESPACHADA", "RECEBIDA", "FINALIZADA"].includes(stage)) actions.push(["REOPEN", "Reabrir com justificativa"]);
   return actions;
 }
@@ -115,6 +115,10 @@ export function createPurchasesWorkflow(context) {
       const link = document.createElement("a"); link.href = result.data.signedUrl; link.target = "_blank"; link.rel = "noopener noreferrer"; link.click();
     });
     detail.querySelector("#fiscalOpenTransfer")?.addEventListener("click", () => context.openTransfer(selected.id));
+    if (selected.domain === "TRANSFERENCIA" && ["LIBERADA_PARA_ENVIO", "DESPACHADA", "RECEBIDA", "FINALIZADA"].includes(selected.invoice_stage)) {
+      const link = document.createElement("button");link.className="secondary-button";link.textContent="Gestao de Expedicao";
+      link.addEventListener("click",()=>context.navigate("expedition"));detail.querySelector(".button-row").appendChild(link);
+    }
     if (selected.domain === "TRANSFERENCIA") {
       const divergences = await context.client().from("wms_transfer_divergences").select("id,sku,observation,resolved,difference_quantity").eq("transfer_id", selected.id).eq("warehouse_code",selected.warehouse_code).eq("resolved",false).limit(100);
       if (divergences.error) throw divergences.error;
