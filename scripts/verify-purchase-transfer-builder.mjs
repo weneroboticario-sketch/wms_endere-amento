@@ -32,6 +32,8 @@ try{
       await window.builder.refresh();
     });
     await page.getByRole("button",{name:"Nova transferencia",exact:true}).click();
+    assert.equal(await page.getByRole("columnheader",{name:"Saldo destino (B)",exact:true,includeHidden:true}).count(),1);
+    assert.equal(await page.getByRole("columnheader",{name:"Disponivel origem (A)",exact:true,includeHidden:true}).count(),1);
     await page.getByRole("button",{name:"Selecionar pagina",exact:true}).click();
     await page.getByRole("button",{name:"Adicionar selecionados",exact:true}).click();
     await page.locator("#pbResponsible").selectOption("stock");
@@ -45,6 +47,8 @@ try{
     await page.locator('[data-pb-quantity="84390"]').dispatchEvent("change");
     await page.getByRole("button",{name:"Revalidar e revisar",exact:true}).click();
     await page.getByRole("button",{name:"Criar transferencia",exact:true}).waitFor();
+    const destinationBalances=await page.locator('td[data-label="Saldo destino"] strong').allTextContents();
+    assert.deepEqual(destinationBalances,["0","1","2"]);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
     if(width===390)assert.ok(await page.evaluate(()=>[...document.querySelectorAll('.pb-grid td')].every(c=>c.getBoundingClientRect().right<=window.innerWidth)));
     await page.screenshot({path:`artifacts/purchase-builder/review-${width}.png`,fullPage:true});

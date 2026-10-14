@@ -58,6 +58,10 @@ quantidade_faltante, origem_sugerida e nome_material_snapshot.
 
 Tres etapas: Unidade, Produtos e Revisao. Desktop com tabela compacta e carrinho
 lateral; mobile com cards e barra inferior de revisao/confirmacao.
+Lista e carrinho mostram explicitamente Saldo destino (codigo da loja) e
+Disponivel origem (codigo do estoque), com quantidade em destaque. Saldo destino
+vem da base LOJA; disponibilidade da origem vem da CAPTACAO. Dado nao consultado
+na necessidade colada nao e apresentado como zero.
 Filtros gerais paginados e filtros de disponibilidade/selecionados na pagina atual.
 O botao Selecionar pagina seleciona somente os itens exibidos.
 
