@@ -48,7 +48,7 @@ export async function workflowDatabase() {
     insert into wms_warehouses(id,code,name) values('a','A','Store A'),('b','B','Store B');
     insert into wms_users(id,name,username,role) values('actor','Actor','actor','OPERADOR');`);
   await db.exec("alter table wms_history enable row level security;create policy history_read on wms_history for select to authenticated using(warehouse_code=any(private.current_wms_allowed_warehouses()));create policy history_write on wms_history for insert to authenticated with check(warehouse_code=any(private.current_wms_allowed_warehouses()) and private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR','OPERADOR']));");
-  for (const migration of ["20261014003034_purchases_invoice_workflow.sql", "20261014003039_reverse_logistics_monthly_targets.sql", "20261014020000_admin_purchases_request_mode.sql", "20261014145541_reverse_purchases_create.sql"]) {
+  for (const migration of ["20261014003034_purchases_invoice_workflow.sql", "20261014003039_reverse_logistics_monthly_targets.sql", "20261014020000_admin_purchases_request_mode.sql", "20261014145541_reverse_purchases_create.sql", "20261014151110_reverse_purchases_operations.sql"]) {
     await db.exec(await readFile(new URL("../supabase/migrations/" + migration, import.meta.url), "utf8"));
   }
   await db.exec(`grant usage on schema public,private,storage to authenticated;
@@ -140,12 +140,19 @@ test("reverse logistics preserves text, isolates units and excludes canceled box
     await db.exec("select set_config('test.role','COMPRAS',false)");
     const buyer=(await insert("buyer")).rows[0];
     assert.equal(buyer.status,"REGISTRADA");assert.equal(buyer.created_by_id,"actor");
-    const blocked=await db.query("update wms_reverse_logistics set status='ENVIADA' where id='buyer' returning id");
-    assert.equal(blocked.rows.length,0);
-    await assert.rejects(db.query("select wms_reverse_action('buyer','REGISTRADA','ENVIADA','','buyer-send')"),/sem permissao|row-level security|nao encontrado/);
-    assert.equal((await db.query("select count(*)::int n from wms_history where id like 'reverse:buyer:%'")).rows[0].n,1);
+    await db.query("select wms_reverse_action('buyer','REGISTRADA','ENVIADA','','buyer-send')");
+    await db.query("select wms_reverse_action('buyer','REGISTRADA','ENVIADA','','buyer-send')");
+    assert.equal((await summary()).rows[0].result[0].completed_boxes,12);
+    await db.query("select wms_reverse_action('buyer','ENVIADA','RECEBIDA','','buyer-received')");
+    await db.query("select wms_reverse_action('buyer','RECEBIDA','CONCLUIDA','','buyer-completed')");
+    assert.equal((await db.query("select count(*)::int n from wms_history where id like 'reverse:buyer:%'")).rows[0].n,4);
+    await assert.rejects(db.query("select wms_reverse_action('buyer','CONCLUIDA','DIVERGENCIA','reopen','buyer-reopen')"),/Transicao/);
+    await assert.rejects(db.query("select wms_reverse_action('buyer','CONCLUIDA','CONCLUIDA','archive','buyer-archive',true)"),/Arquivamento/);
     await assert.rejects(db.query("insert into wms_history(id,warehouse_code,action) values('forged','A','Logistica Reversa')"),/row-level security/);
     await assert.rejects(db.query("insert into wms_reverse_logistics(id,warehouse_code,unit_origin_code,unit_origin_name,box_quantity,gdv_number,gdv_normalized,nfe_number,nfe_normalized,responsible_id,responsible_name,created_by_id,created_by_name,competence_month,idempotency_key) values('other','B','B','B',1,'other','','other','','actor','Actor','actor','Actor',current_date,'other')"),/row-level security/);
-    await assert.rejects(db.exec("insert into wms_reverse_logistics_monthly_targets(id,unit_code,unit_name,competence_month,target_boxes,updated_by_id,updated_by_name) values('target','A','A',date_trunc('month',now())::date,100,'actor','Actor')"), /row-level security|sem permissao/);
+    await db.exec("insert into wms_reverse_logistics_monthly_targets(id,unit_code,unit_name,competence_month,target_boxes,updated_by_id,updated_by_name) values('target','A','A',date_trunc('month',now())::date,100,'actor','Actor')");
+    await db.exec("update wms_reverse_logistics_monthly_targets set target_boxes=120 where id='target'");
+    assert.equal((await db.query("select target_boxes from wms_reverse_logistics_monthly_targets where id='target'")).rows[0].target_boxes,120);
+    await assert.rejects(db.exec("insert into wms_reverse_logistics_monthly_targets(id,unit_code,unit_name,competence_month,target_boxes,updated_by_id,updated_by_name) values('other-target','B','B',date_trunc('month',now())::date,100,'actor','Actor')"),/row-level security/);
   } finally { await db.close(); }
 });
