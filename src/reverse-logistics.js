@@ -9,7 +9,7 @@ export function reverseMetrics(target, completed, day, days) {
 export function createReverseLogistics(context) {
   const root = document.getElementById("reverseLogisticsContent");
   const e = escapeHtml;
-  const staff = () => ["ADMINISTRADOR","SUPERVISOR","OPERADOR"].includes(context.user().role);
+  const staff = () => ["ADMINISTRADOR","SUPERVISOR","OPERADOR","COMPRAS"].includes(context.user().role);
   const canCreate = () => staff() || context.user().role === "COMPRAS";
   const manager = () => ["ADMINISTRADOR","SUPERVISOR"].includes(context.user().role);
   let page = 0, busy = false, rows = [], warehouse = "", creationKey = randomId("reverse");
@@ -79,6 +79,8 @@ export function createReverseLogistics(context) {
   document.getElementById("reverseTargetForm")?.addEventListener("submit",async event=>{
     event.preventDefault();if(busy)return;busy=true;const form=event.target;
     try {
+      if(!staff())throw new Error("Perfil sem permissao para alterar metas.");
+      if(!context.warehouses().some(w=>w.code===form.elements.unit.value))throw new Error("Unidade nao autorizada.");
       const target=Number(form.elements.target.value);if(!Number.isInteger(target)||target<0)throw new Error("Meta deve ser inteira e nao negativa.");
       const unit=form.elements.unit.value,month=document.getElementById("reverseMonth").value+"-01",user=context.user();
       const result=await context.client().from("wms_reverse_logistics_monthly_targets").upsert({id:`target:${unit}:${month}`,unit_code:unit,
