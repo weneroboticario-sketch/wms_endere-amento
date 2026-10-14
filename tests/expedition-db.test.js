@@ -15,6 +15,9 @@ async function database() {
     alter table wms_transfers add column if not exists total_expected_quantity numeric default 0;`);
   await db.exec(await readFile(new URL("../supabase/migrations/20261014162858_transfer_expedition_lifecycle.sql", import.meta.url), "utf8"));
   await db.exec(await readFile(new URL("../supabase/migrations/20261014163200_transfer_executive_metrics.sql", import.meta.url), "utf8"));
+  await db.exec(await readFile(new URL("../supabase/migrations/20261014182622_expedition_scoped_user_columns.sql", import.meta.url), "utf8"));
+  await db.exec(`revoke select on wms_users from authenticated;
+    grant select(id,name,role,active,archived,available_for_tasks,default_warehouse_code,warehouse_code) on wms_users to authenticated;`);
   await db.exec("update wms_users set default_warehouse_code='A',available_for_tasks=true where id='actor';set role authenticated;");
   return db;
 }

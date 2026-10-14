@@ -35,6 +35,8 @@ mantem o comportamento anterior.
 - Operador pode assumir para si e executar apenas a expedicao atribuida a ele.
 - Administrador e supervisor atribuem, reatribuem e resolvem divergencias.
 - Responsavel precisa estar ativo, nao arquivado, disponivel e na origem.
+- Consulta de responsavel seleciona somente ID e nome, respeitando as permissoes
+  de colunas protegidas do cadastro. Nao concede leitura de password_hash.
 - PDF permanece no bucket privado, com URL assinada de 300 segundos.
 - Nenhuma funcao nova reserva, movimenta ou modifica saldo de estoque.
 - A mesma chave de acao retorna o estado salvo sem duplicar evento ou aviso.
