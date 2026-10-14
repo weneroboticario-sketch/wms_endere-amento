@@ -8178,7 +8178,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
         changed = true;
       }
     });
-    if (changed) await saveData();
+    // COMPRAS enriches the displayed metadata without rewriting stock addresses.
+    if (changed && !isPurchasesUser()) await saveData();
   }
 
   function bindNavigation() {
@@ -19119,7 +19120,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
         changed = true;
       }
     });
-    if (changed) saveData();
+    if (changed && !isPurchasesUser()) saveData();
   }
 
   function renderHistory() {
