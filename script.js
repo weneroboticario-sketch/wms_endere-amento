@@ -6836,7 +6836,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }, 30000);
 
   function isGlobalAdmin() {
-    return isGlobalAdminUser(authState.currentUser);
+    return IS_CP_ALAMO ? isAdmin() : isGlobalAdminUser(authState.currentUser);
   }
 
   function isGlobalAdminUser(user) {
@@ -6849,6 +6849,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if (screenId === "demoMode") return false;
     if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
+    if (IS_CP_ALAMO && isAdmin()) return true;
     if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0);
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
@@ -8227,6 +8228,12 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   async function showScreen(screenId) {
     if (!authState.currentUser) {
       showLogin("Entre para acessar o sistema.", "warning");
+      return;
+    }
+    if (IS_CP_ALAMO && isAdmin() && isGlobalDashboardScope() &&
+      ["dashboard", "consultaSku", "consultaPrateleira", "bipagem", "baseEstoque", "transferencias", "reposicao", "etiquetas", "exportar"].indexOf(screenId) >= 0) {
+      showToast("Selecione o estoque no topo para acessar esta operacao.", "info");
+      if ($("activeWarehouseSelect")) $("activeWarehouseSelect").focus();
       return;
     }
     if (isRemovedScreen(screenId)) {
