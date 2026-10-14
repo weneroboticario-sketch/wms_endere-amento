@@ -12,6 +12,7 @@ export function createPurchaseTransferBuilder(context) {
   const target = STORE_NEED_CONFIG.target;
   let loadedUser = "", batchId = "", batchCheckedAt = 0;
   let attention = [], pageFilter = "ALL";
+  let messageKind = "error";
   const draftKey = () => `purchase-draft:${context.user().id}:${new URL(context.client().supabaseUrl || window.location.origin).hostname}`;
   const unit = code => units.find(w => w.code === code);
   const options = value => units.map(w => `<option value="${e(w.code)}" ${value === w.code ? "selected" : ""}>${e(w.code)} - ${e(w.name)}</option>`).join("");
@@ -23,14 +24,14 @@ export function createPurchaseTransferBuilder(context) {
       <nav class="pb-steps" aria-label="Etapas">${["Unidade","Produtos","Revisao"].map((label,i)=>`<span class="${step===i+1?"current":""}">${i+1}. ${label}</span>`).join("")}</nav>
       <div class="pb-units"><label>Estoque de origem<select id="pbOrigin" ${busy||step===3?"disabled":""}>${options(origin)}</select></label><label>Loja destino<select id="pbDestination" ${busy||step===3?"disabled":""}>${options(destination)}</select></label></div>
       <p id="pbImportNotice" role="status"></p>
-      ${message?`<p class="pb-error" role="status">${e(message)}</p>`:""}
+      ${message?`<p class="pb-message pb-${messageKind}" role="status">${e(message)}</p>`:""}
       ${result?`<section><h3>Transferencia criada com sucesso</h3><p><strong>${e(result.code)}</strong> | ${counts.skus} SKUs analisados | ${items.filter(i=>i.quantity>0).length} enviados | ${counts.partial} parciais | ${counts.zero} sem envio</p><div class="button-row"><button data-pb="open" class="primary-button">Abrir transferencia</button><button data-pb="another" class="secondary-button">Criar outra para esta loja</button><button data-screen-target="fiscalWorkflow" class="secondary-button">Central de Compras / NF</button></div></section>`:
       step===1?`<div class="pb-options"><button data-pb="start" class="primary-button" ${busy?"disabled":""}>Nova transferencia</button><button data-pb="restore" class="secondary-button">Recuperar rascunho</button></div>
       <h3>Lojas que precisam de atencao</h3><div class="pb-grid"><table><thead><tr><th>Loja</th><th>Zerados</th><th>Baixo estoque</th><th>Transferencias abertas</th><th>Ultima atualizacao</th><th>Acao</th></tr></thead><tbody>${attention.map(a=>`<tr><td data-label="Produto">${e(a.code)} - ${e(a.name)}</td><td data-label="Zerados">${a.zero??"Sem base"}</td><td data-label="Baixo estoque">${a.low??"Sem base"}</td><td data-label="Transferencias abertas">${a.open_transfers}</td><td data-label="Atualizacao">${a.updated_at?e(new Date(a.updated_at).toLocaleString()):"Sem base LOJA"}</td><td data-label="Acao"><button class="secondary-button" data-pb-destination="${e(a.code)}">Selecionar loja</button></td></tr>`).join("")}</tbody></table></div>`:
       `<div class="pb-layout"><div>${step===2?productsHtml():reviewHtml(items)}${cartTable(items)}
-      <div class="pb-options"><label>Responsavel do estoque<select id="pbResponsible" ${busy||step===3?"disabled":""}><option value="">Selecione</option>${staff.map(u=>`<option value="${e(u.id)}" ${responsible===u.id?"selected":""}>${e(u.name)} (${e(u.role)})</option>`).join("")}</select></label>
-      <label>Prioridade<select id="pbPriority" ${busy||step===3?"disabled":""}>${["NORMAL","ALTA","URGENTE"].map(p=>`<option ${p===priority?"selected":""}>${p}</option>`).join("")}</select></label><label class="pb-wide">Observacao<textarea id="pbObservation" maxlength="4000" ${busy||step===3?"disabled":""}>${e(observation)}</textarea></label></div>
+      <div class="pb-options"><label>Prioridade<select id="pbPriority" ${busy||step===3?"disabled":""}>${["NORMAL","ALTA","URGENTE"].map(p=>`<option ${p===priority?"selected":""}>${p}</option>`).join("")}</select></label><label class="pb-wide">Observacao<textarea id="pbObservation" maxlength="4000" ${busy||step===3?"disabled":""}>${e(observation)}</textarea></label></div>
       </div><aside class="pb-cart"><h3>Transferencia em montagem</h3><dl><dt>Origem</dt><dd>${e(origin)}</dd><dt>Destino</dt><dd>${e(destination)}</dd><dt>SKUs</dt><dd>${counts.skus}</dd><dt>Necessidade</dt><dd>${counts.need}</dd><dt>A enviar</dt><dd>${counts.units}</dd><dt>Integrais</dt><dd>${counts.full}</dd><dt>Parciais</dt><dd>${counts.partial}</dd><dt>Sem envio</dt><dd>${counts.zero}</dd></dl>
+      <label class="pb-responsible">Responsavel do estoque<select id="pbResponsible" required aria-invalid="${messageKind==="error"&&message&&!responsible?"true":"false"}" ${busy||step===3?"disabled":""}><option value="">${staff.length?"Selecione":"Nenhum responsavel disponivel"}</option>${staff.map(u=>`<option value="${e(u.id)}" ${responsible===u.id?"selected":""}>${e(u.name)} (${e(u.role)})</option>`).join("")}</select></label>
       <p>Saldo baseado na ultima atualizacao da CAPTACAO.</p><div class="button-row"><button data-pb="${step===3?"create":"review"}" class="primary-button pb-review" ${busy?"disabled":""}>${busy?"Processando...":step===3?"Criar transferencia":"Revalidar e revisar"}</button><button data-pb="save" class="secondary-button" ${busy?"disabled":""}>Salvar rascunho</button>${step===3?'<button data-pb="back" class="secondary-button">Voltar e corrigir</button>':""}</div></aside></div><div class="pb-mobile-bar"><span>${counts.skus} SKUs | ${counts.units} unidades</span><button class="primary-button" data-pb="${step===3?"create":"review"}" ${busy?"disabled":""}>${step===3?"Confirmar":"Revisar"}</button></div>`}`;
   }
   function productsHtml() {
@@ -73,7 +74,7 @@ export function createPurchaseTransferBuilder(context) {
     if(r.error)throw r.error;staff=r.data||[];if(!staff.some(u=>u.id===responsible))responsible="";
   }
   async function review() {
-    if(!responsible)throw new Error("Selecione um responsavel do estoque.");
+    if(!responsible)throw new Error(staff.length?"Selecione um responsavel do estoque.":"Nenhum responsavel disponivel neste estoque. Verifique o cadastro de operadores e supervisores.");
     const old=[...cart.values()];if(!old.length)throw new Error("Adicione produtos a transferencia.");
     const current=await capture(old);changes=current.filter((i,n)=>i.available!==old[n].available).map((i,n)=>({sku:i.sku,before:old.find(o=>o.sku===i.sku).available,after:i.available,index:n}));
     cart=new Map(current.map(i=>[i.sku,i]));duplicates=await rpc("wms_purchase_open_duplicates",{p_origin_code:origin,p_destination_code:destination,p_skus:old.map(i=>i.sku)});acknowledged=false;
@@ -137,9 +138,15 @@ export function createPurchaseTransferBuilder(context) {
     const dest=event.target.closest("[data-pb-destination]");if(dest){destination=dest.dataset.pbDestination;if(origin===destination)origin=units.find(w=>w.code!==destination)?.code||"";draw();return;}
     const existing=event.target.closest("[data-pb-existing]");if(existing){context.openTransfer(existing.dataset.pbExisting);return;}
     const button=event.target.closest("[data-pb]");if(!button)return;
-    const action=button.dataset.pb;message="";
+    const action=button.dataset.pb;message="";messageKind="error";
     const actor=context.user().id;
     // Read current inputs before rendering replaces the DOM.
+    if(step===2){
+      const input=root.querySelector("#pbResponsible");
+      if(input)responsible=input.value;
+      priority=root.querySelector("#pbPriority")?.value||priority;
+      observation=root.querySelector("#pbObservation")?.value??observation;
+    }
     if(action==="search"){search=root.querySelector("#pbSearch").value.trim();filter=root.querySelector("#pbFilter").value;sort=root.querySelector("#pbSort").value;const input=root.querySelector("#pbMinimumOrigin");if(!input.checkValidity()){input.reportValidity();return;}minimumOrigin=Number(input.value);page=0;}
     const pasted=action==="paste"?parseStoreNeedText(root.querySelector("#pbPaste").value):null;
     busy=true;draw();
@@ -152,15 +159,23 @@ export function createPurchaseTransferBuilder(context) {
       if(action==="review")await review();if(action==="create")await create();if(action==="back")step=2;
       if(action==="open")context.openTransfer(result.id);
       if(action==="another"){result=null;cart.clear();changes=[];duplicates=[];actionId=randomId("purchase");step=1;}
-      if(action==="save"){localStorage.setItem(draftKey(),JSON.stringify({origin,destination,items:[...cart.values()],priority,observation,responsible,actionId}));message="Rascunho salvo neste navegador. Nenhuma tarefa foi criada.";}
+      if(action==="save"){localStorage.setItem(draftKey(),JSON.stringify({origin,destination,items:[...cart.values()],priority,observation,responsible,actionId}));messageKind="success";message="Rascunho salvo neste navegador. Nenhuma tarefa foi criada.";}
       if(action==="restore"){
         const draft=JSON.parse(localStorage.getItem(draftKey())||"null");if(!draft)throw new Error("Nenhum rascunho encontrado.");
         if(!unit(draft.origin)||!unit(draft.destination)||!Array.isArray(draft.items)||draft.items.length>500)throw new Error("Rascunho fora das unidades autorizadas.");
         origin=draft.origin;destination=draft.destination;priority=draft.priority;observation=draft.observation;responsible=draft.responsible;actionId=draft.actionId||randomId("purchase");
-        cart=new Map(draft.items.map(i=>[String(i.sku),i]));await loadStaff();step=2;await loadRows();message="Rascunho recuperado. Revalide os saldos antes de criar.";
+        cart=new Map(draft.items.map(i=>[String(i.sku),i]));await loadStaff();step=2;await loadRows();messageKind="info";message="Rascunho recuperado. Revalide os saldos antes de criar.";
       }
-    }catch(error){message=error.message||String(error);context.diagnostic("purchase-builder",error);}
-    finally{busy=false;if(actor!==context.user()?.id)await refresh();else draw();}
+    }catch(error){messageKind="error";message=error.message||String(error);context.diagnostic("purchase-builder",error);}
+    finally{
+      busy=false;if(actor!==context.user()?.id)await refresh();else{
+        draw();
+        if(action==="review"&&!responsible&&messageKind==="error"){
+          const input=root.querySelector("#pbResponsible");
+          input?.scrollIntoView({block:"center"});input?.focus({preventScroll:true});
+        }
+      }
+    }
   });
   return {refresh,selectDestination(code){
     if(cart.size)throw new Error("Salve ou finalize o carrinho atual antes de abrir outra loja.");
