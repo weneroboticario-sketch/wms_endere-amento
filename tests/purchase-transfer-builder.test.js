@@ -23,8 +23,10 @@ test("responsible is visible in cart and is read before rendering the action",()
   assert.match(aside,/id="pbResponsible"/);
   assert.ok(aside.indexOf('id="pbResponsible"')<aside.indexOf('data-pb="${step===3?"create":"review"}"'));
   assert.ok(source.indexOf("if(input)responsible=input.value")<source.indexOf("busy=true;draw()"));
-  assert.match(source,/input\?\.scrollIntoView/);
-  assert.match(source,/input\?\.focus/);
+  assert.match(aside,/Responsavel do estoque \(opcional\)/);
+  assert.match(aside,/Delegar depois/);
+  assert.doesNotMatch(aside,/<select id="pbResponsible" required/);
+  assert.doesNotMatch(source,/if\(!responsible\)throw/);
 });
 test("saving a draft is a success notice and still does not create a transfer",()=>{
   const save=source.slice(source.indexOf('if(action==="save")'),source.indexOf('if(action==="restore")'));
