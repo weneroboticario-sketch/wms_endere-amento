@@ -13,6 +13,12 @@
 .pb-cart { border-left: 1px solid #cbd8df; padding: 16px; position: sticky; top: 90px; background: #f3f8fa; }
 .pb-cart dl { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin: 0 0 16px; }
 .pb-cart dd { margin: 0; font-weight: 700; }
+.pb-responsible { display: grid; gap: 8px; margin: 16px 0; font-weight: 700; }
+.pb-responsible select { width: 100%; min-width: 0; }
+.pb-responsible select[aria-invalid=true] { border-color: #a42323; }
+.pb-message { padding: 12px; margin: 12px 0; }
+.pb-message.pb-success { background: #e6f5ef; color: #08794e; }
+.pb-message.pb-info { background: #edf4f7; color: #142b35; }
 .pb-grid { overflow-x: auto; border: 1px solid #cbd8df; border-radius: 6px; }
 .pb-grid table { display: table !important; width: 100%; border-collapse: collapse; table-layout: auto; font-size: 13px; }
 .pb-grid thead { display: table-header-group !important; }.pb-grid tbody { display: table-row-group !important; }
