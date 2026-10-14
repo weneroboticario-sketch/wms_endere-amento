@@ -4945,6 +4945,16 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     return replenishmentState.loadingPromise;
   }
 
+  var replenishmentCaptureBalances = { warehouse: "", actor: "", values: {}, error: false };
+
+  function replenishmentCaptureBalanceLabel(item) {
+    if (replenishmentCaptureBalances.warehouse !== activeWarehouseCode() ||
+      replenishmentCaptureBalances.actor !== (authState.currentUser && authState.currentUser.id)) return "Carregando";
+    if (replenishmentCaptureBalances.error) return "Indisponivel";
+    var quantity = replenishmentCaptureBalances.values[item.codigoMaterial];
+    return quantity === undefined ? "Nao importado" : formatQty(quantity);
+  }
+
   async function performReplenishmentLoad(requestedWarehouseCode) {
     var loadStartedAt = performance.now();
     var loadedFromCache = replenishmentState.requests.length > 0;
@@ -4961,6 +4971,20 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       if (response.error) throw response.error;
       if (activeWarehouseCode() !== requestedWarehouseCode) return false;
       replenishmentState.requests = (response.data || []).map(fromDbReplenishmentRequest);
+      if (IS_CP_ALAMO && !isAttendant()) {
+        var balanceActor = authState.currentUser && authState.currentUser.id;
+        try {
+          var captureModule = await import("./src/replenishment-capture-balances.js");
+          var balances = await captureModule.fetchReplenishmentCaptureBalances(supabaseDb, requestedWarehouseCode,
+            replenishmentState.requests.map(function (item) { return item.codigoMaterial; }));
+          if (activeWarehouseCode() !== requestedWarehouseCode || !authState.currentUser || authState.currentUser.id !== balanceActor) return false;
+          replenishmentCaptureBalances = { warehouse: requestedWarehouseCode, actor: balanceActor, values: balances, error: false };
+        } catch (balanceError) {
+          if (activeWarehouseCode() !== requestedWarehouseCode || !authState.currentUser || authState.currentUser.id !== balanceActor) return false;
+          replenishmentCaptureBalances = { warehouse: requestedWarehouseCode, actor: balanceActor, values: {}, error: true };
+          recordPerformanceError("reposicao-saldo-captacao", balanceError);
+        }
+      }
       replenishmentState.tablesAvailable = true;
       await writeModuleCacheForWarehouse("replenishmentData", requestedWarehouseCode, { requests: replenishmentState.requests });
       recordPerformanceMetric("lastReplenishmentLoadMs", loadStartedAt);
@@ -9641,6 +9665,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
+      IS_CP_ALAMO ? replenishmentMetricHtml("CAPTACAO disponivel", replenishmentCaptureBalanceLabel(item)) : "",
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
       replenishmentMetricHtml("Atendida", formatQty(item.attendedQty)),
       replenishmentMetricHtml("Pendente", formatQty(item.pendingQty)),
