@@ -12,6 +12,7 @@ As migrations desta pasta são a fonte oficial do schema. Não execute hotfixes 
 
 - `20261014003034_purchases_invoice_workflow.sql`: origem Compras, NF privada, handoffs e bloqueio apos conferencia.
 - `20261014003039_reverse_logistics_monthly_targets.sql`: processos de logistica reversa e metas por unidade/mes.
+- `20261014020000_admin_purchases_request_mode.sql`: administrador escolhe pedido operacional ou pedido de Compras com NF, sem trocar de perfil.
 
 Aplicar nessa ordem antes do frontend do CP Alamo. Nao aplicar estas duas migrations
 no WMS Enderecamento. Relatorios completos em `docs/RELATORIO_WORKFLOW_COMPRAS_NF.md`

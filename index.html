@@ -551,6 +551,9 @@
               <h3>Novo pedido</h3>
             </div>
             <form id="replenishmentForm" autocomplete="off">
+              <label class="cp-admin-purchase-mode" hidden>Origem do pedido
+                <select id="replenishmentOriginInput"><option value="ESTOQUE">Pedido operacional</option><option value="COMPRAS">Pedido de Compras (com NF)</option></select>
+              </label>
               <label for="replenishmentSkuInput">Codigo do produto</label>
               <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
@@ -751,6 +754,9 @@
                 <h3>Nova Transferência</h3>
               </div>
               <form id="newTransferForm" autocomplete="off">
+                <label class="cp-admin-purchase-mode" hidden>Origem do pedido
+                  <select id="transferOriginInput"><option value="ESTOQUE">Pedido operacional</option><option value="COMPRAS">Pedido de Compras (com NF)</option></select>
+                </label>
                 <label for="transferImportModeInput">Formato de entrada</label>
                 <select id="transferImportModeInput">
                   <option value="MESSAGE">Colar mensagem</option>

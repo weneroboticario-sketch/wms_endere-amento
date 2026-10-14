@@ -20,6 +20,11 @@ Nao recebe tarefas fisicas, nao inicia separacao ao abrir um detalhe e nao edita
 
 ## Fluxo
 
+Administrador tambem pode selecionar "Pedido de Compras (com NF)" na origem do formulario
+de reposicao ou nova transferencia. A opcao aparece somente no CP Alamo, mantendo o perfil
+ADMINISTRADOR e o nome real do criador. O padrao continua sendo "Pedido operacional".
+Migration adicional: 20261014020000_admin_purchases_request_mode.sql, schema 2026.10.14.003.
+
 Compras cria -> Estoque separa e confere -> PRONTA_PARA_NOTA -> NF_EM_PREPARACAO
 -> NF_ANEXADA -> LIBERADA_PARA_ENVIO -> DESPACHADA -> RECEBIDA -> FINALIZADA.
 Na reposicao, o Estoque informa caixas e confirma a quantidade atendida no painel fiscal.

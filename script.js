@@ -89,7 +89,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = IS_CP_ALAMO ? "2026.10.14.002" : "2026.10.10.001";
+  var EXPECTED_SCHEMA_VERSION = IS_CP_ALAMO ? "2026.10.14.003" : "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -2735,6 +2735,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function toDbTransfer(item) {
     return {
       id: item.id,
+      ...(IS_CP_ALAMO ? { request_origin: item.requestOrigin || "ESTOQUE" } : {}),
       codigo_transferencia: item.code,
       nome_transferencia: item.name,
       estabelecimento_id: item.establishmentId,
@@ -5069,6 +5070,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function toDbReplenishmentRequest(item) {
     return {
       id: item.id,
+      ...(IS_CP_ALAMO ? { request_origin: item.requestOrigin || "ESTOQUE" } : {}),
       created_at: item.createdAt || nowIso(),
       updated_at: item.updatedAt || nowIso(),
       warehouse_code: normalizeWarehouseCode(item.warehouseCode || activeWarehouseCode()),
@@ -5260,10 +5262,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var requestedQty = Number(data.requestedQty || 0);
     var storeQty = Number(data.storeQty || 0);
     var priority = normalizeReplenishmentPriority(data.priority);
+    var requestOrigin = isPurchasesUser() || (IS_CP_ALAMO && isAdmin() && data.requestOrigin === "COMPRAS") ? "COMPRAS" : "ESTOQUE";
     if (!sku) throw new Error("Codigo Material obrigatorio.");
     if (!authState.currentUser) throw new Error("Usuario solicitante obrigatorio.");
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
-    var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
+    var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].concat(IS_CP_ALAMO ? [requestOrigin] : []).join(":");
     if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
       var recentDuplicate = findRecentReplenishmentDuplicate(sku, requestedQty, 15000);
       if (recentDuplicate) return recentDuplicate;
@@ -5282,12 +5285,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock", error);
     }
     var now = nowIso();
-    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty, priority]);
+    var idempotencyKey = data.idempotencyKey || createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser.id, sku, requestedQty, priority].concat(IS_CP_ALAMO ? [requestOrigin] : []));
     var clientActionId = data.clientActionId || idempotencyKey;
     var existingByKey = await findReplenishmentByIdempotencyKey(idempotencyKey);
     if (existingByKey) return existingByKey;
     var request = {
       id: randomId("rep"),
+      requestOrigin: requestOrigin,
       createdAt: now,
       updatedAt: now,
       warehouseCode: activeWarehouseCode(),
@@ -6592,6 +6596,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function applyRolePermissions() {
     var visibleScreens = 0;
+    document.querySelectorAll(".cp-admin-purchase-mode").forEach(function (element) { element.hidden = !IS_CP_ALAMO || !isAdmin(); });
     document.querySelectorAll(".cpalamo-only").forEach(function (element) { element.hidden = !IS_CP_ALAMO; });
     document.querySelectorAll(".admin-only").forEach(function (element) {
       element.hidden = !isAdmin();
@@ -8313,6 +8318,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       if (event.target.closest("[data-open-replenishments]")) showScreen("reposicao");
     });
     if ($("replenishmentForm")) $("replenishmentForm").addEventListener("submit", handleCreateReplenishment);
+    [["replenishmentOriginInput","createReplenishmentButton"],["transferOriginInput","createTransferButton"]].forEach(function (pair) {
+      $(pair[0]).addEventListener("change",function () { var button=$(pair[1]);if(button)delete button.dataset.idempotencyKey; });
+    });
     if ($("replenishmentExportForm")) $("replenishmentExportForm").addEventListener("submit", exportCompletedReplenishments);
     if ($("refreshReplenishmentExportsButton")) $("refreshReplenishmentExportsButton").addEventListener("click", loadReplenishmentExportHistory);
     if ($("replenishmentExportHistory")) $("replenishmentExportHistory").addEventListener("click", async function (event) {
@@ -9707,10 +9715,11 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var priority = isAttendant() ? normalizeReplenishmentPriority(selectedRadioValue("replenishmentPriority", "NORMAL")) : "NORMAL";
       var idempotencyKey = button && button.dataset.idempotencyKey
         ? button.dataset.idempotencyKey
-        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value, priority]);
+        : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value, priority].concat(IS_CP_ALAMO ? [$("replenishmentOriginInput").value] : []));
       if (button) button.dataset.idempotencyKey = idempotencyKey;
       var created = await createReplenishmentRequest({
         codigoMaterial: $("replenishmentSkuInput").value,
+        requestOrigin: $("replenishmentOriginInput").value,
         storeQty: $("replenishmentStoreQtyInput").value,
         requestedQty: $("replenishmentRequestQtyInput").value,
         priority: priority,
@@ -17009,8 +17018,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var transferId = randomId("trf-" + groupIndex);
       var transfer = buildImportedTransferRecord(group, responsible, transferId, buildTransferCode(group, groupIndex), buildTransferName(group), now);
       if (IS_CP_ALAMO) {
-        transfer.requestOrigin=isPurchasesUser()?"COMPRAS":"ESTOQUE";
-        transfer.requiresInvoice=!!isPurchasesUser();transfer.invoiceStage="";
+        transfer.requestOrigin=isPurchasesUser() || (isAdmin() && $("transferOriginInput").value==="COMPRAS")?"COMPRAS":"ESTOQUE";
+        transfer.requiresInvoice=transfer.requestOrigin==="COMPRAS";transfer.invoiceStage="";
       }
       transfer.requestId = creationRequestId;
       transfer.idempotencyKey = creationRequestId + ":GRUPO-" + (groupIndex + 1);

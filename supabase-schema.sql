@@ -22,3 +22,4 @@
 \ir supabase/migrations/20261013233105_cpalamo_display_name.sql
 \ir supabase/migrations/20261014003034_purchases_invoice_workflow.sql
 \ir supabase/migrations/20261014003039_reverse_logistics_monthly_targets.sql
+\ir supabase/migrations/20261014020000_admin_purchases_request_mode.sql

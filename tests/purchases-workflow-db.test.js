@@ -47,7 +47,7 @@ export async function workflowDatabase() {
     alter table wms_transfer_divergences add column if not exists resolved_at timestamptz;
     insert into wms_warehouses(id,code,name) values('a','A','Store A'),('b','B','Store B');
     insert into wms_users(id,name,username,role) values('actor','Actor','actor','OPERADOR');`);
-  for (const migration of ["20261014003034_purchases_invoice_workflow.sql", "20261014003039_reverse_logistics_monthly_targets.sql"]) {
+  for (const migration of ["20261014003034_purchases_invoice_workflow.sql", "20261014003039_reverse_logistics_monthly_targets.sql", "20261014020000_admin_purchases_request_mode.sql"]) {
     await db.exec(await readFile(new URL("../supabase/migrations/" + migration, import.meta.url), "utf8"));
   }
   await db.exec(`grant usage on schema public,private,storage to authenticated;
@@ -85,6 +85,23 @@ test("Compras workflow preserves legacy, protects quantities and requires a priv
     assert.equal((await db.query("select status from wms_replenishment_requests where id='buyer'")).rows[0].status, "CONCLUIDO");
     assert.equal((await db.query("select count(*)::int n from wms_notifications where event_type='LIBERADA_PARA_ENVIO'")).rows[0].n, 1);
     await assert.rejects(db.exec("insert into wms_replenishment_requests(id,warehouse_code) values('wrong','B')"), /row-level security/);
+  } finally { await db.close(); }
+});
+
+test("administrator selects purchases for either domain while normal requests stay operational", async () => {
+  const db = await workflowDatabase();
+  try {
+    await db.exec("select set_config('test.role','ADMINISTRADOR',false)");
+    for(const table of ["wms_transfers","wms_replenishment_requests"]) {
+      const extraColumn = table === "wms_replenishment_requests" ? ",codigo_material" : "";
+      const extraValue = table === "wms_replenishment_requests" ? ",'00178'" : "";
+      await db.query(`insert into ${table}(id,warehouse_code,request_origin${extraColumn}) values($1,'A','COMPRAS'${extraValue}),($2,'A','ESTOQUE'${extraValue})`,[table+"-buyer",table+"-normal"]);
+      const rows = (await db.query(`select id,request_origin,requires_invoice from ${table} order by id`)).rows;
+      assert.equal(rows[0].request_origin,"COMPRAS");assert.equal(rows[0].requires_invoice,true);
+      assert.equal(rows[1].request_origin,"ESTOQUE");assert.equal(rows[1].requires_invoice,false);
+    }
+    await db.exec("select set_config('test.role','OPERADOR',false);insert into wms_replenishment_requests(id,warehouse_code,request_origin,codigo_material) values('operator-origin','A','COMPRAS','00178')");
+    assert.equal((await db.query("select requires_invoice from wms_replenishment_requests where id='operator-origin'")).rows[0].requires_invoice,false);
   } finally { await db.close(); }
 });
 
