@@ -10,15 +10,19 @@ export function createReverseLogistics(context) {
   const root = document.getElementById("reverseLogisticsContent");
   const e = escapeHtml;
   const staff = () => ["ADMINISTRADOR","SUPERVISOR","OPERADOR"].includes(context.user().role);
+  const canCreate = () => staff() || context.user().role === "COMPRAS";
   const manager = () => ["ADMINISTRADOR","SUPERVISOR"].includes(context.user().role);
   let page = 0, busy = false, rows = [], warehouse = "", creationKey = randomId("reverse");
   const options = () => context.warehouses().map(w => `<option value="${e(w.code)}">${e(w.code)} - ${e(w.name)}</option>`).join("");
-  root.innerHTML = `<div class="button-row"><label>Competencia<input id="reverseMonth" type="month" required value="${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}"></label><label>Unidade<select id="reverseUnit">${manager() || context.user().role === "COMPRAS" ? '<option value="">Todas autorizadas</option>' : ""}${options()}</select></label><label>Status<select id="reverseStatus"><option value="">Todos</option>${["REGISTRADA","AGUARDANDO_ENVIO","ENVIADA","RECEBIDA","CONCLUIDA","DIVERGENCIA","CANCELADA"].map(s=>`<option>${s}</option>`).join("")}</select></label><label>GDV, NFe ou responsavel<input id="reverseSearch" maxlength="120"></label><button class="secondary-button" id="reverseSearchButton" type="button">Buscar</button></div>
+  root.innerHTML = `${canCreate() ? `<details open><summary>Registrar logistica reversa</summary><form id="reverseCreateForm"><label>Unidade de origem<select name="unit" required>${options()}</select></label><label>Quantidade de caixas<input name="boxes" type="number" min="1" step="1" required></label><label>No GDV<input name="gdv" maxlength="120" required></label><label>NFe<input name="nfe" maxlength="120" required></label><label>Destino<input name="destination" maxlength="180"></label><label>Observacao<textarea name="observation" maxlength="2000"></textarea></label><button class="primary-button" type="submit">Registrar</button></form></details>
+` : ""}
+    <div class="button-row"><label>Competencia<input id="reverseMonth" type="month" required value="${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}"></label><label>Unidade<select id="reverseUnit">${manager() || context.user().role === "COMPRAS" ? '<option value="">Todas autorizadas</option>' : ""}${options()}</select></label><label>Status<select id="reverseStatus"><option value="">Todos</option>${["REGISTRADA","AGUARDANDO_ENVIO","ENVIADA","RECEBIDA","CONCLUIDA","DIVERGENCIA","CANCELADA"].map(s=>`<option>${s}</option>`).join("")}</select></label><label>GDV, NFe ou responsavel<input id="reverseSearch" maxlength="120"></label><button class="secondary-button" id="reverseSearchButton" type="button">Buscar</button></div>
     <div class="table-wrapper"><table><thead><tr><th>Unidade</th><th>Meta</th><th>Realizado</th><th>%</th><th>Restante</th><th>Excedente</th><th>Pendencias</th><th>Divergencias</th><th>Ritmo</th></tr></thead><tbody id="reverseSummaryRows"></tbody></table></div>
     <div class="button-row"><label>Ordenacao<select id="reverseSort"><option value="asc">Menor percentual</option><option value="desc">Maior percentual</option><option value="pending">Mais pendencias</option><option value="divergences">Mais divergencias</option></select></label></div>
-    ${staff() ? `<details><summary>Registrar logistica reversa</summary><form id="reverseCreateForm"><label>Unidade de origem<select name="unit" required>${options()}</select></label><label>Quantidade de caixas<input name="boxes" type="number" min="1" step="1" required></label><label>No GDV<input name="gdv" maxlength="120" required></label><label>NFe<input name="nfe" maxlength="120" required></label><label>Destino<input name="destination" maxlength="180"></label><label>Observacao<textarea name="observation" maxlength="2000"></textarea></label><button class="primary-button" type="submit">Registrar</button></form></details>
-      <details><summary>Meta mensal da unidade</summary><form id="reverseTargetForm"><label>Unidade<select name="unit" required>${options()}</select></label><label>Meta em caixas<input name="target" type="number" min="0" step="1" required></label><button class="primary-button" type="submit">Salvar meta</button></form></details>` : ""}
+    ${staff() ? `      <details><summary>Meta mensal da unidade</summary><form id="reverseTargetForm"><label>Unidade<select name="unit" required>${options()}</select></label><label>Meta em caixas<input name="target" type="number" min="0" step="1" required></label><button class="primary-button" type="submit">Salvar meta</button></form></details>` : ""}
     <div class="table-wrapper"><table><thead><tr><th>Data</th><th>Unidade</th><th>GDV</th><th>NFe</th><th>Caixas</th><th>Status</th><th>Responsavel</th><th>Acoes</th></tr></thead><tbody id="reverseRows"></tbody></table></div><div class="button-row"><button id="reversePrevious" class="secondary-button" type="button">Anterior</button><button id="reverseNext" class="secondary-button" type="button">Proxima</button></div><div id="reverseDetail"></div>`;
+  const createForm = document.getElementById("reverseCreateForm");
+  if (createForm && context.warehouses().some(w => w.code === context.warehouse())) createForm.elements.unit.value = context.warehouse();
   if (!manager() && context.user().role !== "COMPRAS") document.getElementById("reverseUnit").value = context.warehouse();
   const status = message => { document.getElementById("reverseLogisticsStatus").textContent = message; };
   let summaryRows = [];
@@ -57,6 +61,8 @@ export function createReverseLogistics(context) {
   document.getElementById("reverseCreateForm")?.addEventListener("submit",async event=>{
     event.preventDefault(); if(busy)return;busy=true;const form=event.target;form.querySelector("button").disabled=true;
     try {
+      if(!canCreate())throw new Error("Perfil sem permissao para registrar.");
+      if(!context.warehouses().some(w=>w.code===form.elements.unit.value))throw new Error("Unidade nao autorizada.");
       const boxes=Number(form.elements.boxes.value);if(!Number.isInteger(boxes)||boxes<1)throw new Error("Informe caixas inteiras e maiores que zero.");
       const user=context.user();const unit=form.elements.unit.value;
       const payload={id:creationKey,warehouse_code:unit,unit_origin_code:unit,unit_origin_name:context.warehouses().find(w=>w.code===unit)?.name || unit,
@@ -66,7 +72,7 @@ export function createReverseLogistics(context) {
       if(!payload.gdv_number || !payload.nfe_number)throw new Error("GDV e NFe obrigatorios.");
       const result=await context.client().from("wms_reverse_logistics").upsert(payload,{onConflict:"idempotency_key",ignoreDuplicates:true});
       if(result.error)throw result.error;
-      creationKey=randomId("reverse");form.reset();context.changed();status("Processo registrado.");
+      creationKey=randomId("reverse");form.reset();form.elements.unit.value=unit;context.changed();status("Processo registrado.");
     }catch(error){status(error.code==="23505"?"GDV ja registrado em processo ativo. Confira a referencia.":error.message);}
     finally{busy=false;form.querySelector("button").disabled=false;await refresh();}
   });
