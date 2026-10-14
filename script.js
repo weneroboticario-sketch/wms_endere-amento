@@ -969,6 +969,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     }
     if (isGlobalDashboardScope() && screenId === "saudeSistema") return true;
     if (screenId === "usuarios") {
+      await ensureWarehousesLoaded();
       var managementResults = await Promise.all([
         ensureUsersLoaded({ repair: false, force: true }),
         ensureAccessRequestsLoaded({ force: true })
@@ -6903,6 +6904,10 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       setStatus("userFormStatus", "Acesso restrito ao administrador ou supervisor.", "error");
       return;
     }
+    if (!await ensureWarehousesLoaded()) {
+      setStatus("userFormStatus", "Nao foi possivel carregar os estoques. Atualize antes de salvar o usuario.", "error");
+      return;
+    }
     var id = $("userEditId").value;
     var name = normalizeText($("userNameInput").value);
     var username = normalizeText($("userUsernameInput").value).toLowerCase();
@@ -7114,6 +7119,12 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var allowed = user && user.isGlobalAdmin ? warehouses.map(function (warehouse) { return warehouse.code; }) : parseWarehouseCodes(user && user.allowedWarehouseCodes);
     if (!allowed.length) allowed = [normalizeWarehouseCode(user && user.defaultWarehouseCode || activeWarehouseCode())];
     var defaultCode = normalizeWarehouseCode(user && user.defaultWarehouseCode || allowed[0] || activeWarehouseCode());
+    var validCodes = warehouses.map(function (warehouse) { return normalizeWarehouseCode(warehouse.code); });
+    if (validCodes.indexOf(defaultCode) < 0) {
+      defaultCode = validCodes.indexOf(activeWarehouseCode()) >= 0 ? activeWarehouseCode() : (validCodes[0] || "");
+    }
+    allowed = allowed.filter(function (code) { return validCodes.indexOf(code) >= 0; });
+    if (defaultCode && allowed.indexOf(defaultCode) < 0) allowed.push(defaultCode);
     if (isSupervisor()) {
       defaultCode = activeWarehouseCode();
       allowed = [activeWarehouseCode()];
@@ -7121,6 +7132,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     defaultSelect.innerHTML = warehouses.map(function (warehouse) {
       return "<option value=\"" + escapeHtml(warehouse.code) + "\">" + escapeHtml(warehouse.code + " - " + warehouse.name) + "</option>";
     }).join("");
+    if (!warehouses.length) defaultSelect.innerHTML = '<option value="">Nenhum estoque ativo autorizado</option>';
     defaultSelect.value = defaultCode;
     defaultSelect.disabled = isSupervisor();
     allowedBox.innerHTML = warehouses.map(function (warehouse) {
@@ -7166,6 +7178,15 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   function renderUsers() {
     if (!$("userGroups")) return;
+    if (moduleLoadState.warehouses) {
+      renderUserWarehouseInputs({
+        role: $("userRoleInput").value,
+        defaultWarehouseCode: $("userDefaultWarehouseInput").value || activeWarehouseCode(),
+        allowedWarehouseCodes: selectedUserWarehouseCodes(),
+        supervisorId: $("userSupervisorInput").value,
+        isGlobalAdmin: $("userGlobalAdminInput") && $("userGlobalAdminInput").checked
+      });
+    }
     var users = [];
     try {
       syncUserFilterControls();
