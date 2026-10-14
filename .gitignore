@@ -7,3 +7,4 @@ tmp/
 .env.*.local
 artifacts/cp-workflow-views/
 artifacts/demo-mode/
+artifacts/purchase-builder/

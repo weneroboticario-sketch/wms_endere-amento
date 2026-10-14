@@ -2269,6 +2269,10 @@ tbody tr:hover td {
   gap: 12px;
 }
 
+.transfer-card-grid > .purchase-transfer-stock-card {
+  grid-column: 1 / -1;
+}
+
 .transfer-board-card {
   display: grid;
   grid-template-columns: minmax(300px, 1.05fr) minmax(360px, 1.15fr) minmax(142px, 0.32fr);

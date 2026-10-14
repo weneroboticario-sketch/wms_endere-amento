@@ -89,7 +89,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   var ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
-  var EXPECTED_SCHEMA_VERSION = IS_CP_ALAMO ? "2026.10.14.003" : "2026.10.10.001";
+  var EXPECTED_SCHEMA_VERSION = IS_CP_ALAMO ? "2026.10.14.004" : "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
@@ -113,6 +113,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.demoMode = ["ADMINISTRADOR"];
+    SCREEN_PERMISSIONS.purchaseTransfer = ["ADMINISTRADOR", "COMPRAS"];
     var roleOption = document.createElement("option"); roleOption.value = "COMPRAS"; roleOption.textContent = "Compras";
     document.getElementById("userRoleInput").appendChild(roleOption);
   }
@@ -1688,6 +1689,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     return [
       "id",
       "request_origin", "requires_invoice", "invoice_stage", "status_changed_at",
+      ...(IS_CP_ALAMO ? ["purchase_priority"] : []),
       "codigo_transferencia",
       "nome_transferencia",
       "estabelecimento_id",
@@ -2536,6 +2538,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       requestOrigin: row.request_origin || "LEGADO",
       requiresInvoice: row.requires_invoice === true,
       invoiceStage: row.invoice_stage || "",
+      purchasePriority: row.purchase_priority || "NORMAL",
       code: row.codigo_transferencia || "",
       name: row.nome_transferencia || "",
       establishmentId: row.estabelecimento_id || "",
@@ -6595,6 +6598,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
     if (isGlobalDashboardScope()) return "globalDashboard";
+    if (IS_CP_ALAMO && authState.currentUser.role === "COMPRAS") return "purchaseTransfer";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
   }
@@ -6681,8 +6685,12 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         var context = {
           client: function () { return supabaseDb; }, user: function () { return authState.currentUser; },
           warehouse: activeWarehouseCode, global: isGlobalDashboardScope,
-          warehouses: function () { var allowed = allowedWarehouseCodesForUser(authState.currentUser); return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; }); },
+          warehouses: function () {
+            var allowed = isGlobalAdmin() ? allowedWarehouseCodesForUser(authState.currentUser) : parseWarehouseCodes(authState.currentUser.allowedWarehouseCodes || authState.currentUser.defaultWarehouseCode);
+            return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; });
+          },
           diagnostic: recordPerformanceError,
+          navigate: showScreen,
           changed: function () { scheduleTransferRealtimeRefresh("fiscal-workflow", 100); },
           openTransfer: async function (id) {
             var result = await supabaseDb.from("wms_transfers").select("*").eq("id", id).single();
@@ -6693,7 +6701,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
             activateTransferTab("transferWorkSection"); renderTransferWork();
           }
         };
-        if (screenId === "fiscalWorkflow") {
+        if (screenId === "purchaseTransfer") {
+          var builder = await import("./src/purchase-transfer-builder.js"); cpWorkflowViews[screenId] = builder.createPurchaseTransferBuilder(context);
+        } else if (screenId === "fiscalWorkflow") {
           var fiscal = await import("./src/purchases-workflow.js"); cpWorkflowViews[screenId] = fiscal.createPurchasesWorkflow(context);
         } else {
           var reverse = await import("./src/reverse-logistics.js"); cpWorkflowViews[screenId] = reverse.createReverseLogistics(context);
@@ -6733,6 +6743,21 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       if (!authState.currentUser || authState.currentUser.id!==actor || activeWarehouseCode()!==code) return;
       if(result[0].error || result[1].error)throw result[0].error || result[1].error;
       host.innerHTML="<h3>Compras e Logistica Reversa</h3><div class=\"metric-grid\">"+Object.entries(result[0].data || {}).map(function(pair){return "<article class=\"metric-card\"><span>"+escapeHtml(pair[0])+"</span><strong>"+Number(pair[1])+"</strong></article>";}).join("")+"</div><div class=\"table-wrap\"><table><thead><tr><th>Unidade</th><th>Meta mensal</th><th>Caixas realizadas</th><th>Percentual</th><th>Pendencias</th></tr></thead><tbody>"+(result[1].data || []).map(function(row){return "<tr><td>"+escapeHtml(row.unit_code)+"</td><td>"+Number(row.target_boxes)+"</td><td>"+Number(row.completed_boxes)+"</td><td>"+(Number(row.target_boxes)>0?(Number(row.completed_boxes)/Number(row.target_boxes)*100).toFixed(1)+"%":"Meta nao definida")+"</td><td>"+Number(row.pending)+"</td></tr>";}).join("")+"</tbody></table></div>";
+      if (canAccessScreen("purchaseTransfer")) {
+        var attention = await supabaseDb.rpc("wms_purchase_attention", { p_target: 3 });
+        if (!attention.error && authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === code) {
+          host.insertAdjacentHTML("beforeend", "<h3>Lojas que precisam de atencao</h3><div class=\"table-wrap\"><table><thead><tr><th>Loja</th><th>Zerados</th><th>Baixo estoque</th><th>Transferencias abertas</th><th>Ultima atualizacao</th><th>Acao</th></tr></thead><tbody>" + (attention.data || []).map(function (row) {
+            return "<tr><td>" + escapeHtml(row.code + " - " + row.name) + "</td><td>" + (row.zero === null ? "Sem base" : Number(row.zero)) + "</td><td>" + (row.low === null ? "Sem base" : Number(row.low)) + "</td><td>" + Number(row.open_transfers) + "</td><td>" + (row.updated_at ? formatDateTime(row.updated_at) : "Sem base LOJA") + "</td><td><button class=\"secondary-button\" data-purchase-destination=\"" + escapeHtml(row.code) + "\">Ver necessidade</button></td></tr>";
+          }).join("") + "</tbody></table></div>");
+          host.querySelectorAll("[data-purchase-destination]").forEach(function (button) {
+            button.addEventListener("click", async function () {
+              await showScreen("purchaseTransfer");
+              try { cpWorkflowViews.purchaseTransfer.selectDestination(button.dataset.purchaseDestination); }
+              catch (error) { showToast(error.message, "warning"); }
+            });
+          });
+        }
+      }
       cpDashboardSummaryAt=Date.now();cpDashboardSummaryWarehouse=code;
     }catch(error){recordPerformanceError("cp-workflow-summary",error);host.textContent="Indicadores fiscais indisponiveis no momento.";}
     finally{cpDashboardSummaryPending=false;}
@@ -6754,9 +6779,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "demoMode") return IS_CP_ALAMO && isAdmin();
-    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) return false;
+    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
-    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0);
+    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0);
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
@@ -8168,7 +8193,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     if (screenId === "usuarios") renderUsers();
     try {
       if (screenId === "demoMode") await openDemoModeScreen();
-      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
+      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
       recordPerformanceError("tela-" + screenId, error);
@@ -8201,6 +8226,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function updateModuleSubtitleLabel(screenId) {
     if (screenId === "demoMode") return "Demonstracao";
     if (screenId === "fiscalWorkflow") return "Compras / NF";
+    if (screenId === "purchaseTransfer") return "Necessidade das Lojas";
     if (screenId === "reverseLogistics") return "Logistica Reversa";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
@@ -10897,8 +10923,10 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var conferenceAssignment = getLatestTransferConferenceAssignment(transfer.id);
     var origin = transferRouteOriginLabel(transfer);
     var destination = transferRouteDestinationLabel(transfer);
-    var source = transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
-    var stage = transferPanelStageInfo(transfer.status);
+    var purchaseRequest = IS_CP_ALAMO && transfer.requestOrigin === "COMPRAS";
+    var source = purchaseRequest ? "COMPRAS" : transfer.importSource || (getTransferFlow(transfer) === "CONFERENCIA_XML" ? "XML" : "EXCEL");
+    var boardStatus = purchaseRequest && transfer.invoiceStage && transfer.invoiceStage !== "CORRECAO_SOLICITADA" ? "PRONTA_PARA_NOTA" : transfer.status;
+    var stage = transferPanelStageInfo(boardStatus);
     var pendingCount = stage.label === "Caixa" || stage.label === "Nota" ? stats.pendingPacking : stats.pendingSeparation;
     var progressClass = stats.progress >= 100 ? "is-complete" : stats.progress > 0 ? "is-active" : "is-empty";
     var progressDetail = stage.label === "Caixa" || stage.label === "Nota"
@@ -10912,19 +10940,21 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       : "";
     var mergedInfo = transfer.isMerged ? "<div class=\"transfer-board-note\">Unificada de " + transfer.mergedFromIds.length + " transferencia(s)</div>" : transfer.mergedIntoId ? "<div class=\"transfer-board-note\">Arquivada por unificacao</div>" : "";
     return [
-      "<article class=\"transfer-board-card " + stage.className + "\">",
+      "<article class=\"transfer-board-card " + stage.className + (purchaseRequest ? " purchase-transfer-stock-card" : "") + "\">",
       "<div class=\"transfer-board-main\">",
       "<div class=\"transfer-board-top\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><span class=\"transfer-stage-chip\">" + escapeHtml(stage.label) + "</span></div>",
       IS_CP_ALAMO ? "<small>Origem da solicitacao: " + escapeHtml(transfer.requestOrigin === "COMPRAS" ? "Compras" : transfer.requestOrigin === "LEGADO" ? "Legado" : "Estoque") + "</small>" : "",
+      purchaseRequest ? "<small>Prioridade: " + escapeHtml(transfer.purchasePriority || "NORMAL") + " | NF obrigatoria</small>" : "",
       "<div class=\"transfer-board-title\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
       "<div class=\"transfer-route-flow\"><div><span>Sai de</span><strong>" + escapeHtml(origin) + "</strong></div><span class=\"route-arrow\">&rarr;</span><div><span>Vai para</span><strong>" + escapeHtml(destination) + "</strong></div></div>",
       "</div>",
       "<div class=\"transfer-board-status\">",
       "<div class=\"transfer-stage-line\"><span class=\"stage-dot\"></span><strong>" + escapeHtml(stage.label) + "</strong><span>" + escapeHtml(transferStatusDisplayLabel(transfer.status)) + "</span></div>",
-      transferStageTrackHtml(transfer.status),
+      transferStageTrackHtml(boardStatus, purchaseRequest ? transfer.invoiceStage : ""),
       "<div class=\"transfer-progress " + progressClass + "\"><div class=\"transfer-progress-bar\"><span style=\"width:" + stats.progress + "%\"></span></div><span><strong>" + stats.progress + "%</strong> " + escapeHtml(progressDetail) + "</span></div>",
       "<div class=\"transfer-board-meta\"><span><small>SKUs</small><strong>" + stats.totalItems + "</strong></span><span><small>Volume</small><strong>" + formatQty(stats.requested) + " un.</strong></span><span><small>Pendente</small><strong>" + pendingCount + "</strong></span><span><small>Responsável</small><strong>" + escapeHtml(transfer.responsibleName || "-") + "</strong></span><span><small>Criada</small><strong>" + formatDateTime(transfer.createdAt) + "</strong></span></div>",
       conferenceAssignment ? "<div class=\"transfer-board-note\">Conferente: " + escapeHtml(conferenceAssignment.assignedUserName || "-") + "</div>" : "",
+      purchaseRequest && transfer.invoiceStage ? "<div class=\"transfer-board-note\">Fiscal: " + escapeHtml(transfer.invoiceStage.replace(/_/g, " ")) + "</div>" : "",
       mergedInfo,
       "</div>",
       "<div class=\"row-actions transfer-action-stack transfer-board-actions\">",
@@ -10950,12 +10980,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     return { label: "Separação", className: "stage-separation" };
   }
 
-  function transferStageTrackHtml(status) {
+  function transferStageTrackHtml(status, fiscalStage) {
     var activeIndex = 1;
     if (["EM_SEPARACAO", "SEPARACAO_CONCLUIDA"].indexOf(status) >= 0) activeIndex = 2;
     if (["EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(status) >= 0) activeIndex = 3;
     if (["LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA", "PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA"].indexOf(status) >= 0) activeIndex = 3;
     if (isFinalTransferStatus(status)) activeIndex = 4;
+    if (fiscalStage && fiscalStage !== "CORRECAO_SOLICITADA") activeIndex = 4;
     if (status === "CANCELADA" || status === "UNIFICADA" || status === "ARQUIVADA_POR_UNIFICACAO") activeIndex = -1;
     var steps = ["Criada", "Separação", "Caixa", "Nota"];
     return "<div class=\"transfer-stage-track\">" + steps.map(function (label, index) {
@@ -11768,6 +11799,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function myTransferCardHtml(transfer) {
+    if (IS_CP_ALAMO && transfer.requestOrigin === "COMPRAS") {
+      return transferPanelRowHtml(transfer).replace("data-transfer-view=", "data-transfer-open=");
+    }
     var stats = getTransferStats(transfer.id);
     var action = isFinalTransferStatus(transfer.status, transfer) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
