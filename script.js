@@ -3696,21 +3696,20 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var parsed = normalizeLocation(row && row.codigoEndereco);
       if (!skuKey || !parsed.valid) return;
       if (!grouped[skuKey]) grouped[skuKey] = { sku: sku, locations: {}, row: row };
-      grouped[skuKey].locations[parsed.code] = parsed;
+      grouped[skuKey].locations[parsed.code] = { parsed: parsed, row: row };
       grouped[skuKey].row = row;
     });
-    return Object.keys(grouped).map(function (skuKey) {
+    return Object.keys(grouped).flatMap(function (skuKey) {
       var group = grouped[skuKey];
       var locationCodes = Object.keys(group.locations);
-      if (locationCodes.length !== 1) return null;
-      return {
+      return locationCodes.map(function (code) { return {
         skuKey: skuKey,
         sku: group.sku,
-        row: group.row,
-        parsed: group.locations[locationCodes[0]],
-        locationCode: locationCodes[0]
-      };
-    }).filter(Boolean);
+        row: group.locations[code].row,
+        parsed: group.locations[code].parsed,
+        locationCode: code
+      }; });
+    });
   }
 
   function importedLocationAreaCode(locationCode, warehouseCode, fallbackAreaCode) {
@@ -3754,7 +3753,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     plans.forEach(function (plan) {
       var duplicatesBefore = result.duplicatesRemoved;
       var matches = workingBindings.filter(function (binding) {
-        if (deleteById[binding.id]) return false;
+        if (deleteById[binding.id] || locationKeyFromBinding(binding) !== plan.locationCode) return false;
         return splitSkuValues(binding.sku).some(function (candidate) {
           return normalizeSkuKey(candidate) === plan.skuKey;
         });
@@ -3763,7 +3762,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       var officialMatches = simpleMatches.filter(function (binding) {
         return locationKeyFromBinding(binding) === plan.locationCode;
       }).sort(sortByDateDesc);
-      var keep = officialMatches[0] || simpleMatches.slice().sort(sortByDateDesc)[0] || null;
+      var keep = officialMatches[0] || null;
 
       simpleMatches.forEach(function (binding) {
         if (!keep || binding.id !== keep.id) markBindingForDelete(binding);
@@ -8796,55 +8795,33 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var skuLocations = findBySku(sku).filter(function (binding) {
       return binding.locationCode !== parsed.code && (!sourceBindingId || binding.id !== sourceBindingId);
     });
+    var skuDecision = "keep";
     if (skuLocations.length) {
       renderScanResults(sameLocation ? [sameLocation].concat(skuLocations) : skuLocations);
-      var skuDecision = await askSkuMoveDecision(sku, parsed.code, skuLocations, Boolean(sameLocation));
+      skuDecision = await askSkuMoveDecision(sku, parsed.code, skuLocations, Boolean(sameLocation));
+      if (skuDecision === "cancel") {
+        return { ok: false, message: "Nenhuma localizacao foi alterada.", type: "warning" };
+      }
       if (sameLocation) {
         if (skuDecision === "move") {
           var removeOldResult = await removeAddressingBindingsForUniqueSku(
-            skuLocations,
-            "Vinculo antigo removido para manter o SKU somente em " + parsed.code + "."
+            skuLocations, "Vinculo removido por confirmacao para manter somente " + parsed.code + "."
           );
-          if (!removeOldResult.ok) {
-            return { ok: false, message: "Nao foi possivel remover a localizacao antiga: " + removeOldResult.message, type: "error" };
-          }
-          var currentOccupants = findByLocation(parsed.code);
-          return {
-            ok: true,
-            binding: currentOccupants.find(function (binding) { return isSameSku(binding.sku, sku); }) || sameLocation,
-            occupants: currentOccupants
-          };
+          if (!removeOldResult.ok) return { ok: false, message: removeOldResult.message, type: "error" };
         }
-
-        var removeCurrentResult = await removeAddressingBindingsForUniqueSku(
-          [sameLocation],
-          "Vinculo removido deste endereco para manter o SKU somente na localizacao anterior."
-        );
-        if (!removeCurrentResult.ok) {
-          return { ok: false, message: "Nao foi possivel manter apenas a localizacao anterior: " + removeCurrentResult.message, type: "error" };
-        }
-        clearScanFieldsForNext();
-        return {
-          ok: false,
-          message: "SKU mantido em " + skuLocations.map(function (binding) { return binding.locationCode; }).join(", ") + ". O vinculo de " + parsed.code + " foi removido.",
-          type: "warning"
-        };
-      }
-      if (skuDecision !== "move") {
-        clearScanFieldsForNext();
-        return { ok: false, message: "SKU mantido no endereço antigo. Nenhuma localização foi alterada.", type: "warning" };
+        return { ok: true, binding: sameLocation, occupants: findByLocation(parsed.code) };
       }
     }
 
     if (sameLocation) {
       renderScanResults(locationOccupants.length ? locationOccupants : [sameLocation]);
       clearScanFieldsForNext();
-      return { ok: false, message: "Esse codigo ja esta alocado somente nessa localizacao.", type: "warning" };
+      return { ok: false, message: "Esse codigo ja esta alocado nessa localizacao.", type: "warning" };
     }
 
-    var target = sourceBindingId
-      ? state.bindings.find(function (binding) { return binding.id === sourceBindingId; })
-      : (skuLocations[0] || null);
+    var target = skuDecision === "move"
+      ? (sourceBindingId ? state.bindings.find(function (item) { return item.id === sourceBindingId; }) : skuLocations[0]) || null
+      : (!skuLocations.length && sourceBindingId ? state.bindings.find(function (item) { return item.id === sourceBindingId; }) : null);
     var previousLocations = [];
     if (target && target.locationCode !== parsed.code) previousLocations.push(target.locationCode);
     skuLocations.forEach(function (item) {
@@ -8864,7 +8841,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     binding.createdAt = binding.createdAt || now;
     binding.updatedAt = now;
 
-    var idsToRemove = unique(occupantIdsToRemove.concat(skuLocations
+    var idsToRemove = unique(occupantIdsToRemove.concat((skuDecision === "move" ? skuLocations : [])
       .filter(function (item) { return !target || item.id !== target.id; })
       .map(function (item) { return item.id; })
       .filter(Boolean)));
@@ -9225,15 +9202,13 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var oldLocations = currentLocations.map(function (binding) { return binding.locationCode; }).join(", ");
     if (!modal) {
       return Promise.resolve(window.confirm(
-        "O SKU " + sku + " já está em " + oldLocations + ". Clique em OK para removê-lo do endereço antigo e usar " + newLocationCode + ", ou em Cancelar para mantê-lo onde está."
-      ) ? "move" : "keep");
+        "O SKU " + sku + " esta em " + oldLocations + ". Deseja manter tambem em " + newLocationCode + "?"
+      ) ? "keep" : "cancel");
     }
     $("skuMoveTitle").textContent = skuAlreadyAtNewLocation
       ? "SKU " + sku + " esta em mais de uma localizacao"
       : "SKU " + sku + " já possui endereço";
-    $("skuMoveMessage").textContent = skuAlreadyAtNewLocation
-      ? "Este SKU pode permanecer em somente uma localizacao. Escolha qual endereco deve ser mantido."
-      : "Escolha se deseja mover o produto para o novo endereço ou manter o cadastro atual.";
+    $("skuMoveMessage").textContent = "O SKU possui outras localizacoes. Deseja manter todas ou deixar somente em " + newLocationCode + "?";
     $("skuMoveList").innerHTML = [
       "<span>Produto: " + escapeHtml(product || "Não informado") + "</span>",
       "<span>Endereço atual: " + escapeHtml(oldLocations) + "</span>",
@@ -9241,8 +9216,8 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     ].join("");
     var moveButton = modal.querySelector("[data-sku-move-decision='move']");
     var keepButton = modal.querySelector("[data-sku-move-decision='keep']");
-    if (moveButton) moveButton.textContent = skuAlreadyAtNewLocation ? "Remover dos antigos e manter neste" : "Remover do antigo e usar o novo";
-    if (keepButton) keepButton.textContent = skuAlreadyAtNewLocation ? "Manter no antigo e remover deste" : "Manter no endereço antigo";
+    if (moveButton) moveButton.textContent = "Manter somente neste endereco";
+    if (keepButton) keepButton.textContent = "Manter em todas as localizacoes";
     modal.hidden = false;
 
     return new Promise(function (resolve) {
@@ -9254,7 +9229,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
         resolve(decision);
       }
       function handleEscape(event) {
-        if (event.key === "Escape") finish("keep");
+        if (event.key === "Escape") finish("cancel");
       }
       buttons.forEach(function (button) {
         button.onclick = function () {

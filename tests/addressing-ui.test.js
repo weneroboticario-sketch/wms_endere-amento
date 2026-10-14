@@ -26,8 +26,8 @@ test("occupied-location dialog offers adding another SKU", async () => {
 test("existing SKU dialog distinguishes moving from keeping its address", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
 
-  assert.match(html, /data-sku-move-decision="move"[^>]*>Remover do antigo e usar o novo</);
-  assert.match(html, /data-sku-move-decision="keep"[^>]*>Manter no endereço antigo</);
+  assert.match(html, /data-sku-move-decision="move"[^>]*>Manter somente neste endereco</);
+  assert.match(html, /data-sku-move-decision="keep"[^>]*>Manter em todas as localizacoes</);
 });
 
 test("an already allocated SKU still asks about other products in the location", async () => {
@@ -38,13 +38,13 @@ test("an already allocated SKU still asks about other products in the location",
   assert.match(source, /Remover os outros e manter este/);
 });
 
-test("an SKU found in two locations forces the user to keep only one", async () => {
+test("an SKU found in two locations offers keeping all or only one", async () => {
   const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
   assert.match(source, /askSkuMoveDecision\(sku, parsed\.code, skuLocations, Boolean\(sameLocation\)\)/);
-  assert.match(source, /Este SKU pode permanecer em somente uma localizacao/);
-  assert.match(source, /Remover dos antigos e manter neste/);
-  assert.match(source, /Manter no antigo e remover deste/);
+  assert.doesNotMatch(source, /Este SKU pode permanecer em somente uma localizacao/);
+  assert.match(source, /Manter somente neste endereco/);
+  assert.match(source, /Manter em todas as localizacoes/);
 });
 
 test("removing one SKU from a combined legacy row keeps the other SKUs", () => {
