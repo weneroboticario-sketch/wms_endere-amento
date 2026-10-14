@@ -31,7 +31,7 @@ export function createPurchaseTransferBuilder(context) {
       `<div class="pb-layout"><div>${step===2?productsHtml():reviewHtml(items)}${cartTable(items)}
       <div class="pb-options"><label>Prioridade<select id="pbPriority" ${busy||step===3?"disabled":""}>${["NORMAL","ALTA","URGENTE"].map(p=>`<option ${p===priority?"selected":""}>${p}</option>`).join("")}</select></label><label class="pb-wide">Observacao<textarea id="pbObservation" maxlength="4000" ${busy||step===3?"disabled":""}>${e(observation)}</textarea></label></div>
       </div><aside class="pb-cart"><h3>Transferencia em montagem</h3><dl><dt>Origem</dt><dd>${e(origin)}</dd><dt>Destino</dt><dd>${e(destination)}</dd><dt>SKUs</dt><dd>${counts.skus}</dd><dt>Necessidade</dt><dd>${counts.need}</dd><dt>A enviar</dt><dd>${counts.units}</dd><dt>Integrais</dt><dd>${counts.full}</dd><dt>Parciais</dt><dd>${counts.partial}</dd><dt>Sem envio</dt><dd>${counts.zero}</dd></dl>
-      <label class="pb-responsible">Responsavel do estoque<select id="pbResponsible" required aria-invalid="${messageKind==="error"&&message&&!responsible?"true":"false"}" ${busy||step===3?"disabled":""}><option value="">${staff.length?"Selecione":"Nenhum responsavel disponivel"}</option>${staff.map(u=>`<option value="${e(u.id)}" ${responsible===u.id?"selected":""}>${e(u.name)} (${e(u.role)})</option>`).join("")}</select></label>
+      <label class="pb-responsible">Responsavel do estoque (opcional)<select id="pbResponsible" ${busy||step===3?"disabled":""}><option value="">Delegar depois</option>${staff.map(u=>`<option value="${e(u.id)}" ${responsible===u.id?"selected":""}>${e(u.name)} (${e(u.role)})</option>`).join("")}</select></label>
       <p>Saldo baseado na ultima atualizacao da CAPTACAO.</p><div class="button-row"><button data-pb="${step===3?"create":"review"}" class="primary-button pb-review" ${busy?"disabled":""}>${busy?"Processando...":step===3?"Criar transferencia":"Revalidar e revisar"}</button><button data-pb="save" class="secondary-button" ${busy?"disabled":""}>Salvar rascunho</button>${step===3?'<button data-pb="back" class="secondary-button">Voltar e corrigir</button>':""}</div></aside></div><div class="pb-mobile-bar"><span>${counts.skus} SKUs | ${counts.units} unidades</span><button class="primary-button" data-pb="${step===3?"create":"review"}" ${busy?"disabled":""}>${step===3?"Confirmar":"Revisar"}</button></div>`}`;
   }
   function productsHtml() {
@@ -74,7 +74,6 @@ export function createPurchaseTransferBuilder(context) {
     if(r.error)throw r.error;staff=r.data||[];if(!staff.some(u=>u.id===responsible))responsible="";
   }
   async function review() {
-    if(!responsible)throw new Error(staff.length?"Selecione um responsavel do estoque.":"Nenhum responsavel disponivel neste estoque. Verifique o cadastro de operadores e supervisores.");
     const old=[...cart.values()];if(!old.length)throw new Error("Adicione produtos a transferencia.");
     const current=await capture(old);changes=current.filter((i,n)=>i.available!==old[n].available).map((i,n)=>({sku:i.sku,before:old.find(o=>o.sku===i.sku).available,after:i.available,index:n}));
     cart=new Map(current.map(i=>[i.sku,i]));duplicates=await rpc("wms_purchase_open_duplicates",{p_origin_code:origin,p_destination_code:destination,p_skus:old.map(i=>i.sku)});acknowledged=false;
@@ -170,10 +169,6 @@ export function createPurchaseTransferBuilder(context) {
     finally{
       busy=false;if(actor!==context.user()?.id)await refresh();else{
         draw();
-        if(action==="review"&&!responsible&&messageKind==="error"){
-          const input=root.querySelector("#pbResponsible");
-          input?.scrollIntoView({block:"center"});input?.focus({preventScroll:true});
-        }
       }
     }
   });

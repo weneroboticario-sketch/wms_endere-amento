@@ -24,6 +24,8 @@ async function database() {
   await db.exec(await readFile(new URL("../supabase/migrations/20261014032016_purchase_transfer_multi_sku.sql",import.meta.url),"utf8"));
   await db.exec(await readFile(new URL("../supabase/migrations/20261014034555_purchase_transfer_scoped_user_columns.sql",import.meta.url),"utf8"));
   await db.exec(await readFile(new URL("../supabase/migrations/20261014134729_purchase_origin_minimum.sql",import.meta.url),"utf8"));
+  await db.exec("create policy wms_transfers_warehouse_insert on public.wms_transfers for insert to authenticated with check(false)");
+  await db.exec(await readFile(new URL("../supabase/migrations/20261014141212_purchase_optional_responsible.sql",import.meta.url),"utf8"));
   await db.exec(`revoke select on public.wms_users from authenticated;
     do $$declare columns text;begin
       select string_agg(quote_ident(column_name),',') into columns from information_schema.columns
@@ -33,6 +35,27 @@ async function database() {
   await db.exec("select set_config('test.role','COMPRAS',false);set role authenticated");return db;
 }
 const create=(db,items,key="test-action-001",origin="A",responsible="stock")=>db.query("select wms_create_purchase_transfer($1,'b',$2,'NORMAL','',$3,$4) result",[origin,responsible,JSON.stringify(items),key]);
+
+test("unassigned purchase is pending, idempotent and can be delegated by supervisor",async()=>{
+  const db=await database();try{
+    await db.exec("reset role; drop policy transfer_scope on wms_transfers; create policy test_transfer_read on wms_transfers for select to authenticated using(warehouse_code=any(private.current_wms_allowed_warehouses())); create policy test_transfer_update on wms_transfers for update to authenticated using(private.has_wms_role(array['SUPERVISOR','ADMINISTRADOR']) and warehouse_code=any(private.current_wms_allowed_warehouses())); set role authenticated");
+    const items=[{sku:"01302",requested_quantity:3,store_need_quantity:3}];
+    const first=(await create(db,items,"unassigned-action","A","")).rows[0].result;
+    const again=(await create(db,items,"unassigned-action","A",null)).rows[0].result;
+    assert.equal(again.id,first.id);assert.equal(again.replayed,true);
+    const row=(await db.query("select status,responsavel_id,requires_invoice from wms_transfers where id=$1",[first.id])).rows[0];
+    assert.equal(row.status,"PENDENTE");assert.equal(row.responsavel_id,"");assert.equal(row.requires_invoice,true);
+    assert.equal((await db.query("select user_id from wms_notifications where event_type='PURCHASE_TRANSFER_CREATED'")).rows[0].user_id,"");
+    await assert.rejects(create(db,items,"invalid-selected","A","wrong"),/Responsavel/);
+    await assert.rejects(create(db,[{sku:"01302",requested_quantity:51,store_need_quantity:51}],"excess-no-staff","A",""),/insuficiente/);
+    await assert.rejects(db.query("insert into wms_transfers(id,warehouse_code,criado_por_id,status,request_origin,requires_invoice) values('bad','A','other','PENDENTE','COMPRAS',true)"),/row-level security/);
+    await db.exec("select set_config('test.role','SUPERVISOR',false)");
+    const assigned=await db.query("update wms_transfers set responsavel_id='stock',responsavel_nome='Stock',status='ATRIBUIDA' where id=$1 returning status",[first.id]);
+    assert.equal(assigned.rows[0].status,"ATRIBUIDA");
+    assert.equal(Number((await db.query("select total_disponivel from wms_stock_positions where id='one'")).rows[0].total_disponivel),50);
+    assert.equal((await db.query("select count(*)::int n from wms_transfers")).rows[0].n,1);
+  }finally{await db.close();}
+});
 
 test("minimum origin is inclusive, aggregated before pagination and read only",async()=>{
   const db=await database();try{
