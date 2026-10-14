@@ -12,7 +12,7 @@ test("visual refresh preserves every DOM id and behavior data attribute", async 
   assert.deepEqual([...html.matchAll(/\b(data-[a-z-]+)="([^"]*)"/g)].map(x => x[1] + "=" + x[2]).sort(), contract.dataAttributes);
 });
 
-test("application JavaScript differs only in approved display text and visual classes", async () => {
+test("application JavaScript matches approved baseline including capture balance hydration", async () => {
   const source = (await read("script.js")).replace(/\r\n/g, "\n")
     .replaceAll('"WMS Álamo - Visão Geral"', '"Visao Geral - Alamo"')
     .replaceAll('"WMS Álamo"', '"Gestão Operacional"')

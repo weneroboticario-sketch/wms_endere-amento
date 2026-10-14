@@ -5389,6 +5389,12 @@ body.role-atendente .replenishment-layout {
   grid-column: 1 / -1;
 }
 
+@media (min-width: 801px) {
+  .replenishment-card-metrics.cp-capture-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
 .replenishment-request-message {
   grid-column: 1 / -1;
   display: grid;

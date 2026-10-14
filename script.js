@@ -9663,7 +9663,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
       "</div>",
-      "<div class=\"replenishment-card-metrics\">",
+      "<div class=\"replenishment-card-metrics" + (IS_CP_ALAMO ? " cp-capture-metrics" : "") + "\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
       IS_CP_ALAMO ? replenishmentMetricHtml("CAPTACAO disponivel", replenishmentCaptureBalanceLabel(item)) : "",
       replenishmentMetricHtml("Solicitada", formatQty(item.requestedQty)),
