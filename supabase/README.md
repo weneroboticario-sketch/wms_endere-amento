@@ -18,6 +18,16 @@ Aplicar nessa ordem antes do frontend do CP Alamo. Nao aplicar estas duas migrat
 no WMS Enderecamento. Relatorios completos em `docs/RELATORIO_WORKFLOW_COMPRAS_NF.md`
 e `docs/RELATORIO_LOGISTICA_REVERSA.md`. `supabase-schema.sql` e o roteiro psql para instalacao nova.
 
+### Compras Multi-SKU (Somente CP Alamo)
+
+- `20261014032016_purchase_transfer_multi_sku.sql`: necessidade LOJA, comparacao CAPTACAO,
+  resumo agregado, duplicidade, prioridade e criacao transacional/idempotente.
+- `20261014034555_purchase_transfer_scoped_user_columns.sql`: consulta somente colunas
+  permitidas de usuarios na RPC, sem liberar colunas sensiveis.
+
+Aplicar ambas antes do frontend; schema `2026.10.14.004`.
+Relatorio: `docs/RELATORIO_TRANSFERENCIA_COMPRAS_MULTI_SKU.md`.
+
 1. `20260923000000_legacy_baseline.sql`: baseline idempotente para uma instalação nova.
 2. `20260924012751_auth_profile_foundation.sql`: vínculo com Supabase Auth e helpers privados.
 3. `20260924012758_rls_security_hardening.sql`: grants mínimos e RLS por perfil/estoque.

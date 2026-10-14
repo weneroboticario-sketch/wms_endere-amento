@@ -85,3 +85,12 @@ continuaram LEGADO/sem NF. Nenhuma migration foi aplicada no banco do WMS Endere
 Suite: 101 testes aprovados; build/lint aprovados. Playwright confirmou tabelas e controles
 Compras em 1366 e 390 pixels, com Trusted Types ativo e sem overflow horizontal da pagina.
 O upload real de um PDF de negocio ainda deve ser validado pelo responsavel fiscal.
+
+## Compras por Destino e Multiplos SKUs
+
+A criacao de transferencias de Compras agora pode ser feita por Necessidade das Lojas,
+com carrinho, comparacao CAPTACAO, revalidacao e uma RPC atomica. Continua usando
+as mesmas tabelas e entra no fluxo fiscal acima com origem COMPRAS/NF obrigatoria.
+No Estoque, utiliza o cartao operacional existente, identificado como COMPRAS.
+Pedidos de reposicao permanecem independentes e nao foram removidos.
+Detalhes e limites em `RELATORIO_TRANSFERENCIA_COMPRAS_MULTI_SKU.md`.

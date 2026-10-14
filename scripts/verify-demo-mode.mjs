@@ -41,6 +41,11 @@ try {
     await page.getByRole("button",{name:"Resetar DEMO",exact:true}).click();
     await page.getByText("Aguardando separacao",{exact:true}).waitFor();
     await page.getByRole("button",{name:"Carregar cenario DEMO",exact:true}).click();
+    await page.locator('[data-demo-tab="needs"]').click();
+    await page.getByRole("button",{name:"Criar transferencia multi-SKU DEMO",exact:true}).click();
+    assert.equal(await page.locator(".demo-main tbody tr").count(),2);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+    await page.screenshot({path:resolve(output,`multi-sku-${width}.png`),fullPage:true});
     await page.getByRole("button",{name:"Sair da DEMO",exact:true}).click();assert.equal(await page.locator("#demoModeContent").textContent(),"");
     assert.equal(await page.evaluate(()=>window.demoController.isDemoMode()),false);
     const denied=await page.evaluate(()=>{window.demoActive=true;window.demoUser={role:"OPERADOR"};try{window.demoController.activate();return false;}catch{return true;}});assert.equal(denied,true);

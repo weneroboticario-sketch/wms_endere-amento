@@ -51,6 +51,14 @@ export function createDemoSession(getUser, now = ()=>new Date().toISOString()) {
     resetDemoScenario(warehouseReference){assertDemo();scenario=loadDemoScenario(warehouseReference || scenario.warehouseReference);return clone(scenario);},
     setWarehouseReference(code,allowed){assertDemo();if(!allowed.includes(code))throw new Error("Unidade nao autorizada.");if(scenario.created)throw new Error("Resete a DEMO para trocar a unidade de referencia.");scenario.warehouseReference=code;},
     createDemoTransfer(){assertDemo(scenario.transfer);if(scenario.created)return;scenario.created=true;event(scenario.transfer,"Criada por Compras DEMO");},
+    createDemoPurchaseTransfer(items){
+      assertDemo(scenario.transfer);if(scenario.created)return;
+      const positive=items.filter(i=>i.quantity>0);
+      if(!positive.length || positive.some(i=>!Number.isInteger(i.quantity)||i.quantity>i.available))throw new Error("Revise as quantidades DEMO.");
+      scenario.transfer.destination="TLS1 DEMO";
+      scenario.transfer.items=positive.map(i=>({is_demo:true,sku:i.sku,name:i.description,requested:i.quantity,separated:0,checked:0}));
+      scenario.created=true;event(scenario.transfer,"Transferencia multi-SKU criada por Compras DEMO");
+    },
     setInvoiceNumber(number){assertDemo(scenario.transfer);if(scenario.transfer.status!=="PRONTA_PARA_NOTA")throw new Error("NF DEMO fora da etapa permitida.");const value=String(number || "").trim();if(!value || value.length>120)throw new Error("Informe o numero da NF DEMO.");scenario.transfer.invoiceNumber=value;},
     attachDemoPdf(name,source="SIMULADO"){assertDemo(scenario.transfer);if(scenario.transfer.status!=="PRONTA_PARA_NOTA")throw new Error("Disponibilize para NF primeiro.");scenario.transfer.pdf={is_demo:true,name,source};scenario.transfer.status="NF_ANEXADA";event(scenario.transfer,source==="SIMULADO"?"PDF DEMO anexado - simulacao local":"PDF DEMO local - sem upload");},
     advanceDemoTransfer(){
@@ -60,8 +68,8 @@ export function createDemoSession(getUser, now = ()=>new Date().toISOString()) {
       if(t.status==="NF_ANEXADA" && !t.pdf)throw new Error("PDF DEMO obrigatorio.");
       const next=DEMO_TRANSFER_STAGES[DEMO_TRANSFER_STAGES.indexOf(t.status)+1];if(!next)return t.status;
       t.status=next;
-      if(next==="EM_SEPARACAO") {scenario.startedAt=now();t.items.forEach((item,i)=>{item.separated=[4,3,1][i];});event(t,"Separacao iniciada - Colaborador DEMO");}
-      else if(next==="SEPARACAO_CONCLUIDA") {t.items.forEach(i=>{i.checked=i.separated;});event(t,"Separacao concluida");event(t,"Conferencia concluida - 8 unidades, divergencia de 1");}
+      if(next==="EM_SEPARACAO") {scenario.startedAt=now();t.items.forEach((item,i)=>{item.separated=i===2?Math.max(0,item.requested-1):item.requested;});event(t,"Separacao iniciada - Colaborador DEMO");}
+      else if(next==="SEPARACAO_CONCLUIDA") {t.items.forEach(i=>{i.checked=i.separated;});event(t,"Separacao concluida");event(t,"Conferencia concluida - "+t.items.reduce((n,i)=>n+i.checked,0)+" unidades");}
       else if(next==="MONTAGEM_CAIXA_CONCLUIDA")event(t,"2 caixas DEMO montadas");
       else if(next==="PRONTA_PARA_NOTA") {event(t,"Disponivel para NF");scenario.notifications.push({is_demo:true,message:"Compras DEMO foi notificado localmente."});}
       else if(next==="LIBERADA_PARA_ENVIO") {event(t,"NF concluida - liberada para envio");scenario.notifications.push({is_demo:true,message:"Estoque / Expedicao DEMO recebeu a liberacao local."});}

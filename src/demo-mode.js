@@ -2,8 +2,9 @@ import { escapeHtml as e } from "./utils.js";
 import { createDemoSession, getDemoDashboardSummary, demoResponsibility } from "./demo-scenario.js";
 import { validateInvoicePdf } from "./purchases-workflow.js";
 import "./demo-mode.css";
+import { compareNeedWithCapture, summarizePurchaseCart } from "./purchase-transfer-model.js";
 
-const titles={dashboard:"Dashboard DEMO",sku:"Consulta SKU",create:"Compras cria",transfer:"Estoque / Conferencia / Caixas",invoice:"Compras / NF",replenishment:"Reposicao DEMO",reverse:"Logistica Reversa",target:"Meta mensal"};
+const titles={dashboard:"Dashboard DEMO",sku:"Consulta SKU",needs:"Necessidade das Lojas DEMO",create:"Compras cria",transfer:"Estoque / Conferencia / Caixas",invoice:"Compras / NF",replenishment:"Reposicao DEMO",reverse:"Logistica Reversa",target:"Meta mensal"};
 const labels={AGUARDANDO_SEPARACAO:"Aguardando separacao",EM_SEPARACAO:"Em separacao",SEPARACAO_CONCLUIDA:"Conferencia concluida",MONTAGEM_CAIXA_CONCLUIDA:"Montagem concluida",PRONTA_PARA_NOTA:"Disponivel para NF",NF_ANEXADA:"NF anexada",LIBERADA_PARA_ENVIO:"Liberada para envio",DESPACHADA:"Despachada",RECEBIDA:"Recebida",FINALIZADA:"Concluida"};
 const stepCommands={AGUARDANDO_SEPARACAO:"Iniciar separacao",EM_SEPARACAO:"Concluir conferencia",SEPARACAO_CONCLUIDA:"Finalizar montagem",MONTAGEM_CAIXA_CONCLUIDA:"Disponibilizar para NF",NF_ANEXADA:"Liberar para envio",LIBERADA_PARA_ENVIO:"Marcar como despachada",DESPACHADA:"Marcar como recebida",RECEBIDA:"Concluir processo"};
 const badge='<span class="demo-badge">DEMO</span>';
@@ -15,6 +16,7 @@ export function mountDemoMode(context) {
   const root=context.root;
   const session=createDemoSession(context.user);
   let tab="dashboard",message="",lookup=null,lookupBusy=false,pdfUrl="",generation=0;
+  const demoNeeds=()=>[{sku:"01302",need:4,description:"Produto DEMO integral"},{sku:"84390",need:50,description:"Produto DEMO parcial"},{sku:"94137",need:2,description:"Produto DEMO sem saldo"}].map((i,n)=>compareNeedWithCapture(i,{available:[10,30,0][n],description:i.description,location:"ENDERECO DEMO"}));
   const units=()=>context.warehouses();
   const revokePdf=()=>{if(pdfUrl)URL.revokeObjectURL(pdfUrl);pdfUrl="";};
   const active=()=>session.isDemoMode() && context.active();
@@ -32,6 +34,10 @@ export function mountDemoMode(context) {
       ${lookup?lookup.found?table(["SKU real","Produto real","Disponivel na posicao","Endereco"],[[e(lookup.sku),e(lookup.name),e(lookup.available),e(lookup.location || "Sem localizacao")]]):'<p class="demo-notice">SKU nao encontrado nesta unidade. Os itens do cenario continuam ficticios e podem ser apresentados normalmente.</p>':""}
       ${table(["SKU DEMO","Produto ficticio","Solicitada"],t.items.map(i=>[e(i.sku)+" "+badge,e(i.name),i.requested]))}${button("view-create","Nova solicitacao DEMO",false,true)}`;
     if(tab==="create")content=`<h4>${badge} ${e(t.id)}</h4><form id="demoCreateForm"><label>Origem<input value="COMPRAS DEMO" readonly></label><label>Estoque de referencia<select id="demoUnit"${s.created?" disabled":""}>${units().map(u=>`<option value="${e(u.code)}"${u.code===s.warehouseReference?" selected":""}>${e(u.code)} - ${e(u.name)}</option>`).join("")}</select></label><label>Destino<input value="DESTINO DEMO" readonly></label><label>SKUs<input value="3" readonly></label><button class="primary-button" type="submit"${s.created?" disabled":""}>${s.created?"Solicitacao DEMO criada":"Criar solicitacao DEMO"}</button></form>${table(["SKU","Produto","Solicitada"],t.items.map(i=>[e(i.sku)+" "+badge,e(i.name),i.requested]))}`;
+    if(tab==="needs") {
+      const items=demoNeeds(),totals=summarizePurchaseCart(items);
+      content=`<h4>Destino: TLS1 DEMO ${badge}</h4><p>1. Unidade / 2. Produtos / 3. Revisao</p>${table(["SKU","Necessidade","CAPTACAO ficticia","Enviar","Faltante","Situacao"],items.map(i=>[e(i.sku),i.need,i.available,i.quantity,i.missing,e(i.situation)]))}<p>Transferencia em montagem: ${totals.skus} SKUs analisados | ${totals.units} unidades | ${totals.partial} parcial | ${totals.zero} sem envio</p><p>Revisao: uma transferencia, dois itens positivos. O item sem saldo permanece na analise.</p>${button("create-multi","Criar transferencia multi-SKU DEMO",s.created,true)}`;
+    }
     if(tab==="transfer")content=`<div class="demo-metrics">${metric("Solicitada",summary.requested)}${metric("Separada",summary.separated)}${metric("Conferida",summary.checked)}${metric("Divergencia",summary.divergence)}${metric("Caixas",t.boxes)}</div>
       ${table(["SKU DEMO","Produto","Solicitada","Separada","Conferida","Faltante"],t.items.map(i=>[e(i.sku)+" "+badge,e(i.name),i.requested,i.separated,i.checked,i.requested-i.separated]))}
       <p>Responsavel: <strong>${e(t.status==="AGUARDANDO_SEPARACAO"?"Estoque DEMO":"Colaborador DEMO")}</strong> | Inicio: ${e(s.startedAt?new Date(s.startedAt).toLocaleString("pt-BR"):"Ainda nao iniciado")}</p>
@@ -70,6 +76,7 @@ export function mountDemoMode(context) {
       else if(action==="view-pdf"){window.open(pdfUrl,"_blank","noopener,noreferrer");return;}
       else if(action==="release"){session.advanceDemoTransfer();message="NF DEMO concluida. Processo liberado para envio simulado.";}
       else if(action==="replenishment-step"){session.advanceDemoReplenishment();message="Reposicao DEMO atualizada; saldo real preservado.";}
+      else if(action==="create-multi"){session.createDemoPurchaseTransfer(demoNeeds());tab="transfer";message="Uma transferencia DEMO criada com dois itens positivos. Nenhuma chamada ao banco.";}
       else if(action==="reverse-reload"){session.createDemoReverseLogistics();message="3 registros locais DEMO: 72 caixas. Meta mensal DEMO: 72%.";}
       else if(action==="transfer-step" && session.getScenario().transfer.status==="PRONTA_PARA_NOTA")tab="invoice";
       else if(action==="advance" || action==="transfer-step")advance();
