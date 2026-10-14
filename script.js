@@ -1256,6 +1256,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     var activeCodes = activeWarehouseCodes();
     if (!user) return [DEFAULT_WAREHOUSE_CODE];
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return activeCodes.length ? activeCodes : WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; });
+    if (IS_CP_ALAMO && user.role === "COMPRAS" && activeCodes.length) return activeCodes.filter(function (code) { return code !== "DOURADOS"; });
     var allowed = parseWarehouseCodes(user.allowedWarehouseCodes);
     var defaultCode = normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode || user.warehouseCode);
     var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, false, user.warehouseAccessConfirmed === true);
@@ -6712,7 +6713,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
           client: function () { return supabaseDb; }, user: function () { return authState.currentUser; },
           warehouse: activeWarehouseCode, global: isGlobalDashboardScope,
           warehouses: function () {
-            var allowed = isGlobalAdmin() ? allowedWarehouseCodesForUser(authState.currentUser) : parseWarehouseCodes(authState.currentUser.allowedWarehouseCodes || authState.currentUser.defaultWarehouseCode);
+            var allowed = isGlobalAdmin() || isPurchasesUser() ? allowedWarehouseCodesForUser(authState.currentUser) : parseWarehouseCodes(authState.currentUser.allowedWarehouseCodes || authState.currentUser.defaultWarehouseCode);
             return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; });
           },
           diagnostic: recordPerformanceError,

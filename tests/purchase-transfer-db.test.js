@@ -36,6 +36,38 @@ async function database() {
 }
 const create=(db,items,key="test-action-001",origin="A",responsible="stock")=>db.query("select wms_create_purchase_transfer($1,'b',$2,'NORMAL','',$3,$4) result",[origin,responsible,JSON.stringify(items),key]);
 
+test("COMPRAS can create a transfer from another active store without stock execution rights",async()=>{
+  const db=await database();try{
+    await db.exec(`reset role;
+      create or replace function auth.uid() returns uuid language sql as $$select '11111111-1111-1111-1111-111111111111'::uuid$$;
+      alter table wms_users add column if not exists allowed_warehouse_codes text;
+      alter table wms_users add column if not exists is_global_admin boolean default false;
+      update wms_users set role='COMPRAS',allowed_warehouse_codes='A',default_warehouse_code='A',auth_user_id='11111111-1111-1111-1111-111111111111' where id='actor';
+      insert into wms_stock_positions(id,warehouse_code,source_type,codigo_material,nome_material,total_disponivel,codigo_endereco) values('global-source','C','CAPTACAO','01302','Product',22,'R01');`);
+    await db.exec(`alter table wms_transfer_items enable row level security;
+      create policy item_scope_read on wms_transfer_items for select to authenticated using(warehouse_code=any(private.current_wms_allowed_warehouses()));
+      create policy wms_transfer_items_warehouse_insert on wms_transfer_items for insert to authenticated with check(
+        warehouse_code=any(private.current_wms_allowed_warehouses()) and exists(select 1 from wms_transfers t where t.id=transfer_id and t.status='ATRIBUIDA' and t.criado_por_id=private.current_wms_profile_id()));`);
+    await db.exec(await readFile(new URL("../supabase/migrations/20261014185927_purchases_all_active_warehouses.sql",import.meta.url),"utf8"));
+    await db.exec("set role authenticated");
+    await assert.rejects(create(db,[{sku:"01302",requested_quantity:3,store_need_quantity:3}],"global-purchase","C",null),/row-level security/);
+    assert.equal((await db.query("select count(*)::int n from wms_transfers")).rows[0].n,0);
+    await db.exec("reset role");
+    await db.exec(await readFile(new URL("../supabase/migrations/20261014191842_purchase_unassigned_items_access.sql",import.meta.url),"utf8"));
+    await db.exec("set role authenticated");
+    const first=(await create(db,[{sku:"01302",requested_quantity:3,store_need_quantity:3}],"global-purchase","C",null)).rows[0].result;
+    const retry=(await create(db,[{sku:"01302",requested_quantity:3,store_need_quantity:3}],"global-purchase","C",null)).rows[0].result;
+    assert.equal(retry.id,first.id);
+    const transfer=(await db.query("select warehouse_code,status,requires_invoice from wms_transfers where id=$1",[first.id])).rows[0];
+    assert.equal(transfer.warehouse_code,"C");assert.equal(transfer.status,"PENDENTE");assert.equal(transfer.requires_invoice,true);
+    const forbidden=await db.query("update wms_stock_positions set total_disponivel=0 where id='global-source' returning id");
+    assert.equal(forbidden.rows.length,0);
+    assert.equal(Number((await db.query("select total_disponivel from wms_stock_positions where id='global-source'")).rows[0].total_disponivel),22);
+    await db.exec("reset role;insert into wms_transfers(id,warehouse_code,status,criado_por_id,request_origin) values('other-creator','C','PENDENTE','stock','COMPRAS');set role authenticated");
+    await assert.rejects(db.query("insert into wms_transfer_items(id,transfer_id,warehouse_code,sku,quantidade_solicitada) values('foreign-item','other-creator','C','01302',1)"),/row-level security/);
+  }finally{await db.close();}
+});
+
 test("unassigned purchase is pending, idempotent and can be delegated by supervisor",async()=>{
   const db=await database();try{
     await db.exec("reset role; drop policy transfer_scope on wms_transfers; create policy test_transfer_read on wms_transfers for select to authenticated using(warehouse_code=any(private.current_wms_allowed_warehouses())); create policy test_transfer_update on wms_transfers for update to authenticated using(private.has_wms_role(array['SUPERVISOR','ADMINISTRADOR']) and warehouse_code=any(private.current_wms_allowed_warehouses())); set role authenticated");
