@@ -3088,6 +3088,9 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
       stockState.summary.captacao = stockResults[2];
       stockState.summary.updatedAt = stockState.batches[0] ? stockState.batches[0].created_at : "";
       stockState.tablesAvailable = true;
+      if (!stockState.importing && getActiveScreenId() === "baseEstoque" && $("stockImportStatus").textContent === "Carregando Base de Estoque...") {
+        setStatus("stockImportStatus", "", "");
+      }
       recordPerformanceMetric("lastStockLoadMs", startedAt);
       return true;
     } catch (error) {
@@ -3805,7 +3808,19 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
     var upserts = Object.keys(upsertById).filter(function (id) { return !deleteById[id]; }).map(function (id) {
       return toDbBinding(upsertById[id]);
     });
-    if (upserts.length) await upsertInChunks("wms_bindings", upserts, "id");
+    for (var offset = 0; offset < upserts.length; offset += 200) {
+      var bindingChunk = upserts.slice(offset, offset + 200);
+      var response = await runSupabaseRequestWithRetry("import-bindings", function () {
+        return supabaseDb.rpc("wms_upsert_import_bindings", { p_warehouse_code: warehouseCode, p_rows: bindingChunk });
+      });
+      if (response.error) throw response.error;
+      (response.data || []).map(fromDbBinding).forEach(function (saved) {
+        workingBindings = workingBindings.filter(function (binding) {
+          return binding.id !== saved.id && !(binding.sku === saved.sku && locationKeyFromBinding(binding) === locationKeyFromBinding(saved));
+        });
+        workingBindings.push(saved);
+      });
+    }
 
     state.bindings = expandBindingsWithMultipleSkus(workingBindings.filter(function (binding) {
       return !deleteById[binding.id];
