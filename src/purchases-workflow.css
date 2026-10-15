@@ -1,0 +1,90 @@
+.cp-alamo #fiscalWorkflowContent { min-width: 0; }
+.cp-alamo #fiscalWorkflowContent .fiscal-filters { display: grid; grid-template-columns: minmax(170px,1fr) minmax(240px,2fr) auto; gap: 12px; padding: 16px; background: #fff; border-bottom: 1px solid var(--border); align-items: end; }
+.cp-alamo #fiscalWorkflowContent .fiscal-filters label { display: grid; gap: 6px; margin: 0; }
+.cp-alamo #fiscalMetrics { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); margin-bottom: 16px; }
+.cp-alamo #fiscalMetrics article:nth-child(1) { background: var(--warning-bg); }
+.cp-alamo #fiscalMetrics article:nth-child(2) { background: var(--info-bg); }
+.cp-alamo #fiscalMetrics article:nth-child(3) { background: var(--success-bg); }
+.cp-alamo #fiscalMetrics article:nth-child(4) { background: #f2effc; }
+.cp-alamo #fiscalMetrics article:nth-child(5) { background: var(--success-bg); }
+.cp-alamo #fiscalMetrics strong { font-size: 26px; overflow-wrap: anywhere; }
+.cp-alamo #fiscalMetrics article { position: relative; padding: 16px; }
+.cp-alamo #fiscalMetrics article > svg { position: absolute; left: 14px; top: 14px; width: 26px; height: 26px; color: var(--primary-dark); background: #ffffffa0; padding: 4px; border-radius: 6px; }
+.cp-alamo #fiscalMetrics article > span { padding-left: 32px; }
+.cp-alamo #fiscalMetrics article:nth-child(5) strong { font-size: 22px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; padding: 12px; color: var(--muted); }
+.cp-alamo #fiscalWorkflowContent .fiscal-tabs button[aria-pressed=true] { color: var(--primary-dark); background: var(--primary-soft); border-bottom-color: var(--primary); }
+.cp-alamo #fiscalWorkflowContent .fiscal-queue { margin-top: 16px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table { width: 100%; table-layout: auto; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table td { white-space: normal; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table td:first-child { min-width: 170px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table td:nth-child(2) { min-width: 140px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table :is(th,td) { min-width: 66px; padding: 12px 10px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-table .fiscal-code { font-size: 15px; font-weight: 800; }
+.cp-alamo #fiscalWorkflowContent .fiscal-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cp-alamo #fiscalWorkflowContent .fiscal-pagination { justify-content: flex-end; padding: 12px; background: #fff; border-bottom: 1px solid var(--border); }
+.cp-alamo #fiscalWorkflowContent .drawer.fiscal-drawer { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(480px,100%); max-width: 100%; height: 100dvh; max-height: 100dvh; padding: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0; overflow-y: auto; box-shadow: -8px 0 32px #061d2920; }
+.cp-alamo #fiscalWorkflowContent .fiscal-drawer[open] { display: block; }
+.cp-alamo #fiscalWorkflowContent .drawer-heading { position: sticky; top: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; background: #fff; border-bottom: 1px solid var(--border); padding: 20px; z-index: 3; }
+.cp-alamo #fiscalWorkflowContent .drawer-heading h3 { font-size: 20px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.cp-alamo #fiscalWorkflowContent .drawer-heading p { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+.cp-alamo #fiscalWorkflowContent .drawer-tabs { display: flex; padding: 0 16px; background: #fff; border-bottom: 1px solid var(--border); }
+.cp-alamo #fiscalWorkflowContent .drawer-tabs button { flex: 1; padding: 12px 6px; background: transparent; border: 0; border-bottom: 3px solid transparent; font-size: 14px; color: var(--muted); }
+.cp-alamo #fiscalWorkflowContent .drawer-tabs button[aria-selected=true] { color: var(--primary-dark); border-bottom-color: var(--primary); font-weight: 700; }
+.cp-alamo #fiscalWorkflowContent .drawer-body { padding: 20px; }
+.cp-alamo #fiscalWorkflowContent .drawer-body h4 { font-size: 16px; margin: 0 0 16px; }
+.cp-alamo #fiscalWorkflowContent .drawer-summary { display: grid; grid-template-columns: minmax(120px,1fr) minmax(0,1fr); gap: 10px 16px; margin: 0 0 20px; }
+.cp-alamo #fiscalWorkflowContent .drawer-summary dt { font-size: 13px; color: var(--muted); }
+.cp-alamo #fiscalWorkflowContent .drawer-summary dd { font-size: 14px; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.cp-alamo #fiscalWorkflowContent .fiscal-drawer-actions { position: sticky; bottom: 0; padding: 16px 20px; border-top: 1px solid var(--border); background: #fff; z-index: 2; gap: 8px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-drawer-actions button { flex: 1 1 150px; }
+.cp-alamo #fiscalUploadForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px 12px; }
+.cp-alamo #fiscalUploadForm label { display: grid; gap: 6px; margin: 0; }
+.cp-alamo #fiscalUploadForm label:nth-child(n+3),.cp-alamo #fiscalUploadForm button { grid-column: 1 / -1; }
+.cp-alamo #fiscalWorkflowContent .fiscal-pdf-drop { position: relative; min-height: 144px; border: 1px dashed #aec4d9; border-radius: 6px; background: var(--surface-soft); padding: 16px; text-align: center; display: grid; place-items: center; gap: 8px; color: var(--muted); }
+.cp-alamo #fiscalWorkflowContent .fiscal-pdf-drop.dragging { background: var(--primary-soft); border-color: var(--primary); }
+.cp-alamo #fiscalWorkflowContent .fiscal-pdf-drop input { width: 100%; font-size: 13px; cursor: pointer; }
+.cp-alamo #fiscalWorkflowContent .fiscal-pdf-drop small { font-size: 13px; color: var(--muted); }
+.cp-alamo #fiscalHistoryRows { white-space: pre-line; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline { grid-template-columns: repeat(2,minmax(0,1fr)); padding-top: 0; }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline strong { font-size: 14px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline small { font-size: 13px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline li { border-left: 3px solid var(--border); padding-left: 10px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline li.complete { border-color: var(--green); }
+.cp-alamo #fiscalWorkflowContent .fiscal-timeline li.complete strong { color: var(--success); }
+.cp-alamo #fiscalWorkflowContent .fiscal-items { min-width: 0; }
+.cp-alamo #fiscalWorkflowContent .fiscal-items :is(th,td) { min-width: 80px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-charts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin-top: 20px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-charts section { background: #fff; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 20px 16px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-charts h3 { font-size: 16px; margin: 0 0 16px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-daily-bars { height: 190px; display: flex; align-items: flex-end; gap: 8px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-daily-bars > div { flex: 1; min-width: 0; text-align: center; }
+.cp-alamo #fiscalWorkflowContent .fiscal-daily-bar { background: var(--blue); min-height: 2px; border-radius: 3px 3px 0 0; }
+.cp-alamo #fiscalWorkflowContent .fiscal-daily-bars strong,.cp-alamo #fiscalWorkflowContent .fiscal-daily-bars small { display: block; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; margin-top: 4px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-chart-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; font-size: 14px; }
+.cp-alamo #fiscalWorkflowContent .fiscal-chart-list li { display: flex; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
+@media(max-width:1200px) { .cp-alamo #fiscalMetrics { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media(max-width:760px) {
+  .cp-alamo #fiscalWorkflowContent .fiscal-charts { grid-template-columns: minmax(0,1fr); }
+  .cp-alamo #fiscalWorkflowContent .fiscal-filters { grid-template-columns: minmax(0,1fr); padding: 12px; }
+  .cp-alamo #fiscalMetrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo #fiscalWorkflowContent .fiscal-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo #fiscalWorkflowContent .fiscal-queue { border: 0; background: transparent; overflow: visible; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table,.cp-alamo #fiscalWorkflowContent .fiscal-table tbody,.cp-alamo #fiscalWorkflowContent .fiscal-table tr { display: block; width: 100%; min-width: 0; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table thead { display: none; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table tr { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 4px 8px; background: #fff; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; padding: 12px; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td { display: grid; grid-column: 1 / -1; grid-template-columns: 120px minmax(0,1fr); gap: 8px; min-width: 0; padding: 6px 0; border: 0; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:nth-child(n+3):nth-child(-n+5) { display: flex; flex-direction: column; grid-column: auto; gap: 4px; background: var(--surface-soft); padding: 8px; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:nth-child(6) { display: none; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:last-child { display: block; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:last-child::before { display: none; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:last-child button { width: 100%; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td::before { content: attr(data-label); font-size: 13px; color: var(--muted); font-weight: 600; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:first-child { display: block; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td:first-child::before { display: none; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-table td small { grid-column: 2; }
+  .cp-alamo #fiscalWorkflowContent .drawer.fiscal-drawer { width: 100%; border: 0; }
+  .cp-alamo #fiscalWorkflowContent .drawer-body,.cp-alamo #fiscalWorkflowContent .drawer-heading { padding: 16px; }
+  .cp-alamo #fiscalWorkflowContent .fiscal-drawer-actions { padding: 12px 16px; }
+}

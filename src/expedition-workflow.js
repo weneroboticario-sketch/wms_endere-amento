@@ -1,4 +1,5 @@
 import { escapeHtml as e, randomId } from "./utils.js";
+import { decorateWorkflow } from "./cpalamo-appearance.js";
 
 export const EXPEDITION_LABELS = Object.freeze({
   "": "Aguardando expedicao", ATRIBUIDA: "Atribuida", COLETADA: "Coletada",
@@ -41,6 +42,11 @@ export function createExpeditionWorkflow(context) {
     <div class="button-row"><button class="secondary-button" data-prev>Anterior</button><span data-page></span><button class="secondary-button" data-next>Proxima</button></div>
     <section data-detail hidden></section><section data-executive></section>`;
   const find=s=>root.querySelector(s),status=msg=>{find("[data-status]").textContent=msg;};
+  root.insertAdjacentHTML("afterbegin", `<nav class="fiscal-tabs" aria-label="Filas de expedicao">${[["","Aguardando despacho"],["ATRIBUIDA","Atribuidas"],["EM_TRANSITO","Em transito"],["ENTREGUE","Entregues"],["ENTREGA_COM_DIVERGENCIA","Divergencias"]].map(([value,label])=>`<button type="button" data-expedition-tab="${value}" aria-pressed="${value===""}">${label}</button>`).join("")}</nav>`);
+  root.querySelectorAll("[data-expedition-tab]").forEach(button=>button.addEventListener("click",()=>{
+    find("[data-queue]").value=button.dataset.expeditionTab;
+    find("[data-queue]").dispatchEvent(new window.Event("change",{bubbles:true}));
+  }));
   let page=0,rows=[],selected=null,generation=0,busy=false,actionKey=null;
   const warehouse=()=>context.global()?find("[data-unit]").value:context.warehouse();
   find("[data-unit]").value=context.global()?context.warehouses()[0]?.code:context.warehouse();
@@ -64,6 +70,8 @@ export function createExpeditionWorkflow(context) {
       find("[data-rows]").innerHTML=rows.length?rows.map((r,i)=>`<tr><td>${e(r.codigo_transferencia||r.id)}</td><td>${e(r.origem_codigo_loja||r.warehouse_code)} / ${e(r.destino_codigo_loja||r.destino_nome)}</td><td>${e(r.invoice_number||"-")}</td><td>${boxes(r)} prontas<br>${r.dispatched_boxes??"-"} enviadas / ${r.received_boxes??"-"} recebidas</td><td>${e(r.expedition_responsible_name||"Nao atribuida")}</td><td>${e(EXPEDITION_LABELS[r.expedition_stage]||r.expedition_stage)}</td><td>${e(deliverySla(r,Date.now(),attention))}<br>${e(date(r.delivery_deadline))}</td><td><button class="secondary-button" data-open="${i}">Abrir</button></td></tr>`).join(""):'<tr><td colspan="8">Nenhuma transferencia nesta fila.</td></tr>';
       find("[data-page]").textContent=`Pagina ${page+1}`;
       find("[data-prev]").disabled=page===0;find("[data-next]").disabled=rows.length<30;
+      root.querySelectorAll("[data-expedition-tab]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.expeditionTab===queue)));
+      decorateWorkflow(root);
     }catch(error){status(error.message);}
     await executive.refresh();
   }

@@ -1,4 +1,5 @@
 import { escapeHtml, randomId } from "./utils.js";
+import { decorateWorkflow, decorateMetrics } from "./cpalamo-appearance.js";
 
 export function reverseMetrics(target, completed, day, days) {
   const percent = target > 0 ? completed / target * 100 : null;
@@ -21,6 +22,7 @@ export function createReverseLogistics(context) {
     <div class="button-row"><label>Ordenacao<select id="reverseSort"><option value="asc">Menor percentual</option><option value="desc">Maior percentual</option><option value="pending">Mais pendencias</option><option value="divergences">Mais divergencias</option></select></label></div>
     ${staff() ? `      <details><summary>Meta mensal da unidade</summary><form id="reverseTargetForm"><label>Unidade<select name="unit" required>${options()}</select></label><label>Meta em caixas<input name="target" type="number" min="0" step="1" required></label><button class="primary-button" type="submit">Salvar meta</button></form></details>` : ""}
     <div class="table-wrapper"><table><thead><tr><th>Data</th><th>Unidade</th><th>GDV</th><th>NFe</th><th>Caixas</th><th>Status</th><th>Responsavel</th><th>Acoes</th></tr></thead><tbody id="reverseRows"></tbody></table></div><div class="button-row"><button id="reversePrevious" class="secondary-button" type="button">Anterior</button><button id="reverseNext" class="secondary-button" type="button">Proxima</button></div><div id="reverseDetail"></div>`;
+  root.insertAdjacentHTML("afterbegin", '<div class="stock-summary-grid" id="reverseKpis"></div>');
   const createForm = document.getElementById("reverseCreateForm");
   if (createForm && context.warehouses().some(w => w.code === context.warehouse())) createForm.elements.unit.value = context.warehouse();
   if (!manager() && context.user().role !== "COMPRAS") document.getElementById("reverseUnit").value = context.warehouse();
@@ -32,6 +34,9 @@ export function createReverseLogistics(context) {
     const sorted = summaryRows.map(s=>({ ...s,metrics:reverseMetrics(Number(s.target_boxes),Number(s.completed_boxes),date.getDate(),days) })).sort((a,b)=>
       mode === "pending" ? b.pending-a.pending : mode === "divergences" ? b.divergences-a.divergences : (mode === "desc" ? -1 : 1)*((a.metrics.percent || 0)-(b.metrics.percent || 0)));
     document.getElementById("reverseSummaryRows").innerHTML = sorted.map(s=>`<tr><td>${e(s.unit_code)} - ${e(s.unit_name)}</td><td>${s.target_boxes}</td><td>${s.completed_boxes}</td><td>${s.metrics.percent === null ? "-" : s.metrics.percent.toFixed(1)+"%"}</td><td>${s.metrics.remaining}</td><td>${s.metrics.excess}</td><td>${s.pending}</td><td>${s.divergences}</td><td>${e(s.metrics.pace)}</td></tr>`).join("");
+    const target=sorted.reduce((n,row)=>n+Number(row.target_boxes||0),0),completed=sorted.reduce((n,row)=>n+Number(row.completed_boxes||0),0);
+    document.getElementById("reverseKpis").innerHTML = [["Meta do mes",target],["Realizado",completed],["Faltante",Math.max(0,target-completed)],["Realizado (%)",target>0?(completed/target*100).toFixed(1)+"%":"Sem meta"],["Pendencias",sorted.reduce((n,row)=>n+Number(row.pending||0),0)]].map(([label,value])=>`<article class="stock-summary-card"><span>${label}</span><strong>${value}</strong></article>`).join("");
+    decorateMetrics(document.getElementById("reverseKpis"));
   }
   async function refresh() {
     if (busy) return; busy = true;
@@ -55,6 +60,7 @@ export function createReverseLogistics(context) {
       rows = result.data || [];
       document.getElementById("reverseRows").innerHTML = rows.length ? rows.map((r,i)=>`<tr><td>${e(new Date(r.created_at).toLocaleString())}</td><td>${e(r.unit_origin_code)}</td><td>${e(r.gdv_number)}</td><td>${e(r.nfe_number)}</td><td>${r.box_quantity}</td><td>${e(r.status)}</td><td>${e(r.responsible_name)}</td><td><button class="secondary-button" data-reverse-open="${i}" type="button">Abrir</button></td></tr>`).join("") : '<tr><td colspan="8">Nenhum processo neste filtro.</td></tr>';
       document.getElementById("reversePrevious").disabled = page===0; document.getElementById("reverseNext").disabled = rows.length<30;
+      decorateWorkflow(root);
     } catch(error) { status(error.message || String(error)); }
     finally { busy = false; }
   }

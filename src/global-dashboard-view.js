@@ -1,6 +1,7 @@
 import { escapeHtml as esc } from "./utils.js";
 import { captacaoFreshness, createGlobalDashboardService, GLOBAL_DASHBOARD_CONFIG, isGlobalView, warehouseAttention } from "./global-dashboard-service.js";
 import "./global-dashboard.css";
+import { decorateMetrics } from "./cpalamo-appearance.js";
 
 const labels = { overview: "Visão Geral", tasks: "Tarefas", replenishment: "Reposição", transfers: "Transferências", captacao: "Importações", team: "Equipe", alerts: "Alertas" };
 const states = { NORMAL: "Normal", ATENCAO: "Atenção", CRITICO: "Crítico", ATUALIZADO: "Atualizada", DESATUALIZADO: "Desatualizada", ERRO: "Falha", SEM_DADOS: "Sem dados" };
@@ -37,9 +38,10 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
   let boardQuery = "";
   let boardOffset = 0;
   let boardLimit = 10;
+  let movementOnly = false;
   const pendingDomains = new Set();
   const allowed = () => isGlobalView(getUser(), getWarehouse());
-  root.innerHTML = `<div class="page-title"><div><p class="eyebrow">Central de controle</p><h2>VISÃO GERAL — OPERAÇÃO ÁLAMO</h2><p>Central de acompanhamento operacional de todos os estoques</p></div><button type="button" class="secondary-button" data-global-refresh>Atualizar</button></div>
+  root.innerHTML = `<div class="page-title"><div><p class="eyebrow">Central de controle</p><h2>Visão Geral Operacional</h2><p>Acompanhamento em tempo real dos estoques e solicitações</p></div><button type="button" class="secondary-button" data-global-refresh>Atualizar</button></div>
     <div class="global-filters">
       <label>Estoque<select data-filter="warehouse"><option value="">Todos os estoques</option></select></label>
       <label>Período<select data-filter="period"><option value="now">Agora</option><option value="today">Hoje</option><option value="24h" selected>Últimas 24h</option><option value="7d">7 dias</option><option value="custom">Personalizado</option></select></label>
@@ -52,7 +54,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     <details class="global-settings"><summary>Indicadores de atenção</summary><div>${[["freshHours","CAPTAÇÃO recente (horas)"],["staleHours","CAPTAÇÃO desatualizada (horas)"],["stalledHours","Operação parada (horas)"],["pendingWarningCount","Fila em atenção (pedidos)"],["minimumAvailable","Mínimo de disponíveis"]].map(([key,label]) => `<label>${label}<input data-config="${key}" type="number" min="1" max="720" value="${config[key]}"></label>`).join("")}</div></details>
     <p class="global-update" data-global-updated role="status">Aguardando atualização</p><div data-global-errors role="alert"></div>
     <nav class="global-tabs" aria-label="Painéis globais">${Object.entries(labels).map(([key,label]) => `<button type="button" data-global-tab="${key}" aria-pressed="${key === tab}">${label}</button>`).join("")}</nav>
-    <div data-global-overview><section class="global-band global-priority-band"><h3>Prioridades da operação agora</h3><div data-global-priorities></div></section><div class="global-metrics global-primary-metrics" data-global-metrics></div><div data-global-board></div><div data-global-domains></div><div data-global-today></div><section class="global-band"><div class="global-section-heading"><h3>Tendência operacional</h3><div class="global-period-switch"><button type="button" data-global-period="today">Hoje</button><button type="button" data-global-period="7d">7 dias</button></div></div><div class="global-charts" data-global-trends></div></section><section class="global-band"><h3>Atividade agora</h3><div data-global-activity></div></section><section class="global-band"><h3>Alertas detalhados</h3><div data-global-alert-summary></div><button type="button" data-jump="alerts">Ver todos os alertas</button></section></div>
+    <div data-global-overview><div class="global-metrics global-replenishment-metrics" data-global-replenishment-metrics></div><div class="global-operational-grid"><section class="global-band"><h3>Reposição aberta por estoque</h3><div data-global-replenishment-table></div></section><section class="global-band global-priority-band"><div class="global-section-heading"><h3>Alertas Operacionais</h3><button type="button" data-jump="alerts">Ver todos</button></div><div data-global-priorities></div></section></div><div class="global-charts global-operational-charts" data-global-replenishment-charts></div><div class="global-metrics global-primary-metrics" data-global-metrics></div><div data-global-board></div><div data-global-domains></div><div data-global-today></div><section class="global-band"><div class="global-section-heading"><h3>Tendência operacional</h3><div class="global-period-switch"><button type="button" data-global-period="today">Hoje</button><button type="button" data-global-period="7d">7 dias</button></div></div><div class="global-charts" data-global-trends></div></section><section class="global-band"><h3>Atividade agora</h3><div data-global-activity></div></section><section class="global-band"><h3>Alertas detalhados</h3><div data-global-alert-summary></div><button type="button" data-jump="alerts">Ver todos os alertas</button></section></div>
     <section class="global-band" data-global-details hidden><h3 data-global-detail-title></h3><div data-global-domain-metrics class="global-metrics"></div><div data-global-domain-charts class="global-charts"></div>
       <div class="global-detail-controls"><label>Busca<input type="search" data-detail-search placeholder="Código, SKU, produto ou responsável"></label>
       <label>Situação<select data-filter="mode"><option value="open">Abertas</option><option value="pending">Pendentes</option><option value="running">Em andamento</option><option value="overdue">Atrasadas</option><option value="completed">Concluídas recentes</option></select></label>
@@ -61,6 +63,12 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     </section>
     <dialog class="global-dialog"><form method="dialog"><button class="secondary-button" aria-label="Fechar detalhes">Fechar</button></form><div data-global-record></div></dialog>`;
   const $ = selector => root.querySelector(selector);
+  const advanced=document.createElement("details");advanced.className="global-advanced-filters";
+  advanced.innerHTML='<summary>Mais filtros</summary><div class="global-advanced-body"></div>';
+  const advancedBody=advanced.querySelector("div");
+  for(const field of ["status","responsible","kind","priority"])advancedBody.appendChild($(`[data-filter="${field}"]`).closest("label"));
+  advancedBody.appendChild($(".global-settings"));$(".global-filters").appendChild(advanced);
+  $(".page-title > div").appendChild($("[data-global-updated]"));
   function filters() {
     const now = new Date(Math.floor(Date.now()/60000)*60000);
     const period = $('[data-filter="period"]').value;
@@ -210,11 +218,42 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       return stats;
     }).sort((a,b) => ({CRITICO:0,ATENCAO:1,SEM_DADOS:2,NORMAL:3}[a.attention]-{CRITICO:0,ATENCAO:1,SEM_DADOS:2,NORMAL:3}[b.attention] || b.overdue-a.overdue || b.pending-a.pending));
   }
+  function renderReplenishmentOverview() {
+    const rows = snapshot.replenishment?.summary || [];
+    const target = $('[data-global-replenishment-metrics]');
+    if (!snapshot.replenishment) {
+      target.innerHTML = snapshot.errors.replenishment ? retry("replenishment") : skeleton(6);
+      $('[data-global-replenishment-table]').innerHTML = '<p class="empty-state">Aguardando indicadores de reposição.</p>';
+      $('[data-global-replenishment-charts]').innerHTML = "";
+      return;
+    }
+    target.innerHTML = domainMetrics("replenishment").map(([label,value],index)=>`<article class="global-replenishment-kpi tone-${index}"><span>${esc(label)}</span><strong>${number(value)}</strong></article>`).join("");
+    decorateMetrics(target);
+    const units = snapshot.warehouses.map(w=>{
+      const subset = rows.filter(row=>row.warehouse_code===w.code);
+      return { ...w, pending:sum(subset,"open",["PENDENTE","ATRIBUIDO"]), running:sum(subset,"open",["EM_SEPARACAO"]), separated:sum(subset,"open",["SEPARADO"]) };
+    });
+    const maximum = Math.max(1,...units.map(w=>w.pending+w.running+w.separated));
+    $('[data-global-replenishment-table]').innerHTML = table(["Estoque","Fila atual","Pendentes","Em separação","Separados"],
+      units.map(w=>[`<button type="button" class="ghost-button" data-jump="replenishment" data-jump-warehouse="${esc(w.code)}">${esc(w.name)}</button>`,
+        `<progress max="${maximum}" value="${w.pending+w.running+w.separated}" aria-label="Volume de pedidos de ${esc(w.name)}"></progress>`,
+        number(w.pending),number(w.running),number(w.separated)]));
+    const stages = domainMetrics("replenishment");
+    const total = stages.reduce((n,[,value])=>n+value,0);
+    const colors = ["#287de0","#f4a51c","#19a96f","#7558db","#e54b4b","#087b85"];
+    let position=0;
+    const stops = stages.map(([,value],i)=>{const start=position;position+=total?value/total*360:0;return colors[i]+" "+start+"deg "+position+"deg";}).join(",");
+    const distribution = total ? `<section><h3>Distribuição por etapa</h3><div class="global-distribution"><div class="global-donut" style="background:conic-gradient(${stops})"><div><strong>${number(total)}</strong><span>Pedidos</span></div></div><ul>${stages.map(([label,value],i)=>`<li><span style="border-color:${colors[i]}">${esc(label)}</span><strong>${number(value)}</strong></li>`).join("")}</ul></div></section>` : '<section><h3>Distribuição por etapa</h3><p class="empty-state">Nenhum pedido nos indicadores atuais.</p></section>';
+    const trends=(snapshot.executive?.trends||[]).filter(row=>row.domain==="replenishment");
+    const daily=snapshot.errors.executive?retry("executive"):trends.length?chart("Volume diário de reposição",trends.map(row=>({label:new Date(row.day+"T12:00:00").toLocaleDateString("pt-BR"),values:[{label:"Criados",value:row.created},{label:"Concluídos",value:row.finished}]}))):'<section><h3>Volume diário de reposição</h3><p class="empty-state">Sem movimentação no período.</p></section>';
+    $('[data-global-replenishment-charts]').innerHTML = distribution+daily+queueChart();
+  }
   function renderOverview() {
     const tasks = snapshot.tasks?.summary || [], rep = snapshot.replenishment?.summary || [], trans = snapshot.transfers?.summary || [];
     const team = snapshot.team?.rows || [], imports = filteredImports();
     const board = boardRows();
     renderPriorities(board);
+    renderReplenishmentOverview();
     const kpis=[
       ["Estoques em atenção",board.filter(w=>["ATENCAO","CRITICO"].includes(w.attention)).length,"overview",`${snapshot.warehouses.length} estoques operacionais`,board.some(w=>w.unknown)],
       ["Pessoas disponíveis",sum(team,"available"),"team",`${number(sum(team,"active"))} ativas no cadastro`,!snapshot.team],
@@ -225,7 +264,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     ];
     $('[data-global-metrics]').innerHTML=kpis.map(([title,value,domain,context,unknown])=>`<button type="button" class="global-kpi ${unknown?'SEM_DADOS':value>0&&["tasks","captacao"].includes(domain)?'CRITICO':(domain==="overview"&&value>0)||(domain==="team"&&value===0)?'ATENCAO':'NORMAL'}" data-jump="${domain}" ${domain==="tasks"?'data-jump-mode="overdue"':""}><span>${esc(title)}</span><strong>${unknown?"—":number(value)}</strong><small>${unknown?"Dados indisponíveis":esc(context)}</small></button>`).join("");
     $('[data-global-today]').innerHTML = `<section class="global-band"><h3>Hoje na operação</h3><div class="global-metrics global-domain-metrics">${metrics([["Reposições criadas",snapshot.replenishment?sum(rep,"created_today"):null],["Reposições concluídas",snapshot.replenishment?sum(rep,"finished_today",["CONCLUIDO"]):null],["Transferências iniciadas",snapshot.transfers?sum(trans,"started_today"):null],["Transferências concluídas",snapshot.transfers?sum(trans,"finished_today",["FINALIZADA"]):null],["Tarefas concluídas",snapshot.tasks?sum(tasks,"finished_today",["CONCLUIDA"]):null],["Importações realizadas",snapshot.imports?sum(imports,"today"):null],["Importações com falha",snapshot.imports?sum(imports,"today",["FAILED"]):null]])}</div></section>`;
-    $('[data-global-board]').innerHTML = `<section class="global-band"><h3>Status dos estoques</h3><div class="global-detail-controls"><label>Busca de estoque<input type="search" data-board-search value="${esc(boardQuery)}"></label><label>Ordenar por<select data-board-sort><option value="attention">Necessidade de atenção</option><option value="pending">Mais pendências</option><option value="overdue">Mais atrasos</option><option value="active">Menos pessoas</option><option value="captacao">CAPTAÇÃO mais antiga</option></select></label></div><div data-board-table></div><div class="global-pagination"><button type="button" data-board-page="previous">Anterior</button><span data-board-page-label></span><button type="button" data-board-page="next">Próxima</button></div></section>`;
+    $('[data-global-board]').innerHTML = `<section class="global-band"><h3>Resumo dos estoques</h3><div class="global-detail-controls"><label>Busca de estoque<input type="search" data-board-search value="${esc(boardQuery)}"></label><label>Ordenar por<select data-board-sort><option value="attention">Necessidade de atenção</option><option value="pending">Mais pendências</option><option value="overdue">Mais atrasos</option><option value="active">Menos pessoas</option><option value="captacao">CAPTAÇÃO mais antiga</option></select></label><label class="global-movement-toggle"><input type="checkbox" data-board-movement ${movementOnly ? "checked" : ""}> Somente com movimento</label></div><div data-board-table></div><div class="global-pagination"><button type="button" data-board-page="previous">Anterior</button><span data-board-page-label></span><button type="button" data-board-page="next">Próxima</button></div></section>`;
     $('[data-board-sort]').value=boardSort;
     renderBoard(board);
     $('[data-global-domains]').innerHTML=domainPanel("replenishment")+domainPanel("transfers")+importsPanel()+teamPanel()+domainPanel("tasks");
@@ -236,15 +275,21 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     if(importDays.length)$('[data-global-trends]').insertAdjacentHTML("beforeend",chart("Importações: sucesso e falha",importDays.map(day=>({label:new Date(day+"T12:00:00").toLocaleDateString("pt-BR"),values:[{label:"Sucesso",value:sum(imports.filter(r=>r.day===day),"total",["COMPLETED"])},{label:"Falha",value:sum(imports.filter(r=>r.day===day),"total",["FAILED"])}]}))));
     $('[data-global-alert-summary]').innerHTML=snapshot.errors.alerts?retry("alerts"):`<p>${number(sum(snapshot.alerts?.summary||[],"critical"))} alertas críticos · ${number(sum(snapshot.alerts?.summary||[],"total"))} ocorrências</p>`;
     $('[data-global-errors]').innerHTML="";
-    $('[data-global-updated]').textContent = snapshot.generated_at?"Última atualização: " + date(snapshot.generated_at) + " · " + service.diagnostics.realtime:"Carregando indicadores";
+    $('[data-global-updated]').textContent = snapshot.generated_at?"Última atualização: " + date(snapshot.generated_at):"Carregando indicadores";
     root.querySelectorAll('[data-global-period]').forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.globalPeriod===$('[data-filter="period"]').value)));
   }
   function renderBoard(board = boardRows()) {
     const key = $('[data-board-sort]').value;
     if (key !== "attention") board.sort((a,b) => key === "captacao" ? new Date(a.batch?.last_completed_at || 0)-new Date(b.batch?.last_completed_at || 0) : key === "active" ? a.active-b.active : b[key]-a[key]);
-    board=board.filter(w=>[w.name,w.code].join(" ").toLowerCase().includes(boardQuery.toLowerCase()));
-    const total=board.length;const ranked=board.slice(0,5);board=board.slice(boardOffset,boardOffset+boardLimit);
-    $('[data-board-table]').innerHTML = `<div class="global-ranking"><h4>Onde precisamos olhar agora?</h4><ol>${ranked.map(w=>`<li><button type="button" data-board-record="${esc(w.code)}"><strong>${esc(w.name)}</strong>${badge(w.attention)}<small>${esc(w.unknown?"Dados incompletos":reasons(w)[0]||"Operação sem alertas de atenção")}</small></button></li>`).join("")}</ol></div><div class="global-warehouse-grid">${board.map(w=>`<article class="global-warehouse ${w.attention}" data-warehouse-card><header><div><strong>${esc(w.name)}</strong><small>${esc(w.code)}</small></div>${badge(w.attention)}</header><dl><dt>Pessoas</dt><dd>${snapshot.team?`${w.active} ativas · ${w.available} disponíveis`:"Sem dados"}</dd><dt>Reposições</dt><dd>${snapshot.replenishment?number(w.pending)+" abertas":"Sem dados"}</dd><dt>Transferências</dt><dd>${snapshot.transfers?number(w.transfers)+" abertas":"Sem dados"}</dd><dt>Tarefas</dt><dd>${snapshot.tasks?number(w.overdue)+" atrasadas":"Sem dados"}</dd><dt>CAPTAÇÃO</dt><dd>${badge(w.freshness)}<small>há ${esc(age(w.batch?.last_completed_at))}</small></dd><dt>Última atividade</dt><dd>há ${esc(age(w.lastActivity))}</dd></dl><p class="global-context">${esc(w.unknown?"Dados incompletos":reasons(w).join(" · ")||"Sem motivos de atenção")}</p><button type="button" data-board-record="${esc(w.code)}">Ver detalhes</button></article>`).join("")}</div>${total>10?`<button type="button" data-board-all>${boardLimit===10?"Ver todos os "+total+" estoques":"Mostrar 10 estoques"}</button>`:""}`;
+    board=board.filter(w=>[w.name,w.code].join(" ").toLowerCase().includes(boardQuery.toLowerCase()) && (!movementOnly || w.unknown || w.pending+w.transfers+w.tasks>0));
+    const total=board.length;board=board.slice(boardOffset,boardOffset+boardLimit);
+    $('[data-board-table]').innerHTML = table(["Estoque","Situação","Reposições","Transferências","Tarefas atrasadas","Equipe","CAPTAÇÃO","Ação"],
+      board.map(w=>[`<strong>${esc(w.name)}</strong><small>${esc(w.code)}</small>`,badge(w.attention),
+        snapshot.replenishment?number(w.pending):"Sem dados",snapshot.transfers?number(w.transfers):"Sem dados",
+        snapshot.tasks?number(w.overdue):"Sem dados",snapshot.team?`${w.active} ativas<small>${w.available} disponíveis</small>`:"Sem dados",
+        `${badge(w.freshness)}<small>${esc(age(w.batch?.last_completed_at))}</small>`,
+        `<button type="button" data-board-record="${esc(w.code)}">Ver detalhes</button>`]))
+      + (total>10?`<button type="button" data-board-all>${boardLimit===10?"Ver todos os "+total+" estoques":"Mostrar 10 estoques"}</button>`:"");
     $('[data-board-page-label]').textContent="Página "+(Math.floor(boardOffset/boardLimit)+1);$('[data-board-page="previous"]').disabled=boardOffset===0;$('[data-board-page="next"]').disabled=total<=boardOffset+boardLimit;
   }
   function renderDomainCharts() {
@@ -380,6 +425,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     if(button.dataset.boardPage){boardOffset=Math.max(0,boardOffset+(button.dataset.boardPage==="next"?boardLimit:-boardLimit));renderBoard();}
   });
   root.addEventListener("change",event=>{
+    if(event.target.hasAttribute("data-board-movement")){movementOnly=event.target.checked;boardOffset=0;renderBoard();return;}
     if(event.target.hasAttribute("data-board-sort")){boardSort=event.target.value;boardOffset=0;renderBoard();return;}
     if(!event.target.dataset.config && !event.target.dataset.filter)return;
     if(event.target.dataset.config){const key=event.target.dataset.config;config[key]=Math.max(1,Math.min(720,Number(event.target.value)||GLOBAL_DASHBOARD_CONFIG[key]));config.staleHours=Math.max(config.freshHours,config.staleHours);service.invalidate();}

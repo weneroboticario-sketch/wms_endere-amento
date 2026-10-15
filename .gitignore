@@ -8,4 +8,6 @@ tmp/
 artifacts/cp-workflow-views/
 artifacts/demo-mode/
 artifacts/purchase-builder/
+artifacts/global-refresh/
+artifacts/global-refresh-edge/
 /test-results/

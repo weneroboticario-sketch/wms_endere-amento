@@ -14,10 +14,11 @@ try {
   for (const width of [1366,390]) {
     const page = await browser.newPage({viewport:{width,height:900}});
     const errors=[];page.on("pageerror",error=>errors.push(error.stack));
-    await page.route("**/workflow-view-fixture",route=>route.fulfill({contentType:"text/html",body:'<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'; trusted-types default dompurify"><link rel="stylesheet" href="/style.css"><main style="padding:16px;min-width:0"><div id="fiscalWorkflowContent"></div><p id="fiscalWorkflowStatus"></p><div id="reverseLogisticsContent"></div><p id="reverseLogisticsStatus"></p></main>'}));
+    await page.route("**/workflow-view-fixture",route=>route.fulfill({contentType:"text/html",body:'<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for \'script\'; trusted-types default dompurify"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/src/cpalamo-theme.css"><link rel="stylesheet" href="/src/purchases-workflow.css"><main style="padding:16px;min-width:0"><div id="fiscalWorkflowContent"></div><p id="fiscalWorkflowStatus"></p><div id="reverseLogisticsContent"></div><p id="reverseLogisticsStatus"></p></main>'}));
     await page.goto("http://127.0.0.1:5184/workflow-view-fixture");
     await page.evaluate(async()=>{
       const security=await import("/src/utils.js");security.installHtmlSecurity();
+      document.documentElement.classList.add("cp-alamo");
       const fiscal=await import("/src/purchases-workflow.js");
       const reverse=await import("/src/reverse-logistics.js");
       const date=new Date().toISOString();
@@ -39,13 +40,19 @@ try {
       await reverse.createReverseLogistics(context).refresh();
     });
     const columns=await page.locator("#fiscalRows tr:first-child td").evaluateAll(cells=>cells.map(c=>c.getBoundingClientRect().x));
-    assert.equal(columns.length,7);assert.ok(columns.every((x,i)=>i===0 || x>columns[i-1]));
+    assert.equal(columns.length,9);
+    if(width>760)assert.ok(columns.every((x,i)=>i===0 || x>columns[i-1]));
+    else {
+      assert.equal(await page.locator('.fiscal-table thead').isVisible(),false);
+      assert.ok(await page.locator('.fiscal-queue').evaluate(element=>element.scrollWidth<=element.clientWidth+1),'Mobile fiscal cards must fit without internal horizontal scrolling');
+    }
     assert.equal(await page.locator("#reverseCreateForm").count(),1);
     assert.equal(await page.locator("[data-fiscal-action=DISPATCH]").count(),0);
     assert.equal(await page.locator("#fiscalUploadForm").count(),1);
     assert.deepEqual(errors,[]);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),"A pagina nao pode expandir horizontalmente");
     await page.screenshot({path:resolve(output,`workflow-${width}.png`),fullPage:true});
+    await page.locator('[data-fiscal-detail-tab="invoice"]').click();
     await page.locator("#fiscalUploadForm button").click();
     assert.match(await page.locator("#fiscalUploadStatus").textContent(), /Confira o campo/);
     await page.locator('#fiscalUploadForm input[name="number"]').fill("0000123");
@@ -58,6 +65,15 @@ try {
     assert.equal(uploads[1].p_data.number,"0000123");
     assert.equal(uploads[1].p_data.value,"123.45");
     assert.match(await page.locator("#fiscalUploadStatus").textContent(), /NF anexada/);
+    assert.equal(await page.locator('[data-fiscal-panel="invoice"]').isVisible(),true);
+    await page.locator('[data-fiscal-action="CORRECTION"]').click();
+    await page.locator('[data-modal-cancel]').click();
+    assert.equal((await page.evaluate(()=>window.uploadCalls)).length,2);
+    await page.locator('[data-fiscal-close]').click();
+    assert.equal(await page.locator('#fiscalDetail').isVisible(),false);
+    await page.locator('[data-fiscal-open]').first().click();
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#fiscalDetail').isVisible(),false);
     console.log(`PASS: tabelas alinhadas, Compras sem acoes fisicas, viewport ${width}`);
     await page.close();
   }

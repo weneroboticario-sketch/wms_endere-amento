@@ -1,0 +1,248 @@
+/* CP Alamo design system. The independent WMS keeps its existing theme. */
+:root.cp-alamo {
+  --app-bg: #f4f7fb; --bg: var(--app-bg); --surface: #fff; --surface-alt: #f1f5f9;
+  --surface-soft: #f8fafc; --surface-raised: #fff; --surface-hover: #f3f7fb;
+  --ink: #172b4d; --text: #172b4d; --text-strong: #0c1f3a; --muted: #52647b; --muted-soft: #687a91;
+  --border: #dce5ef; --line: var(--border); --border-soft: #e9eff5;
+  --nav: #092636; --nav-dark: #061d29; --nav-hover: #163c4d;
+  --primary: #087b85; --primary-dark: #06636b; --primary-hover: #06636b; --primary-soft: #e9f8f8;
+  --blue: #287de0; --green: #128451; --orange: #ae6800; --red: #c33138; --purple: #6e50bd;
+  --success: #147343; --warning: #8a5a00; --danger: #ba3038;
+  --success-bg: #ecf9f2; --warning-bg: #fff6e6; --danger-bg: #fff0f0; --info-bg: #edf6ff;
+  --radius: 8px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 8px;
+  --shadow-sm: 0 2px 8px rgba(15,31,50,.04); --shadow: var(--shadow-sm);
+  --shadow-md: 0 5px 16px rgba(15,31,50,.06); --shadow-strong: var(--shadow-md);
+  --sidebar-width: 220px; --space-1: 4px; --space-2: 8px; --space-3: 12px;
+  --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+}
+
+/* Layout, navigation and header */
+.cp-alamo body { background: var(--app-bg); color: var(--text); }
+.cp-alamo .content { padding: 20px 22px 28px; }
+.cp-alamo .sidebar { background: var(--nav-dark); padding: 16px 10px; }
+.cp-alamo .brand { padding: 0 4px 16px; gap: 10px; }
+.cp-alamo .brand h1 { font-size: 20px; line-height: 1.25; }
+.cp-alamo .brand p { font-size: 13px; color: #b3cbd9; }
+.cp-alamo .brand #sidebarModuleSubtitle { display: none; }
+.cp-alamo .brand-mark { width: 38px; height: 40px; min-width: 38px; box-shadow: none; font-size: 25px; }
+.cp-alamo .menu-section { margin-bottom: 16px; }
+.cp-alamo .menu-label { font-size: 13px; color: #aac5d5; margin-bottom: 6px; }
+.cp-alamo .menu-item { min-height: 44px; padding: 9px 10px; font-size: 14px; gap: 9px; line-height: 1.35; border-radius: 6px; }
+.cp-alamo .menu-item::before { display: none; }
+.cp-alamo .menu-item > svg { flex-shrink: 0; width: 28px; height: 28px; color: #c4dce9; background: #1c3a4b; padding: 4px; border-radius: 6px; }
+.cp-alamo .menu-item.active { background: var(--nav-hover); border-left: 3px solid var(--accent); color: #fff; }
+.cp-alamo .menu-item.active svg { color: #ffcc62; }
+.cp-alamo .menu-badge { min-width: 24px; height: 24px; border-radius: 999px; font-size: 13px; }
+.cp-alamo .user-card { position: relative; background: transparent; border: 0; border-top: 1px solid #244250; border-radius: 0; box-shadow: none; padding: 16px 8px 8px; }
+.cp-alamo .app-avatar { display: flex; width: 36px; height: 36px; justify-content: center; align-items: center; background: #294d60; border-radius: 50%; font-weight: 700; color: #fff; margin-bottom: 8px; }
+.cp-alamo .user-card strong { font-size: 14px; }
+.cp-alamo .user-card > span:not(.app-avatar) { font-size: 13px; }
+.cp-alamo .user-card button { width: 100%; margin-top: 12px; }
+.cp-alamo .user-strip { grid-template-columns: minmax(150px,1fr) minmax(210px,1.25fr) auto auto auto auto; gap: 12px; padding: 12px 16px; border-radius: 0; box-shadow: none; margin: -20px -22px 24px; border: 0; border-bottom: 1px solid var(--border); }
+.cp-alamo .user-strip .header-pill { padding: 4px 10px; border-radius: 0; background: transparent; border-left: 1px solid var(--border-soft); }
+.cp-alamo .user-strip .app-header-title { padding: 0; }
+.cp-alamo .user-strip strong { font-size: 14px; }
+.cp-alamo .user-strip span { font-size: 13px; }
+.cp-alamo .header-user-pill { display: none; }
+.cp-alamo .user-strip .connection-pill { display: block; }
+.cp-alamo .header-user-pill strong { max-width: 200px; }
+.cp-alamo .warehouse-pill strong { display: none; }
+.cp-alamo .warehouse-pill select { margin-top: 3px; background: var(--surface-soft); }
+.cp-alamo .user-strip .warehouse-pill { position: relative; }
+.cp-alamo .user-strip .warehouse-pill > span { position: absolute; top: 7px; left: 18px; pointer-events: none; }
+.cp-alamo .user-strip .warehouse-pill select { min-height: 52px; margin: 0; padding-top: 18px; }
+.cp-alamo .task-pill strong { color: var(--primary-dark); }
+.cp-alamo .mobile-topbar { background: #fff; border-bottom: 1px solid var(--border); box-shadow: none; }
+.cp-alamo .page-title { align-items: flex-start; margin: 0 0 20px; }
+.cp-alamo .page-title h2 { color: var(--text-strong); font-size: 28px; font-weight: 800; line-height: 1.2; }
+.cp-alamo .page-title p:not(.eyebrow) { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+.cp-alamo .eyebrow { color: var(--primary-dark); font-size: 13px; }
+
+/* Repeated items and functional bands */
+.cp-alamo :is(.panel,.cp-workflow-band,.global-band) { background: var(--surface); border: 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); border-radius: 0; padding: 20px; box-shadow: none; }
+.cp-alamo :is(.panel,.global-band) :is(.panel,.global-band) { border-top: 0; box-shadow: none; padding: 16px 0; }
+.cp-alamo :is(.panel-header,.section-header,.global-section-heading) { margin-bottom: 16px; align-items: center; }
+.cp-alamo :is(.panel h3,.global-band h3,.section-header h3) { font-size: 18px; color: var(--text-strong); }
+.cp-alamo :is(.app-card,.kpi-card,.metric-card,.stock-summary-card,.global-metrics article,.global-kpi) { border: 1px solid var(--border); border-radius: 8px; background: #fff; box-shadow: var(--shadow-sm); }
+.cp-alamo :is(.metric-card,.stock-summary-card,.global-kpi) { padding: 16px; min-height: 104px; }
+.cp-alamo :is(.metric-card,.stock-summary-card,.global-kpi) strong { color: var(--text-strong); font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cp-alamo :is(.metric-grid,.stock-summary-grid,.global-metrics,.kpi-grid) { gap: 12px; }
+.cp-alamo :is(.dashboard-grid,.content-grid,.two-column-grid) { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.cp-alamo .three-column-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.cp-alamo .sku-location-code { background: var(--primary-soft); color: var(--primary-dark); font-size: 20px; text-align: left; padding: 14px 16px; }
+.cp-alamo .sku-card-meta strong { font-size: 20px; }
+.cp-alamo .sku-location-card { border: 1px solid var(--border); background: #fff; box-shadow: none; }
+.cp-alamo :is(.transfer-card,.replenishment-card) { border-color: var(--border); background: #fff; box-shadow: var(--shadow-sm); }
+.cp-alamo .transfer-work-location { font-size: 24px; }
+.cp-alamo .transfer-work-stats strong { font-size: 28px; }
+.cp-alamo #transferWorkSection .current-location-line strong { font-size: 24px; font-weight: 800; color: var(--primary-dark); }
+.cp-alamo #transferWorkSection .current-qty-highlight strong { font-size: 30px; font-variant-numeric: tabular-nums; }
+.cp-alamo .transfer-scan-panel :is(input,button) { min-height: 48px; font-size: 18px; }
+.cp-alamo :is(.user-card-grid,.user-card-meta,.replenishment-card-meta) { gap: 12px; }
+.cp-alamo .user-card-grid { grid-template-columns: repeat(auto-fit,minmax(min(100%,300px),1fr)); }
+.cp-alamo #usuarios .users-layout { grid-template-columns: minmax(0,1fr); }
+.cp-alamo .user-form-disclosure > summary { cursor: pointer; font-size: 16px; font-weight: 700; color: var(--primary-dark); min-height: 44px; padding: 12px 0; }
+.cp-alamo #userForm { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.cp-alamo #userForm .app-form-field { display: grid; gap: 6px; min-width: 0; }
+.cp-alamo #userForm .app-form-field label { margin: 0; }
+.cp-alamo #userForm > :not(.app-form-field):not(input[type=hidden]) { grid-column: 1 / -1; }
+.cp-alamo .user-diagnostics { grid-template-columns: repeat(5,minmax(0,1fr)); }
+.cp-alamo .user-diagnostics div { box-shadow: none; border-radius: 0; border: 0; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
+.cp-alamo .user-diagnostics strong { font-size: 20px; }
+.cp-alamo .pb-cart { background: #fff; border-left: 1px solid var(--border); padding: 20px; box-shadow: none; }
+
+/* Forms, buttons and feedback */
+.cp-alamo :is(input:not([type=checkbox]):not([type=radio]),select,textarea) { font-size: 14px; min-height: 44px; border-color: var(--border); background: #fff; color: var(--text); border-radius: 6px; }
+.cp-alamo :is(input,select,textarea):focus { border-color: var(--primary); box-shadow: 0 0 0 3px #098b9418; outline: none; }
+.cp-alamo label { font-size: 14px; font-weight: 600; }
+.cp-alamo button { font-size: 14px; min-height: 40px; letter-spacing: 0; box-shadow: none; }
+.cp-alamo :is(.primary-button,.secondary-button,.danger-button,.ghost-button,.icon-button) { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px; padding: 10px 14px; }
+.cp-alamo .primary-button { background: var(--primary); border-color: var(--primary); color: #fff; }
+.cp-alamo .primary-button:hover { background: var(--primary-hover); }
+.cp-alamo .secondary-button { background: #fff; border-color: var(--border); color: var(--text); }
+.cp-alamo .secondary-button:hover { background: var(--surface-hover); border-color: #aec1d4; }
+.cp-alamo .danger-button { color: var(--danger); background: var(--danger-bg); border: 1px solid #f5cbd0; }
+.cp-alamo .ghost-button { background: transparent; border: 0; color: var(--primary-dark); }
+.cp-alamo .icon-button { padding: 0; width: 44px; height: 44px; flex-shrink: 0; }
+.cp-alamo .app-action-icon { flex-shrink: 0; }
+.cp-alamo :is(.filters-bar,.filters-row,.global-filters,.transfer-filters,.replenishment-filters,.user-filter-grid) { gap: 12px; background: var(--surface-soft); padding: 16px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.cp-alamo :is(.global-tabs,.user-tab-row,.transfer-tabs) { gap: 4px; border-bottom: 1px solid var(--border); }
+.cp-alamo :is(.global-tabs button,.user-tab,.transfer-tabs button) { background: transparent; border: 0; border-radius: 0; padding: 10px 14px; min-height: 44px; font-weight: 600; color: var(--muted); }
+.cp-alamo :is(.global-tabs button[aria-pressed=true],.user-tab.active,.transfer-tabs button.active) { color: var(--primary-dark); border-bottom: 3px solid var(--primary); background: var(--primary-soft); }
+.cp-alamo :is(.status-badge,.global-state,.status-pill) { display: inline-flex; padding: 4px 8px; font-size: 13px; font-weight: 600; line-height: 1.4; border-radius: 6px; overflow-wrap: normal; word-break: normal; max-width: 100%; }
+.cp-alamo .status-info { background: var(--info-bg); color: #1c60a1; }
+.cp-alamo .status-success { background: var(--success-bg); color: var(--success); }
+.cp-alamo .status-warning { background: var(--warning-bg); color: var(--warning); }
+.cp-alamo .status-danger { background: var(--danger-bg); color: var(--danger); }
+.cp-alamo .status-neutral { background: var(--surface-alt); color: var(--muted); }
+.cp-alamo .status-purple { background: #f2effc; color: #6343a7; }
+.cp-alamo :is(.inline-alert,.inline-status,.empty-state) { font-size: 14px; line-height: 1.5; border-radius: 6px; }
+.cp-alamo .empty-state { background: var(--surface-soft); padding: 24px 16px; border: 1px dashed var(--border); color: var(--muted); }
+.cp-alamo .inline-status:empty { display: none; }
+.cp-alamo .app-skeleton { min-height: 106px; background: var(--surface-alt); border: 1px solid var(--border-soft); border-radius: 8px; }
+.cp-alamo [aria-busy=true] .fiscal-queue { opacity: .65; }
+.cp-alamo :is(.modal-card,dialog) { border-radius: 8px; border-color: var(--border); background: #fff; box-shadow: var(--shadow-md); }
+.cp-alamo dialog::backdrop { background: #061d2966; }
+.cp-alamo dialog.app-modal { width: min(480px,calc(100% - 24px)); padding: 20px; }
+.cp-alamo .app-modal label { display: grid; gap: 8px; margin: 16px 0; }
+.cp-alamo #cpUserDetail { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(480px,100%); max-width: 100%; height: 100dvh; max-height: 100dvh; padding: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0; overflow-y: auto; }
+.cp-alamo #cpUserDetail .user-card { padding: 0; border: 0; }
+.cp-alamo #cpUserDetail .drawer-heading { padding: 16px; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); }
+.cp-alamo #cpUserDetail .drawer-body { padding: 16px; }
+.cp-alamo .login-shell { background: var(--app-bg); }
+.cp-alamo .login-card { border: 1px solid var(--border); box-shadow: var(--shadow-md); }
+.cp-alamo .login-brand p { color: var(--muted); }
+
+/* Tables and operational quantities */
+.cp-alamo :is(.table-wrapper,.table-wrap,.global-table-wrap) { background: #fff; border-color: var(--border); border-radius: 6px; max-width: 100%; }
+.cp-alamo table { background: #fff; color: var(--text); font-size: 14px; border-collapse: collapse; }
+.cp-alamo :is(th,td) { padding: 11px 12px; font-size: 14px; vertical-align: middle; border: 0; border-bottom: 1px solid var(--border-soft); overflow-wrap: break-word; word-break: normal; }
+.cp-alamo th { font-size: 13px; font-weight: 700; background: var(--surface-soft); color: var(--text-strong); min-width: 90px; }
+.cp-alamo tbody tr:hover { background: #f8fbfd; }
+.cp-alamo td small { display: block; margin-top: 4px; font-size: 13px; color: var(--muted); }
+.cp-alamo :is(.numeric-value,.operational-value,.global-kpi strong,td strong) { font-variant-numeric: tabular-nums; }
+.cp-alamo td .status-badge { min-width: 96px; }
+.cp-alamo .operational-code { font-size: 16px; font-weight: 800; color: var(--text-strong); }
+.cp-alamo .stock-export-actions { gap: 12px; }
+.cp-alamo .stock-export-actions button { text-align: left; justify-content: flex-start; background: var(--surface-soft); padding: 16px; min-height: 64px; }
+
+/* Consolidated overview: leading indicators and restrained functional bands */
+.cp-alamo #globalDashboard { color: var(--text); }
+.cp-alamo #globalDashboard .global-filters { grid-template-columns: minmax(150px,1fr) minmax(170px,1fr) minmax(130px,auto); align-items: start; padding: 12px 16px; }
+.cp-alamo .global-advanced-filters { align-self: end; }
+.cp-alamo .global-advanced-filters > summary { cursor: pointer; min-height: 44px; padding: 12px; color: var(--primary-dark); font-size: 14px; font-weight: 600; }
+.cp-alamo .global-advanced-body { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; padding: 12px; }
+.cp-alamo .global-advanced-filters[open] { grid-column: 1 / -1; }
+.cp-alamo .global-advanced-body .global-settings { grid-column: 1 / -1; }
+.cp-alamo #globalDashboard .page-title .global-update { margin: 8px 0 0; font-size: 13px; }
+.cp-alamo [data-global-overview] { display: grid; gap: 16px; }
+.cp-alamo [data-global-metrics] { margin: 0; }
+.cp-alamo [data-global-replenishment-metrics] { order: -4; }
+.cp-alamo .global-operational-grid { order: -3; }
+.cp-alamo .global-operational-charts { order: -2; }
+.cp-alamo .global-operational-grid .global-priority-band { order: 0; }
+.cp-alamo .global-priority-band { order: -1; margin: 0; }
+.cp-alamo #globalDashboard .global-primary-metrics { gap: 12px; margin: 0; }
+.cp-alamo #globalDashboard .global-kpi { min-height: 116px; padding: 16px; border-top-width: 1px; }
+.cp-alamo #globalDashboard .global-kpi:nth-child(3n+1) { background: var(--info-bg); }
+.cp-alamo #globalDashboard .global-kpi:nth-child(3n+2) { background: var(--success-bg); }
+.cp-alamo #globalDashboard .global-kpi.CRITICO { background: var(--danger-bg); }
+.cp-alamo .global-band { margin-top: 0; }
+.cp-alamo .global-primary-metrics .global-kpi span { min-height: 0; }
+.cp-alamo .global-charts { gap: 20px; }
+.cp-alamo .global-charts > section { padding: 16px 0; border-top: 1px solid var(--border-soft); }
+.cp-alamo .global-bars li { grid-template-columns: minmax(100px,140px) minmax(0,1fr); }
+.cp-alamo .global-bars li > div { border-radius: 4px; background: var(--surface-alt); }
+.cp-alamo .global-table { min-width: 0; }
+.cp-alamo .global-state { font-size: 13px; }
+.cp-alamo [data-global-priorities] { grid-template-columns: repeat(auto-fit,minmax(min(100%,210px),1fr)); }
+.cp-alamo .global-priority { background: var(--warning-bg); border: 0; border-left: 3px solid #f4a51c; border-radius: 4px; }
+.cp-alamo .global-priority.CRITICO { background: var(--danger-bg); border-left-color: var(--red); }
+.cp-alamo .global-warehouse-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.cp-alamo .global-replenishment-metrics { grid-template-columns: repeat(6,minmax(0,1fr)); }
+.cp-alamo .global-replenishment-kpi { position: relative; padding: 16px 16px 16px 54px; min-height: 106px; }
+.cp-alamo .global-replenishment-kpi > svg { position: absolute; top: 16px; left: 14px; width: 28px; height: 28px; background: #ffffffa0; padding: 4px; border-radius: 6px; color: var(--primary-dark); }
+.cp-alamo .global-replenishment-kpi strong { display: block; font-size: 30px; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.cp-alamo .global-replenishment-kpi span { font-size: 14px; font-weight: 600; }
+.cp-alamo .global-replenishment-kpi.tone-0 { background: var(--info-bg); }.cp-alamo .global-replenishment-kpi.tone-1 { background: var(--warning-bg); }
+.cp-alamo .global-replenishment-kpi.tone-2,.cp-alamo .global-replenishment-kpi.tone-5 { background: var(--success-bg); }.cp-alamo .global-replenishment-kpi.tone-3 { background: #f2effc; }.cp-alamo .global-replenishment-kpi.tone-4 { background: var(--danger-bg); }
+.cp-alamo .global-operational-grid { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(280px,1fr); gap: 16px; }
+.cp-alamo .global-operational-grid [data-global-priorities] { grid-template-columns: minmax(0,1fr); }
+.cp-alamo .global-operational-grid .global-priority { padding: 12px; gap: 4px; }
+.cp-alamo .global-operational-charts { grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0; gap: 16px; }
+.cp-alamo .global-operational-charts > section { background: #fff; padding: 20px 16px; border-bottom: 1px solid var(--border); }
+.cp-alamo .global-operational-grid th { min-width: 72px; }
+.cp-alamo .global-operational-grid td { padding: 9px; }
+.cp-alamo .global-distribution { display: grid; gap: 16px; }
+.cp-alamo .global-donut { width: 150px; height: 150px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto; }
+.cp-alamo .global-donut > div { width: 108px; height: 108px; border-radius: 50%; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.cp-alamo .global-donut strong { font-size: 28px; font-variant-numeric: tabular-nums; }
+.cp-alamo .global-donut span { font-size: 13px; color: var(--muted); }
+.cp-alamo .global-distribution ul { list-style: none; padding: 0; margin: 0; font-size: 13px; display: grid; gap: 8px; }
+.cp-alamo .global-distribution li { display: flex; justify-content: space-between; gap: 8px; }
+.cp-alamo .global-distribution li > span { border-left: 4px solid; padding-left: 8px; }
+.cp-alamo .global-movement-toggle { display: flex; align-items: center; gap: 8px; }
+.cp-alamo #globalDashboard .global-movement-toggle input { width: 20px; min-height: 20px; }
+
+/* Responsive */
+@media(max-width:1280px) {
+  .cp-alamo .user-strip { grid-template-columns: minmax(150px,1fr) minmax(200px,1.5fr) auto auto; }
+  .cp-alamo .header-user-pill { display: none; }
+  .cp-alamo .user-strip .app-header-title { grid-column: auto; }
+  .cp-alamo .user-diagnostics { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .cp-alamo #globalDashboard .global-primary-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .cp-alamo .global-replenishment-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+@media(max-width:900px) {
+  .cp-alamo :is(.dashboard-grid,.content-grid,.two-column-grid,.three-column-grid) { grid-template-columns: minmax(0,1fr); }
+  .cp-alamo .global-warehouse-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo .global-operational-grid,.cp-alamo .global-operational-charts { grid-template-columns: minmax(0,1fr); }
+}
+@media(max-width:760px) {
+  .cp-alamo .content { width: 100%; margin-left: 0; padding: 16px 12px 24px; }
+  .cp-alamo #userForm { grid-template-columns: minmax(0,1fr); }
+  .cp-alamo .sidebar { width: min(280px,90%); }
+  .cp-alamo .user-strip { margin: -16px -12px 20px; padding: 12px; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+  .cp-alamo .user-strip .app-header-title,.cp-alamo .user-strip > .logout-button { display: none; }
+  .cp-alamo .warehouse-pill { grid-column: 1 / -1; }
+  .cp-alamo .user-strip .header-pill { border: 0; padding: 0; }
+  .cp-alamo .page-title h2 { font-size: 26px; }
+  .cp-alamo :is(.panel,.cp-workflow-band,.global-band) { padding: 16px 12px; }
+  .cp-alamo :is(.primary-button,.secondary-button,.danger-button,button) { min-height: 44px; }
+  .cp-alamo :is(.user-diagnostics,.metric-grid,.stock-summary-grid) { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo #globalDashboard .global-primary-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo .global-replenishment-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo .global-warehouse-grid { grid-template-columns: minmax(0,1fr); }
+  .cp-alamo :is(.filters-bar,.filters-row,.global-filters,.transfer-filters,.replenishment-filters,.user-filter-grid) { padding: 12px; }
+  .cp-alamo .global-table td { padding: 8px 0; border: 0; }
+  .cp-alamo #globalDashboard .global-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .cp-alamo .global-advanced-filters { grid-column: 1 / -1; }
+  .cp-alamo .global-advanced-body { grid-template-columns: minmax(0,1fr); }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) table { display: block; min-width: 0; }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) thead { display: none; }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) :is(tbody,tr) { display: block; width: 100%; }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) tr { padding: 12px; border-bottom: 1px solid var(--border); }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) td { display: grid; grid-template-columns: 110px minmax(0,1fr); gap: 8px; padding: 8px 0; border: 0; min-width: 0; }
+  .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) td::before { content: attr(data-label); font-size: 13px; color: var(--muted); }
+}
+@media(prefers-reduced-motion:reduce) { .cp-alamo * { scroll-behavior: auto; transition: none; animation: none; } }

@@ -33,6 +33,9 @@ import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
+import { initializeCpAppearance } from "./src/cpalamo-appearance.js";
+import "./src/cpalamo-theme.css";
+import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 
 (function () {
@@ -46,6 +49,10 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     window.location.hostname.indexOf("wms-dourados-") === 0 ||
     String(import.meta.env.VITE_SUPABASE_URL || "").indexOf("ztxdqvxvkfgfqowaiaep") >= 0;
   if (IS_CP_ALAMO) {
+    initializeCpAppearance({ userDetails: function (id) {
+      var user = authState.users.find(function (record) { return record.id === id; });
+      return user ? userCardHtml(user) : "";
+    } });
     document.title = "WMS Álamo";
     document.querySelectorAll(".brand h1, .mobile-topbar strong").forEach(function (element) {
       element.textContent = "WMS Álamo";
@@ -7469,6 +7476,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   function groupedUserCardsHtml(users) {
+    if (IS_CP_ALAMO) return cpUserTableHtml(users);
     var byWarehouse = {};
     users.forEach(function (user) {
       var warehouse = user.defaultWarehouseCode || "SEM_ESTOQUE";
@@ -7499,6 +7507,17 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
         "</details>"
       ].join("");
     }).join("");
+  }
+
+  function cpUserTableHtml(users) {
+    return "<div class=\"table-wrapper cp-user-table\"><table class=\"table-modern\"><thead><tr><th>Usuario</th><th>Nome</th><th>Perfil</th><th>Estoque</th><th>Status</th><th>Tarefas</th><th>Acao</th></tr></thead><tbody>" + users.map(function (user) {
+      var selection = "<input type=\"checkbox\" aria-label=\"Selecionar " + escapeHtml(user.name) + "\" data-user-select=\"" + escapeHtml(user.id) + "\"" + (userManagementState.selectedIds[user.id] ? " checked" : "") + (isProtectedUserForDestructiveAction(user) ? " disabled" : "") + ">";
+      return "<tr><td data-label=\"Usuario\"><label class=\"checkbox-label\">" + selection + " <strong>" + escapeHtml(user.username || user.matricula || "-") + "</strong></label></td>" +
+        "<td data-label=\"Nome\">" + escapeHtml(user.name || "-") + "<small>" + escapeHtml(user.supervisorName || "Sem supervisor") + "</small></td>" +
+        "<td data-label=\"Perfil\">" + escapeHtml(user.role) + "</td><td data-label=\"Estoque\">" + escapeHtml(user.defaultWarehouseCode || "-") + "</td>" +
+        "<td data-label=\"Status\"><span class=\"status-badge " + (user.active ? "status-success" : "status-neutral") + "\">" + (user.archived ? "Arquivado" : user.active ? "Ativo" : "Inativo") + "</span></td>" +
+        "<td data-label=\"Tarefas\">" + (user.availableForTasks ? "Disponivel" : "Indisponivel") + "</td><td data-label=\"Acao\"><button type=\"button\" class=\"secondary-button\" data-user-open-detail=\"" + escapeHtml(user.id) + "\">Detalhes</button></td></tr>";
+    }).join("") + "</tbody></table></div>";
   }
 
   function userCardHtml(user) {

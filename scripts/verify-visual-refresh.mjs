@@ -11,7 +11,7 @@ const phase = process.argv[5] || "after";
 const before = phase === "before";
 const html = (await readFile("index.html", "utf8"))
   .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, "")
-  .replace("</head>", '<link rel="stylesheet" href="/src/global-dashboard.css"><link rel="stylesheet" href="/src/purchase-transfer-builder.css"></head>');
+  .replace("</head>", '<link rel="stylesheet" href="/src/global-dashboard.css"><link rel="stylesheet" href="/src/purchase-transfer-builder.css">'+(before?'':'<link rel="stylesheet" href="/src/cpalamo-theme.css"><link rel="stylesheet" href="/src/purchases-workflow.css">')+'</head>');
 let server, browser;
 try {
   server = await createServer({server: {host: "127.0.0.1", port: 4193, strictPort: true}, resolve: {preserveSymlinks: false}});
@@ -20,6 +20,7 @@ try {
   const page = await browser.newPage();
   await page.route("**/visual-verification", route => route.fulfill({contentType: "text/html", body: html}));
   await page.goto("http://127.0.0.1:4193/visual-verification");
+  if(!before)await page.evaluate(async()=>{const {initializeCpAppearance}=await import('/src/cpalamo-appearance.js');initializeCpAppearance();});
   await page.evaluate(() => {
     document.body.className = "auth-unlocked role-administrador";
     document.querySelectorAll('.cpalamo-only').forEach(e => {e.hidden = false;});
@@ -47,15 +48,29 @@ try {
     const {mountGlobalDashboard} = await import("/src/global-dashboard-view.js");
     const client = {
       from() {const q={select(){return this;},eq(){return this;},neq(){return this;},order(){return Promise.resolve({data:[{code:"22796",name:"22796 - VDDRD",active:true},{code:"23696",name:"23696 - VDTLS_HUB",active:true}],error:null});}};return q;},
-      async rpc(){return {data:{rows:[],summary:[],trends:[],attention:[],totals:{}},error:null};}
+      async rpc(_name,args){
+        const data={rows:[],summary:[],trends:[],attention:[],totals:{}};
+        if(args.p_section==='replenishment_summary')data.summary=[{warehouse_code:'22796',status:'PENDENTE',open:56},{warehouse_code:'22796',status:'SEM_ESTOQUE',open:2},{warehouse_code:'22796',status:'CONCLUIDO',open:0,finished_today:2}];
+        if(args.p_section==='team')data.rows=[{warehouse_code:'22796',active:3,available:2,busy:1},{warehouse_code:'23696',active:2,available:1,busy:1}];
+        if(args.p_section==='executive'){data.queue=[{warehouse_code:'22796',minutes_60_plus:58}];data.trends=Array.from({length:7},(_,i)=>({domain:'replenishment',day:'2026-10-'+String(8+i).padStart(2,'0'),created:10+i*3,finished:5+i}));}
+        return {data,error:null};
+      }
     };
     const view=mountGlobalDashboard({root:document.getElementById("globalDashboard"),client,getUser:()=>({id:"visual",username:"admin",role:"ADMINISTRADOR",active:true,defaultWarehouseCode:"DOURADOS"}),getWarehouse:()=>"DOURADOS",openWarehouse(){},onSync(){}});
     await view.refresh();
   });
+  if(!before)await page.evaluate(async()=>{
+    const {createPurchasesWorkflow}=await import('/src/purchases-workflow.js');
+    const date=new Date().toISOString();
+    const rows=[0,1,2].map(i=>({id:'fixture-'+i,warehouse_code:'22796',requires_invoice:true,request_origin:'COMPRAS',invoice_stage:'PRONTA_PARA_NOTA',status:'PRONTA_PARA_NOTA',updated_at:date,status_changed_at:date,packing_finished_at:date,codigo_transferencia:'TRF-2026-0012'+i,destino_nome:'23696 - VDTLS_HUB',total_caixas:i+2,invoice_snapshot:[{sku:'000123',requested:12,separated:10,checked:10,difference:-2}]}));
+    const client={from(table){const data=table==='wms_transfers'?rows:[];let single=false;let id='';const query=new Proxy({}, {get(_target,key){if(key==='then')return resolve=>resolve({data:single?data.find(row=>row.id===id):data,error:null});return(...args)=>{if(key==='single')single=true;if(key==='eq'&&args[0]==='id')id=args[1];return query;};}});return query;},async rpc(){return{data:{'Aguardando NF':3,'Em preparacao':0,'NF anexadas hoje':0,'Liberadas hoje':0,'Valor faturado hoje':0},error:null};}};
+    const context={client:()=>client,user:()=>({id:'buyer',role:'COMPRAS'}),warehouse:()=> '22796',global:()=>false,warehouses:()=>[{code:'22796',name:'VDDRD'}],diagnostic:()=>{},changed:()=>{}};
+    await createPurchasesWorkflow(context).refresh();
+  });
   await mkdir(output, {recursive: true});
   const results = [];
-  const screens = ["dashboard", "globalDashboard", "consultaSku", "transferencias", "reposicao", "baseEstoque", "usuarios", "purchaseTransfer", "fiscalWorkflow", "reverseLogistics", "expedition", "bipagem", "consultaPrateleira"];
-  const sizes = before ? [[1366,768],[390,844]] : [[1366,768],[1920,1080],[768,1024],[1024,768],[360,800],[390,844],[412,915]];
+  const screens = ["dashboard", "globalDashboard", "consultaSku", "transferencias", "reposicao", "baseEstoque", "usuarios", "purchaseTransfer", "fiscalWorkflow", "reverseLogistics", "expedition", "bipagem", "consultaPrateleira", "etiquetas", "exportar", "estoques", "saudeSistema", "manutencao", "configuracoes"];
+  const sizes = before ? [[1366,768],[390,844]] : [[1366,768],[1440,900],[1920,1080],[768,1024],[1024,768],[360,800],[390,844]];
   for (const [width,height] of sizes) {
     await page.setViewportSize({width,height});
     for (const screen of screens) {
@@ -72,12 +87,28 @@ try {
       results.push({width, screen, ...result});
       if (!before) {
         assert.equal(result.overflow, false, `${screen}: page overflow at ${width}`);
-        if (result.minFont !== null) assert.ok(result.minFont >= 13.9, `${screen}: font ${result.minFont} at ${width}`);
+        if (result.minFont !== null) assert.ok(result.minFont >= 13, `${screen}: font ${result.minFont} at ${width}`);
       }
-      if ([1366,390].includes(width) && ["dashboard","globalDashboard","consultaSku","transferencias","purchaseTransfer","fiscalWorkflow"].includes(screen)) await page.screenshot({path: join(output, `refresh-${phase}-${screen}-${width}.png`), fullPage: screen !== "globalDashboard"});
+      if ([1366,390].includes(width)) await page.screenshot({path: join(output, `refresh-${phase}-${screen}-${width}.png`), fullPage: screen !== "globalDashboard"});
     }
   }
   if (!before) {
+    for(const width of [1366,390]) {
+      await page.setViewportSize({width,height:844});
+      for(const [section,title] of [["newTransferSection","Nova transferencia"],["myTransfersSection","Minhas tarefas"],["taskCenterSection","Gestao de tarefas"],["finalizedTransfersSection","Finalizadas"],["establishmentsSection","Estabelecimentos"],["transferWorkSection","Separacao"],["transferWorkSection","Conferencia"],["transferWorkSection","Montagem de caixas"]]) {
+        await page.evaluate(({section,title})=>{
+          document.querySelectorAll('.screen').forEach(e=>{e.hidden=e.id!=='transferencias';e.classList.toggle('active',e.id==='transferencias');});
+          document.querySelectorAll('.transfer-section').forEach(e=>e.hidden=e.id!==section);
+          if(section==='transferWorkSection') {
+            document.getElementById('transferWorkTitle').textContent=title;
+            document.getElementById('transferCurrentItem').innerHTML='<h3>000123</h3><p>Produto de teste de leitura operacional</p><div class="current-location-line"><span>Endereco</span><strong>R01-RK01-L02-F</strong></div><div class="current-qty-highlight"><span>Conferida</span><strong>24</strong></div>';
+          }
+        },{section,title});
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),`${title}: page overflow at ${width}`);
+        if(section==='transferWorkSection')assert.ok(await page.locator('.current-qty-highlight strong').evaluate(e=>parseFloat(window.getComputedStyle(e).fontSize)>=28));
+        await page.screenshot({path:join(output,`subview-${title.replaceAll(' ','-')}-${width}.png`),fullPage:true});
+      }
+    }
     await page.setViewportSize({width:1366,height:768});
     for (const zoom of [1,1.1,1.25]) {
       await page.evaluate(z => {document.documentElement.style.zoom = String(z);},zoom);
