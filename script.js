@@ -13937,6 +13937,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     $("startPackingButton").hidden = true;
     $("finishSeparationButton").hidden = true;
     $("finishPackingButton").hidden = finalized || mode !== "MONTAGEM";
+    $("finishPackingButton").textContent = IS_CP_ALAMO && transfer.requiresInvoice ? "Disponibilizar para NF" : "Finalizar transferencia";
     $("finishPackingButton").disabled = false;
     if ($("transferFinalBoxesBox")) $("transferFinalBoxesBox").hidden = !showFinalBoxes;
     if (!showFinalBoxes && $("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
@@ -18482,7 +18483,9 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     }
     var report = getTransferFinalReport(transfer);
     var hasDivergence = shouldRegisterPackingMissing || report.divergences.length > 0 || countTransferDivergences(transfer.id) > 0;
-    var message = hasDivergence ? "Existem divergências nesta transferência. Finalizar mesmo assim?" : "Transferência pronta para nota. Finalizar?";
+    var message = IS_CP_ALAMO && transfer.requiresInvoice
+      ? "Disponibilizar " + transfer.code + " para NF? " + getTransferStats(transfer.id).packed + " unidades conferidas | " + finalBoxCount + " caixas. As divergencias permanecem registradas; somente o conferido sera faturado."
+      : hasDivergence ? "Existem divergências nesta transferência. Finalizar mesmo assim?" : "Transferência pronta para nota. Finalizar?";
     if (!shouldRegisterPackingMissing && !window.confirm(message)) {
       setStatus("transferWorkStatus", "Revise os itens antes de finalizar.", "warning");
       return;
@@ -18503,7 +18506,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     await updateTransferStatus(transfer, hasDivergence ? "PRONTA_PARA_NOTA_COM_DIVERGENCIA" : "PRONTA_PARA_NOTA", {
       lacre_concluido_em: packingFinishedAt,
       duracao_lacre_segundos: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
-      finalizado_em: packingFinishedAt,
+      finalizado_em: IS_CP_ALAMO && transfer.requiresInvoice ? null : packingFinishedAt,
       duracao_segundos: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt),
       total_caixas: finalBoxCount,
       total_enviado: finalStats.packed,
@@ -18511,7 +18514,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       has_divergence: hasDivergence,
       packing_finished_at: packingFinishedAt,
       packing_duration_seconds: secondsBetween(transfer.packingStartedAt || transfer.separationFinishedAt, packingFinishedAt),
-      total_finished_at: packingFinishedAt,
+      total_finished_at: IS_CP_ALAMO && transfer.requiresInvoice ? null : packingFinishedAt,
       total_duration_seconds: secondsBetween(transfer.startedAt || transfer.separationStartedAt || transfer.createdAt, packingFinishedAt)
     }, wasRevalidation ? "TRANSFER_REVALIDATION_FINISHED" : "PACKING_FINISHED", {
       finalBoxCount: finalBoxCount,

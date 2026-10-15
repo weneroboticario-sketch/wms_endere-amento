@@ -29,8 +29,8 @@ try {
       await reverse.createReverseLogistics(context).refresh();
     });
     const columns=await page.locator("#fiscalRows tr:first-child td").evaluateAll(cells=>cells.map(c=>c.getBoundingClientRect().x));
-    assert.equal(columns.length,6);assert.ok(columns.every((x,i)=>i===0 || x>columns[i-1]));
-    assert.equal(await page.locator("#reverseCreateForm").count(),0);
+    assert.equal(columns.length,7);assert.ok(columns.every((x,i)=>i===0 || x>columns[i-1]));
+    assert.equal(await page.locator("#reverseCreateForm").count(),1);
     assert.equal(await page.locator("[data-fiscal-action=DISPATCH]").count(),0);
     assert.equal(await page.locator("#fiscalUploadForm").count(),1);
     assert.deepEqual(errors,[]);

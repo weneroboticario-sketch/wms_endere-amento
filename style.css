@@ -6118,3 +6118,10 @@ body.role-atendente .replenishment-layout {
   #expedition > #expeditionContent > .button-row > label, #expedition [data-filter] > label:has(select), .cp-transfer-executive [data-filter] > label:has(select) { grid-column: 1 / -1; }
   #expedition .stock-summary-grid, .cp-transfer-executive .stock-summary-grid { grid-template-columns: minmax(0,1fr); }
 }
+
+.fiscal-timeline { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; list-style: none; padding: 12px 0; margin: 0 0 16px; border-bottom: 1px solid var(--border); }
+.fiscal-timeline li { min-width: 0; overflow-wrap: anywhere; }
+.fiscal-timeline small { display: block; color: var(--muted); margin-top: 4px; }
+@media(max-width:600px) {
+  .fiscal-timeline { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
