@@ -33,6 +33,7 @@ import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
+import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
 
 (function () {
   "use strict";
@@ -54,6 +55,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   var globalDashboardController = null;
+  var stockOverviewController = null;
   var operationalCatalogPromise = null;
 
   async function ensureOperationalCatalog() {
@@ -951,6 +953,15 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
+    if (screenId === "stockOverview") {
+      if (!stockOverviewController) stockOverviewController = mountStockOverview({
+        root: $("stockOverview"), client: supabaseDb,
+        getUser: function () { return authState.currentUser; },
+        openWarehouse: async function (code) { await switchActiveWarehouse(code); await showScreen("baseEstoque"); }
+      });
+      await stockOverviewController.refresh();
+      return true;
+    }
     if (screenId === "globalDashboard") {
       ensureGlobalDashboard().start();
       await ensureGlobalDashboard().refresh();
@@ -6621,6 +6632,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema";
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
@@ -8038,6 +8050,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }

@@ -127,6 +127,7 @@
         </div>
         <div class="menu-section">
           <p class="menu-label">Administracao</p>
+          <button class="menu-item" data-icon="DAS" data-screen="stockOverview" type="button" hidden>Visão Geral</button>
           <button class="menu-item admin-only global-admin-only" data-icon="EST" data-screen="estoques" type="button">Estoques</button>
           <button class="menu-item" data-icon="USR" data-screen="usuarios" type="button">Usuarios</button>
           <button class="menu-item" data-icon="SAU" data-screen="saudeSistema" type="button">Saúde do Sistema</button>
@@ -163,7 +164,7 @@
           <span>Usuario</span>
           <strong id="topUserName">-</strong>
         </div>
-        <div class="header-pill">
+        <div class="header-pill header-role-pill">
           <span>Perfil</span>
           <strong id="topUserRole">-</strong>
         </div>
@@ -191,6 +192,7 @@
       <section class="task-alert" id="operatorTaskAlert" hidden></section>
 
       <section class="screen" id="globalDashboard" hidden></section>
+      <section class="screen" id="stockOverview" hidden></section>
       <section class="screen active" id="dashboard">
         <div class="page-title">
           <div>
@@ -200,6 +202,8 @@
           <button class="primary-button" data-screen-target="consultaSku" type="button">Consultar CAPTACAO</button>
         </div>
 
+        <section class="dashboard-metric-group">
+        <h3>Estoque</h3>
         <div class="metric-grid">
           <article class="metric-card">
             <span>SKUs CAPTACAO</span>
@@ -217,6 +221,11 @@
             <span>Ultima atualizacao</span>
             <strong id="metricUpdated">-</strong>
           </article>
+        </div>
+        </section>
+        <section class="dashboard-metric-group">
+        <h3>Operação</h3>
+        <div class="metric-grid">
           <article class="metric-card compact-metric">
             <span>Transferencias abertas</span>
             <strong id="metricTransfersOpen">0</strong>
@@ -234,6 +243,7 @@
             <strong id="metricReplenishmentPending">0</strong>
           </article>
         </div>
+        </section>
 
         <section class="panel dashboard-quick-panel">
           <div class="panel-header">
