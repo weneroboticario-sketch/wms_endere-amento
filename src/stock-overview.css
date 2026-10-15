@@ -1,0 +1,27 @@
+#stockOverview { min-width: 0; }
+.overview-toolbar { display:flex; align-items:end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin:20px 0; }
+.overview-toolbar label { display:grid; gap:8px; min-width:220px; }
+.overview-toolbar p { color:var(--muted); font-size:var(--text-sm); }
+.overview-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
+.overview-summary article { border-bottom:3px solid var(--primary); padding:16px 0; }
+.overview-summary article:nth-child(2) { border-color:#667b49; }
+.overview-summary article:nth-child(3) { border-color:#ad7921; }
+.overview-summary article:nth-child(4) { border-color:#815878; }
+.overview-summary span { display:block; font-size:var(--text-sm); }
+.overview-summary strong { display:block; font-size:var(--text-2xl); overflow-wrap:anywhere; margin-top:8px; }
+.overview-band { margin-top:28px; padding-top:20px; border-top:1px solid var(--line); }
+.overview-warehouses { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.overview-warehouse { padding:20px; border:1px solid var(--line); border-radius:6px; background:white; min-width:0; }
+.overview-warehouse header { display:flex; gap:12px; justify-content:space-between; align-items:start; flex-wrap:wrap; }
+.overview-warehouse h4 { font-size:var(--text-lg); margin:0; overflow-wrap:anywhere; }
+.overview-warehouse dl { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; }
+.overview-warehouse dd { font-weight:700; margin:0; }
+.overview-warehouse p { font-size:var(--text-sm); color:var(--muted); }
+.overview-state { font-size:var(--text-sm); border-radius:4px; padding:4px 8px; }
+.overview-state.success { background:#e1f3e9; color:#116240; }
+.overview-state.warning { background:#fff1d3; color:#795300; }
+.overview-state.error,#stockOverview [data-error] { background:#fce9e9; color:#a52020; }
+#stockOverview [data-error] { padding:16px; }
+#stockOverview td { overflow-wrap:anywhere; max-width:300px; }
+@media(max-width:900px) { .overview-summary { grid-template-columns:repeat(2,minmax(0,1fr)); } .overview-warehouses { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:480px) { .overview-toolbar label { width:100%; min-width:0; } .overview-warehouse { padding:14px; } }
