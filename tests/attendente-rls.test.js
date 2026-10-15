@@ -33,7 +33,8 @@ async function createMigratedDatabase() {
 
   const migrationsDirectory = resolve("supabase/migrations");
   const migrationFiles = (await readdir(migrationsDirectory))
-    .filter((fileName) => fileName.endsWith(".sql"))
+    // This fixture covers the attendant contract, not later task/Storage modules.
+    .filter((fileName) => fileName.endsWith(".sql") && fileName <= "20261007010406_email_password_recovery.sql")
     .sort();
   for (const migrationFile of migrationFiles) {
     const sql = await readFile(resolve(migrationsDirectory, migrationFile), "utf8");
