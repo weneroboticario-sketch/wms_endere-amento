@@ -55,7 +55,11 @@ export function createPurchasesWorkflow(context) {
   let loadedWarehouse = "";
   let pendingAction = null;
   const e = escapeHtml;
-  const status = message => { document.getElementById("fiscalWorkflowStatus").textContent = message; };
+  const status = message => {
+    document.getElementById("fiscalWorkflowStatus").textContent = message;
+    const local = document.getElementById("fiscalUploadStatus");
+    if (local) local.textContent = message;
+  };
   const originalWarehouse = context.warehouse;
   const unitOptions = context.warehouses().map(w => `<option value="${e(w.code)}">${e(w.code)} - ${e(w.name)}</option>`).join("");
   root.innerHTML = `<div class="button-row"><select id="fiscalQueueFilter" aria-label="Filtro de responsabilidade"><option value="mine">Aguardando minha acao</option><option value="open">Todos em andamento</option><option value="PRONTA_PARA_NOTA">Aguardando NF</option><option value="NF_EM_PREPARACAO">Em preparacao</option><option value="NF_ANEXADA">NF anexada</option><option value="LIBERADA_PARA_ENVIO">Liberada para envio</option><option value="CORRECAO_SOLICITADA">Com correcao</option><option value="closed">Concluidos</option></select><button id="fiscalRefresh" class="secondary-button" type="button">Atualizar</button></div><label>Buscar processo<input id="fiscalSearch" type="search" placeholder="Codigo, NFe ou destino"></label><div id="fiscalMetrics" class="stock-summary-grid"></div><div id="fiscalNotifications"></div><div class="table-wrapper"><table><thead><tr><th>Processo</th><th>Estoque concluido</th><th>NF</th><th>Etapa</th><th>Responsabilidade</th><th>Tempo na etapa</th><th>Acao</th></tr></thead><tbody id="fiscalRows"></tbody></table></div><div class="button-row"><button id="fiscalPrevious" class="secondary-button" type="button">Anterior</button><button id="fiscalNext" class="secondary-button" type="button">Proxima pagina</button></div><section id="fiscalDetail" hidden></section>`;
@@ -135,6 +139,16 @@ export function createPurchasesWorkflow(context) {
       <div class="button-row">${fiscalActions(selected.invoice_stage, role, selected.domain).map(([action,label]) => `<button class="secondary-button" data-fiscal-action="${action}" type="button">${label}</button>`).join("")}${selected.invoice_file_path ? '<button class="secondary-button" id="fiscalViewPdf" type="button">Abrir PDF</button>' : ""}${selected.domain === "TRANSFERENCIA" ? '<button class="secondary-button" id="fiscalOpenTransfer" type="button">Abrir transferencia</button>' : ""}</div>
       ${editableInvoice ? `<form id="fiscalUploadForm"><label>Numero da NFe<input name="number" maxlength="120" value="${e(selected.invoice_number)}" required></label><label>Valor total da NF (R$)<input name="value" type="number" min="0.01" step="0.01" value="${e(selected.invoice_value ?? "")}" required></label><label>Chave da NFe<input name="key" maxlength="44" value="${e(selected.invoice_key)}"></label><label>PDF da NF<input name="pdf" type="file" accept="application/pdf,.pdf" required></label><button class="primary-button" type="submit">${selected.invoice_file_path ? "Substituir PDF" : "Anexar NF"}</button></form>` : ""}<details id="fiscalHistory"><summary>Historico do processo</summary><div id="fiscalHistoryRows"></div></details>`;
     detail.querySelector("#fiscalUploadForm")?.addEventListener("submit", upload);
+    const uploadForm = detail.querySelector("#fiscalUploadForm");
+    if (uploadForm) {
+      uploadForm.insertAdjacentHTML("afterend", '<p id="fiscalUploadStatus" class="inline-status" role="status" aria-live="polite"></p>');
+      uploadForm.addEventListener("invalid", event => {
+        const labels = { number: "numero da NFe", value: "valor total da NF maior que zero", pdf: "arquivo PDF da NF" };
+        status("Confira o campo: " + (labels[event.target.name] || "chave da NFe") + ".");
+      }, true);
+    } else {
+      detail.insertAdjacentHTML("beforeend", '<p id="fiscalUploadStatus" class="inline-status" role="status" aria-live="polite"></p>');
+    }
     const milestones = [
       ["Estoque finalizado", selected.packing_finished_at],
       ["NF anexada", selected.invoice_file_path ? selected.invoice_uploaded_at : null],
@@ -194,8 +208,14 @@ export function createPurchasesWorkflow(context) {
   }
 
   async function upload(event) {
-    event.preventDefault(); if (busy) return; busy = true;
-    const form = event.target; const button = form.querySelector("button"); button.disabled = true;
+    event.preventDefault();
+    if (busy) { status("Aguarde a atualizacao em andamento e tente novamente."); return; }
+    busy = true;
+    const form = event.target; const button = form.querySelector("button");
+    const buttonLabel = button.textContent;
+    button.disabled = true; button.textContent = "Anexando...";
+    form.setAttribute("aria-busy", "true");
+    status("Enviando PDF e vinculando a NF a transferencia...");
     let path = ""; let uploaded = false;
     try {
       const value = Number(form.elements.value.value);
@@ -213,7 +233,12 @@ export function createPurchasesWorkflow(context) {
         if (cleanup.error) context.diagnostic("invoice-orphan", cleanup.error);
       }
       context.diagnostic("invoice-upload", error); status(error.message || String(error));
-    } finally { busy = false; button.disabled = false; const message=document.getElementById("fiscalWorkflowStatus").textContent;await refresh();status(message); }
+    } finally {
+      busy = false; button.disabled = false; button.textContent = buttonLabel;
+      form.removeAttribute("aria-busy");
+      const message=document.getElementById("fiscalWorkflowStatus").textContent;
+      await refresh(); status(message);
+    }
   }
 
   root.addEventListener("click", async event => {

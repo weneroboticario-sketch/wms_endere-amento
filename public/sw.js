@@ -1,5 +1,5 @@
-const STATIC_CACHE = "wms-static-v39";
-const RUNTIME_CACHE = "wms-runtime-v19";
+const STATIC_CACHE = "wms-static-v40";
+const RUNTIME_CACHE = "wms-runtime-v20";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", function (event) {

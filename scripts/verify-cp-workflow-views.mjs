@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { Buffer } from "node:buffer";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
@@ -24,6 +25,15 @@ try {
       const client={from(table){const rows=table==="wms_transfers"?[process]:table==="wms_reverse_logistics"?[{id:"reverse",warehouse_code:"22796",unit_origin_code:"22796",gdv_number:"000123",nfe_number:"000789",box_quantity:12,status:"ENVIADA",responsible_name:"Colaborador",created_at:date}]:[];
         let single=false;const query=new Proxy({}, {get(_target,key){if(key==="then")return (resolve)=>resolve({data:single?rows[0]:rows,error:null});return()=>{if(key==="single")single=true;return query;};}});return query;},
         async rpc(name){return{data:name==="wms_fiscal_summary"?{"Aguardando NF":1,"Correcoes":0,"Liberadas hoje":0}:[{unit_code:"22796",unit_name:"Loja exemplo",target_boxes:100,completed_boxes:12,pending:1,divergences:0}],error:null};}};
+      window.uploadCalls = [];
+      client.storage = { from: () => ({ upload: async (path) => { window.uploadCalls.push({path}); return {error:null}; }, remove: async () => ({error:null}) }) };
+      const rpc = client.rpc;
+      client.rpc = async (name, args) => {
+        if (name !== "wms_invoice_action") return rpc(name,args);
+        window.uploadCalls.push(args);
+        Object.assign(process,{invoice_stage:"NF_ANEXADA",invoice_number:args.p_data.number,invoice_value:args.p_data.value,invoice_file_path:args.p_data.path});
+        return {data:process,error:null};
+      };
       const context={client:()=>client,user:()=>({id:"buyer",role:"COMPRAS",name:"Compras"}),warehouse:()=>"22796",global:()=>false,warehouses:()=>[{code:"22796",name:"Loja exemplo"}],changed:()=>{},diagnostic:()=>{},openTransfer:()=>{}};
       const view=fiscal.createPurchasesWorkflow(context);await view.refresh();await view.open({...process,domain:"TRANSFERENCIA",table:"wms_transfers"});
       await reverse.createReverseLogistics(context).refresh();
@@ -36,6 +46,18 @@ try {
     assert.deepEqual(errors,[]);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),"A pagina nao pode expandir horizontalmente");
     await page.screenshot({path:resolve(output,`workflow-${width}.png`),fullPage:true});
+    await page.locator("#fiscalUploadForm button").click();
+    assert.match(await page.locator("#fiscalUploadStatus").textContent(), /Confira o campo/);
+    await page.locator('#fiscalUploadForm input[name="number"]').fill("0000123");
+    await page.locator('#fiscalUploadForm input[name="value"]').fill("123.45");
+    await page.locator('#fiscalUploadForm input[type="file"]').setInputFiles({name:"nf.pdf",mimeType:"application/pdf",buffer:Buffer.from("%PDF-1.4\n%%EOF")});
+    await page.locator("#fiscalUploadForm button").click();
+    await page.waitForFunction(() => document.getElementById("fiscalWorkflowStatus").textContent.includes("NF anexada"), {timeout:5000});
+    const uploads = await page.evaluate(() => window.uploadCalls);
+    assert.equal(uploads.length,2);
+    assert.equal(uploads[1].p_data.number,"0000123");
+    assert.equal(uploads[1].p_data.value,"123.45");
+    assert.match(await page.locator("#fiscalUploadStatus").textContent(), /NF anexada/);
     console.log(`PASS: tabelas alinhadas, Compras sem acoes fisicas, viewport ${width}`);
     await page.close();
   }
