@@ -8230,8 +8230,11 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       showLogin("Entre para acessar o sistema.", "warning");
       return;
     }
+    if (IS_CP_ALAMO && isAdmin() && isGlobalDashboardScope() && screenId === "dashboard") {
+      screenId = "globalDashboard";
+    }
     if (IS_CP_ALAMO && isAdmin() && isGlobalDashboardScope() &&
-      ["dashboard", "consultaSku", "consultaPrateleira", "bipagem", "baseEstoque", "transferencias", "reposicao", "etiquetas", "exportar"].indexOf(screenId) >= 0) {
+      ["consultaSku", "consultaPrateleira", "bipagem", "baseEstoque", "transferencias", "reposicao", "etiquetas", "exportar"].indexOf(screenId) >= 0) {
       showToast("Selecione o estoque no topo para acessar esta operacao.", "info");
       if ($("activeWarehouseSelect")) $("activeWarehouseSelect").focus();
       return;
