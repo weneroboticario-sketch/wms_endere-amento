@@ -58,6 +58,15 @@ export function decorateMetrics(root) {
 
 export function initializeCpAppearance({ userDetails } = {}) {
   document.documentElement.classList.add("cp-alamo");
+  document.querySelectorAll(".brand").forEach(brand => {
+    if (brand.querySelector(".sgo-brand-logo")) return;
+    const logo = document.createElement("img");
+    logo.className = "sgo-brand-logo";
+    logo.src = "/sgo-logo.jpg";
+    logo.alt = "SGO - Sistema de Gestão Operacional - CP Álamo";
+    logo.width = 1280; logo.height = 698;
+    brand.prepend(logo);
+  });
   document.querySelectorAll(".menu-item").forEach(button => addActionIcon(button, menuIcons[button.dataset.screen] || Package));
   const group = document.querySelectorAll(".menu-label");
   ["Operação", "Transferências", "Gestão", "Administração"].forEach((label,index) => { if (group[index]) group[index].textContent = label; });
