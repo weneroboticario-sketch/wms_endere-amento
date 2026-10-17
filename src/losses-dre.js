@@ -16,7 +16,7 @@ export function createLossesDre(context) {
  let actorId=context.user()?.id;
  const $=selector=>root.querySelector(selector);
  const warehouses=()=>context.warehouses().filter(w=>w.code!=="DOURADOS");
- const warehouseOptions=()=>options(warehouses(),"code","name");
+ const warehouseOptions=()=>warehouses().map(w=>`<option value="${e(w.code)}">${e(w.name?.startsWith(`${w.code} - `)?w.name:`${w.code} - ${w.name||w.code}`)}</option>`).join("");
  const tabs={panel:"Painel",new:"Nova Perda",pending:"Pendentes",financial:"Pendências Financeiras",approved:"Aprovadas",history:"Histórico",exports:"Fechamento e Exportação DRE",config:"Configuração"};
  root.innerHTML=`<nav class="loss-tabs" aria-label="Perdas e DRE">${Object.entries(tabs).map(([id,label])=>`<button type="button" data-tab="${id}" aria-selected="${id===tab}" ${(id==="config"&&!caps().configure)||(id==="exports"&&!caps().export)?"hidden":""}>${label}</button>`).join("")}</nav>
   <p class="loss-error" role="alert" data-error></p><p role="status" data-notice></p>
