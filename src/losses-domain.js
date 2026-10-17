@@ -46,10 +46,18 @@ export function allocatePercent(value,rows) {
   return {...row,percent:Number(parts[i])/10000,amount:Number(amount)/100};
  });
 }
+let invoiceXmlPolicy;
 export function parseInvoiceXml(text,Parser=globalThis.DOMParser) {
  if(typeof text!=="string"||text.length>5*1024*1024)throw new Error("XML acima de 5 MB.");
  if(/<!DOCTYPE|<!ENTITY/i.test(text))throw new Error("XML com entidades externas não é permitido.");
- const xml=new Parser().parseFromString(text,"application/xml");
+ let input=text;
+ if(globalThis.trustedTypes?.createPolicy) {
+  // XML is parsed into an inert document and only text/attributes are extracted.
+  // The HTML sanitizer would remove NF-e tags, so use a private XML-only policy.
+  invoiceXmlPolicy ||= globalThis.trustedTypes.createPolicy("wms-invoice-xml",{createHTML:value=>value});
+  input=invoiceXmlPolicy.createHTML(text);
+ }
+ const xml=new Parser().parseFromString(input,"application/xml");
  if(xml.getElementsByTagName("parsererror").length)throw new Error("XML inválido.");
  const find=(node,name)=>node?.getElementsByTagNameNS("*",name)?.[0];
  const info=find(xml,"infNFe");if(!info)throw new Error("O arquivo não contém uma NF-e.");

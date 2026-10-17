@@ -62,7 +62,15 @@ export async function requestPasswordRecovery(client, email, redirectTo) {
 
 export async function invokeUserAdministration(client, payload) {
   const { data, error } = await client.functions.invoke("manage-wms-user", { body: payload });
-  if (error) throw error;
+  if (error) {
+    let message;
+    try {
+      const response = await error.context?.clone?.().json();
+      message = typeof response?.error === "string" ? response.error : response?.message;
+    } catch { /* A non-JSON gateway response keeps the original error. */ }
+    if (typeof message === "string" && message.trim()) throw new Error(message, { cause: error });
+    throw error;
+  }
   if (!data || data.ok !== true) throw new Error((data && data.error) || "Falha ao administrar usuario.");
   return data;
 }

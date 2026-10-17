@@ -10,11 +10,19 @@ import {lossDatabase} from "../tests/losses-dre-db.test.js";
 const {chromium}=await import(pathToFileURL(process.env.WMS_PLAYWRIGHT_MODULE).href);
 const output=resolve("../../outputs/losses-browser");
 await mkdir(output,{recursive:true});
+const policy=JSON.parse(await readFile("vercel.json","utf8")).headers.flatMap(rule=>rule.headers).find(header=>header.key==="Content-Security-Policy").value;
+const excelLibrary=await readFile(resolve("../../outputs/xlsx-0.18.5-validation.js"),"utf8");
 const db=await lossDatabase();
-await db.exec("select set_config('test.scope','A,B,C',false)");
+await db.exec(`reset role;
+ create or replace function private.current_wms_profile_id() returns text language sql as $$select coalesce(nullif(current_setting('test.actor',true),''),'actor')$$;
+ insert into wms_users(id,name,role) values('approver','Approver','ADMINISTRADOR');
+ set role authenticated;select set_config('test.scope','A,B,C',false)`);
 const server=await createServer({resolve:{preserveSymlinks:false},server:{host:"127.0.0.1",port:0},plugins:[{
- name:"local-loss-verification",configureServer(s){s.middlewares.use("/__losses-test",(_req,res)=>{
-  res.setHeader("Content-Type","text/html");res.end('<!doctype html><html class="cp-alamo"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body style="padding:20px"><section id="lossesDre" class="screen active"><h2>Perdas e DRE</h2><div id="lossesDreContent"></div></section></body></html>');
+ name:"local-loss-verification",configureServer(s){
+ s.middlewares.use("/__losses-xlsx.js",(_req,res)=>{res.setHeader("Content-Type","text/javascript");res.end(excelLibrary);});
+ s.middlewares.use("/__losses-test",(_req,res)=>{
+  res.setHeader("Content-Security-Policy",policy);
+  res.setHeader("Content-Type","text/html");res.end('<!doctype html><html class="cp-alamo"><head><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/src/cpalamo-theme.css"><link rel="stylesheet" href="/src/purchases-workflow.css"><script src="/__losses-xlsx.js"></script></head><body style="padding:20px"><section id="lossesDre" class="screen active"><h2>Perdas e DRE</h2><div id="lossesDreContent"></div></section></body></html>');
  });}
 }]});
 await server.listen();
@@ -56,10 +64,10 @@ await page.exposeFunction("validationRequest",async request=>{
 });
 try {
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__losses-test`);
- await page.addScriptTag({path:resolve("../../outputs/xlsx-0.18.5-validation.js")});
  const invalidXml=await page.evaluate(async()=>{const {parseInvoiceXml}=await import("/src/losses-domain.js");try{parseInvoiceXml("<NFe><broken></NFe>");return false;}catch{return true;}});
  assert.equal(invalidXml,true,"malformed XML is rejected by the browser parser");
  await page.evaluate(async()=>{
+  const {installHtmlSecurity}=await import("/src/utils.js");installHtmlSecurity();
   class Query {
    constructor(table){this.table=table;this.columns="*";this.ops=[];}
    select(columns){this.columns=columns;return this;}
@@ -77,7 +85,13 @@ try {
  await click('[data-tab="new"]');
  const xml='<?xml version="1.0"?><nfeProc xmlns="http://www.portalfiscal.inf.br/nfe"><NFe><infNFe Id="NFe'+"1".repeat(44)+'"><ide><nNF>000123</nNF><dhEmi>2026-09-28T10:00:00-04:00</dhEmi></ide><emit><CNPJ>12345678000199</CNPJ><xNome>Fornecedor teste</xNome></emit><total><ICMSTot><vNF>15000.00</vNF></ICMSTot></total></infNFe></NFe></nfeProc>';
  await page.locator("[data-xml]").setInputFiles({name:"nota.xml",mimeType:"application/xml",buffer:Buffer.from(xml)});await idle();
+ assert.equal(await page.locator("[data-error]").textContent(),"");
  assert.equal(await page.locator('[name="invoice_number"]').inputValue(),"000123");
+ assert.equal(await page.locator('[name="invoice_key"]').inputValue(),"1".repeat(44));
+ assert.equal(await page.locator('[name="invoice_issue_date"]').inputValue(),"2026-09-28");
+ assert.equal(await page.locator('[name="invoice_value"]').inputValue(),"15000,00");
+ assert.equal(await page.locator('[name="issuer_cnpj"]').inputValue(),"12345678000199");
+ assert.equal(await page.locator('[name="issuer_name"]').inputValue(),"Fornecedor teste");
  assert.equal(await page.locator('[name="competence"]').inputValue(),"2026-09");
  await page.locator('[name="loss_type_id"]').selectOption("damage");
  assert.equal(await page.locator('[name="dre"]').inputValue(),"PERDAS DE ESTOQUE");
@@ -97,6 +111,8 @@ try {
  await click("[data-submit]");
  let loss=(await db.query("select * from wms_losses")).rows[0];assert.equal(loss.status,"PENDENTE");
  assert.equal((await db.query("select count(*)::int n from wms_loss_files")).rows[0].n,1);
+ await db.exec("select set_config('test.actor','approver',false)");
+ await page.evaluate(()=>{window.validationUser={id:"approver",name:"Approver",role:"ADMINISTRADOR"};});
  await page.locator("[data-month]").fill("2026-09");await click("[data-refresh]");
  await click("[data-open]");await click('[data-action="APPROVE"]');
  loss=(await db.query("select * from wms_losses")).rows[0];assert.equal(loss.status,"APROVADA");assert.equal(Number(loss.rate_value_snapshot),72);
