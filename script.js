@@ -14059,6 +14059,16 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
   }
 
   function transferStockGuidanceHtml(item, variant) {
+    if (item && variant === "current") {
+      return "<div class=\"transfer-stock-guidance\"><div class=\"transfer-pick-grid\">" + [
+        ["Saldo Captação", transferStockValueLabel(item.captureAvailable, item)],
+        ["Saldo Loja", transferStockValueLabel(item.storeAvailable, null)],
+        ["Retirar da Captação", formatQty(item.suggestedCaptureQty || 0)],
+        ["Retirar da Loja", formatQty(item.suggestedStoreQty || 0)]
+      ].map(function (entry) { return "<span><small>" + escapeHtml(entry[0]) + "</small><b>" + escapeHtml(entry[1]) + "</b></span>"; }).join("") + "</div>" +
+        (Number(item.quantityShortage || 0) > 0 ? "<p class=\"danger-text\">Faltam " + formatQty(item.quantityShortage) + " " + escapeHtml(item.unit || "UN") + "</p>" : "") +
+        (item.stockAlert && item.stockAlertMessage ? "<em>" + escapeHtml(item.stockAlertMessage) + "</em>" : "") + "</div>";
+    }
     if (!item || (!item.originSuggested && !item.stockAlertMessage && !transferCaptureLocationCode(item))) return "";
     var origin = transferOriginSuggestionLabel(item.originSuggested);
     var originResolved = ["CAPTACAO", "LOJA", "CAPTACAO_E_LOJA", "LOJA_E_CAPTACAO"].indexOf(item.originSuggested) >= 0;
@@ -14561,10 +14571,10 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     var locationLine = transferCompactLocationLabel(item);
     var productName = normalizeText(item.description || "");
     var isBox = isBoxQuantityItem(item);
-    var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item);
+    var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item, "current");
     var highlight = mode === "MONTAGEM"
       ? "<div class=\"current-qty-highlight packing\"><span>Restante para caixa</span><strong>" + formatQty(qty.pendingPacking) + " " + escapeHtml(item.unit || "UN") + "</strong></div>"
-      : "<div class=\"current-qty-highlight\"><span>Quantidade para coletar</span><strong>" + formatQty(qty.pendingSeparation || qty.requested) + " " + escapeHtml(item.unit || "UN") + "</strong></div>";
+      : "<div class=\"current-qty-highlight\"><span>Quantidade solicitada</span><strong>" + formatQty(qty.requested) + " " + escapeHtml(item.unit || "UN") + "</strong></div>";
     var meta = mode === "MONTAGEM" ? [
       "<span>Solicitado <b>" + formatQty(qty.requested) + "</b></span>",
       "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
@@ -14573,10 +14583,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
       isBox ? "<span>Unidades por caixa <b>" + (Number(item.unitsPerBox || 0) > 0 ? formatQty(item.unitsPerBox) : "-") + "</b></span>" : "",
       isBox ? "<span>Total em unidades <b>" + (Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-") + "</b></span>" : ""
     ].join("") : [
-      "<span>Solicitado <b>" + formatQty(qty.requested) + "</b></span>",
-      "<span>Separado <b>" + formatQty(qty.separated) + "</b></span>",
-      "<span>Pendente <b>" + formatQty(qty.pendingSeparation) + "</b></span>",
-      "<span>Status <b>" + escapeHtml(statusLabel) + "</b></span>"
+      qty.separated > 0 ? "<span>Já separado <b>" + formatQty(qty.separated) + "</b></span>" : ""
     ].join("");
     $("transferCurrentItem").innerHTML = [
       "<span class=\"current-item-kicker\">" + (mode === "MONTAGEM" ? "ITEM PARA CAIXA" : "PRÓXIMO ITEM") + "</span>",
