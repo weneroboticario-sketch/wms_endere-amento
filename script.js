@@ -121,6 +121,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.expedition = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    SCREEN_PERMISSIONS.lossesDre = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.purchaseTransfer = ["ADMINISTRADOR", "COMPRAS"];
     var roleOption = document.createElement("option"); roleOption.value = "COMPRAS"; roleOption.textContent = "Compras";
     document.getElementById("userRoleInput").appendChild(roleOption);
@@ -6765,6 +6766,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
           var fiscal = await import("./src/purchases-workflow.js"); cpWorkflowViews[screenId] = fiscal.createPurchasesWorkflow(context);
         } else if (screenId === "expedition") {
           var expedition = await import("./src/expedition-workflow.js"); cpWorkflowViews[screenId] = expedition.createExpeditionWorkflow(context);
+        } else if (screenId === "lossesDre") {
+          var losses = await import("./src/losses-dre.js"); cpWorkflowViews[screenId] = losses.createLossesDre(context);
         } else {
           var reverse = await import("./src/reverse-logistics.js"); cpWorkflowViews[screenId] = reverse.createReverseLogistics(context);
         }
@@ -6854,10 +6857,10 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "demoMode") return false;
-    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0) return false;
+    if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (IS_CP_ALAMO && isAdmin()) return true;
-    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0);
+    if (isGlobalDashboardScope()) return screenId === "saudeSistema" || (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre"].indexOf(screenId) >= 0);
     if (screenId === "estoques" || screenId === "manutencao") return isGlobalAdmin();
     var roles = SCREEN_PERMISSIONS[screenId] || ["ADMINISTRADOR"];
     return roles.indexOf(authState.currentUser.role) >= 0;
@@ -8285,7 +8288,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     renderAll();
     if (screenId === "usuarios") renderUsers();
     try {
-      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
+      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
       recordPerformanceError("tela-" + screenId, error);
@@ -8320,6 +8323,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if (screenId === "expedition") return "Gestao de Expedicao";
     if (screenId === "purchaseTransfer") return "Necessidade das Lojas";
     if (screenId === "reverseLogistics") return "Logistica Reversa";
+    if (screenId === "lossesDre") return "Perdas e DRE";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }

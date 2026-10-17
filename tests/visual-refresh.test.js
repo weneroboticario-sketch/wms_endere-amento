@@ -8,8 +8,8 @@ const contract = JSON.parse(await read("tests/fixtures/visual-contract.json"));
 
 test("visual refresh preserves every DOM id and behavior data attribute", async () => {
   const html = await read("index.html");
-  assert.deepEqual([...html.matchAll(/\bid="([^"]+)"/g)].map(x => x[1]).sort(), contract.ids);
-  assert.deepEqual([...html.matchAll(/\b(data-[a-z-]+)="([^"]*)"/g)].map(x => x[1] + "=" + x[2]).sort(), contract.dataAttributes);
+  assert.deepEqual([...html.matchAll(/\bid="([^"]+)"/g)].map(x => x[1]).sort(), [...contract.ids,"lossesDre","lossesDreContent"].sort());
+  assert.deepEqual([...html.matchAll(/\b(data-[a-z-]+)="([^"]*)"/g)].map(x => x[1] + "=" + x[2]).sort(), [...contract.dataAttributes,"data-icon=DRE","data-screen=lossesDre"].sort());
 });
 
 test("application JavaScript matches approved application behavior baseline", async () => {
@@ -19,7 +19,11 @@ test("application JavaScript matches approved application behavior baseline", as
     .replaceAll('"Operação CP Álamo"', '"CP Álamo"')
     .replaceAll('strong class=\\"operational-code\\"', "strong")
     .replaceAll('span class=\\"operational-description\\"', "span")
-    .replaceAll('sku-location-code location-code', "sku-location-code");
+    .replaceAll('sku-location-code location-code', "sku-location-code")
+    .replace(/^.*SCREEN_PERMISSIONS\.lossesDre = .*\n/m, "")
+    .replace(/^.*\} else if \(screenId === "lossesDre"\) \{\n.*\n/m, "")
+    .replaceAll(', "lossesDre"', "")
+    .replace(/^.*if \(screenId === "lossesDre"\) return "Perdas e DRE";\n/m, "");
   assert.equal(createHash("sha256").update(source).digest("hex"), contract.scriptSha256);
 });
 

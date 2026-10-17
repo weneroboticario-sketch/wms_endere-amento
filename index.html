@@ -124,6 +124,7 @@
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
+          <button class="menu-item cpalamo-only" data-icon="DRE" data-screen="lossesDre" type="button" hidden>Perdas e DRE</button>
           <button class="menu-item" data-icon="DAS" data-screen="globalDashboard" type="button" hidden>Visão Geral</button>
           <button class="menu-item active" data-icon="DAS" data-screen="dashboard" type="button">Dashboard</button>
           <button class="menu-item" data-icon="BSE" data-screen="baseEstoque" type="button">Base de Estoque</button>
@@ -196,6 +197,10 @@
       <section class="task-alert" id="operatorTaskAlert" hidden></section>
 
       <section class="screen" id="globalDashboard" hidden></section>
+      <section class="screen" id="lossesDre" hidden>
+        <div class="page-title"><div><p class="eyebrow">Gestão / Financeiro</p><h2>Perdas e DRE</h2></div></div>
+        <div id="lossesDreContent"></div>
+      </section>
       <section class="screen" id="fiscalWorkflow" hidden>
         <div class="page-title"><div><p class="eyebrow">Processos</p><h2>Compras / NF</h2></div></div>
         <div id="fiscalWorkflowContent"></div><div id="fiscalWorkflowStatus" class="inline-status" role="status"></div>

@@ -21,9 +21,17 @@ export function createReverseLogistics(context) {
     <div class="table-wrapper"><table><thead><tr><th>Unidade</th><th>Meta</th><th>Realizado</th><th>%</th><th>Restante</th><th>Excedente</th><th>Pendencias</th><th>Divergencias</th><th>Ritmo</th></tr></thead><tbody id="reverseSummaryRows"></tbody></table></div>
     <div class="button-row"><label>Ordenacao<select id="reverseSort"><option value="asc">Menor percentual</option><option value="desc">Maior percentual</option><option value="pending">Mais pendencias</option><option value="divergences">Mais divergencias</option></select></label></div>
     ${staff() ? `      <details><summary>Meta mensal da unidade</summary><form id="reverseTargetForm"><label>Unidade<select name="unit" required>${options()}</select></label><label>Meta em caixas<input name="target" type="number" min="0" step="1" required></label><button class="primary-button" type="submit">Salvar meta</button></form></details>` : ""}
-    <div class="table-wrapper"><table><thead><tr><th>Data</th><th>Unidade</th><th>GDV</th><th>NFe</th><th>Caixas</th><th>Status</th><th>Responsavel</th><th>Acoes</th></tr></thead><tbody id="reverseRows"></tbody></table></div><div class="button-row"><button id="reversePrevious" class="secondary-button" type="button">Anterior</button><button id="reverseNext" class="secondary-button" type="button">Proxima</button></div><div id="reverseDetail"></div>`;
+    <div class="table-wrapper"><table><thead><tr><th>Data do registro</th><th>Competência</th><th>Emissão NF</th><th>Unidade</th><th>GDV</th><th>NFe</th><th>Caixas</th><th>Status</th><th>Responsavel</th><th>Acoes</th></tr></thead><tbody id="reverseRows"></tbody></table></div><div class="button-row"><button id="reversePrevious" class="secondary-button" type="button">Anterior</button><button id="reverseNext" class="secondary-button" type="button">Proxima</button></div><div id="reverseDetail"></div>`;
   root.insertAdjacentHTML("afterbegin", '<div class="stock-summary-grid" id="reverseKpis"></div>');
   const createForm = document.getElementById("reverseCreateForm");
+  if(createForm) {
+    createForm.insertAdjacentHTML("afterbegin",'<label>Emissão NF<input name="invoice_issue_date" type="date"></label><label>Competência financeira<input name="financial_competence" type="month" required></label>');
+    createForm.elements.invoice_issue_date.addEventListener("change",()=>{
+      const suggestion=createForm.elements.invoice_issue_date.value.slice(0,7),input=createForm.elements.financial_competence;
+      if(suggestion && suggestion!==input.value && (!input.value || window.confirm("A emissão sugere "+suggestion+". Atualizar competência?")))input.value=suggestion;
+    });
+  }
+  root.insertAdjacentHTML("afterbegin",'<div id="reverseCompetenceNotice" role="status"></div><label><input id="reverseReviewCompetence" type="checkbox"> Competências antigas a revisar</label>');
   if (createForm && context.warehouses().some(w => w.code === context.warehouse())) createForm.elements.unit.value = context.warehouse();
   if (!manager() && context.user().role !== "COMPRAS") document.getElementById("reverseUnit").value = context.warehouse();
   const status = message => { document.getElementById("reverseLogisticsStatus").textContent = message; };
@@ -48,7 +56,11 @@ export function createReverseLogistics(context) {
       const summary = await context.client().rpc("wms_reverse_summary", { p_month: month, p_unit: unit || null });
       if (summary.error) throw summary.error;
       summaryRows = summary.data || [];renderSummary();
-      let query = context.client().from("wms_reverse_logistics").select("*").eq("competence_month",month).eq("is_deleted",false);
+      const reviewCount=summaryRows.reduce((n,r)=>n+Number(r.competence_pending||0),0);
+      document.getElementById("reverseCompetenceNotice").textContent=reviewCount?reviewCount+" registro(s) aguardam revisão de competência e não entram no realizado mensal.":"";
+      let query = context.client().from("wms_reverse_logistics").select("*").eq("is_deleted",false);
+      if(document.getElementById("reverseReviewCompetence").checked)query=query.eq("competence_review_required",true);
+      else query=query.eq("competence_month",month).eq("competence_review_required",false);
       if (unit) query = query.eq("unit_origin_code",unit);
       const selectedStatus = document.getElementById("reverseStatus").value;
       if (selectedStatus) query = query.eq("status",selectedStatus);
@@ -58,7 +70,7 @@ export function createReverseLogistics(context) {
       const result = await query.order("created_at",{ascending:false}).range(page*30,page*30+29);
       if (result.error) throw result.error;
       rows = result.data || [];
-      document.getElementById("reverseRows").innerHTML = rows.length ? rows.map((r,i)=>`<tr><td>${e(new Date(r.created_at).toLocaleString())}</td><td>${e(r.unit_origin_code)}</td><td>${e(r.gdv_number)}</td><td>${e(r.nfe_number)}</td><td>${r.box_quantity}</td><td>${e(r.status)}</td><td>${e(r.responsible_name)}</td><td><button class="secondary-button" data-reverse-open="${i}" type="button">Abrir</button></td></tr>`).join("") : '<tr><td colspan="8">Nenhum processo neste filtro.</td></tr>';
+      document.getElementById("reverseRows").innerHTML = rows.length ? rows.map((r,i)=>`<tr><td>${e(new Date(r.created_at).toLocaleString())}</td><td>${e(r.financial_competence||"A revisar")}</td><td>${e(r.invoice_issue_date||"—")}</td><td>${e(r.unit_origin_code)}</td><td>${e(r.gdv_number)}</td><td>${e(r.nfe_number)}</td><td>${r.box_quantity}</td><td>${e(r.status)}</td><td>${e(r.responsible_name)}</td><td><button class="secondary-button" data-reverse-open="${i}" type="button">Abrir</button></td></tr>`).join("") : '<tr><td colspan="10">Nenhum processo neste filtro.</td></tr>';
       document.getElementById("reversePrevious").disabled = page===0; document.getElementById("reverseNext").disabled = rows.length<30;
       decorateWorkflow(root);
     } catch(error) { status(error.message || String(error)); }
@@ -76,6 +88,9 @@ export function createReverseLogistics(context) {
         destination:form.elements.destination.value.trim(),observation:form.elements.observation.value.trim(),responsible_id:user.id,responsible_name:user.name,
         created_by_id:user.id,created_by_name:user.name,competence_month:document.getElementById("reverseMonth").value+"-01",idempotency_key:creationKey};
       if(!payload.gdv_number || !payload.nfe_number)throw new Error("GDV e NFe obrigatorios.");
+      payload.financial_competence=form.elements.financial_competence.value;
+      payload.invoice_issue_date=form.elements.invoice_issue_date.value || null;
+      if(!payload.financial_competence)throw new Error("Competência obrigatória.");
       const result=await context.client().from("wms_reverse_logistics").upsert(payload,{onConflict:"idempotency_key",ignoreDuplicates:true});
       if(result.error)throw result.error;
       creationKey=randomId("reverse");form.reset();form.elements.unit.value=unit;context.changed();status("Processo registrado.");
@@ -102,6 +117,16 @@ export function createReverseLogistics(context) {
     const actions=staff()?(transitions[row.status] || []):[];
     if(manager() && ["CONCLUIDA","CANCELADA"].includes(row.status))actions.push("DIVERGENCIA");
     detail.innerHTML=`<h3>GDV ${e(row.gdv_number)} - NFe ${e(row.nfe_number)}</h3><p>${e(row.observation)} | Destino: ${e(row.destination || "-")}</p><p>Criado: ${e(row.created_at)} | Enviado: ${e(row.sent_at || "-")} | Recebido: ${e(row.received_at || "-")}</p><div class="button-row">${actions.map(s=>`<button class="secondary-button" data-reverse-status="${s}" type="button">${s==="DIVERGENCIA" && ["CONCLUIDA","CANCELADA"].includes(row.status)?"Reabrir com motivo":e(s)}</button>`).join("")}${manager()?'<button class="secondary-button" data-reverse-archive="true" type="button">Arquivar</button>':""}</div><details><summary>Historico</summary><pre id="reverseHistory"></pre></details>`;
+    detail.insertAdjacentHTML("afterbegin",`<p>Emissão NF: ${e(row.invoice_issue_date||"Não informada")} · Competência: ${e(row.financial_competence||"A revisar")}</p>`);
+    if(manager() || context.user().role==="COMPRAS") {
+      detail.insertAdjacentHTML("afterbegin",`<form id="reverseCompetenceForm"><label>Competência<input type="month" name="competence" required value="${e(row.financial_competence||"")}"></label><label>Emissão NF<input type="date" name="issue" value="${e(row.invoice_issue_date||"")}"></label><label>Justificativa<input name="reason" required minlength="5"></label><button class="secondary-button">Revisar competência</button></form>`);
+      document.getElementById("reverseCompetenceForm").addEventListener("submit",async event=>{
+        event.preventDefault();if(busy)return;busy=true;
+        try {const form=event.target;const result=await context.client().rpc("wms_reverse_set_competence",{p_id:row.id,p_competence:form.elements.competence.value,p_issue_date:form.elements.issue.value||null,p_reason:form.elements.reason.value,p_expected_updated_at:row.updated_at});
+          if(result.error)throw result.error;detail.innerHTML="";status("Competência revisada.");}
+        catch(error){status(error.message);}finally{busy=false;await refresh();}
+      });
+    }
     detail.querySelector("details").addEventListener("toggle",async event=>{if(!event.target.open)return;
       const result=await context.client().from("wms_history").select("datetime,details").eq("warehouse_code",row.warehouse_code)
         .like("id",`reverse:${row.id}:%`).order("datetime",{ascending:false}).limit(30);
@@ -119,6 +144,7 @@ export function createReverseLogistics(context) {
   document.getElementById("reverseSearchButton").addEventListener("click",()=>{page=0;refresh();});
   for(const id of ["reverseMonth","reverseUnit","reverseStatus"])document.getElementById(id).addEventListener("change",()=>{page=0;refresh();});
   document.getElementById("reverseSort").addEventListener("change",renderSummary);
+  document.getElementById("reverseReviewCompetence").addEventListener("change",()=>{page=0;refresh();});
   document.getElementById("reversePrevious").addEventListener("click",()=>{page=Math.max(0,page-1);refresh();});
   document.getElementById("reverseNext").addEventListener("click",()=>{page++;refresh();});
   return { refresh };
