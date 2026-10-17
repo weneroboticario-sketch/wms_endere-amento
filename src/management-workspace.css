@@ -1,0 +1,24 @@
+.cp-alamo .management-workspace { min-width:0; }
+.cp-alamo .management-band { margin:20px 0; padding:16px 0; border-top:1px solid var(--line); }
+.cp-alamo .management-band h3 { font-size:18px; }
+.cp-alamo .management-band small { font-size:14px; color:var(--muted); font-weight:400; }
+.cp-alamo .management-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
+.cp-alamo .management-metrics article { border-bottom:3px solid #16817e; padding:12px; background:#f2f9f8; }
+.cp-alamo .management-metrics article:nth-child(2) { border-color:#3179b5; background:#f2f7fc; }
+.cp-alamo .management-metrics article:nth-child(3) { border-color:#ba7f19; background:#fff9ec; }
+.cp-alamo .management-metrics article:nth-child(4) { border-color:#ac4653; background:#fff4f5; }
+.cp-alamo .management-metrics span { display:block; font-size:14px; }
+.cp-alamo .management-metrics strong { display:block; font-size:26px; margin-top:8px; }
+.cp-alamo .management-toolbar { display:flex; align-items:end; flex-wrap:wrap; gap:12px; padding:16px 0; }
+.cp-alamo .management-toolbar label { display:grid; gap:6px; flex:1 1 210px; min-width:0; }
+.cp-alamo .management-workspace .table-wrapper { overflow:auto; max-width:100%; }
+.cp-alamo .management-workspace table { min-width:800px; width:100%; border-collapse:collapse; }
+.cp-alamo .management-workspace td,.cp-alamo .management-workspace th { padding:12px; text-align:left; border-bottom:1px solid var(--line); font-size:14px; }
+.cp-alamo .management-workspace th { background:#edf4f7; }
+.cp-alamo .management-drawer { margin:0 0 0 auto; height:100%; max-height:100%; width:min(540px,100%); max-width:100%; border:0; border-left:1px solid var(--line); padding:24px; color:var(--ink); }
+.cp-alamo .management-drawer::backdrop { background:#00192366; }
+.cp-alamo .management-drawer header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.cp-alamo .management-drawer h3 { overflow-wrap:anywhere; font-size:20px; }
+.cp-alamo .management-drawer dl { display:grid; grid-template-columns:minmax(100px,1fr) minmax(0,1.5fr); gap:12px; }
+.cp-alamo .management-drawer dd { margin:0; overflow-wrap:anywhere; }
+@media(max-width:700px) { .cp-alamo .management-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .cp-alamo .management-toolbar label { flex-basis:100%; } }

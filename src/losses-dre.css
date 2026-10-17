@@ -1,6 +1,8 @@
 #lossesDre .loss-toolbar { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin:16px 0; }
 #lossesDre label { display:grid; gap:6px; min-width:0; }
 #lossesDre .loss-toolbar label { flex:1 1 150px; }
+#lossesDre .loss-more-filters { flex:1 1 100%; }
+#lossesDre .loss-more-filters summary { cursor:pointer; padding:8px 0; color:var(--primary-dark); }
 .loss-tabs { display:flex; flex-wrap:wrap; border-bottom:1px solid var(--line); gap:4px; margin-bottom:20px; }
 .loss-tabs button { border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--ink); padding:12px; }
 .loss-tabs button[aria-selected="true"] { border-bottom-color:var(--primary); color:var(--primary-dark); font-weight:700; }

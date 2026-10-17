@@ -8,8 +8,8 @@ const contract = JSON.parse(await read("tests/fixtures/visual-contract.json"));
 
 test("visual refresh preserves every DOM id and behavior data attribute", async () => {
   const html = await read("index.html");
-  assert.deepEqual([...html.matchAll(/\bid="([^"]+)"/g)].map(x => x[1]).sort(), [...contract.ids,"lossesDre","lossesDreContent"].sort());
-  assert.deepEqual([...html.matchAll(/\b(data-[a-z-]+)="([^"]*)"/g)].map(x => x[1] + "=" + x[2]).sort(), [...contract.dataAttributes,"data-icon=DRE","data-screen=lossesDre"].sort());
+  assert.deepEqual([...html.matchAll(/\bid="([^"]+)"/g)].map(x => x[1]).sort(), [...contract.ids,"lossesDre","lossesDreContent","managerCentral","managerCentralContent","managementQueries","managementQueriesContent"].sort());
+  assert.deepEqual([...html.matchAll(/\b(data-[a-z-]+)="([^"]*)"/g)].map(x => x[1] + "=" + x[2]).sort(), [...contract.dataAttributes,"data-icon=DRE","data-screen=lossesDre","data-icon=DAS","data-icon=DAS","data-screen=managerCentral","data-screen=managementQueries"].sort());
 });
 
 test("application JavaScript matches approved application behavior baseline", async () => {

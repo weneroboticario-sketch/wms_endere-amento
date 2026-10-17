@@ -10,18 +10,20 @@ const badge=status=>`<span class="loss-state ${e(status)}">${e(LOSS_STATUS[statu
 const options=(rows,key="id",label="name")=>rows.map(row=>`<option value="${e(row[key])}">${e(row[label])}</option>`).join("");
 const table=(headers,rows)=>`<div class="table-wrapper"><table><thead><tr>${headers.map(h=>`<th>${e(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")||`<tr><td colspan="${headers.length}">Nenhum registro.</td></tr>`}</tbody></table></div>`;
 export function createLossesDre(context) {
- const root=document.getElementById("lossesDreContent"),client=()=>context.client(),caps=()=>lossCapabilities(context.user()?.role);
+ const root=document.getElementById("lossesDreContent"),client=()=>context.client(),caps=()=>lossCapabilities(context.user()?.role,context.capabilities?.()||[]);
  let types=[],rates=[],centers=[],rows=[],page=0,tab="panel",busy=false,draft=null,items=[],allocations=[],files=[],detail=null,preview=null;
  const commands=new Map();
  let actorId=context.user()?.id;
  const $=selector=>root.querySelector(selector);
  const warehouses=()=>context.warehouses().filter(w=>w.code!=="DOURADOS");
  const warehouseOptions=()=>options(warehouses(),"code","name");
- const tabs={panel:"Painel",new:"Nova Perda",pending:"Pendentes",approved:"Aprovadas",history:"Histórico",exports:"Exportação Financeira",config:"Configuração"};
+ const tabs={panel:"Painel",new:"Nova Perda",pending:"Pendentes",financial:"Pendências Financeiras",approved:"Aprovadas",history:"Histórico",exports:"Fechamento e Exportação DRE",config:"Configuração"};
  root.innerHTML=`<nav class="loss-tabs" aria-label="Perdas e DRE">${Object.entries(tabs).map(([id,label])=>`<button type="button" data-tab="${id}" aria-selected="${id===tab}" ${(id==="config"&&!caps().configure)||(id==="exports"&&!caps().export)?"hidden":""}>${label}</button>`).join("")}</nav>
   <p class="loss-error" role="alert" data-error></p><p role="status" data-notice></p>
   <div class="loss-toolbar" data-filters><label>Competência<input type="month" data-month value="${month()}"></label><label>Loja competente<select data-unit><option value="">Todas autorizadas</option>${warehouseOptions()}</select></label>
-  <label>Tipo de perda<select data-type><option value="">Todos</option></select></label><label>Busca<input data-search type="search" maxlength="100" placeholder="Perda, NF, motivo ou pessoa"></label><button class="secondary-button" type="button" data-refresh>Buscar</button></div>
+  <details class="loss-more-filters"><summary>Filtros adicionais</summary><div class="loss-toolbar"><label>Tipo de perda<select data-type><option value="">Todos</option></select></label><label>DRE<select data-dre><option value="">Todas</option></select></label>
+  <label>Centro de custo<select data-center><option value="">Todos</option></select></label><label>Status<select data-status><option value="">Todos</option>${Object.entries(LOSS_STATUS).map(([value,label])=>`<option value="${e(value)}">${e(label)}</option>`).join("")}</select></label>
+  <label>Busca<input data-search type="search" maxlength="100" placeholder="Perda, NF, motivo ou pessoa"></label></div></details><button class="secondary-button" type="button" data-refresh>Buscar</button></div>
   <div data-panel></div><div data-list></div><div class="button-row" data-pages><button type="button" class="secondary-button" data-prev>Anterior</button><span data-page></span><button type="button" class="secondary-button" data-next>Próxima</button></div>
   <div data-form hidden></div><div data-exports hidden></div><div data-config hidden></div>
   <dialog class="loss-dialog" data-detail><header><h3 data-detail-title></h3><button type="button" class="secondary-button" data-close>Fechar</button></header><p class="loss-error" role="alert" data-detail-error></p><div data-detail-body></div></dialog>`;
@@ -51,12 +53,18 @@ export function createLossesDre(context) {
   for(const result of results)if(result.error)throw result.error;
   [types,rates,centers]=results.map(r=>r.data||[]);
   const type=$("[data-type]").value;$("[data-type]").innerHTML='<option value="">Todos</option>'+options(types);$("[data-type]").value=type;
+  for(const [selector,data] of [["data-dre",[...new Map(types.map(t=>[t.dre_code,{code:t.dre_code,name:t.dre_label}])).values()]],["data-center",centers]]) {
+   const select=$("["+selector+"]"),previous=select.value;select.innerHTML='<option value="">Todos</option>'+options(data,"code","name");select.value=previous;
+  }
  }
- const filters=()=>({competence:$("[data-month]").value,warehouse:$("[data-unit]").value,type:$("[data-type]").value});
+ const filters=()=>({competence:$("[data-month]").value,warehouse:$("[data-unit]").value,type:$("[data-type]").value,
+  dre:$("[data-dre]").value,cost_center:$("[data-center]").value,status:$("[data-status]").value});
  async function loadList() {
   const f=filters();
   let q=client().from("wms_losses").select("*").order("created_at",{ascending:false}).range(page*30,page*30+29);
   if(f.competence)q=q.eq("competence",f.competence);if(f.warehouse)q=q.eq("competent_warehouse_code",f.warehouse);if(f.type)q=q.eq("loss_type_id",f.type);
+  if(f.dre)q=q.eq("dre_code_snapshot",f.dre);if(f.status)q=q.eq("status",f.status);
+  if(f.cost_center) {const centersResult=await client().from("wms_loss_allocations").select("loss_id").eq("cost_center",f.cost_center);if(centersResult.error)throw centersResult.error;q=q.in("id",centersResult.data.map(a=>a.loss_id));}
   if(tab==="pending")q=q.in("status",["PENDENTE","CORRECAO_SOLICITADA"]);
   if(tab==="approved")q=q.eq("status","APROVADA");
   const search=$("[data-search]").value.replace(/[,().%_*\\]/g,"").trim();
@@ -69,9 +77,10 @@ export function createLossesDre(context) {
   $("[data-prev]").disabled=page===0;$("[data-next]").disabled=rows.length<30;$("[data-page]").textContent="Página "+(page+1);
  }
  async function loadPanel() {
+  if(context.user().role==="FINANCEIRO"&&!(context.capabilities?.()||[]).includes("finance.dashboard.read"))throw new Error("Painel financeiro não autorizado.");
   const result=await rpc("wms_loss_summary",{p_filters:filters()});
   const gross=Number(result.gross),credits=Number(result.credits);
-  $("[data-panel]").innerHTML=`<div class="loss-kpis">${[["Perda Bruta",money(gross)],["Ajustes Positivos",money(credits)],["Perda Líquida",money(gross-credits)],["Lançamentos",result.records],["Pendentes",result.pending],["Aprovadas / Exportadas",result.approved]].map(([label,value])=>`<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>
+  $("[data-panel]").innerHTML=`<div class="loss-kpis">${[["Perda Bruta",money(gross)],["Ajustes Positivos",money(credits)],["Perda Líquida",money(gross-credits)],["Registros aprovados",result.approved],["Pendências financeiras",result.financial_pending??result.pending],["Valor calculado pela alíquota",money(result.rate_value)]].map(([label,value])=>`<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>
    <p>Ticket médio aprovado: ${money(result.approved?(gross-credits)/result.approved:0)} · Correções: ${result.corrections} · Canceladas: ${result.cancelled}</p>
    <div class="loss-comparison">${[["type","Perdas por tipo"],["dre","Perdas por DRE"],["warehouse","Perdas por loja"]].map(([dimension,title])=>{
     const groups=result.groups.filter(g=>g.dimension===dimension).sort((a,b)=>Number(b.value)-Number(a.value));
@@ -82,14 +91,21 @@ export function createLossesDre(context) {
  async function refreshData() {
   if(!caps().read)throw new Error("Acesso não autorizado.");
   if(actorId!==context.user()?.id){actorId=context.user()?.id;tab="panel";page=0;draft=null;items=[];allocations=[];files=[];commands.clear();$("[data-detail]").close();$("[data-form]").innerHTML="";}
-  root.querySelectorAll("[data-tab]").forEach(b=>{b.hidden=(b.dataset.tab==="config"&&!caps().configure)||(b.dataset.tab==="exports"&&!caps().export);});
+  const financial=context.user()?.role==="FINANCEIRO";
+  root.closest(".screen").querySelector("h2").textContent=financial?"Painel Financeiro — CP Álamo":"Perdas e DRE";
+  const menu=document.querySelector('[data-screen="lossesDre"]');if(menu)menu.lastChild.textContent=financial?"Painel Financeiro":"Perdas e DRE";
+  root.querySelectorAll("[data-tab]").forEach(b=>{b.hidden=(b.dataset.tab==="new"&&!caps().create)||(b.dataset.tab==="config"&&!caps().configure)||(b.dataset.tab==="exports"&&!caps().export)||(b.dataset.tab==="financial"&&!caps().validate);});
   await loadConfig();
   $("[data-filters]").hidden=["new","config"].includes(tab);
-  $("[data-panel]").hidden=tab!=="panel";$("[data-form]").hidden=tab!=="new";$("[data-exports]").hidden=tab!=="exports";$("[data-config]").hidden=tab!=="config";
-  $("[data-list]").hidden=["new","config","exports"].includes(tab);$("[data-pages]").hidden=$("[data-list]").hidden;
+  $("[data-panel]").hidden=!["panel","financial"].includes(tab);$("[data-form]").hidden=tab!=="new";$("[data-exports]").hidden=tab!=="exports";$("[data-config]").hidden=tab!=="config";
+  $("[data-list]").hidden=["new","config","exports","financial"].includes(tab);$("[data-pages]").hidden=$("[data-list]").hidden;
   root.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.tab===tab)));
   if(tab==="panel")await loadPanel();
-  if(!["new","config","exports"].includes(tab))await loadList();
+  if(tab==="financial") {
+   const pending=await rpc("wms_financial_pending",{p_filters:filters()});
+   $("[data-panel]").innerHTML=table(["Código","Unidade","Competência","Status","Pendências","Ação"],pending.rows.map(r=>`<tr><td>${e(r.loss_code)}</td><td>${e(r.competent_warehouse_code)}</td><td>${e(r.competence||"Ausente")}</td><td>${badge(r.status)}</td><td>${e([...r.issues,...(r.retroactive?["Lançamento retroativo: conferir competência"]:[]),...(!r.financial_validated_at?["Conferência financeira pendente"]:[])].join(" · "))}</td><td><button type="button" class="secondary-button" data-open="${e(r.id)}">Abrir</button></td></tr>`));
+  }
+  if(!["new","config","exports","financial"].includes(tab))await loadList();
   if(tab==="exports")await renderExports();
   if(tab==="config")renderConfig();
   decorateWorkflow(root);
@@ -232,11 +248,13 @@ export function createLossesDre(context) {
   const results=await Promise.all(["items","allocations","files","events"].map(name=>client().from("wms_loss_"+name).select("*").eq("loss_id",id).order(name==="events"?"created_at":"id").limit(200)));
   for(const result of results)if(result.error)throw result.error;
   const [itemRows,allocationRows,fileRows,eventRows]=results.map(r=>r.data||[]),r0=detail,type=types.find(t=>t.id===r0.loss_type_id);
-  const canEdit=["RASCUNHO","CORRECAO_SOLICITADA"].includes(r0.status)&&(r0.created_by_id===context.user().id||caps().approve);
+  const canEdit=caps().edit_draft&&["RASCUNHO","CORRECAO_SOLICITADA"].includes(r0.status)&&(r0.created_by_id===context.user().id||caps().approve);
   const actions=[];
   if(canEdit)actions.push(["EDIT","Editar"]);
-  if(caps().approve&&r0.status==="PENDENTE")actions.push(["APPROVE","Aprovar"],["CORRECTION","Solicitar correção"]);
-  if(caps().approve&&["APROVADA","EXPORTADA","CANCELADA"].includes(r0.status))actions.push(["REOPEN","Reabrir"]);
+  if(caps().approve&&r0.status==="PENDENTE"&&r0.created_by_id!==context.user().id)actions.push(["APPROVE","Aprovar"],["REJECT","Rejeitar"]);
+  if(caps().request_correction&&(r0.status==="PENDENTE"||(caps().validate&&r0.status==="APROVADA")))actions.push(["CORRECTION","Solicitar correção"]);
+  if(caps().validate&&r0.status==="APROVADA"&&!r0.financial_validated_at&&![r0.created_by_id,r0.approved_by_id].includes(context.user().id))actions.push(["VALIDATE_FINANCE","Validar conferência financeira"]);
+  if(caps().reopen&&["APROVADA","EXPORTADA","CANCELADA"].includes(r0.status))actions.push(["REOPEN","Reabrir"]);
   if(r0.status!=="CANCELADA"&&r0.status!=="EXPORTADA"&&(caps().cancel||canEdit))actions.push(["CANCEL","Cancelar"]);
   $("[data-detail-title]").textContent=r0.loss_code;
   $("[data-detail-body]").innerHTML=`${badge(r0.status)}<div class="loss-tabs">${["Resumo","Itens","Documentos","Rateio","Histórico"].map((name,i)=>`<button type="button" data-detail-tab="${i}" aria-selected="${i===0}">${name}</button>`).join("")}</div>
@@ -246,6 +264,7 @@ export function createLossesDre(context) {
    <div data-detail-pane="3" hidden>${table(["Centro","Percentual","Valor","Valor calculado"],allocationRows.map(a=>`<tr><td>${e(a.cost_center)}</td><td>${a.percent??"—"}</td><td>${money(a.amount)}</td><td>${a.rate_value_snapshot==null?"—":money(a.rate_value_snapshot)}</td></tr>`))}</div>
    <div data-detail-pane="4" hidden><ol class="loss-history">${eventRows.map(ev=>`<li><strong>${e(ev.event_type)}</strong><small>${date(ev.created_at)} · ${e(ev.user_name)}</small>${e(ev.reason)}</li>`).join("")}</ol></div>
    <div class="button-row">${actions.map(([action,label])=>`<button class="secondary-button" type="button" data-action="${action}">${label}</button>`).join("")}</div>`;
+  $("[data-detail-pane='0']").insertAdjacentHTML("beforeend",`<p>Conferência financeira: ${r0.financial_validated_at?e(date(r0.financial_validated_at))+" · "+e(r0.financial_validated_by):"Pendente"}</p>`);
   $("[data-detail-body]").querySelectorAll("[data-detail-tab]").forEach(button=>button.addEventListener("click",()=>{
    $("[data-detail-body]").querySelectorAll("[data-detail-pane]").forEach(p=>p.hidden=p.dataset.detailPane!==button.dataset.detailTab);
    $("[data-detail-body]").querySelectorAll("[data-detail-tab]").forEach(b=>b.setAttribute("aria-selected",String(b===button)));
@@ -258,7 +277,7 @@ export function createLossesDre(context) {
    const action=button.dataset.action;
    if(action==="EDIT"){items=itemRows;allocations=allocationRows;tab="new";$("[data-detail]").close();renderForm(r0);if(allocations.some(a=>a.percent==null))$("[data-allocation-mode]").value="amount";renderAllocations();await refreshData();return;}
    let data={};
-   if(["CORRECTION","REOPEN","CANCEL"].includes(action)){const result=await requestVisualFields(button.textContent,[{name:"reason",label:"Justificativa"}]);if(!result)return;data=result;}
+   if(["CORRECTION","REOPEN","CANCEL","VALIDATE_FINANCE","REJECT"].includes(action)){const result=await requestVisualFields(button.textContent,[{name:"reason",label:"Justificativa"}]);if(!result)return;data=result;}
    if(action==="APPROVE"){
     if(!window.confirm("Aprovar e congelar a classificação, a alíquota e os valores desta perda?"))return;
     const result=await client().from("wms_losses").select("id").neq("id",r0.id).neq("status","CANCELADA").eq("invoice_number",r0.invoice_number).eq("competent_warehouse_code",r0.competent_warehouse_code).eq("invoice_value",r0.invoice_value).eq("competence",r0.competence).limit(1);
@@ -296,6 +315,11 @@ export function createLossesDre(context) {
    const answer=await requestVisualFields(button.textContent+" "+f.competence,[{name:"reason",label:"Justificativa"}]);if(!answer)return;
    await command(button.dataset.period,null,{competence:f.competence,...answer});status("Competência atualizada.");await renderExports();
   })));
+  $("[data-period='CLOSE_PERIOD']").hidden=!caps().close;
+  $("[data-period='REOPEN_PERIOD']").hidden=!caps().reopen_period;
+  const periods=await client().from("wms_loss_periods").select("competence,status,updated_at").order("competence",{ascending:false}).limit(12);
+  if(periods.error)throw periods.error;
+  $("[data-exports]").insertAdjacentHTML("beforeend",'<h3>Situação dos fechamentos</h3>'+table(["Competência","Situação","Atualização"],periods.data.map(p=>`<tr><td>${e(p.competence)}</td><td>${e(p.status)}</td><td>${e(date(p.updated_at))}</td></tr>`)));
  }
  function renderConfig() {
   if(!caps().configure)throw new Error("Configuração exclusiva de administradores.");
@@ -322,6 +346,7 @@ export function createLossesDre(context) {
    if(result.error){$("[data-error]").textContent=result.error.message;return;}
    const form=$("[data-config-settings]");if(form)form.elements.metric_basis.value=result.data.metric_basis;
   });
+  for(const [name,allowed] of [["type",caps().configure_types],["rate",caps().configure_rates],["settings",context.user().role==="ADMINISTRADOR"],["center",context.user().role==="ADMINISTRADOR"]])$("[data-config-"+name+"]").closest("section").hidden=!allowed;
  }
  root.querySelectorAll("[data-tab]").forEach(button=>button.addEventListener("click",()=>run(async()=>{
   tab=button.dataset.tab;page=0;preview=null;if(tab==="new"){items=[];allocations=[];renderForm();}await refreshData();
@@ -331,5 +356,5 @@ export function createLossesDre(context) {
  $("[data-next]").addEventListener("click",()=>run(async()=>{page++;await loadList();}));
  $("[data-close]").addEventListener("click",()=>$("[data-detail]").close());
  root.addEventListener("click",event=>{const button=event.target.closest("[data-open]");if(button)run(()=>openDetail(button.dataset.open));});
- return { refresh:()=>run(refreshData) };
+ return { refresh:()=>run(refreshData),open:id=>run(()=>openDetail(id)) };
 }

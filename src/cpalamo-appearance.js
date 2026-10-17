@@ -6,7 +6,7 @@ const menuIcons = { consultaSku: Search, consultaPrateleira: MapPin, bipagem: Pa
   purchaseTransfer: ClipboardList, reposicao: RotateCcw, fiscalWorkflow: FileText, expedition: Truck,
   reverseLogistics: RotateCcw, globalDashboard: LayoutDashboard, dashboard: LayoutDashboard, baseEstoque: Warehouse,
   exportar: FileText, etiquetas: Tags, estoques: Warehouse, usuarios: Users, saudeSistema: ShieldCheck,
-  manutencao: Settings, configuracoes: Settings };
+  manutencao: Settings, configuracoes: Settings, managerCentral: LayoutDashboard, managementQueries: FileText, lossesDre: FileText };
 
 export function workflowErrorMessage(error, fallback = "Nao foi possivel carregar os dados. Use Atualizar para tentar novamente.") {
   const message=error?.message || String(error);

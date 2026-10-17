@@ -1,9 +1,21 @@
 export const LOSS_STATUS = { RASCUNHO:"Rascunho",PENDENTE:"Pendente",CORRECAO_SOLICITADA:"Correção solicitada",APROVADA:"Aprovada",CANCELADA:"Cancelada",EXPORTADA:"Exportada" };
-export function lossCapabilities(role) {
+export function lossCapabilities(role, capabilities=[]) {
+ if(["GERENTE","FINANCEIRO"].includes(role)) {
+  const has=code=>capabilities.includes(code);
+  return {read:has("finance.loss.read")||has("manager.approvals.read"),create:false,edit_draft:false,submit:false,
+   request_correction:has("manager.loss.request_correction")||has("finance.loss.request_correction"),
+   approve:has("manager.loss.approve"),cancel:false,export:has("finance.export")&&has("finance.dre.read"),
+   validate:has("finance.loss.validate"),close:has("finance.close_competence"),reopen_period:has("finance.reopen_competence"),
+   reopen:has("manager.operational_exception.handle"),configure:has("finance.configure_rates")||has("finance.configure_types"),
+   configure_rates:has("finance.configure_rates"),configure_types:has("finance.configure_types")};
+ }
  const read=["ADMINISTRADOR","SUPERVISOR","OPERADOR","COMPRAS"].includes(role);
  const manage=["ADMINISTRADOR","SUPERVISOR"].includes(role);
  return {read,create:read,edit_draft:read,submit:read,request_correction:manage,approve:manage,cancel:manage,
-  export:["ADMINISTRADOR","SUPERVISOR","COMPRAS"].includes(role),configure:role==="ADMINISTRADOR"};
+  export:["ADMINISTRADOR","SUPERVISOR","COMPRAS"].includes(role),configure:role==="ADMINISTRADOR",
+  validate:role==="ADMINISTRADOR",close:["ADMINISTRADOR","SUPERVISOR","COMPRAS"].includes(role),
+  reopen_period:["ADMINISTRADOR","SUPERVISOR","COMPRAS"].includes(role),reopen:manage,
+  configure_rates:role==="ADMINISTRADOR",configure_types:role==="ADMINISTRADOR"};
 }
 export function cents(value) {
  const text=String(value ?? "").trim();

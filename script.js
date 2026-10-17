@@ -116,15 +116,21 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     configuracoes: ["ADMINISTRADOR"]
   };
   if (IS_CP_ALAMO) {
-    ROLES.push("COMPRAS");
+    ROLES.push("COMPRAS", "GERENTE", "FINANCEIRO");
     ["dashboard", "consultaSku", "baseEstoque", "transferencias", "reposicao"].forEach(function (screen) { SCREEN_PERMISSIONS[screen].push("COMPRAS"); });
     SCREEN_PERMISSIONS.fiscalWorkflow = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.expedition = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
     SCREEN_PERMISSIONS.reverseLogistics = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
-    SCREEN_PERMISSIONS.lossesDre = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS"];
+    SCREEN_PERMISSIONS.lossesDre = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "COMPRAS", "GERENTE", "FINANCEIRO"];
+    SCREEN_PERMISSIONS.managerCentral = ["ADMINISTRADOR", "GERENTE"];
+    SCREEN_PERMISSIONS.managementQueries = ["ADMINISTRADOR", "GERENTE", "FINANCEIRO"];
     SCREEN_PERMISSIONS.purchaseTransfer = ["ADMINISTRADOR", "COMPRAS"];
     var roleOption = document.createElement("option"); roleOption.value = "COMPRAS"; roleOption.textContent = "Compras";
     document.getElementById("userRoleInput").appendChild(roleOption);
+    ["GERENTE", "FINANCEIRO"].forEach(function (role) {
+      var option = document.createElement("option"); option.value = role; option.textContent = role;
+      document.getElementById("userRoleInput").appendChild(option);
+    });
   }
   var TRANSFER_STATUSES = [
     "PENDENTE",
@@ -6435,6 +6441,12 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
       return;
     }
+    if (IS_CP_ALAMO && ["GERENTE", "FINANCEIRO"].indexOf(authState.currentUser.role) >= 0) {
+      resetSessionInactivityTimeout();
+      await showScreen(defaultScreenForUser());
+      if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6598,6 +6610,10 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       await showScreen("globalDashboard");
       return;
     }
+    if (IS_CP_ALAMO && ["GERENTE", "FINANCEIRO"].indexOf(authState.currentUser.role) >= 0) {
+      await showScreen(defaultScreenForUser());
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6680,7 +6696,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-compras");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-compras", "role-gerente", "role-financeiro");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
@@ -6688,6 +6704,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
     if (isGlobalDashboardScope()) return "globalDashboard";
+    if (IS_CP_ALAMO && authState.currentUser.role === "GERENTE") return "managerCentral";
+    if (IS_CP_ALAMO && authState.currentUser.role === "FINANCEIRO") return "lossesDre";
     if (IS_CP_ALAMO && authState.currentUser.role === "COMPRAS") return "purchaseTransfer";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6735,14 +6753,19 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   function isPurchasesUser() { return IS_CP_ALAMO && authState.currentUser && authState.currentUser.role === "COMPRAS"; }
 
   var cpWorkflowViews = {};
+  var cpProfileCapabilities = [];
   var cpWorkflowLoading = {};
   async function openCpWorkflowScreen(screenId) {
     if (!IS_CP_ALAMO || !canAccessScreen(screenId)) return;
     await ensureWarehousesLoaded();
+    var capabilitiesResult = await supabaseDb.rpc("wms_profile_capabilities");
+    if (capabilitiesResult.error) throw capabilitiesResult.error;
+    cpProfileCapabilities = capabilitiesResult.data.capabilities || [];
     if (!cpWorkflowViews[screenId]) {
       if (!cpWorkflowLoading[screenId]) cpWorkflowLoading[screenId] = (async function () {
         var context = {
           client: function () { return supabaseDb; }, user: function () { return authState.currentUser; },
+          capabilities: function () { return cpProfileCapabilities; },
           warehouse: activeWarehouseCode, global: isGlobalDashboardScope,
           warehouses: function () {
             var allowed = isGlobalAdmin() || isPurchasesUser() ? allowedWarehouseCodesForUser(authState.currentUser) : parseWarehouseCodes(authState.currentUser.allowedWarehouseCodes || authState.currentUser.defaultWarehouseCode);
@@ -6750,6 +6773,10 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
           },
           diagnostic: recordPerformanceError,
           navigate: showScreen,
+          openLoss: async function (id) {
+            await showScreen("lossesDre");
+            if (cpWorkflowViews.lossesDre) await cpWorkflowViews.lossesDre.open(id);
+          },
           changed: function () { scheduleTransferRealtimeRefresh("fiscal-workflow", 100); },
           openTransfer: async function (id) {
             var result = await supabaseDb.from("wms_transfers").select("*").eq("id", id).single();
@@ -6760,7 +6787,9 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
             activateTransferTab("transferWorkSection"); renderTransferWork();
           }
         };
-        if (screenId === "purchaseTransfer") {
+        if (screenId === "managerCentral" || screenId === "managementQueries") {
+          var management = await import("./src/management-workspace.js"); cpWorkflowViews[screenId] = management.createManagementWorkspace(context, screenId);
+        } else if (screenId === "purchaseTransfer") {
           var builder = await import("./src/purchase-transfer-builder.js"); cpWorkflowViews[screenId] = builder.createPurchaseTransferBuilder(context);
         } else if (screenId === "fiscalWorkflow") {
           var fiscal = await import("./src/purchases-workflow.js"); cpWorkflowViews[screenId] = fiscal.createPurchasesWorkflow(context);
@@ -6857,6 +6886,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "demoMode") return false;
+    if (["managerCentral", "managementQueries"].indexOf(screenId) >= 0 && !IS_CP_ALAMO) return false;
     if (!IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre"].indexOf(screenId) >= 0) return false;
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (IS_CP_ALAMO && isAdmin()) return true;
@@ -7052,7 +7082,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       supervisor = null;
       supervisorId = "";
     }
-    if (role === "ATENDENTE") availableForTasks = false;
+    if (["ATENDENTE", "GERENTE", "FINANCEIRO"].indexOf(role) >= 0) availableForTasks = false;
     if (supervisor && (supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, defaultWarehouseCode))) {
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
@@ -7373,7 +7403,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       { value: "SUPERVISOR", label: "Supervisor" },
       { value: "OPERADOR", label: "Operador" },
       { value: "ATENDENTE", label: "Atendente" }
-    ], userFilterValue("userRoleFilter"));
+    ].concat(IS_CP_ALAMO ? [{value:"COMPRAS",label:"Compras"},{value:"GERENTE",label:"Gerente"},{value:"FINANCEIRO",label:"Financeiro"}] : []), userFilterValue("userRoleFilter"));
     fillUserSelect("userSupervisorFilter", userSupervisorFilterOptions(), userFilterValue("userSupervisorFilter"));
   }
 
@@ -8288,7 +8318,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     renderAll();
     if (screenId === "usuarios") renderUsers();
     try {
-      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
+      if (IS_CP_ALAMO && ["fiscalWorkflow", "reverseLogistics", "purchaseTransfer", "expedition", "lossesDre", "managerCentral", "managementQueries"].indexOf(screenId) >= 0) await openCpWorkflowScreen(screenId);
       await ensureScreenDataLoaded(screenId);
     } catch (error) {
       recordPerformanceError("tela-" + screenId, error);
