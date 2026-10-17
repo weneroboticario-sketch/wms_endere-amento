@@ -1,0 +1,42 @@
+#lossesDre .loss-toolbar { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin:16px 0; }
+#lossesDre label { display:grid; gap:6px; min-width:0; }
+#lossesDre .loss-toolbar label { flex:1 1 150px; }
+.loss-tabs { display:flex; flex-wrap:wrap; border-bottom:1px solid var(--line); gap:4px; margin-bottom:20px; }
+.loss-tabs button { border:0; border-bottom:3px solid transparent; border-radius:0; background:transparent; color:var(--ink); padding:12px; }
+.loss-tabs button[aria-selected="true"] { border-bottom-color:var(--primary); color:var(--primary-dark); font-weight:700; }
+.loss-kpis { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:12px; }
+.loss-kpis article { padding:16px 0; border-bottom:3px solid #158477; min-width:0; }
+.loss-kpis article:nth-child(2) { border-color:#677b43; }
+.loss-kpis article:nth-child(5) { border-color:#ba8220; }
+.loss-kpis span { display:block; font-size:14px; color:var(--muted); }
+.loss-kpis strong { display:block; font-size:22px; margin-top:8px; overflow-wrap:anywhere; }
+.loss-band { padding:20px 0; border-top:1px solid var(--line); margin-top:20px; }
+.loss-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.loss-form-grid .full { grid-column:1/-1; }
+.loss-state { display:inline-block; border-radius:4px; padding:5px 8px; font-size:14px; background:#edf0f2; white-space:nowrap; }
+.loss-state.PENDENTE { background:#fff1d1; color:#7c5300; }
+.loss-state.CORRECAO_SOLICITADA,.loss-state.CANCELADA { background:#fbe8e8; color:#a02626; }
+.loss-state.APROVADA { background:#e0f3e8; color:#16633e; }
+.loss-state.EXPORTADA { background:#e9eafb; color:#45478c; }
+.loss-dialog { width:min(1000px,calc(100% - 24px)); max-height:90vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:24px; color:var(--ink); }
+.loss-dialog::backdrop { background:#0007; }
+.loss-dialog dl { display:grid; grid-template-columns:minmax(110px,180px) minmax(0,1fr); gap:10px; }
+.loss-dialog dd { margin:0; overflow-wrap:anywhere; }
+.loss-dialog header { display:flex; justify-content:space-between; gap:16px; align-items:center; }
+.loss-history { padding:0; list-style:none; }
+.loss-history li { border-left:3px solid #25838a; padding:8px 16px; margin:12px 0; }
+.loss-history small { display:block; color:var(--muted); }
+.loss-upload { border:1px dashed #8daeb7; padding:16px; background:#f4fafb; }
+#lossesDre .table-wrapper { overflow:auto; max-width:100%; }
+#lossesDre [data-list] table { min-width:1000px; }
+#lossesDre td { overflow-wrap:anywhere; max-width:240px; vertical-align:top; }
+.loss-form-grid input[readonly] { background:#edf3f6; }
+.loss-comparison { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.loss-bars { list-style:none; padding:0; }
+.loss-bars li { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin:12px 0; }
+.loss-bars progress { grid-column:1/-1; width:100%; accent-color:#19847a; }
+.loss-revision { padding:16px 0; border-top:1px solid var(--line); }
+.loss-error { color:#a52323; background:#fceaea; padding:12px; }
+.loss-error:empty { display:none; }
+@media(max-width:1100px) { .loss-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:650px) { .loss-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .loss-form-grid,.loss-comparison { grid-template-columns:minmax(0,1fr); } .loss-dialog { padding:16px; } #lossesDre .loss-toolbar label { flex-basis:100%; } }
