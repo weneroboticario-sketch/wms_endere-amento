@@ -65,7 +65,12 @@ export function parseInvoiceXml(text,Parser=globalThis.DOMParser) {
  const ide=find(info,"ide"),total=find(info,"ICMSTot"),issuer=find(info,"emit");
  const key=(info.getAttribute("Id")||"").replace(/^NFe/,"");
  const value=get(total,"vNF");
- return { invoice_number:get(ide,"nNF"),invoice_key:/^\d{44}$/.test(key)?key:"",
+ const items=[...info.getElementsByTagNameNS("*","det")].map(det=>{
+  const product=find(det,"prod"),quantity=Number(get(product,"qCom")),unit=Number(get(product,"vUnCom"));
+  if(!product||!get(product,"cProd")||!Number.isFinite(quantity)||quantity<=0||!Number.isFinite(unit)||unit<0)throw new Error("Item do XML com SKU, quantidade ou valor inválido.");
+  return {sku:get(product,"cProd"),description_snapshot:get(product,"xProd"),quantity,unit_value:unit.toFixed(2),location_snapshot:""};
+ });
+ return { items,invoice_number:get(ide,"nNF"),invoice_key:/^\d{44}$/.test(key)?key:"",
   invoice_issue_date:(get(ide,"dhEmi")||get(ide,"dEmi")).slice(0,10),
   invoice_value:value?cents(value)/100:0,issuer_cnpj:get(issuer,"CNPJ"),issuer_name:get(issuer,"xNome") };
 }
