@@ -28,6 +28,10 @@
 .cp-alamo .brand > :not(.sgo-brand-logo) { display: none; }
 .cp-alamo .sgo-brand-logo { display: block; width: 100%; max-width: 280px; height: auto; aspect-ratio: 1280 / 698; object-fit: contain; border-radius: 6px; }
 .cp-alamo .login-brand { justify-content: center; }
+.cp-alamo .sidebar .brand { flex-wrap: wrap; }
+.cp-alamo .sidebar .brand > div:not(.brand-mark) { display: block; }
+.cp-alamo .sidebar .brand h1 { font-size: 18px; }
+.cp-alamo .sgo-header-logo { display: block; width: 80px; height: 44px; object-fit: contain; flex-shrink: 0; }
 .cp-alamo .menu-section { margin-bottom: 16px; }
 .cp-alamo .menu-label { font-size: 13px; color: #aac5d5; margin-bottom: 6px; }
 .cp-alamo .menu-item { min-height: 44px; padding: 9px 10px; font-size: 14px; gap: 9px; line-height: 1.35; border-radius: 6px; }

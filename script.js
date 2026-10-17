@@ -53,12 +53,14 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       var user = authState.users.find(function (record) { return record.id === id; });
       return user ? userCardHtml(user) : "";
     } });
-    document.title = "WMS Álamo";
+    document.title = "Gestão Operacional - CP Álamo";
     document.querySelectorAll(".brand h1, .mobile-topbar strong").forEach(function (element) {
-      element.textContent = "WMS Álamo";
+      element.textContent = "Gestão Operacional";
     });
     document.querySelectorAll(".login-brand p").forEach(function (element) { element.textContent = "Operação CP Álamo"; });
     document.querySelector("link[rel=manifest]").setAttribute("href", "/manifest-cpalamo.webmanifest");
+    document.querySelector("link[rel=icon]").setAttribute("href", "/sgo-logo.jpg");
+    document.querySelector("link[rel=icon]").setAttribute("type", "image/jpeg");
   }
 
   var globalDashboardController = null;
@@ -6633,7 +6635,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if ($("topWarehouseCode")) $("topWarehouseCode").textContent = globalScope ? "Visao Geral" : code;
     if ($("sidebarWarehouseCode")) $("sidebarWarehouseCode").textContent = globalScope ? "Visao Geral" : "Estoque: " + code;
     if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").hidden = !isGlobalAdministrator(authState.currentUser) || globalScope;
-    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = globalScope ? "WMS Álamo - Visão Geral" : IS_CP_ALAMO ? "WMS Álamo" : "Controle WMS";
+    if (document.querySelector(".app-header-title strong")) document.querySelector(".app-header-title strong").textContent = IS_CP_ALAMO ? (globalScope ? "Gestão Operacional - Visão Geral" : "Gestão Operacional") : "Controle WMS";
     var select = $("activeWarehouseSelect");
     if (!select) return;
     var allowed = allowedWarehouseCodesForUser(authState.currentUser);

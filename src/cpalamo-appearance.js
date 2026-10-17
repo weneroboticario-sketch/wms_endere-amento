@@ -67,6 +67,13 @@ export function initializeCpAppearance({ userDetails } = {}) {
     logo.width = 1280; logo.height = 698;
     brand.prepend(logo);
   });
+  const header = document.querySelector(".app-header-title");
+  if (header && !header.querySelector(".sgo-header-logo")) {
+    const logo = document.createElement("img");
+    logo.className = "sgo-header-logo"; logo.src = "/sgo-logo.jpg";
+    logo.alt = "SGO - CP Álamo"; logo.width = 80; logo.height = 44;
+    header.prepend(logo);
+  }
   document.querySelectorAll(".menu-item").forEach(button => addActionIcon(button, menuIcons[button.dataset.screen] || Package));
   const group = document.querySelectorAll(".menu-label");
   ["Operação", "Transferências", "Gestão", "Administração"].forEach((label,index) => { if (group[index]) group[index].textContent = label; });
