@@ -171,10 +171,11 @@ export function createLossesDre(context) {
   }),300);});
   $("[data-xml]").addEventListener("change",()=>run(async()=>{
    const file=$("[data-xml]").files[0];if(!file)return;
+   status("");invalidateReview();files=files.filter(x=>x.type!=="XML");
    if(!/\.xml$/i.test(file.name)||file.size>5*1024*1024||!["","application/xml","text/xml"].includes(file.type))throw new Error("Selecione um XML válido de até 5 MB.");
    const invoice=parseInvoiceXml(await file.text());
    for(const [key,value] of Object.entries(invoice))f[key].value=key==="invoice_value"?Number(value).toFixed(2).replace(".",","):value;
-   f.invoice_issue_date.dispatchEvent(new window.Event("change"));files=files.filter(x=>x.type!=="XML");files.push({file,type:"XML"});
+   f.invoice_issue_date.dispatchEvent(new window.Event("change"));files.push({file,type:"XML"});
    invalidateReview();status("Dados preenchidos a partir do XML. Revise antes de enviar.");
   }));
   $("[data-pdf]").addEventListener("change",()=>run(async()=>{
