@@ -3223,6 +3223,9 @@ tbody tr:hover td {
 .transfer-qty-grid {
   grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
 }
+.direct-picking-summary .transfer-qty-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.direct-picking-summary .transfer-item-metric:first-child { grid-column: 1 / -1; }
+#transferCurrentItem .transfer-pick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 .transfer-item-metric {
   min-height: 56px;

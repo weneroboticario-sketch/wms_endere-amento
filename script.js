@@ -14007,13 +14007,13 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     var statusLabel = displayTransferStatusLabel(statusKey);
     var itemClass = "transfer-work-item transfer-detail-v20261008 status-" + String(statusKey || "PENDENTE").toLowerCase().replace(/_/g, "-") + (selected ? " selected" : "");
     var productName = shortProductName(item.description || "");
+    if (mode !== "MONTAGEM") itemClass += " direct-picking-summary";
     var location = transferLocationStatus(item);
     var locationBadgeClass = location.hasLocation ? "ok" : "alert";
     var locationBadgeLabel = location.hasLocation ? (location.code || [location.rua, location.rack, location.linha, location.letra].filter(Boolean).join("-")) : (location.warning || "Sem localização cadastrada.");
     var flags = [];
-    if (!item.isExtra && mode !== "MONTAGEM" && qty.requested > 0 && qty.separated <= 0) flags.push("Não pego");
     if (!item.isExtra && mode === "MONTAGEM" && qty.separated > 0 && qty.packed <= 0) flags.push("Não pego");
-    if (item.stockAlertMessage) flags.push(item.stockAlertMessage);
+    if (item.stockAlert && item.stockAlertMessage && (location.hasLocation || !/localiza/i.test(item.stockAlertMessage))) flags.push(item.stockAlertMessage);
     var uniqueFlags = unique(flags.filter(Boolean));
     var flagsHtml = uniqueFlags.length
       ? "<div class=\"transfer-item-flags\">" + uniqueFlags.map(function (label) {
@@ -14031,18 +14031,17 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
       { label: "Total UN", value: Number(qty.expectedUnits || 0) > 0 ? formatQty(qty.expectedUnits) : "-" }
     ] : [
       { label: "Solicitado", value: formatQty(qty.requested) + " " + (item.unit || "UN") },
-      { label: "Separado", value: formatQty(qty.separated) },
-      { label: "Pendente", value: formatQty(qty.pendingSeparation) },
-      { label: "Saldo loja", value: transferStockValueLabel(item.storeAvailable, null) },
-      { label: "Retirar captação", value: formatQty(item.suggestedCaptureQty || 0) },
-      { label: "Saldo captação", value: transferStockValueLabel(item.captureAvailable, item) },
-      { label: "Retirar loja", value: formatQty(item.suggestedStoreQty || 0) },
-      { label: "Faltante", value: formatQty(item.quantityShortage || 0) }
+      { label: "Saldo Captação", value: transferStockValueLabel(item.captureAvailable, item) },
+      { label: "Saldo Loja", value: transferStockValueLabel(item.storeAvailable, null) },
+      { label: "Retirar da Captação", value: formatQty(item.suggestedCaptureQty || 0) },
+      { label: "Retirar da Loja", value: formatQty(item.suggestedStoreQty || 0) }
     ];
+    if (mode !== "MONTAGEM" && qty.separated > 0) qtyCells.push({ label: "Já separado", value: formatQty(qty.separated) });
+    if (mode !== "MONTAGEM" && Number(item.quantityShortage || 0) > 0) qtyCells.push({ label: "Faltante", value: formatQty(item.quantityShortage) });
     var qtyRows = qtyCells.map(function (entry) {
       return "<span class=\"transfer-item-metric\"><small>" + escapeHtml(entry.label) + "</small><b>" + escapeHtml(entry.value) + "</b></span>";
     }).join("");
-    var stockGuidance = mode === "MONTAGEM" ? "" : transferStockGuidanceHtml(item, "compact");
+    var stockGuidance = "";
     return [
       "<article class=\"" + itemClass + "\" data-transfer-work-item=\"" + item.id + "\">",
       "<div class=\"transfer-work-item-head\"><strong class=\"transfer-item-sku\">SKU " + escapeHtml(item.sku || "-") + "</strong><span>" + escapeHtml(statusLabel) + "</span></div>",
