@@ -173,7 +173,9 @@ export function createLossesDre(context) {
    const file=$("[data-xml]").files[0];if(!file)return;
    status("");invalidateReview();files=files.filter(x=>x.type!=="XML");
    if(!/\.xml$/i.test(file.name)||file.size>5*1024*1024||!["","application/xml","text/xml"].includes(file.type))throw new Error("Selecione um XML válido de até 5 MB.");
-   const invoice=parseInvoiceXml(await file.text());
+   const {items:invoiceItems,...invoice}=parseInvoiceXml(await file.text());
+   collectItems();
+   if(invoiceItems.length&&(!items.length||window.confirm("Substituir os itens preenchidos pelos produtos deste XML?"))){items=invoiceItems;renderItems();}
    for(const [key,value] of Object.entries(invoice))f[key].value=key==="invoice_value"?Number(value).toFixed(2).replace(".",","):value;
    f.invoice_issue_date.dispatchEvent(new window.Event("change"));files.push({file,type:"XML"});
    invalidateReview();status("Dados preenchidos a partir do XML. Revise antes de enviar.");
