@@ -17303,11 +17303,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
 
   function transferLocationLabel(item) {
     var status = transferLocationStatus(item);
-    var base = status.hasLocation
-      ? "Rua: " + status.rua + " | Rack: " + status.rack + " | Linha: " + status.linha + " | Letra: " + status.letra + " | Endereço: " + status.code
-      : status.warning;
-    var stock = transferStockLabel(item);
-    return stock ? base + " | " + stock : base;
+    return status.hasLocation ? status.code : (status.warning || "Sem localização cadastrada.");
   }
 
   function transferOriginSuggestionLabel(origin) {
@@ -17366,16 +17362,12 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
 
   function transferLocationSummaryCell(item) {
     var status = transferLocationStatus(item);
-    var stock = transferStockLabel(item);
     if (!status.hasLocation) {
-      return "<td data-label=\"Localização\" class=\"transfer-location-cell no-location\"><strong>Sem localizacao</strong><span>Sem localizacao cadastrada.</span>" + (stock ? "<em class=\"transfer-stock-line\">" + escapeHtml(stock) + "</em>" : "") + "</td>";
+      return "<td data-label=\"Localização\" class=\"transfer-location-cell no-location\">" + escapeHtml(status.warning || "Sem localização cadastrada.") + "</td>";
     }
     return [
       "<td data-label=\"Localização\" class=\"transfer-location-cell\">",
       "<strong>" + escapeHtml(status.code) + "</strong>",
-      "<span>" + escapeHtml(status.rua) + " | " + escapeHtml(status.rack) + " | " + escapeHtml(status.linha) + " | " + escapeHtml(status.letra) + "</span>",
-      "<em>Localizado</em>",
-      stock ? "<em class=\"transfer-stock-line\">" + escapeHtml(stock) + "</em>" : "",
       "</td>"
     ].join("");
   }
