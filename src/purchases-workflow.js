@@ -78,6 +78,10 @@ export function createPurchasesWorkflow(context) {
     <div class="fiscal-charts" id="fiscalCharts"></div>
     <dialog id="fiscalDetail" class="drawer fiscal-drawer" aria-labelledby="fiscalDrawerTitle" hidden></dialog>`;
   const drawer = document.getElementById("fiscalDetail");
+  window.addEventListener("wms:transfer-removed",event=>{
+    if(selected?.id===event.detail.id){drawer.close();selected=null;}
+    if(event.detail.warehouse_code===context.warehouse())refresh();
+  });
   drawer.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
   drawer.addEventListener("close", () => { drawer.hidden = true; });
   decorateWorkflow(root);
@@ -221,6 +225,7 @@ export function createPurchasesWorkflow(context) {
       </div>
       <footer class="button-row fiscal-drawer-actions">${fiscalActions(selected.invoice_stage, role, selected.domain).map(([action,label]) => `<button class="secondary-button" data-fiscal-action="${action}" type="button">${label}</button>`).join("")}${selected.invoice_file_path ? '<button class="secondary-button" id="fiscalViewPdf" type="button">Abrir PDF</button>' : ""}${selected.domain === "TRANSFERENCIA" ? '<button class="secondary-button" id="fiscalOpenTransfer" type="button">Abrir transferencia</button>' : ""}</footer>`;
     detail.querySelector("#fiscalUploadForm")?.addEventListener("submit", upload);
+    if(selected.domain==="TRANSFERENCIA")mountTransferRemovalActions(detail.querySelector("footer"),selected,context);
     const uploadForm = detail.querySelector("#fiscalUploadForm");
     if (uploadForm) {
       uploadForm.insertAdjacentHTML("afterend", '<p id="fiscalUploadStatus" class="inline-status" role="status" aria-live="polite"></p>');
@@ -401,3 +406,4 @@ export function createPurchasesWorkflow(context) {
   }
   return { refresh, open, openTransferInvoice, summary: () => context.client().rpc("wms_fiscal_summary", { p_warehouse: context.warehouse() }) };
 }
+import { mountTransferRemovalActions } from "./transfer-retention.js";

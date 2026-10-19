@@ -1,0 +1,21 @@
+.transfer-retention-dialog { width:520px; max-width:calc(100vw - 32px); max-height:90dvh; padding:24px; border:1px solid #d2ddea; border-radius:8px; color:#15304b; overflow:auto; }
+.transfer-retention-dialog::backdrop { background:#142c4b66; }
+.transfer-retention-dialog header,.transfer-retention-dialog footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.transfer-retention-dialog h3 { margin:0; font-size:20px; overflow-wrap:anywhere; }
+.transfer-retention-dialog header button { display:grid; place-items:center; width:36px; height:36px; flex:0 0 36px; padding:0; border:0; background:transparent; color:#15304b; }
+.transfer-retention-dialog textarea,.transfer-retention-dialog select { width:100%; margin:8px 0 12px; }
+.transfer-retention-dialog [data-status] { color:#a92d3e; }
+.transfer-retention-dialog p { overflow-wrap:anywhere; font-size:14px; line-height:1.5; }
+.transfer-retention-actions { display:flex; width:100%; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.transfer-retention-actions button { flex:1; min-height:40px; }
+.transfer-retention-actions button:last-child { color:#a92d3e; border-color:#e4b6bf; }
+.transfer-retention-filters { display:flex; align-items:end; flex-wrap:wrap; gap:12px; margin:16px 0; }
+#transferRemovedSection { min-width:0; max-width:100%; width:100%; box-sizing:border-box; }
+#transferRemovedSection .table-wrapper { width:100%; max-width:100%; min-width:0; overflow-x:auto; box-sizing:border-box; }
+#transferRemovedSection table { width:100%; border-collapse:collapse; }
+#transferRemovedSection th,#transferRemovedSection td { padding:12px; text-align:left; border-bottom:1px solid #dbe4ef; vertical-align:top; font-size:14px; }
+#transferRemovedSection td small { display:block; margin-top:5px; color:#52667e; }
+#transferRemovedSection footer { display:flex; justify-content:flex-end; align-items:center; gap:12px; margin-top:16px; }
+#transferRemovedSection footer span { white-space:nowrap; }
+#transferRemovedSection footer button { flex:0 0 auto; }
+@media(max-width:640px) { .transfer-retention-dialog { padding:16px; } .transfer-retention-dialog textarea,.transfer-retention-dialog select { font-size:16px; } #transferRemovedSection table { min-width:850px; } }

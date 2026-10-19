@@ -1,5 +1,6 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import JsBarcode from "jsbarcode";
+import { canRetireTransfer, requestTransferRemoval, mountTransferRemovalActions, createRemovedTransfersView } from "./src/transfer-retention.js";
 import {
   AUTH_EMAIL_DOMAIN,
   changeOwnPassword,
@@ -10896,6 +10897,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
 
   function renderTransfers() {
     if (!$("transferencias")) return;
+    ensureCpTransferArchive();
     invalidateTransferStatsCache();
     renderTransferTabVisibility();
     var activeSection = getActiveTransferSectionId();
@@ -10907,7 +10909,29 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if (activeSection === "establishmentsSection") renderEstablishments();
     if (activeSection === "newTransferSection") renderTransferPreview();
     if (activeSection === "transferWorkSection") renderTransferWork();
+    if (activeSection === "transferRemovedSection" && cpTransferArchive) cpTransferArchive.refresh();
   }
+
+  var cpTransferArchive = null;
+  function cpTransferRemovalContext() {
+    return {client:function(){return supabaseDb;},user:function(){return authState.currentUser;},warehouse:activeWarehouseCode,
+      changed:function(){scheduleTransferRealtimeRefresh("transfer-retirement",100);}};
+  }
+  function ensureCpTransferArchive() {
+    if (!IS_CP_ALAMO || !canRetireTransfer(authState.currentUser) || $("transferRemovedSection")) return;
+    var button=document.createElement("button");button.type="button";button.className="secondary-button transfer-tab";
+    button.dataset.transferTab="transferRemovedSection";button.textContent="Arquivadas / Excluídas";
+    button.addEventListener("click",function(){activateTransferTab("transferRemovedSection");cpTransferArchive.refresh();});
+    $("transferencias").querySelector(".transfer-tabs").appendChild(button);
+    var section=document.createElement("section");section.id="transferRemovedSection";section.className="transfer-section";section.hidden=true;
+    $("transferencias").appendChild(section);cpTransferArchive=createRemovedTransfersView(section,cpTransferRemovalContext());
+  }
+  window.addEventListener("wms:transfer-removed",function(event){
+    if (!IS_CP_ALAMO) return;
+    removeLocalTransferEverywhere(event.detail.id);
+    taskCenterState.tasks=taskCenterState.tasks.filter(function(task){return !(task.referenceType==="TRANSFERENCIA"&&task.referenceId===event.detail.id);});
+    renderTransfers();loadTaskCenterData({force:true});refreshCpWorkflowView();
+  });
 
   function getActiveTransferSectionId() {
     var activeSection = document.querySelector(".transfer-section:not([hidden])");
@@ -10920,6 +10944,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       var target = button.dataset.transferTab;
       var visible = target === "myTransfersSection" || isAdminOrSupervisor();
       if (isPurchasesUser()) visible = ["transferPanelSection", "newTransferSection", "myTransfersSection", "finalizedTransfersSection"].indexOf(target) >= 0;
+      if (target === "transferRemovedSection") visible = IS_CP_ALAMO && canRetireTransfer(authState.currentUser);
       if (target === "taskCenterSection") visible = isAdminOrSupervisor();
       if (target === "transferConferenceSection") visible = false;
       if (target === "establishmentsSection") visible = isAdmin();
@@ -14035,6 +14060,11 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     renderCurrentTransferItem();
     renderAdminTransferProgress(transfer, mode);
     renderTransferFinalReport(transfer);
+    if (IS_CP_ALAMO) {
+      var removalActions=$("transferWorkSection").querySelector(".transfer-retention-actions");
+      if (removalActions) removalActions.remove();
+      mountTransferRemovalActions($("transferWorkSection"),transfer,cpTransferRemovalContext());
+    }
   }
 
   function renderTransferProductList(items) {
@@ -18756,6 +18786,11 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   async function deleteTransferPermanently(id) {
+    if (IS_CP_ALAMO) {
+      var target=getTransferById(id);
+      if (!target) return false;
+      return !!(await requestTransferRemoval(cpTransferRemovalContext(),target,"DELETED"));
+    }
     if (!isAdminOrSupervisor()) {
       showToast("Somente administrador ou supervisor pode excluir transferencia.", "error");
       return false;
@@ -18800,6 +18835,12 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   async function cancelTransfer(id) {
+    if (IS_CP_ALAMO) {
+      var target=getTransferById(id);
+      if (!target) return;
+      await requestTransferRemoval(cpTransferRemovalContext(),target,"ARCHIVED");
+      return;
+    }
     var transfer = getTransferById(id);
     if (!transfer || !canCancelTransfer(transfer)) return;
     if (!window.confirm("Cancelar a transferência " + transferDisplayName(transfer) + "?")) return;
