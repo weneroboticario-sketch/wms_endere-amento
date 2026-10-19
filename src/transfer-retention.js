@@ -13,7 +13,7 @@ export function retentionLabel(row,now=Date.now()) {
 function styles(){
   if(document.getElementById("transferRetentionStyles"))return;
   const link=document.createElement("link");link.id="transferRetentionStyles";link.rel="stylesheet";
-  link.href=new URL("./transfer-retention.css",import.meta.url).href;document.head.append(link);
+  link.href=new URL("./transfer-retention.css?no-inline",import.meta.url).href;document.head.append(link);
 }
 
 export async function requestTransferRemoval(context,row,kind="DELETED") {
