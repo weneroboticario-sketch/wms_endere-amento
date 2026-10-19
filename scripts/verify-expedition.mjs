@@ -39,7 +39,7 @@ try {
     window.view=createExpeditionWorkflow({client:()=>client,user:()=>actor,warehouse:()=>"A",global:()=>false,warehouses:()=>[{code:"A",name:"Origem"},{code:"B",name:"Destino"}],changed(){},diagnostic(){},openTransfer(){}});
     await window.view.refresh();
   });
-  await page.locator("[data-open]").click();
+  await page.getByRole("button",{name:"Abrir",exact:true}).click();
   await page.getByRole("button",{name:"Atribuir expedicao",exact:true}).click();
   await page.getByRole("button",{name:"Confirmar",exact:true}).click();
   await page.waitForFunction(()=>window.verify.row.expedition_stage==="ATRIBUIDA");
@@ -55,8 +55,8 @@ try {
   await page.getByRole("button",{name:"Confirmar",exact:true}).click();
   await page.waitForFunction(()=>window.verify.row.expedition_stage==="ENTREGA_COM_DIVERGENCIA");
   await page.waitForFunction(()=>document.querySelector('[data-detail]').textContent.includes('Entrega com divergencia'));
-  await page.locator("[data-detail]").getByText("Enviadas: 6 | Recebidas: 5 | Diferenca: -1").waitFor();
-  assert.equal(await page.locator("[data-detail]").getByText("Enviadas: 6 | Recebidas: 5 | Diferenca: -1").count(),1);
+  await page.locator(".exp-box-counts dd").filter({hasText:"-1"}).waitFor();
+  assert.deepEqual(await page.locator(".exp-box-counts dd").allTextContents(),["6","6","5","-1"]);
   await page.getByRole("button",{name:"Resolver divergencia",exact:true}).click();
   await page.locator('[data-action-form] textarea').fill("Caixa localizada e recebimento confirmado");
   await page.getByRole("button",{name:"Confirmar",exact:true}).click();
@@ -64,12 +64,15 @@ try {
   await page.waitForFunction(()=>!document.getElementById('expeditionContent').inert);
   const outputDir=process.argv[4]||"test-results/expedition";
   await mkdir(outputDir,{recursive:true});
-  for(const width of [1440,390]){
-    await page.setViewportSize({width,height:1000});
+  for(const width of [1366,390]){
+    await page.setViewportSize({width,height:width===1366?768:844});
     await page.screenshot({path:join(outputDir,`expedition-${width}.png`),fullPage:true});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),`Overflow at ${width}`);
   }
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("[data-detail]").evaluate(el=>el.open),false);
   assert.deepEqual(errors,[]);
   assert.equal((await page.evaluate(()=>window.verify.calls.filter(c=>c.name==="wms_expedition_action"))).length,5);
   console.log("Desktop/mobile expedition UI: assignment, collection, transit, 6/5 divergence and resolution verified; backend separately covered by database tests.");
 } finally {await browser?.close();await server?.close();}
+
