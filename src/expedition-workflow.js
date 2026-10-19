@@ -1,5 +1,6 @@
 import { escapeHtml as e, randomId } from "./utils.js";
 import { decorateWorkflow } from "./cpalamo-appearance.js";
+import { mountTransferRemovalActions } from "./transfer-retention.js";
 import { createElement, Truck, ClipboardList, Users, PackageCheck, TriangleAlert, Search, RefreshCw, X, FileText, History, ArrowLeftRight, Package, Clock } from "lucide";
 
 export const EXPEDITION_LABELS = Object.freeze({
@@ -37,7 +38,7 @@ export function canCancelExpedition(row,user) {
     && !["CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO","FINALIZADA"].includes(row.status)
     && row.invoice_stage!=="FINALIZADA" && row.expedition_stage!=="ENTREGUE";
 }
-const FIELDS="id,status,fiscal_reason,fiscal_revision,codigo_transferencia,warehouse_code,origem_codigo_loja,destino_codigo_loja,destino_nome,invoice_stage,invoice_number,invoice_file_path,invoice_released_at,expedition_stage,expedition_responsible_id,expedition_responsible_name,expedition_revision,delivery_deadline,delivered_at,delivery_resolved_at,collected_at,transit_at,dispatched_boxes,received_boxes,total_caixas,final_box_count,total_boxes,delivery_reason";
+const FIELDS="id,status,is_deleted,updated_at,fiscal_reason,fiscal_revision,codigo_transferencia,warehouse_code,origem_codigo_loja,destino_codigo_loja,destino_nome,invoice_stage,invoice_number,invoice_file_path,invoice_released_at,expedition_stage,expedition_responsible_id,expedition_responsible_name,expedition_revision,delivery_deadline,delivered_at,delivery_resolved_at,collected_at,transit_at,dispatched_boxes,received_boxes,total_caixas,final_box_count,total_boxes,delivery_reason";
 const date=value=>value?new Date(value).toLocaleString("pt-BR",{timeZone:"America/Cuiaba"}):"-";
 export function expeditionBoxCount(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -86,6 +87,10 @@ function slaHtml(row, attention) {
 
 export function createExpeditionWorkflow(context) {
   const root=document.getElementById("expeditionContent");
+  window.addEventListener("wms:transfer-removed",event=>{
+    if(selected?.id===event.detail.id){detailGeneration++;detail.close();selected=null;}
+    if(event.detail.warehouse_code===warehouse())refresh();
+  });
   if (!document.getElementById("expeditionVisualStyles")) {
     const style = document.createElement("link"); style.id = "expeditionVisualStyles"; style.rel = "stylesheet";
     style.href = new URL("./expedition-workflow.css", import.meta.url).href; document.head.append(style);
@@ -235,6 +240,7 @@ export function createExpeditionWorkflow(context) {
         <section id="exp-panel-documents" role="tabpanel" aria-labelledby="exp-tab-documents" data-detail-panel="documents" hidden><section class="exp-detail-section"><h4><span data-exp-icon="document"></span>Nota fiscal</h4><dl class="exp-summary"><div><dt>Número da NF</dt><dd>${e(selected.invoice_number||"—")}</dd></div><div><dt>Documento</dt><dd>${selected.invoice_file_path?"PDF da nota fiscal":"Documento não disponível"}</dd></div></dl><button type="button" class="secondary-button" data-pdf ${selected.invoice_file_path?"":"disabled"}><span data-exp-icon="document"></span>Abrir NF</button></section></section>
         </div><footer class="exp-drawer-footer"><div class="exp-primary-actions">${actions.map(([action,label])=>`<button type="button" class="${action===primary?"primary-button":"secondary-button"}" data-action="${action}">${label}</button>`).join("")}</div><div class="exp-secondary-actions"><button type="button" class="secondary-button" data-transfer><span data-exp-icon="transfer"></span>Ver transferência</button><button type="button" class="secondary-button" data-show-history><span data-exp-icon="history"></span>Ver histórico</button></div></footer>`;
       setDetailTab(detailTab);renderTimeline();renderRows();decorateExpedition(detail);detail.querySelector("[data-close]").focus({preventScroll:true});
+      mountTransferRemovalActions(detail.querySelector("footer"),selected,context);
       if(canCancelExpedition(selected,context.user())){
         const button=document.createElement("button");button.type="button";button.className="secondary-button exp-cancel-transfer";
         button.dataset.action="CANCEL_TRANSFER";button.textContent="Cancelar transferência";

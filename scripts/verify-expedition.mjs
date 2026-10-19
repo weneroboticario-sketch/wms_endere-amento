@@ -31,6 +31,12 @@ try {
         row.status="CANCELADA";row.fiscal_reason=p.p_reason;row.fiscal_revision=(row.fiscal_revision||0)+1;
         return {data:{...row},error:null};
       }
+      if(name==="wms_retire_transfer"){
+        row.is_deleted=true;row.removal_kind=p.p_kind;row.removal_reason=p.p_reason;
+        row.deleted_at=new Date().toISOString();row.deleted_by_name="Supervisor";
+        row.purge_after=p.p_kind==="DELETED"?new Date(Date.now()+60*86400000).toISOString():null;
+        return {data:{...row},error:null};
+      }
       if(name==="wms_transfer_executive_summary")return {data:{created:1,open:1,otd_percent:null,daily:[{day:"2026-10-14",transfers:1,skus:3,units:6,boxes:6}],statuses:[],top_origins:[],top_destinations:[]}};
       const stages={ASSIGN:"ATRIBUIDA",COLLECT:"COLETADA",TRANSIT:"EM_TRANSITO",DELIVER:"ENTREGA_COM_DIVERGENCIA",RESOLVE:"ENTREGUE"};
       row.expedition_stage=stages[p.p_action];row.expedition_revision++;
@@ -40,7 +46,8 @@ try {
       if(p.p_action==="RESOLVE")row.invoice_stage="FINALIZADA";
       return {data:{...row},error:null};
     }};
-    window.view=createExpeditionWorkflow({client:()=>client,user:()=>actor,warehouse:()=>"A",global:()=>false,warehouses:()=>[{code:"A",name:"Origem"},{code:"B",name:"Destino"}],changed(){},diagnostic(){},openTransfer(){}});
+    window.verify.context={client:()=>client,user:()=>actor,warehouse:()=>"A",global:()=>false,warehouses:()=>[{code:"A",name:"Origem"},{code:"B",name:"Destino"}],changed(){},diagnostic(){},openTransfer(){}};
+    window.view=createExpeditionWorkflow(window.verify.context);
     await window.view.refresh();
   });
   await page.getByRole("button",{name:"Abrir",exact:true}).click();
@@ -85,6 +92,23 @@ try {
     await page.screenshot({path:join(outputDir,`expedition-${width}.png`),fullPage:true});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),`Overflow at ${width}`);
   }
+  await page.getByRole("button",{name:"Excluir transferência",exact:true}).click();
+  await page.getByRole("button",{name:"Confirmar exclusão",exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.verify.calls.filter(c=>c.name==="wms_retire_transfer").length),0);
+  await page.locator('.transfer-retention-dialog textarea').fill("Processo de teste duplicado");
+  await page.screenshot({path:join(outputDir,"retention-confirm-mobile.png"),fullPage:false});
+  await page.getByRole("button",{name:"Confirmar exclusão",exact:true}).click();
+  await page.waitForFunction(()=>window.verify.row.is_deleted===true&&!document.querySelector('[data-detail]').open);
+  assert.equal(await page.getByRole("button",{name:"Abrir",exact:true}).count(),0);
+  await page.evaluate(async()=>{
+    const {createRemovedTransfersView}=await import("/src/transfer-retention.js");
+    const root=document.createElement("section");root.id="transferRemovedSection";document.body.append(root);
+    await createRemovedTransfersView(root,window.verify.context).refresh();
+  });
+  await page.locator("#transferRemovedSection").getByText(/Exclusão definitiva em 60 dia\(s\)/).waitFor();
+  assert.equal(await page.locator("#transferRemovedSection").getByText("Processo de teste duplicado",{exact:true}).count(),1);
+  await page.screenshot({path:join(outputDir,"retention-bin-mobile.png"),fullPage:true});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),"Retention view overflow");
   await page.keyboard.press("Escape");
   assert.equal(await page.locator("[data-detail]").evaluate(el=>el.open),false);
   assert.deepEqual(errors,[]);
