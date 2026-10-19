@@ -1,4 +1,5 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import { createTransferInvoiceController } from "./src/transfer-invoice.js";
 import JsBarcode from "jsbarcode";
 import {
   AUTH_EMAIL_DOMAIN,
@@ -11815,6 +11816,18 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     }
   }
 
+  var transferInvoiceController;
+  function transferInvoices() {
+    if (!transferInvoiceController) transferInvoiceController = createTransferInvoiceController({
+      client: function () { return supabaseDb; },
+      transfer: getTransferById,
+      allowed: isAdminOrSupervisor,
+      actor: function () { return authState.currentUser && authState.currentUser.id; },
+      refresh: async function () { await loadTransferData(); renderTransfers(); showToast("NF registrada e transferência finalizada.", "success"); }
+    });
+    return transferInvoiceController;
+  }
+
   function renderFinalizedTransfers() {
     if (!$("finalizedTransferRows")) return;
     if (!isAdminOrSupervisor()) {
@@ -11826,6 +11839,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     $("finalizedTransferRows").innerHTML = visibleTransfers.length
       ? visibleTransfers.map(finalizedTransferRowHtml).join("") + renderTableLimitNotice(transfers.length, visibleTransfers.length, 9, "transferências finalizadas")
       : "<tr><td colspan=\"9\">Nenhuma transferência finalizada.</td></tr>";
+    transferInvoices().decorate();
   }
 
   function renderListLimitNotice(total, shown, label) {
@@ -11860,7 +11874,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
       "<td>" + formatDateTime(report.finishedAt) + "</td>",
-      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (canRequestTransferRevalidation(transfer) ? "<button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar</button>" : "") + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
+      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"primary-button\" data-transfer-invoice=\"" + escapeHtml(transfer.id) + "\" type=\"button\">Registrar NF</button><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (canRequestTransferRevalidation(transfer) ? "<button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar</button>" : "") + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
       "</tr>"
     ].join("");
   }
@@ -18809,6 +18823,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferInvoice) { await transferInvoices().open(button.dataset.transferInvoice); return; }
     if (button.dataset.transferLoadMore !== undefined) {
       transferState.panelRenderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_PAGE_SIZE) + TRANSFER_PANEL_PAGE_SIZE;
       renderTransferPanel();
