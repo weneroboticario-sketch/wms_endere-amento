@@ -6070,7 +6070,7 @@ body.role-atendente .replenishment-layout {
 }
 #transferencias .table-wrap table td::before { display: none; }
 #transferencias .table-wrap table td:nth-child(2) { min-width: 180px; }
-#transferencias .table-wrap table td.transfer-location-cell { min-width: 220px; }
+#transferencias .table-wrap table td.transfer-location-cell { min-width: 150px; }
 .transfer-packed-exports { margin: 12px 0; flex-wrap: wrap; }
 
 #fiscalWorkflowContent, #reverseLogisticsContent { display: grid; gap: 16px; min-width: 0; width: 100%; }
