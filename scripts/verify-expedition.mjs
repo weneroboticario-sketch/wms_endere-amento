@@ -20,13 +20,17 @@ try {
     const actor={id:"actor",name:"Supervisor",role:"SUPERVISOR"};
     window.verify={row,actor,calls:[]};
     const client={from(table){
-      const q={filters:[],singleRow:false,select(){return this;},eq(k,v){this.filters.push([k,v]);return this;},in(){return this;},order(){return this;},range(){return this;},single(){this.singleRow=true;return this;},maybeSingle(){this.singleRow=true;return this;},then(resolve){
+      const q={filters:[],singleRow:false,select(){return this;},eq(k,v){this.filters.push([k,v]);return this;},not(){return this;},in(){return this;},order(){return this;},range(){return this;},single(){this.singleRow=true;return this;},maybeSingle(){this.singleRow=true;return this;},then(resolve){
         let data=table==="wms_transfers"?[row]:table==="wms_users"?[{...actor,default_warehouse_code:"A"}]:[];
         if(table==="wms_transfers")data=data.filter(r=>this.filters.every(([k,v])=>!(k in r)||r[k]===v));
         return Promise.resolve({data:this.singleRow?data[0]||null:data,error:null}).then(resolve);
       }};return q;
     },async rpc(name,p){
       window.verify.calls.push({name,p});
+      if(name==="wms_cancel_expedition_transfer"){
+        row.status="CANCELADA";row.fiscal_reason=p.p_reason;row.fiscal_revision=(row.fiscal_revision||0)+1;
+        return {data:{...row},error:null};
+      }
       if(name==="wms_transfer_executive_summary")return {data:{created:1,open:1,otd_percent:null,daily:[{day:"2026-10-14",transfers:1,skus:3,units:6,boxes:6}],statuses:[],top_origins:[],top_destinations:[]}};
       const stages={ASSIGN:"ATRIBUIDA",COLLECT:"COLETADA",TRANSIT:"EM_TRANSITO",DELIVER:"ENTREGA_COM_DIVERGENCIA",RESOLVE:"ENTREGUE"};
       row.expedition_stage=stages[p.p_action];row.expedition_revision++;
@@ -39,6 +43,18 @@ try {
     window.view=createExpeditionWorkflow({client:()=>client,user:()=>actor,warehouse:()=>"A",global:()=>false,warehouses:()=>[{code:"A",name:"Origem"},{code:"B",name:"Destino"}],changed(){},diagnostic(){},openTransfer(){}});
     await window.view.refresh();
   });
+  await page.getByRole("button",{name:"Abrir",exact:true}).click();
+  await page.getByRole("button",{name:"Cancelar transferência",exact:true}).click();
+  await page.locator('[data-action-form] textarea').fill(" ");
+  await page.getByRole("button",{name:"Confirmar cancelamento",exact:true}).click();
+  assert.equal(await page.evaluate(()=>window.verify.calls.filter(c=>c.name==="wms_cancel_expedition_transfer").length),0);
+  await page.locator('[data-action-form] textarea').fill("Solicitacao duplicada");
+  await page.getByRole("button",{name:"Confirmar cancelamento",exact:true}).click();
+  await page.waitForFunction(()=>window.verify.row.status==="CANCELADA"&&!document.getElementById("expeditionContent").inert);
+  assert.equal(await page.getByRole("button",{name:"Cancelar transferência",exact:true}).count(),0);
+  assert.equal(await page.locator(".exp-summary").getByText("Solicitacao duplicada",{exact:true}).count(),1);
+  await page.keyboard.press("Escape");
+  await page.evaluate(async()=>{window.verify.row.status="LIBERADA_PARA_ENVIO";await window.view.refresh();});
   await page.getByRole("button",{name:"Abrir",exact:true}).click();
   await page.getByRole("button",{name:"Atribuir expedicao",exact:true}).click();
   await page.getByRole("button",{name:"Confirmar",exact:true}).click();
@@ -75,4 +91,5 @@ try {
   assert.equal((await page.evaluate(()=>window.verify.calls.filter(c=>c.name==="wms_expedition_action"))).length,5);
   console.log("Desktop/mobile expedition UI: assignment, collection, transit, 6/5 divergence and resolution verified; backend separately covered by database tests.");
 } finally {await browser?.close();await server?.close();}
+
 

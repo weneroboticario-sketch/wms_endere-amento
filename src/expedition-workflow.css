@@ -64,8 +64,10 @@
 .exp-drawer footer { padding:16px 20px; border-top:1px solid #e2e8f0; background:white; }
 .exp-primary-actions,.exp-secondary-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .exp-secondary-actions { margin-top:8px; }
+.exp-secondary-actions .exp-cancel-transfer { flex-basis:100%; color:#b12636; border-color:#ebbdc4; background:#fff5f6; }
 .exp-primary-actions button,.exp-secondary-actions button { flex:1; min-height:40px; }
 .exp-executive-disclosure { padding:16px 0; }
 @media(max-width:1000px) { .exp-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } .exp-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:640px) { .exp-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .exp-kpis button { padding:12px; } .exp-filters { grid-template-columns:minmax(0,1fr); } .exp-heading h2 { font-size:22px; } #expedition .expedition-workspace dialog.exp-drawer[open] { width:100vw; } .exp-drawer-body { padding:0 16px 16px; } .exp-action-form input,.exp-action-form select,.exp-action-form textarea { font-size:16px; } .exp-table { min-width:0; } .exp-list-heading { align-items:flex-start; flex-direction:column; } }
+
 
