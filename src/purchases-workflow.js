@@ -11,6 +11,10 @@ export const STOCK_FINAL_STATUSES = ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_D
 export const FISCAL_PENDING_STATUSES = ["PRONTA_PARA_NOTA", "NF_EM_PREPARACAO", "NF_ANEXADA", "LIBERADA_PARA_ENVIO", "DESPACHADA", "RECEBIDA", "CORRECAO_SOLICITADA"];
 export const PROCESS_FINAL_STATUSES = ["FINALIZADA", "CANCELADA", "ARQUIVADA_POR_UNIFICACAO"];
 
+export function includeStockReadyTransfers(filter, role) {
+  return ["ADMINISTRADOR", "SUPERVISOR"].includes(role) && ["mine", "open", "PRONTA_PARA_NOTA"].includes(filter);
+}
+
 export function fiscalQueueStages(filter, role) {
   if (filter === "closed") return ["FINALIZADA"];
   if (filter === "open") return null;
@@ -96,7 +100,8 @@ export function createPurchasesWorkflow(context) {
       const age = Math.max(0, Math.floor((Date.now() - new Date(row.status_changed_at || row.updated_at).getTime()) / 60000));
       const stageTone = row.invoice_stage === "PRONTA_PARA_NOTA" ? "warning" : row.invoice_stage === "CORRECAO_SOLICITADA" ? "danger" : ["NF_ANEXADA","FINALIZADA"].includes(row.invoice_stage) ? "success" : "info";
       const minutes = age < 60 ? age + " min" : age < 1440 ? Math.floor(age/60) + "h " + age%60 + "min" : Math.floor(age/1440) + "d " + Math.floor(age%1440/60) + "h";
-      return `<tr><td data-label="Transferencia"><strong class="fiscal-code">${e(row.codigo_transferencia || row.codigo_material || row.id)}</strong><small>${e(row.request_origin)} | ${buyerStage ? "Compras" : "Estoque / Expedicao"}</small></td><td data-label="Rota">${e(row.warehouse_code)}<small>${e(row.domain === "TRANSFERENCIA" ? row.destino_nome || "-" : row.nome_material || "Reposicao")}</small></td><td data-label="SKUs">${totals.skus}</td><td data-label="Unidades">${totals.units}</td><td data-label="Caixas">${Number(row.total_caixas || 0)}</td><td data-label="Estoque finalizado">${row.packing_finished_at ? e(new Date(row.packing_finished_at).toLocaleString("pt-BR")) : "-"}<small>${e(row.invoice_number || "Sem NF")} | ${row.invoice_value == null ? "-" : money(row.invoice_value)}</small></td><td data-label="Tempo"><span class="fiscal-time">${minutes}</span></td><td data-label="Status"><span class="status-badge status-${stageTone}">${e(FISCAL_LABELS[row.invoice_stage] || row.status)}</span></td><td data-label="Acao"><button class="primary-button" data-fiscal-open="${index}" type="button">Abrir</button></td></tr>`;
+      const needsHandoff = row.domain === "TRANSFERENCIA" && row.requires_invoice === false && STOCK_FINAL_STATUSES.includes(row.status);
+      return `<tr><td data-label="Transferencia"><strong class="fiscal-code">${e(row.codigo_transferencia || row.codigo_material || row.id)}</strong><small>${e(row.request_origin)} | ${buyerStage ? "Compras" : "Estoque / Expedicao"}</small></td><td data-label="Rota">${e(row.warehouse_code)}<small>${e(row.domain === "TRANSFERENCIA" ? row.destino_nome || "-" : row.nome_material || "Reposicao")}</small></td><td data-label="SKUs">${totals.skus}</td><td data-label="Unidades">${totals.units}</td><td data-label="Caixas">${Number(row.total_caixas || 0)}</td><td data-label="Estoque finalizado">${row.packing_finished_at ? e(new Date(row.packing_finished_at).toLocaleString("pt-BR")) : "-"}<small>${e(row.invoice_number || "Sem NF")} | ${row.invoice_value == null ? "-" : money(row.invoice_value)}</small></td><td data-label="Tempo"><span class="fiscal-time">${minutes}</span></td><td data-label="Status"><span class="status-badge status-${stageTone}">${e(needsHandoff ? "Estoque pronto para NF" : FISCAL_LABELS[row.invoice_stage] || row.status)}</span></td><td data-label="Acao"><button class="primary-button" data-fiscal-open="${index}" type="button">${needsHandoff ? "Encaminhar para NF" : "Abrir"}</button></td></tr>`;
     }).join("") : '<tr><td colspan="9"><p class="empty-state">Nenhum processo neste filtro.</p></td></tr>';
     root.querySelectorAll("[data-fiscal-tab]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.fiscalTab===document.getElementById("fiscalQueueFilter").value)));
     document.getElementById("fiscalPrevious").disabled = page === 0;
@@ -116,12 +121,14 @@ export function createPurchasesWorkflow(context) {
       const buyer = ["COMPRAS", "ADMINISTRADOR", "SUPERVISOR"].includes(context.user().role);
       const stages = fiscalQueueStages(filter, context.user().role);
       const search = document.getElementById("fiscalSearch").value.trim().replace(/[^\p{L}\p{N} _-]/gu, "");
-      const responses = await Promise.all(["wms_transfers", "wms_replenishment_requests"].map(async (table) => {
+      const sources = ["wms_transfers", "wms_replenishment_requests"].map(table => ({ table, handoff: false }));
+      if (includeStockReadyTransfers(filter, context.user().role)) sources.push({ table: "wms_transfers", handoff: true });
+      const responses = await Promise.all(sources.map(async ({table, handoff}) => {
         if (filter === "without_nf" && table !== "wms_transfers") return [];
-        let query = context.client().from(table).select("id,warehouse_code,status,request_origin,invoice_stage,status_changed_at,updated_at,invoice_number,invoice_value,invoice_snapshot,invoice_file_name" + (table === "wms_transfers" ? ",codigo_transferencia,destino_nome,total_caixas,packing_finished_at" : ",codigo_material,nome_material"))
-          .eq("warehouse_code", warehouse).eq("requires_invoice", filter !== "without_nf").eq("is_deleted", false).not("status", "in", '("CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO")');
+        let query = context.client().from(table).select("id,warehouse_code,status,requires_invoice,request_origin,invoice_stage,status_changed_at,updated_at,invoice_number,invoice_value,invoice_snapshot,invoice_file_name" + (table === "wms_transfers" ? ",codigo_transferencia,destino_nome,total_caixas,packing_finished_at" : ",codigo_material,nome_material"))
+          .eq("warehouse_code", warehouse).eq("requires_invoice", filter !== "without_nf" && !handoff).eq("is_deleted", false).not("status", "in", '("CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO")');
         if (search) query = query.or((table === "wms_transfers" ? ["codigo_transferencia", "invoice_number", "destino_nome"] : ["codigo_material", "invoice_number", "nome_material"]).map(field => `${field}.ilike.%${search}%`).join(","));
-        if (filter === "without_nf") query = query.in("status", STOCK_FINAL_STATUSES).eq("invoice_stage", "").is("sent_at", null);
+        if (filter === "without_nf" || handoff) query = query.in("status", STOCK_FINAL_STATUSES).eq("invoice_stage", "").is("sent_at", null);
         else if (stages) query = query.in("invoice_stage", stages); else query = query.neq("invoice_stage", "FINALIZADA");
         const result = await query.order("updated_at", { ascending: false }).range(page * 30, page * 30 + 29);
         if (result.error) throw result.error;
@@ -130,6 +137,11 @@ export function createPurchasesWorkflow(context) {
       if (warehouse !== context.warehouse()) return;
       rows = responses.flat().sort((a, b) => b.updated_at.localeCompare(a.updated_at)); render();
       const summary = await context.client().rpc("wms_fiscal_summary", { p_warehouse: warehouse });
+      if (["ADMINISTRADOR", "SUPERVISOR"].includes(context.user().role) && !summary.error) {
+        const handoff = await context.client().from("wms_transfers").select("id", { count: "exact", head: true }).eq("warehouse_code", warehouse).eq("requires_invoice", false).eq("is_deleted", false).in("status", STOCK_FINAL_STATUSES).eq("invoice_stage", "").is("sent_at", null);
+        if (handoff.error) throw handoff.error;
+        summary.data["Aguardando NF"] = Number(summary.data["Aguardando NF"] || 0) + Number(handoff.count || 0);
+      }
       const metricOrder = ["Aguardando NF","Em preparacao","NF anexadas hoje","Liberadas hoje","Valor faturado hoje"];
       if (!summary.error) document.getElementById("fiscalMetrics").innerHTML = Object.entries(summary.data || {}).sort(([a],[b])=>metricOrder.indexOf(a)-metricOrder.indexOf(b)).map(([label, total]) => `<article class="stock-summary-card"><span>${e(label)}</span><strong>${label.startsWith("Valor") ? money(total) : Number(total)}</strong></article>`).join("");
       decorateMetrics(document.getElementById("fiscalMetrics"));
@@ -380,5 +392,12 @@ export function createPurchasesWorkflow(context) {
     const tabs=[...drawer.querySelectorAll("[data-fiscal-detail-tab]")],index=tabs.indexOf(event.target);
     const target=tabs[(index+(event.key==="ArrowRight"?1:tabs.length-1))%tabs.length];target.focus();target.click();
   });
-  return { refresh, open, summary: () => context.client().rpc("wms_fiscal_summary", { p_warehouse: context.warehouse() }) };
+  async function openTransferInvoice(id, warehouse) {
+    const unit = document.getElementById("fiscalUnit");
+    if (unit) unit.value = warehouse;
+    if (context.warehouse() !== warehouse) throw new Error("Selecione o estoque da transferencia para acessar a NF.");
+    await open({ id, domain: "TRANSFERENCIA", table: "wms_transfers" });
+    drawer.querySelector('[data-fiscal-detail-tab="invoice"]').click();
+  }
+  return { refresh, open, openTransferInvoice, summary: () => context.client().rpc("wms_fiscal_summary", { p_warehouse: context.warehouse() }) };
 }

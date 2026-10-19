@@ -2,7 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { workflowDatabase } from "./purchases-workflow-db.test.js";
-import { fiscalQueueStages } from "../src/purchases-workflow.js";
+import { fiscalQueueStages, fiscalActions, includeStockReadyTransfers } from "../src/purchases-workflow.js";
+
+test("administrator can access invoice actions and stock-ready handoffs without granting them to operators", () => {
+  for (const role of ["ADMINISTRADOR", "SUPERVISOR"]) {
+    for (const filter of ["mine", "open", "PRONTA_PARA_NOTA"]) assert.equal(includeStockReadyTransfers(filter, role), true);
+    assert.ok(fiscalActions("PRONTA_PARA_NOTA", role, "TRANSFERENCIA").some(([action]) => action === "PREPARE"));
+    assert.ok(fiscalActions("NF_ANEXADA", role, "TRANSFERENCIA").some(([action]) => action === "RELEASE"));
+    assert.equal(includeStockReadyTransfers("NF_ANEXADA", role), false);
+  }
+  assert.equal(includeStockReadyTransfers("mine", "OPERADOR"), false);
+  assert.equal(includeStockReadyTransfers("mine", "COMPRAS"), false);
+});
 
 test("managers see fiscal handoffs, buyers do not get physical responsibilities", () => {
   for (const role of ["ADMINISTRADOR", "SUPERVISOR", "COMPRAS"]) {

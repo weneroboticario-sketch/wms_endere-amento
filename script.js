@@ -6757,6 +6757,16 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   var cpWorkflowViews = {};
   var cpProfileCapabilities = [];
   var cpWorkflowLoading = {};
+  async function openCpTransferInvoice(id) {
+    if (!IS_CP_ALAMO || !isAdminOrSupervisor()) return;
+    var transfer = getTransferById(id);
+    if (!transfer || !transferBelongsToActiveWarehouse(transfer)) return;
+    try {
+      await showScreen("fiscalWorkflow");
+      if (!cpWorkflowViews.fiscalWorkflow) throw new Error("Não foi possível abrir Compras / NF.");
+      await cpWorkflowViews.fiscalWorkflow.openTransferInvoice(id, transfer.warehouseCode || activeWarehouseCode());
+    } catch (error) { showToast(formatSupabaseError(error), "error"); }
+  }
   async function openCpWorkflowScreen(screenId) {
     if (!IS_CP_ALAMO || !canAccessScreen(screenId)) return;
     await ensureWarehousesLoaded();
@@ -12189,7 +12199,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       "<td>" + report.stats.totalItems + "</td>",
       "<td>" + report.divergences.length + "</td>",
       "<td>" + formatDateTime(report.finishedAt) + "</td>",
-      "<td><div class=\"row-actions transfer-action-stack\"><button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (canRequestTransferRevalidation(transfer) ? "<button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar</button>" : "") + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
+      "<td><div class=\"row-actions transfer-action-stack\">" + (IS_CP_ALAMO && isAdminOrSupervisor() ? "<button class=\"primary-button\" data-transfer-fiscal=\"" + escapeHtml(transfer.id) + "\" type=\"button\">Nota Fiscal</button>" : "") + "<button class=\"edit-small\" data-transfer-open=\"" + transfer.id + "\" type=\"button\">Ver detalhes</button>" + (canRequestTransferRevalidation(transfer) ? "<button class=\"edit-small\" data-transfer-revalidate=\"" + transfer.id + "\" type=\"button\">Revalidar</button>" : "") + (isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "") + "</div></td>",
       "</tr>"
     ].join("");
   }
@@ -19168,6 +19178,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferFiscal) { await openCpTransferInvoice(button.dataset.transferFiscal); return; }
     if (button.dataset.transferLoadMore !== undefined) {
       transferState.panelRenderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_PAGE_SIZE) + TRANSFER_PANEL_PAGE_SIZE;
       renderTransferPanel();
