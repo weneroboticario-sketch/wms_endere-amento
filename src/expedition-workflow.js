@@ -18,6 +18,7 @@ export function deliverySla(row, now = Date.now(), attention = 80) {
 }
 
 export function expeditionActions(row,user) {
+  if (["CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO"].includes(row.status)) return [];
   if (user.role==="COMPRAS") return (!row.expedition_stage&&row.invoice_stage==="LIBERADA_PARA_ENVIO")||row.expedition_stage==="ATRIBUIDA" ? [["ASSIGN",row.expedition_stage?"Reatribuir":"Atribuir expedicao"]] : [];
   if (!["ADMINISTRADOR","SUPERVISOR","OPERADOR"].includes(user.role)) return [];
   const manager=["ADMINISTRADOR","SUPERVISOR"].includes(user.role);
@@ -31,7 +32,12 @@ export function expeditionActions(row,user) {
   return [];
 }
 
-const FIELDS="id,codigo_transferencia,warehouse_code,origem_codigo_loja,destino_codigo_loja,destino_nome,invoice_stage,invoice_number,invoice_file_path,invoice_released_at,expedition_stage,expedition_responsible_id,expedition_responsible_name,expedition_revision,delivery_deadline,delivered_at,delivery_resolved_at,collected_at,transit_at,dispatched_boxes,received_boxes,total_caixas,final_box_count,total_boxes,delivery_reason";
+export function canCancelExpedition(row,user) {
+  return ["ADMINISTRADOR","SUPERVISOR","COMPRAS"].includes(user?.role)
+    && !["CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO","FINALIZADA"].includes(row.status)
+    && row.invoice_stage!=="FINALIZADA" && row.expedition_stage!=="ENTREGUE";
+}
+const FIELDS="id,status,fiscal_reason,fiscal_revision,codigo_transferencia,warehouse_code,origem_codigo_loja,destino_codigo_loja,destino_nome,invoice_stage,invoice_number,invoice_file_path,invoice_released_at,expedition_stage,expedition_responsible_id,expedition_responsible_name,expedition_revision,delivery_deadline,delivered_at,delivery_resolved_at,collected_at,transit_at,dispatched_boxes,received_boxes,total_caixas,final_box_count,total_boxes,delivery_reason";
 const date=value=>value?new Date(value).toLocaleString("pt-BR",{timeZone:"America/Cuiaba"}):"-";
 export function expeditionBoxCount(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -58,7 +64,7 @@ export function expeditionTimeline(row, events = []) {
   }
   return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
-const QUEUES = [["all", "Todas"], ["", "Aguardando despacho"], ["ATRIBUIDA", "Atribuídas"], ["COLETADA", "Coletadas"], ["EM_TRANSITO", "Em trânsito"], ["ENTREGUE", "Entregues"], ["ENTREGA_COM_DIVERGENCIA", "Divergências"]];
+const QUEUES = [["all", "Todas"], ["", "Aguardando despacho"], ["ATRIBUIDA", "Atribuídas"], ["COLETADA", "Coletadas"], ["EM_TRANSITO", "Em trânsito"], ["ENTREGUE", "Entregues"], ["ENTREGA_COM_DIVERGENCIA", "Divergências"], ["CANCELADA", "Canceladas"]];
 const KPIS = [["", "Aguardando despacho", "pending"], ["ATRIBUIDA", "Atribuídas", "assigned"], ["EM_TRANSITO", "Em trânsito", "transit"], ["ENTREGUE", "Entregues", "delivered"], ["ENTREGA_COM_DIVERGENCIA", "Divergências", "divergence"]];
 const ICONS = { pending: ClipboardList, assigned: Users, transit: Truck, delivered: PackageCheck, divergence: TriangleAlert, search: Search, refresh: RefreshCw, close: X, document: FileText, history: History, transfer: ArrowLeftRight, boxes: Package, clock: Clock };
 function decorateExpedition(root) {
@@ -67,11 +73,13 @@ function decorateExpedition(root) {
   });
 }
 function expeditionBadge(row) {
+  if(row.status==="CANCELADA")return '<span class="exp-badge exp-divergence">Cancelada</span>';
   const stage = row.expedition_stage || "";
   const tone = ({ "": "pending", ATRIBUIDA: "assigned", COLETADA: "assigned", EM_TRANSITO: "transit", ENTREGUE: "delivered", ENTREGA_COM_DIVERGENCIA: "divergence" })[stage] || "pending";
   return `<span class="exp-badge exp-${tone}">${e(EXPEDITION_LABELS[stage] || stage)}</span>`;
 }
 function slaHtml(row, attention) {
+  if(row.status==="CANCELADA")return '<span class="exp-sla">Cancelada</span>';
   const label = deliverySla(row, Date.now(), attention);
   return `<span class="exp-sla exp-sla-${label === "Atrasado" ? "late" : label === "Atencao" ? "attention" : label === "No prazo" ? "ok" : "unknown"}">${e(label === "Atencao" ? "Atenção" : label)}</span>`;
 }
@@ -121,7 +129,7 @@ export function createExpeditionWorkflow(context) {
   async function refreshMetrics(){
     const ticket=++metricGeneration,w=warehouse(),actor=context.user()?.id;
     const results=await Promise.all(KPIS.map(async([stage])=>{
-      let query=baseQuery("id").eq("expedition_stage",stage);
+      let query=baseQuery("id").not("status","in",'("CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO")').eq("expedition_stage",stage);
       query=stage===""?query.eq("invoice_stage","LIBERADA_PARA_ENVIO"):query.in("invoice_stage",["LIBERADA_PARA_ENVIO","DESPACHADA","RECEBIDA","FINALIZADA"]);
       const result=await query;return result;
     }));
@@ -148,7 +156,11 @@ export function createExpeditionWorkflow(context) {
     try {
       let query=baseQuery(FIELDS);
       const queue=find("[data-queue]").value;
-      if(queue!=="all")query=query.eq("expedition_stage",queue);
+      if(queue==="CANCELADA")query=query.eq("status","CANCELADA");
+      else {
+        query=query.not("status","in",'("CANCELADA","CANCELADO","ARQUIVADA_POR_UNIFICACAO")');
+        if(queue!=="all")query=query.eq("expedition_stage",queue);
+      }
       if(queue==="")query=query.eq("invoice_stage","LIBERADA_PARA_ENVIO");
       else query=query.in("invoice_stage",["LIBERADA_PARA_ENVIO","DESPACHADA","RECEBIDA","FINALIZADA"]);
       const search=find("[data-search]").value.trim().replace(/[,().%_*\\]/g,"");
@@ -172,7 +184,7 @@ export function createExpeditionWorkflow(context) {
     detail.querySelectorAll("[data-detail-panel]").forEach(panel=>panel.hidden=panel.dataset.detailPanel!==value);
     detail.querySelectorAll("[data-detail-tab]").forEach(button=>{button.setAttribute("aria-selected",String(button.dataset.detailTab===value));button.tabIndex=button.dataset.detailTab===value?0:-1;});
   }
-  const timelineLabel=stage=>stage==="RESOLVIDA"?"Divergência resolvida":stage==="REOPENED"?"Expedição reaberta":EXPEDITION_LABELS[stage]||stage.replaceAll("_"," ");
+  const timelineLabel=stage=>stage==="CANCELLED"?"Transferência cancelada":stage==="RESOLVIDA"?"Divergência resolvida":stage==="REOPENED"?"Expedição reaberta":EXPEDITION_LABELS[stage]||stage.replaceAll("_"," ");
   function renderTimeline(){
     if(!selected||!find("[data-timeline]"))return;
     const timeline=expeditionTimeline(selected,eventRows);
@@ -210,6 +222,7 @@ export function createExpeditionWorkflow(context) {
       const difference=expeditionBoxDifference(selected);
       const itemRows=Array.isArray(selected.invoice_snapshot)?selected.invoice_snapshot:[];
       const info=[["Origem → Destino",`${selected.origem_codigo_loja||selected.warehouse_code} → ${selected.destino_codigo_loja||selected.destino_nome||"—"}`],["NFe",selected.invoice_number||"—"],["Responsável",selected.expedition_responsible_name||"Não atribuída"],["Etapa",EXPEDITION_LABELS[selected.expedition_stage]||selected.expedition_stage],["Prazo",date(selected.delivery_deadline)],["Data da coleta",date(selected.collected_at)]];
+      if(selected.status==="CANCELADA")info.push(["Cancelamento",selected.fiscal_reason||"—"]);
       detail.innerHTML=`<header class="exp-drawer-heading"><div><span class="exp-drawer-eyebrow">Detalhes da expedição</span><h3 id="expDrawerTitle">${e(selected.codigo_transferencia||selected.id)}</h3>${expeditionBadge(selected)}<p>NF liberada em ${e(date(selected.invoice_released_at))}</p></div><button type="button" class="exp-icon-button" data-close aria-label="Fechar detalhes" title="Fechar detalhes"><span data-exp-icon="close"></span></button></header>
         <nav class="exp-drawer-tabs" role="tablist" aria-label="Detalhes da expedição">${[["summary","Resumo"],["items","Itens"],["history","Histórico"],["documents","Documentos"]].map(([key,label])=>`<button type="button" id="exp-tab-${key}" role="tab" aria-controls="exp-panel-${key}" data-detail-tab="${key}">${label}${key==="items"&&itemRows.length?` (${itemRows.length})`:""}</button>`).join("")}</nav>
         <div class="exp-drawer-body"><p data-detail-status role="status" class="inline-status"></p>
@@ -222,23 +235,30 @@ export function createExpeditionWorkflow(context) {
         <section id="exp-panel-documents" role="tabpanel" aria-labelledby="exp-tab-documents" data-detail-panel="documents" hidden><section class="exp-detail-section"><h4><span data-exp-icon="document"></span>Nota fiscal</h4><dl class="exp-summary"><div><dt>Número da NF</dt><dd>${e(selected.invoice_number||"—")}</dd></div><div><dt>Documento</dt><dd>${selected.invoice_file_path?"PDF da nota fiscal":"Documento não disponível"}</dd></div></dl><button type="button" class="secondary-button" data-pdf ${selected.invoice_file_path?"":"disabled"}><span data-exp-icon="document"></span>Abrir NF</button></section></section>
         </div><footer class="exp-drawer-footer"><div class="exp-primary-actions">${actions.map(([action,label])=>`<button type="button" class="${action===primary?"primary-button":"secondary-button"}" data-action="${action}">${label}</button>`).join("")}</div><div class="exp-secondary-actions"><button type="button" class="secondary-button" data-transfer><span data-exp-icon="transfer"></span>Ver transferência</button><button type="button" class="secondary-button" data-show-history><span data-exp-icon="history"></span>Ver histórico</button></div></footer>`;
       setDetailTab(detailTab);renderTimeline();renderRows();decorateExpedition(detail);detail.querySelector("[data-close]").focus({preventScroll:true});
+      if(canCancelExpedition(selected,context.user())){
+        const button=document.createElement("button");button.type="button";button.className="secondary-button exp-cancel-transfer";
+        button.dataset.action="CANCEL_TRANSFER";button.textContent="Cancelar transferência";
+        detail.querySelector(".exp-secondary-actions").append(button);
+      }
       detail.querySelector("[data-action-form]").addEventListener("submit",submit);
       await history();
     }catch(error){if(ticket===detailGeneration)status(error.message,"error");}
   }
   async function prepare(action) {
     if(busy||!selected)return;
-    if(!expeditionActions(selected,context.user()).some(([value])=>value===action))return;
+    if(action==="CANCEL_TRANSFER"?!canCancelExpedition(selected,context.user()):!expeditionActions(selected,context.user()).some(([value])=>value===action))return;
     setDetailTab("summary");
     const form=find("[data-action-form]"),entity=selected.id,w=warehouse();
     form.reset();form.dataset.action=action;
-    find("[data-action-title]").textContent=expeditionActions(selected,context.user()).find(([a])=>a===action)?.[1]||action;
+    find("[data-action-title]").textContent=action==="CANCEL_TRANSFER"?"Cancelar transferência (não cancela a NF na SEFAZ)":expeditionActions(selected,context.user()).find(([a])=>a===action)?.[1]||action;
     find("[data-responsible-label]").hidden=action!=="ASSIGN";
     find("[data-boxes-label]").hidden=!["COLLECT","DELIVER"].includes(action);
     find("[data-reason-label]").hidden=action==="TRANSIT";
     form.elements.boxes.value=(action==="COLLECT"?boxes(selected):selected.dispatched_boxes)??"";
     form.elements.boxes.required=["COLLECT","DELIVER"].includes(action);
-    form.elements.reason.required=action==="RESOLVE"||(action==="ASSIGN"&&selected.expedition_stage==="ATRIBUIDA");
+    form.elements.reason.required=action==="CANCEL_TRANSFER"||action==="RESOLVE"||(action==="ASSIGN"&&selected.expedition_stage==="ATRIBUIDA");
+    form.elements.reason.minLength=action==="CANCEL_TRANSFER"?5:0;
+    form.querySelector('[type="submit"]').textContent=action==="CANCEL_TRANSFER"?"Confirmar cancelamento":"Confirmar";
     if(action==="ASSIGN"){
       const result=await context.client().from("wms_users").select("id,name,role,default_warehouse_code,warehouse_code").eq("active",true).eq("archived",false).order("name");
       if(result.error)throw result.error;
@@ -252,6 +272,7 @@ export function createExpeditionWorkflow(context) {
   async function submit(event){
     event.preventDefault();if(busy||!selected)return;
     const form=event.target,action=form.dataset.action,data={reason:form.elements.reason.value.trim()};
+    if(action==="CANCEL_TRANSFER"&&(!canCancelExpedition(selected,context.user())||data.reason.length<5))return status("Informe uma justificativa com pelo menos 5 caracteres.","error");
     if(action==="ASSIGN")data.responsible_id=form.elements.responsible.value;
     if(["COLLECT","DELIVER"].includes(action)){
       if(form.elements.boxes.value==="")return status("Informe uma quantidade inteira de caixas.","error");
@@ -263,11 +284,13 @@ export function createExpeditionWorkflow(context) {
     if(actionKey?.fingerprint!==fingerprint)actionKey={fingerprint,id:randomId("expedition")};
     const w=warehouse(),row=selected;busy=true;root.inert=true;form.querySelector("button").disabled=true;
     try{
-      const result=await context.client().rpc("wms_expedition_action",{p_id:row.id,p_expected_revision:row.expedition_revision,p_action:action,p_data:data,p_action_id:actionKey.id});
+      const result=action==="CANCEL_TRANSFER"
+        ? await context.client().rpc("wms_cancel_expedition_transfer",{p_id:row.id,p_expected_revision:row.expedition_revision,p_expected_fiscal_revision:row.fiscal_revision,p_reason:data.reason,p_action_id:actionKey.id})
+        : await context.client().rpc("wms_expedition_action",{p_id:row.id,p_expected_revision:row.expedition_revision,p_action:action,p_data:data,p_action_id:actionKey.id});
       if(result.error)throw result.error;
       context.changed();
       if(w===warehouse()){await open(row);await refresh();}
-      status("Etapa registrada.","success");
+      status(action==="CANCEL_TRANSFER"?"Transferência cancelada. Justificativa registrada no histórico.":"Etapa registrada.","success");
     }catch(error){context.diagnostic("expedition-action",error);status(error.message);}
     finally{busy=false;root.inert=false;form.querySelector("button").disabled=false;}
   }
@@ -340,4 +363,5 @@ export function createTransferExecutive(root,context,warehouse,allowConfig=true)
   });
   return {refresh};
 }
+
 

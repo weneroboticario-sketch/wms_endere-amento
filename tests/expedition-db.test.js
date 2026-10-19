@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { workflowDatabase } from "./purchases-workflow-db.test.js";
-import { deliverySla,expeditionActions } from "../src/expedition-workflow.js";
+import { deliverySla,expeditionActions,canCancelExpedition } from "../src/expedition-workflow.js";
 
 async function database() {
   const db = await workflowDatabase();
@@ -35,6 +35,54 @@ async function release(db,id="shipment") {
   await db.query("select wms_invoice_action('TRANSFERENCIA',$1,'NF_ANEXADA','RELEASE','{}','release')",[id]);
   await db.exec("select set_config('test.role','OPERADOR',false)");
 }
+
+test("expedition cancellation: reason, scope, concurrency, audit and preserved fiscal data",async()=>{
+  const db=await database();
+  try {
+    await db.exec("reset role");
+    await db.exec(await readFile(new URL("../docs/expedition-cancellation.sql",import.meta.url),"utf8"));
+    await db.exec("set role authenticated");
+    await release(db,"cancel-shipment");
+    const before=(await db.query("select * from wms_transfers where id='cancel-shipment'")).rows[0];
+    const cancel=(reason="Pedido duplicado",key="cancel-1",revision=0)=>db.query(
+      "select wms_cancel_expedition_transfer('cancel-shipment',$1,$2,$3,$4) result",[revision,before.fiscal_revision,reason,key]);
+    await assert.rejects(cancel(),/autorizado/);
+    await db.exec("select set_config('test.role','COMPRAS',false)");
+    await assert.rejects(cancel("  "),/justificativa/);
+    await assert.rejects(cancel("Motivo valido","stale",9),/outro usuario/);
+    const result=(await cancel()).rows[0].result;
+    assert.equal(result.status,"CANCELADA");
+    for(const field of ["invoice_number","invoice_file_path","invoice_stage","expedition_stage"])
+      assert.equal(result[field],before[field],field);
+    assert.equal(Number(result.total_caixas),Number(before.total_caixas));
+    assert.deepEqual(result.invoice_snapshot,before.invoice_snapshot);
+    assert.equal(result.fiscal_reason,"Pedido duplicado");
+    assert.equal((await cancel()).rows[0].result.status,"CANCELADA");
+    assert.equal((await db.query("select count(*)::int n from wms_transfer_events where transfer_id='cancel-shipment' and event_type='EXPEDITION_CANCELLED'")).rows[0].n,1);
+    await assert.rejects(cancel("Outro motivo","another"),/outro usuario|encerrada/);
+    await db.exec("select set_config('test.role','SUPERVISOR',false)");
+    await assert.rejects(db.exec("select wms_expedition_action('cancel-shipment',0,'ASSIGN','{\"responsible_id\":\"actor\"}','after-cancel')"),/nao encontrada/);
+    assert.equal((await db.query("select count(*)::int n from wms_transfer_items where transfer_id='cancel-shipment'")).rows[0].n,1);
+    await release(db,"cancel-divergence");
+    await db.exec("select set_config('test.role','SUPERVISOR',false)");
+    await db.exec("select wms_expedition_action('cancel-divergence',0,'ASSIGN','{\"responsible_id\":\"actor\"}','assign');select wms_expedition_action('cancel-divergence',1,'COLLECT','{\"boxes\":6}','collect');select wms_expedition_action('cancel-divergence',2,'DELIVER','{\"boxes\":5,\"reason\":\"Faltou uma caixa\"}','deliver');");
+    const divergent=(await db.query("select fiscal_revision from wms_transfers where id='cancel-divergence'")).rows[0];
+    const cancelled=(await db.query("select wms_cancel_expedition_transfer('cancel-divergence',3,$1,'Solicitacao de teste','cancel-divergence') result",[divergent.fiscal_revision])).rows[0].result;
+    assert.equal(cancelled.status,"CANCELADA");
+    assert.equal(cancelled.dispatched_boxes,6);assert.equal(cancelled.received_boxes,5);
+    assert.equal(cancelled.delivery_reason,"Faltou uma caixa");
+    assert.equal(cancelled.expedition_stage,"ENTREGA_COM_DIVERGENCIA");
+  }finally {await db.close();}
+});
+
+test("expedition cancellation controls respect roles and terminal stages",()=>{
+  const row={status:"LIBERADA_PARA_ENVIO",invoice_stage:"LIBERADA_PARA_ENVIO",expedition_stage:""};
+  for(const role of ["ADMINISTRADOR","SUPERVISOR","COMPRAS"])assert.equal(canCancelExpedition(row,{role}),true);
+  assert.equal(canCancelExpedition(row,{role:"OPERADOR"}),false);
+  assert.equal(canCancelExpedition({...row,invoice_stage:"FINALIZADA"},{role:"ADMINISTRADOR"}),false);
+  assert.equal(canCancelExpedition({...row,status:"CANCELADA"},{role:"COMPRAS"}),false);
+  assert.deepEqual(expeditionActions({...row,status:"CANCELADA"},{role:"ADMINISTRADOR"}),[]);
+});
 
 test("expedition: same transfer, atomic fiscal handoff, six versus five and audited resolution",async()=>{
   const db=await database();
@@ -134,4 +182,5 @@ test("expedition assignment: purchases can assign active users across units with
     await act(2,"COLLECT",{boxes:6},"operator-collect");
   } finally {await db.close();}
 });
+
 
