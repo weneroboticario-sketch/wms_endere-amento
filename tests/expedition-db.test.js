@@ -110,5 +110,28 @@ test("delivery SLA has exact deadline, configurable attention and does not inven
   assert.equal(deliverySla({...r,delivered_at:new Date(end).toISOString()},end+100),"No prazo");
   assert.equal(deliverySla({}),"Sem prazo");
   assert.deepEqual(expeditionActions({expedition_stage:"EM_TRANSITO",expedition_responsible_id:"a"},{id:"b",role:"OPERADOR"}),[]);
-  assert.deepEqual(expeditionActions({invoice_stage:"LIBERADA_PARA_ENVIO"},{id:"a",role:"COMPRAS"}),[]);
+  assert.deepEqual(expeditionActions({invoice_stage:"LIBERADA_PARA_ENVIO"},{id:"a",role:"COMPRAS"}),[["ASSIGN","Atribuir expedicao"]]);
+  assert.deepEqual(expeditionActions({expedition_stage:"EM_TRANSITO"},{id:"a",role:"COMPRAS"}),[]);
 });
+
+test("expedition assignment: purchases can assign active users across units without operational privileges",async()=>{
+  const db=await database();
+  try {
+    await db.exec("reset role");
+    await db.exec(await readFile(new URL("../docs/expedition-assignment-access.sql",import.meta.url),"utf8"));
+    await db.exec("insert into wms_users(id,name,username,role,default_warehouse_code,available_for_tasks) values('buyer','Buyer','buyer','COMPRAS','B',false),('inactive','Inactive','inactive','OPERADOR','B',true);update wms_users set active=false where id='inactive';set role authenticated;");
+    await release(db,"assignment-access");
+    await db.exec("select set_config('test.role','COMPRAS',false)");
+    const act=(revision,action,data,key)=>db.query("select wms_expedition_action('assignment-access',$1,$2,$3,$4) result",[revision,action,JSON.stringify(data),key]);
+    await assert.rejects(act(0,"ASSIGN",{responsible_id:"inactive"},"inactive"),/ativo/);
+    const result=(await act(0,"ASSIGN",{responsible_id:"buyer"},"buyer")).rows[0].result;
+    assert.equal(result.expedition_responsible_id,"buyer");
+    assert.equal(result.expedition_responsible_name,"Buyer");
+    await assert.rejects(act(1,"COLLECT",{boxes:6},"collect"),/autorizada/);
+    await assert.rejects(act(1,"ASSIGN",{responsible_id:"actor"},"missing-reason"),/justificativa/);
+    await act(1,"ASSIGN",{responsible_id:"actor",reason:"Nova equipe"},"reassign");
+    await db.exec("select set_config('test.role','OPERADOR',false)");
+    await act(2,"COLLECT",{boxes:6},"operator-collect");
+  } finally {await db.close();}
+});
+
