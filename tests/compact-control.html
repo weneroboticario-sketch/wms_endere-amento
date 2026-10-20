@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="pt-BR" class="cp-alamo"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'; trusted-types default dompurify wms-invoice-xml"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verificação local da Central</title><link rel="stylesheet" href="/style.css"></head>
+<body><div class="app-shell"><aside class="sidebar"><div class="brand">SGO</div><nav><button class="menu-item" data-screen="globalDashboard">Visão Geral</button><button class="menu-item" data-screen="transferencias">Transferências</button><button class="menu-item" data-screen="usuarios" hidden>Usuários</button></nav></aside><main class="content"><header class="app-header">Verificação local</header><section id="globalDashboard" class="screen"></section></main></div>
+<script type="module">
+import {installHtmlSecurity} from '/src/utils.js';
+import {mountGlobalDashboard} from '/src/global-dashboard-view.js';
+import {createReferenceFixture} from '/tests/reference-control-fixture.js';
+installHtmlSecurity();
+const root=document.getElementById('globalDashboard');
+const user={id:'admin',username:'admin',default_warehouse_code:'DOURADOS',role:'ADMINISTRADOR',is_global_admin:true,active:true};
+root.classList.add('active');
+const controller=mountGlobalDashboard({root,client:createReferenceFixture(),getUser:()=>user,getWarehouse:()=> 'DOURADOS',openWarehouse:code=>{window.openedWarehouse=code;}});
+document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>{root.hidden=button.dataset.screen!=='globalDashboard';}));
+controller.start();
+</script></body></html>

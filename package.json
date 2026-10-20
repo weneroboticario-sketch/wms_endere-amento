@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.110.7",
+    "chart.js": "4.5.1",
     "dompurify": "3.4.16",
     "jsbarcode": "3.11.6",
     "lucide": "1.57.0"
