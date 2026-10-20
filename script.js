@@ -15,7 +15,7 @@ import {
 } from "./src/auth.js";
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
 import { buildPackedProductRows, packedProductCsv, parseTransferQuantity } from "./src/transfer-export.js";
-import { buildReplenishmentExportRows, fillReplenishmentTemplate } from "./src/replenishment-export.js";
+import { buildReplenishmentExportRows, fillReplenishmentTemplate, getReplenishmentExportFile } from "./src/replenishment-export.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
 import {
   formatLinhaSeparacaoStationName,
@@ -5034,7 +5034,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if (!isSupabaseReady() || !canUseNetwork() || !authState.currentUser || isAttendant()) return;
     var warehouse = activeWarehouseCode();
     var response = await supabaseDb.from("wms_replenishment_export_batches")
-      .select("id,warehouse_code,created_at,requests")
+      .select("id,warehouse_code,created_at,requests,vd_posted_at,vd_posted_by")
       .eq("warehouse_code", warehouse).order("created_at", { ascending: false }).limit(20);
     if (activeWarehouseCode() !== warehouse) return;
     if (response.error) {
@@ -5046,25 +5046,54 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     $("replenishmentExportHistory").innerHTML = replenishmentExportHistory.length
       ? replenishmentExportHistory.map(function (batch) {
         var rows = buildReplenishmentExportRows(batch.requests, warehouse);
-        return "<details><summary>" + escapeHtml(formatDateTime(batch.created_at)) + " - " + rows.length + " material(is) <span class=\"status-badge active\">Transferencia feita</span></summary>" +
+        var posting = batch.vd_posted_at ? "Lancamento VD+ confirmado" : "Lancamento VD+ nao confirmado";
+        return "<details><summary>" + escapeHtml(formatDateTime(batch.created_at)) + " - " + rows.length + " material(is) <span class=\"status-badge active\">Lote exportado</span></summary>" +
+          "<p>" + escapeHtml(posting) + (batch.vd_posted_at ? " - " + escapeHtml(formatDateTime(batch.vd_posted_at)) : "") + "</p>" +
           "<div class=\"table-wrapper\"><table><thead><tr><th>Material</th><th>Quantidade atendida</th><th>Selo</th></tr></thead><tbody>" +
-          rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td><td>" + row[1] + "</td><td>Transferencia feita</td></tr>"; }).join("") +
-          "</tbody></table></div><button class=\"secondary-button\" type=\"button\" data-replenishment-export-download=\"" + escapeHtml(batch.id) + "\">Baixar arquivo novamente</button></details>";
+          rows.map(function (row) { return "<tr><td>" + escapeHtml(row[0]) + "</td><td>" + row[1] + "</td><td>Exportado</td></tr>"; }).join("") +
+          "</tbody></table></div><details><summary>Solicitacoes do lote (" + batch.requests.length + ")</summary>" +
+          batch.requests.map(function (request) { return "<p>" + escapeHtml(request.id) + " - SKU " + escapeHtml(request.codigo_material) + " - " + escapeHtml(request.quantidade_atendida) + " un.</p>"; }).join("") + "</details>" +
+          "<button class=\"secondary-button\" type=\"button\" data-replenishment-export-download=\"" + escapeHtml(batch.id) + "\">Baixar arquivo novamente</button>" +
+          (batch.vd_posted_at ? "" : "<button class=\"secondary-button\" type=\"button\" data-replenishment-export-confirm=\"" + escapeHtml(batch.id) + "\">Confirmar lancamento no VD+</button>") + "</details>";
       }).join("")
       : "<div class=\"empty-state\">Nenhuma exportacao registrada neste estoque.</div>";
   }
 
   async function downloadReplenishmentExportBatch(batch, workbook) {
-    if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
-    if (!workbook) {
-      var response = await fetch("/templates/materiais-reposicao.xlsx");
-      if (!response.ok) throw new Error("Nao foi possivel carregar o modelo de materiais.");
-      workbook = window.XLSX.read(await response.arrayBuffer(), { type: "array" });
-    }
     var rows = buildReplenishmentExportRows(batch.requests, batch.warehouse_code);
-    fillReplenishmentTemplate(window.XLSX, workbook, rows);
+    var base64 = await getReplenishmentExportFile({
+      batch: batch,
+      loadFile: async function (id) {
+        var result = await supabaseDb.from("wms_replenishment_export_files").select("xlsx_base64").eq("batch_id", id).maybeSingle();
+        if (result.error) throw result.error;
+        return result.data?.xlsx_base64;
+      },
+      saveFile: async function (id, content) {
+        var result = await supabaseDb.rpc("save_wms_replenishment_export_file", { p_batch_id: id, p_xlsx_base64: content });
+        if (result.error) throw result.error;
+        return result.data;
+      },
+      createFile: async function () {
+        if (!window.XLSX) throw new Error("Biblioteca xlsx nao carregada.");
+        if (!workbook) {
+          var response = await fetch("/templates/materiais-reposicao.xlsx");
+          if (!response.ok) throw new Error("Nao foi possivel carregar o modelo de materiais.");
+          workbook = window.XLSX.read(await response.arrayBuffer(), { type: "array" });
+        }
+        fillReplenishmentTemplate(window.XLSX, workbook, rows);
+        return window.XLSX.write(workbook, { bookType: "xlsx", type: "base64" });
+      }
+    });
     if (activeWarehouseCode() !== batch.warehouse_code) throw new Error("O estoque mudou. Abra o historico no estoque desejado.");
-    window.XLSX.writeFile(workbook, "Materiais_Reposicao_" + batch.warehouse_code + "_" + batch.id + ".xlsx");
+    var bytes = Uint8Array.from(window.atob(base64), function (c) { return c.charCodeAt(0); });
+    var url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    var link = document.createElement("a");
+    link.href = url;
+    link.download = "Materiais_Reposicao_" + batch.warehouse_code + "_" + batch.id + ".xlsx";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
     return rows;
   }
 
@@ -5098,7 +5127,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       var batch = Array.isArray(result.data) ? result.data[0] : result.data;
       var rows = await downloadReplenishmentExportBatch(batch, workbook);
       pendingReplenishmentExport = null;
-      setStatus("replenishmentExportStatus", rows.length + " material(is) exportado(s). Selo registrado: Transferencia feita. Esses pedidos nao entram na proxima exportacao.", "success");
+      setStatus("replenishmentExportStatus", rows.length + " material(is) exportado(s). Lancamento no VD+ ainda nao confirmado.", "success");
     } catch (error) {
       setStatus("replenishmentExportStatus", formatSupabaseError(error), "error");
     } finally {
@@ -8558,12 +8587,19 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     if ($("replenishmentExportForm")) $("replenishmentExportForm").addEventListener("submit", exportCompletedReplenishments);
     if ($("refreshReplenishmentExportsButton")) $("refreshReplenishmentExportsButton").addEventListener("click", loadReplenishmentExportHistory);
     if ($("replenishmentExportHistory")) $("replenishmentExportHistory").addEventListener("click", async function (event) {
-      var button = event.target.closest("[data-replenishment-export-download]");
+      var button = event.target.closest("[data-replenishment-export-download], [data-replenishment-export-confirm]");
       if (!button || button.disabled) return;
-      var batch = replenishmentExportHistory.find(function (item) { return item.id === button.dataset.replenishmentExportDownload; });
+      var batch = replenishmentExportHistory.find(function (item) { return item.id === (button.dataset.replenishmentExportDownload || button.dataset.replenishmentExportConfirm); });
       if (!batch) return;
       button.disabled = true;
       try {
+        if (button.dataset.replenishmentExportConfirm) {
+          if (!window.confirm("Confirma que este lote ja foi lancado no VD+?")) return;
+          var confirmation = await supabaseDb.rpc("confirm_wms_replenishment_vd_posting", { p_batch_id: batch.id });
+          if (confirmation.error) throw confirmation.error;
+          await loadReplenishmentExportHistory();
+          return;
+        }
         await downloadReplenishmentExportBatch(batch);
         setStatus("replenishmentExportStatus", "Arquivo baixado novamente. Nenhum pedido novo foi marcado.", "success");
       } catch (error) { setStatus("replenishmentExportStatus", formatSupabaseError(error), "error"); }
@@ -9601,8 +9637,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   function applyReplenishmentRoleView(attendantView) {
-    if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
-    if (!IS_CP_ALAMO && !attendantView && replenishmentExportHistoryWarehouse !== activeWarehouseCode()) {
+    if ($("replenishmentExportPanel")) $("replenishmentExportPanel").hidden = !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0;
+    if (!attendantView && replenishmentExportHistoryWarehouse !== activeWarehouseCode()) {
       replenishmentExportHistoryWarehouse = activeWarehouseCode();
       $("replenishmentExportHistory").innerHTML = "";
       loadReplenishmentExportHistory();
