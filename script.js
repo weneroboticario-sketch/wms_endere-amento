@@ -10484,7 +10484,24 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     writeTransferCacheSoon();
   }
 
+  var transferRealtimeRenderTimer = null;
   function renderTransferRealtimeViews() {
+    if (transferRealtimeRenderTimer !== null) return;
+    transferRealtimeRenderTimer = window.setTimeout(function () {
+      transferRealtimeRenderTimer = null;
+      if (!realtimeState.active) return;
+      var deleting = Object.keys(transferState.actionLocks || {}).some(function (key) {
+        return key.indexOf("delete-test:") === 0;
+      });
+      if (deleting) {
+        renderTransferRealtimeViews();
+        return;
+      }
+      flushTransferRealtimeViews();
+    }, 150);
+  }
+
+  function flushTransferRealtimeViews() {
     var activeScreen = getActiveScreenId();
     if (activeScreen === "transferencias") renderTransfers();
     if (activeScreen === "dashboard") renderDashboard();
@@ -11878,17 +11895,24 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     return transferInvoiceController;
   }
 
+  var finalizedTransferMarkup = null;
+  var finalizedTransferRoot = null;
   function renderFinalizedTransfers() {
     if (!$("finalizedTransferRows")) return;
     if (!isAdminOrSupervisor()) {
       $("finalizedTransferRows").innerHTML = "";
+      finalizedTransferMarkup = null;
       return;
     }
     var transfers = getVisibleTransfers().filter(function (transfer) { return isFinalTransferStatus(transfer.status); });
     var visibleTransfers = transfers.slice(0, TRANSFER_FINALIZED_RENDER_LIMIT);
-    $("finalizedTransferRows").innerHTML = visibleTransfers.length
+    var markup = visibleTransfers.length
       ? visibleTransfers.map(finalizedTransferRowHtml).join("") + renderTableLimitNotice(transfers.length, visibleTransfers.length, 9, "transferências finalizadas")
       : "<tr><td colspan=\"9\">Nenhuma transferência finalizada.</td></tr>";
+    if (markup === finalizedTransferMarkup && finalizedTransferRoot === $("finalizedTransferRows")) return;
+    $("finalizedTransferRows").innerHTML = markup;
+    finalizedTransferRoot = $("finalizedTransferRows");
+    finalizedTransferMarkup = markup;
     transferInvoices().decorate();
   }
 
