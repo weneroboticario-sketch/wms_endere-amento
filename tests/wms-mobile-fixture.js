@@ -1,0 +1,34 @@
+import { installHtmlSecurity } from "/src/utils.js";
+import { initializeWmsMobile } from "/src/wms-mobile.js";
+
+installHtmlSecurity();
+const html=await(await fetch("/index.html")).text();
+const original=new DOMParser().parseFromString(html,"text/html");
+document.body.replaceChildren(original.querySelector(".app-shell"));
+const $=id=>document.getElementById(id),role=new URL(window.location.href).searchParams.get("role")||"ADMINISTRADOR";
+window.mobileFixture={role,calls:[],ready:false,authenticated:true};
+const allowed=screen=>!["consultaPrateleira","globalDashboard"].includes(screen)&&(role==="ADMINISTRADOR"||["dashboard","consultaSku","reposicao","transferencias","bipagem"].includes(screen));
+const show=screen=>{if(!allowed(screen))throw Error("Forbidden screen");document.querySelectorAll(".screen").forEach(node=>{node.hidden=node.id!==screen;node.classList.toggle("active",node.id===screen);});window.mobileFixture.calls.push({screen});};
+document.querySelectorAll(".menu-item[data-screen]").forEach(button=>{button.hidden=!allowed(button.dataset.screen);button.addEventListener("click",()=>show(button.dataset.screen));});
+$("topUserName").textContent="Usuário de teste";$("topUserRole").textContent=role;$("topWarehouseCode").textContent="VDCG";$("topTaskCount").textContent="2";
+$("activeWarehouseSelect").hidden=false;$("activeWarehouseSelect").innerHTML='<option>VDCG</option><option>VDAR</option>';
+$("menuToggle").addEventListener("click",()=>$("sidebar").classList.toggle("open"));
+$("replenishmentMetricPending").textContent="2";$("replenishmentMetricSeparating").textContent="1";
+$("transferMetricTotal").textContent="3";$("transferMetricSeparating").textContent="1";$("transferMetricReady").textContent="1";
+const transfer=(code,status,stage)=>`<article class="transfer-board-card ${stage}"><div class="transfer-board-main"><div class="transfer-board-title"><strong>VDCG → VDAR</strong><small>${code}</small></div><div class="transfer-route-flow"><div><strong>VDCG - CD MATRIZ</strong></div><div><strong>VDAR - Estoque VDAR</strong></div></div></div><div class="transfer-board-status"><div class="transfer-stage-line"><strong>Separação</strong><span>${status}</span></div><div class="transfer-board-meta"><span><small>SKUs</small><strong>24</strong></span><span><small>Criada</small><strong>20/10/2026 10:20</strong></span></div></div><div class="transfer-board-actions"><button type="button" data-transfer-view="${code}">Visualizar</button><button type="button" data-transfer-cancel="${code}">Cancelar</button></div></article>`;
+$("transferPanelRows").innerHTML=transfer("TRF-2026-1042","Em separação","stage-separation")+transfer("TRF-2026-1041","Pronta para nota","stage-note");
+const request=(sku,name,status)=>`<article class="replenishment-card status-${status.toLowerCase()}"><div class="replenishment-card-main"><div><span>Produto</span><strong>SKU ${sku}</strong><p>${name}</p></div></div><div class="replenishment-card-metrics"><span><strong>10</strong></span><span><strong>12</strong></span></div><div class="replenishment-card-footer"><span class="status-badge">${status}</span></div><div class="replenishment-actions"><button type="button" data-replenishment-work="${sku}">Iniciar separação</button></div></article>`;
+$("replenishmentList").innerHTML=request("84210","Malbec Desodorante Colônia 100ml","PENDENTE")+request("83757","Lily Eau de Parfum 75ml","EM_SEPARACAO");
+$("skuOperationalHub").hidden=false;$("skuOperationalHub").innerHTML='<section class="sku-hub-card"><div class="sku-hub-title"><span>Produto</span><strong>84210</strong><p>Malbec Desodorante Colônia 100ml</p></div><div class="sku-hub-grid"><span><small>Saldo Loja</small><strong>28</strong></span><span><small>CAPTAÇÃO disponível</small><strong>120</strong></span><span><small>Localização CAPTAÇÃO</small><strong>R01-RK01-L01-A</strong></span></div><div class="sku-replenishment-box"><strong>Reposição</strong><button class="primary-button" type="button" data-sku-create-replenishment="84210">Criar pedido de reposição</button></div></section>';
+$("skuResultCards").innerHTML='<article class="sku-location-card"><div class="sku-card-head"><strong>84210</strong></div><div class="sku-location-code">R01-RK01-L01-A</div><div class="result-actions"><button type="button" data-edit="binding-1">Editar</button><button type="button" data-remove="binding-1">Remover</button></div></article>';
+$("skuResultActions").hidden=false;
+if(role==="ATENDENTE"){$("replenishmentLeaderPanel").hidden=true;$("skuResultCards").replaceChildren();$("skuResultActions").hidden=true;}
+if(role==="OPERADOR")document.querySelector('[data-transfer-tab="newTransferSection"]').hidden=true;
+document.querySelectorAll("[data-transfer-tab]").forEach(button=>button.addEventListener("click",()=>{document.querySelectorAll("#transferencias>.transfer-section").forEach(node=>node.hidden=node.id!==button.dataset.transferTab);window.mobileFixture.calls.push({tab:button.dataset.transferTab});}));
+document.querySelectorAll("[data-replenishment-filter]").forEach(button=>button.addEventListener("click",()=>window.mobileFixture.calls.push({filter:button.dataset.replenishmentFilter})));
+$("replenishmentForm").addEventListener("submit",event=>{event.preventDefault();window.mobileFixture.calls.push({submit:true});});
+document.body.addEventListener("click",event=>{const source=event.target.closest("[data-edit],[data-transfer-view],[data-replenishment-work]");if(source)window.mobileFixture.calls.push({action:{...source.dataset}});});
+show("consultaSku");
+window.mobileFixture.originalIds=[...document.querySelectorAll("[id]")].map(node=>node.id).sort();
+initializeWmsMobile({navigate:show,canAccess:allowed,isAuthenticated:()=>window.mobileFixture.authenticated});
+window.mobileFixture.ready=true;

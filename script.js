@@ -35,6 +35,7 @@ import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, no
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
+import { initializeWmsMobile } from "./src/wms-mobile.js";
 
 (function () {
   "use strict";
@@ -470,6 +471,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     cacheStaticOptions();
     bindNavigation();
     bindEvents();
+    if (!IS_CP_ALAMO) initializeWmsMobile({ navigate: showScreen, canAccess: canAccessScreen, isAuthenticated: function () { return Boolean(authState.currentUser); } });
     bindSessionInactivityMonitor();
     bindTaskAudioUnlock();
     updateConnectivityUi();

@@ -18,7 +18,8 @@
   "dependencies": {
     "@supabase/supabase-js": "2.110.7",
     "dompurify": "3.4.16",
-    "jsbarcode": "3.11.6"
+    "jsbarcode": "3.11.6",
+    "lucide": "1.57.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.3.15",
