@@ -2,6 +2,8 @@ import { escapeHtml as esc } from "./utils.js";
 import { captacaoFreshness, createGlobalDashboardService, GLOBAL_DASHBOARD_CONFIG, isGlobalView, warehouseAttention } from "./global-dashboard-service.js";
 import "./global-dashboard.css";
 import { decorateMetrics } from "./cpalamo-appearance.js";
+import { installCompactControl } from "./compact-control.js";
+import { mountReferenceControl } from "./reference-control.js";
 
 const labels = { overview: "Visão Geral", tasks: "Tarefas", replenishment: "Reposição", transfers: "Transferências", captacao: "Importações", team: "Equipe", alerts: "Alertas" };
 const states = { NORMAL: "Normal", ATENCAO: "Atenção", CRITICO: "Crítico", ATUALIZADO: "Atualizada", DESATUALIZADO: "Desatualizada", ERRO: "Falha", SEM_DADOS: "Sem dados" };
@@ -39,6 +41,9 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
   let boardOffset = 0;
   let boardLimit = 10;
   let movementOnly = false;
+  let boardState = "";
+  let activityOffset = 0;
+  const tabOffsets = new Map();
   const pendingDomains = new Set();
   const allowed = () => isGlobalView(getUser(), getWarehouse());
   root.innerHTML = `<div class="page-title"><div><p class="eyebrow">Central de controle</p><h2>Visão Geral Operacional</h2><p>Acompanhamento em tempo real dos estoques e solicitações</p></div><button type="button" class="secondary-button" data-global-refresh>Atualizar</button></div>
@@ -69,6 +74,14 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
   for(const field of ["status","responsible","kind","priority"])advancedBody.appendChild($(`[data-filter="${field}"]`).closest("label"));
   advancedBody.appendChild($(".global-settings"));$(".global-filters").appendChild(advanced);
   $(".page-title > div").appendChild($("[data-global-updated]"));
+  installCompactControl(root);
+  const reveal=node=>{for(let parent=node.parentElement;parent&&parent!==root;parent=parent.parentElement)if(parent.tagName==="DETAILS")parent.open=true;selectTab("overview");node.scrollIntoView({block:"start",behavior:"smooth"});};
+  const reference=mountReferenceControl(root,{
+    showStocks:()=>reveal($('[data-global-board]')),
+    showActivity:()=>reveal($('[data-global-activity]').closest("section")),
+    openTask:row=>recordDetails(row,"tasks"),
+    loadTrend:range=>service.getDetails("executive",{...filters(),...range},30,0)
+  });
   function filters() {
     const now = new Date(Math.floor(Date.now()/60000)*60000);
     const period = $('[data-filter="period"]').value;
@@ -250,49 +263,48 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
   }
   function renderOverview() {
     const tasks = snapshot.tasks?.summary || [], rep = snapshot.replenishment?.summary || [], trans = snapshot.transfers?.summary || [];
-    const team = snapshot.team?.rows || [], imports = filteredImports();
+    const imports = filteredImports();
     const board = boardRows();
     renderPriorities(board);
-    renderReplenishmentOverview();
-    const kpis=[
-      ["Estoques em atenção",board.filter(w=>["ATENCAO","CRITICO"].includes(w.attention)).length,"overview",`${snapshot.warehouses.length} estoques operacionais`,board.some(w=>w.unknown)],
-      ["Pessoas disponíveis",sum(team,"available"),"team",`${number(sum(team,"active"))} ativas no cadastro`,!snapshot.team],
-      ["Reposições abertas",sum(rep,"open"),"replenishment",`${number(sum(rep,"unassigned"))} sem responsável`,!snapshot.replenishment],
-      ["Transferências abertas",sum(trans,"open"),"transfers",`${number(sum(trans,"stalled"))} sem movimentação`,!snapshot.transfers],
-      ["Tarefas atrasadas",sum(tasks,"overdue"),"tasks","Prazo SLA vencido",!snapshot.tasks],
-      ["Importações com problema",sum(imports,"total",["FAILED"]),"captacao","Falhas no período selecionado",!snapshot.imports]
-    ];
-    $('[data-global-metrics]').innerHTML=kpis.map(([title,value,domain,context,unknown])=>`<button type="button" class="global-kpi ${unknown?'SEM_DADOS':value>0&&["tasks","captacao"].includes(domain)?'CRITICO':(domain==="overview"&&value>0)||(domain==="team"&&value===0)?'ATENCAO':'NORMAL'}" data-jump="${domain}" ${domain==="tasks"?'data-jump-mode="overdue"':""}><span>${esc(title)}</span><strong>${unknown?"—":number(value)}</strong><small>${unknown?"Dados indisponíveis":esc(context)}</small></button>`).join("");
-    $('[data-global-today]').innerHTML = `<section class="global-band"><h3>Hoje na operação</h3><div class="global-metrics global-domain-metrics">${metrics([["Reposições criadas",snapshot.replenishment?sum(rep,"created_today"):null],["Reposições concluídas",snapshot.replenishment?sum(rep,"finished_today",["CONCLUIDO"]):null],["Transferências iniciadas",snapshot.transfers?sum(trans,"started_today"):null],["Transferências concluídas",snapshot.transfers?sum(trans,"finished_today",["FINALIZADA"]):null],["Tarefas concluídas",snapshot.tasks?sum(tasks,"finished_today",["CONCLUIDA"]):null],["Importações realizadas",snapshot.imports?sum(imports,"today"):null],["Importações com falha",snapshot.imports?sum(imports,"today",["FAILED"]):null]])}</div></section>`;
+    if($('.compact-secondary').open)renderReplenishmentOverview();
+    if($('.compact-secondary').open)$('[data-global-today]').innerHTML = `<section class="global-band"><h3>Hoje na operação</h3><div class="global-metrics global-domain-metrics">${metrics([["Reposições criadas",snapshot.replenishment?sum(rep,"created_today"):null],["Reposições concluídas",snapshot.replenishment?sum(rep,"finished_today",["CONCLUIDO"]):null],["Transferências iniciadas",snapshot.transfers?sum(trans,"started_today"):null],["Transferências concluídas",snapshot.transfers?sum(trans,"finished_today",["FINALIZADA"]):null],["Tarefas concluídas",snapshot.tasks?sum(tasks,"finished_today",["CONCLUIDA"]):null],["Importações realizadas",snapshot.imports?sum(imports,"today"):null],["Importações com falha",snapshot.imports?sum(imports,"today",["FAILED"]):null]])}</div></section>`;
     $('[data-global-board]').innerHTML = `<section class="global-band"><h3>Resumo dos estoques</h3><div class="global-detail-controls"><label>Busca de estoque<input type="search" data-board-search value="${esc(boardQuery)}"></label><label>Ordenar por<select data-board-sort><option value="attention">Necessidade de atenção</option><option value="pending">Mais pendências</option><option value="overdue">Mais atrasos</option><option value="active">Menos pessoas</option><option value="captacao">CAPTAÇÃO mais antiga</option></select></label><label class="global-movement-toggle"><input type="checkbox" data-board-movement ${movementOnly ? "checked" : ""}> Somente com movimento</label></div><div data-board-table></div><div class="global-pagination"><button type="button" data-board-page="previous">Anterior</button><span data-board-page-label></span><button type="button" data-board-page="next">Próxima</button></div></section>`;
+    $('[data-board-sort]').closest("label").insertAdjacentHTML("afterend",'<label>Situação<select data-board-state><option value="">Todas</option><option value="NORMAL">Normal</option><option value="ATENCAO">Atenção</option><option value="CRITICO">Crítico</option><option value="SEM_DADOS">Sem dados</option></select></label>');
+    $('[data-board-state]').value=boardState;
     $('[data-board-sort]').value=boardSort;
     renderBoard(board);
-    $('[data-global-domains]').innerHTML=domainPanel("replenishment")+domainPanel("transfers")+importsPanel()+teamPanel()+domainPanel("tasks");
+    if($('.compact-secondary').open)$('[data-global-domains]').innerHTML=domainPanel("replenishment")+domainPanel("transfers")+importsPanel()+teamPanel()+domainPanel("tasks");
     $('[data-global-domains] .global-stock-warning')?.insertAdjacentHTML("beforebegin",`<div class="global-charts">${importChart()}</div>`);
+    if($('.compact-secondary').open){
     const trends=snapshot.executive?.trends||[];
     $('[data-global-trends]').innerHTML=snapshot.errors.executive?retry("executive"):!snapshot.executive?skeleton(2):trends.length?["replenishment","transfers","tasks"].map(domain=>chart(`${labels[domain]} no período`,trends.filter(r=>r.domain===domain).map(r=>({label:new Date(r.day+"T12:00:00").toLocaleDateString("pt-BR"),values:[{label:domain==="transfers"?"Iniciadas":"Criadas",value:r.created},{label:"Concluídas",value:r.finished}]})))).join(""):'<p class="empty-state">Dados insuficientes para calcular tendência.</p>';
     const importDays=[...new Set(imports.map(r=>r.day).filter(Boolean))].sort();
     if(importDays.length)$('[data-global-trends]').insertAdjacentHTML("beforeend",chart("Importações: sucesso e falha",importDays.map(day=>({label:new Date(day+"T12:00:00").toLocaleDateString("pt-BR"),values:[{label:"Sucesso",value:sum(imports.filter(r=>r.day===day),"total",["COMPLETED"])},{label:"Falha",value:sum(imports.filter(r=>r.day===day),"total",["FAILED"])}]}))));
+    }
     $('[data-global-alert-summary]').innerHTML=snapshot.errors.alerts?retry("alerts"):`<p>${number(sum(snapshot.alerts?.summary||[],"critical"))} alertas críticos · ${number(sum(snapshot.alerts?.summary||[],"total"))} ocorrências</p>`;
     $('[data-global-errors]').innerHTML="";
     $('[data-global-updated]').textContent = snapshot.generated_at?"Última atualização: " + date(snapshot.generated_at):"Carregando indicadores";
     root.querySelectorAll('[data-global-period]').forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.globalPeriod===$('[data-filter="period"]').value)));
+    reference.render(snapshot,board);
   }
   function renderBoard(board = boardRows()) {
     const key = $('[data-board-sort]').value;
     if (key !== "attention") board.sort((a,b) => key === "captacao" ? new Date(a.batch?.last_completed_at || 0)-new Date(b.batch?.last_completed_at || 0) : key === "active" ? a.active-b.active : b[key]-a[key]);
-    board=board.filter(w=>[w.name,w.code].join(" ").toLowerCase().includes(boardQuery.toLowerCase()) && (!movementOnly || w.unknown || w.pending+w.transfers+w.tasks>0));
-    const total=board.length;board=board.slice(boardOffset,boardOffset+boardLimit);
+    board=board.filter(w=>[w.name,w.code].join(" ").toLowerCase().includes(boardQuery.toLowerCase()) && (!boardState || w.attention===boardState) && (!movementOnly || w.unknown || w.pending+w.transfers+w.tasks>0));
+    const total=board.length;boardOffset=Math.min(boardOffset,Math.max(0,Math.floor((total-1)/boardLimit)*boardLimit));board=board.slice(boardOffset,boardOffset+boardLimit);
     $('[data-board-table]').innerHTML = table(["Estoque","Situação","Reposições","Transferências","Tarefas atrasadas","Equipe","CAPTAÇÃO","Ação"],
       board.map(w=>[`<strong>${esc(w.name)}</strong><small>${esc(w.code)}</small>`,badge(w.attention),
         snapshot.replenishment?number(w.pending):"Sem dados",snapshot.transfers?number(w.transfers):"Sem dados",
         snapshot.tasks?number(w.overdue):"Sem dados",snapshot.team?`${w.active} ativas<small>${w.available} disponíveis</small>`:"Sem dados",
         `${badge(w.freshness)}<small>${esc(age(w.batch?.last_completed_at))}</small>`,
         `<button type="button" data-board-record="${esc(w.code)}">Ver detalhes</button>`]))
-      + (total>10?`<button type="button" data-board-all>${boardLimit===10?"Ver todos os "+total+" estoques":"Mostrar 10 estoques"}</button>`:"");
+      + (!total?'<p class="empty-state">Nenhum estoque neste filtro.</p>':"");
     $('[data-board-page-label]').textContent="Página "+(Math.floor(boardOffset/boardLimit)+1);$('[data-board-page="previous"]').disabled=boardOffset===0;$('[data-board-page="next"]').disabled=total<=boardOffset+boardLimit;
   }
   function renderDomainCharts() {
+    if(tab==="overview")return;
+    $('[data-global-domain-metrics]').innerHTML=metrics(["tasks","replenishment","transfers"].includes(tab)?domainMetrics(tab):[]);
+    if(!$('.compact-domain-charts').open)return;
     const rows = snapshot[tab]?.summary || [];
     let cards = [], charts = "";
     if (["tasks","replenishment","transfers"].includes(tab)) {
@@ -357,9 +369,15 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
   }
   async function activity() {
     const version=epoch;
-    try { const data=await service.getWarehouseActivity(filters()); if(!allowed()||version!==epoch)return;
-      $('[data-global-activity]').innerHTML=table(["Horário","Estoque","Usuário","Atividade"],(data.rows||[]).slice(0,20).map(r=>[esc(date(r.updated_at)),esc(warehouseLabel(r.warehouse_code)),esc(r.responsible_name||"Não informado"),`${esc(human(r.kind))} ${esc(r.code||"")}: ${esc(human(r.status))}<small>${esc(r.title||"")}</small>`]));
-    } catch { $('[data-global-activity]').textContent="Atividade indisponível."; }
+    try { const response=await service.getWarehouseActivity(filters()); if(!allowed()||version!==epoch)return;
+      const data={...response};
+      const selected=filters();
+      const rows=(data.rows||[]).filter(row=>(!selected.kind||row.kind===selected.kind)&&(!selected.status||row.status===selected.status));
+      reference.activity(rows);
+      data.total=rows.length;data.rows=rows.slice(activityOffset,activityOffset+10);
+      $('[data-global-activity]').innerHTML='<div class="compact-timeline">'+(data.rows||[]).slice(0,10).map(r=>`<details><summary><time>${esc(date(r.updated_at))}</time><strong>${esc(r.responsible_name||"Não informado")}</strong><span>${esc(human(r.kind))}</span><span>${esc(warehouseLabel(r.warehouse_code))}</span>${badge(r.status)}</summary><p>${esc(r.code||"")} · ${esc(r.title||"")}</p></details>`).join("")+'</div>'+(!(data.rows||[]).length?'<p class="empty-state">Nenhuma atividade neste período.</p>':"")+`<div class="global-pagination"><button type="button" data-activity-page="previous" ${activityOffset===0?'disabled':''}>Anterior</button><span>Página ${activityOffset/10+1}</span><button type="button" data-activity-page="next" ${!(data.has_more||data.total>activityOffset+10||(data.rows||[]).length>=10)?'disabled':''}>Próxima</button></div>`;
+      $('[data-activity-page="next"]').disabled=data.total<=activityOffset+10;
+    } catch { $('[data-global-activity]').textContent="Atividade indisponível.";reference.activity([],true); }
   }
   async function refresh(force = false) {
     if (!allowed()) return;
@@ -370,17 +388,23 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       try { const data=await service.getGlobalOverview(filters(),force,partial=>{if(!allowed()||version!==epoch)return;snapshot={...partial,errors:{...partial.errors}};renderOverview();}); if(!allowed()||version!==epoch)return;
         snapshot=data;
         if (!$('[data-filter="warehouse"]').value) allWarehouses=data.warehouses;
-        options();renderOverview();renderDomainCharts();await Promise.all([activity(),loadDetails()]);onSync?.(true);
+        options();renderOverview();renderDomainCharts();await Promise.all([activity(),loadDetails(),loadReferenceDetails()]);onSync?.(true);
       } catch(error) { service.diagnostics.lastError=error.message;$('[data-global-errors]').innerHTML=retry("overview");onSync?.(false); }
       finally { button.disabled=false;refreshPromise=null;if(version!==epoch&&allowed())setTimeout(()=>refresh(true),0); }
     })();
     return refreshPromise;
+  }
+  async function loadReferenceDetails(){
+    const version=epoch;
+    const tasks=async()=>{try{const response=await service.getDetails("tasks",{...filters(),mode:"running",status:"EM_ANDAMENTO"},2,0);if(allowed()&&version===epoch)reference.tasks((response.rows||[]).filter(row=>row.status==="EM_ANDAMENTO"));}catch{if(allowed()&&version===epoch)reference.tasks(null,true);}};
+    await Promise.all([tasks(),reference.refreshTrend()]);
   }
   function recordDetails(row,section=tab) {
     if(!row)return;
     modalRecord=row;modalOffset=0;modalSection=section;
     const translated={warehouse_code:"Estoque",code:"Código",title:"Título",status:"Status",kind:"Tipo",priority:"Prioridade",responsible_name:"Responsável",requester:"Solicitante",sku:"SKU",quantity:"Quantidade",item_count:"Itens",divergence:"Divergências",origin:"Origem",destination:"Destino",created_at:"Criado em",updated_at:"Atualizado em",deadline:"SLA",file_name:"Arquivo",total_rows:"Linhas",error_message:"Erro",active:"Ativos",available:"Disponíveis",busy:"Ocupados",unavailable:"Indisponíveis",started_at:"Iniciada em",finished_at:"Finalizada em",duration_seconds:"Duração (segundos)",skus:"SKUs",separated:"Separados",packed:"Embalados",notes:"Observações",description:"Descrição",blocked_reason:"Bloqueio",attended:"Atendido",pending:"Pendente",location:"Localização"};
     const fields={...row,...row.detail};
+    Object.assign(translated,{attention:"Situação operacional",transfers:"Transferências abertas",tasks:"Tarefas",overdue:"Tarefas atrasadas",freshness:"Base CAPTAÇÃO",stalled:"Processos parados",divergence:"Divergências"});
     $('div[data-global-record]').innerHTML=`<h3>${esc(row.title||row.file_name||warehouseLabel(row.warehouse_code))}</h3><dl>${Object.entries(fields).filter(([key,value])=>translated[key]&&value!=null&&typeof value!=="object").map(([key,value])=>`<dt>${esc(translated[key])}</dt><dd>${esc(key.endsWith("_at")||key==="deadline"?date(value):String(value))}</dd>`).join("")}</dl>`;
     if(["team","transfers"].includes(section)) $('div[data-global-record]').insertAdjacentHTML("beforeend",'<label>Busca no detalhe<input type="search" data-modal-search></label><div data-modal-list></div><div class="global-pagination"><button type="button" data-modal-page="previous">Anterior</button><span data-modal-page-label></span><button type="button" data-modal-page="next">Próxima</button></div>');
     if(row.warehouse_code) $('div[data-global-record]').insertAdjacentHTML("beforeend",`<button type="button" data-open-warehouse="${esc(row.warehouse_code)}">Abrir no estoque</button>`);
@@ -399,8 +423,12 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     }catch(error){service.diagnostics.lastError=error.message;container.textContent="Não foi possível carregar os detalhes.";}
   }
   function selectTab(next) {
-    tab=next;offset=0;epoch++;root.querySelectorAll('[data-global-tab]').forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.globalTab===tab)));$('[data-global-overview]').hidden=tab!=="overview";$('[data-global-details]').hidden=tab==="overview";loadDetails();
+    root.querySelectorAll('[data-compact-mode]').forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.compactMode===$('[data-filter="mode"]').value)));
+    tabOffsets.set(tab,offset);tab=next;offset=tabOffsets.get(next)||0;epoch++;root.querySelectorAll('[data-global-tab]').forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.globalTab===tab)));$('[data-global-overview]').hidden=tab!=="overview";$('[data-global-details]').hidden=tab==="overview";loadDetails();
+    if(tab==="overview")reference.render(snapshot,boardRows());
   }
+  $('.compact-secondary').addEventListener("toggle",()=>{if($('.compact-secondary').open)renderOverview();});
+  $('.compact-domain-charts').addEventListener("toggle",()=>{if($('.compact-domain-charts').open)renderDomainCharts();});
   root.addEventListener("click",event=>{
     const button=event.target.closest("button");if(!button)return;
     if(button.hasAttribute("data-global-refresh")) refresh(true);
@@ -410,7 +438,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       if(changed)$('[data-filter="warehouse"]').value=button.dataset.jumpWarehouse;
       $('[data-filter="mode"]').value=button.dataset.jumpMode||"open";
       selectTab(button.dataset.jump);if(changed){service.invalidate();refresh(true);}
-      if(button.dataset.jump==="overview")$('[data-global-board]').scrollIntoView({behavior:"smooth",block:"start"});
+      if(button.dataset.jump==="overview")reveal($('[data-global-board]'));
     }
     if(button.dataset.retry){service.invalidate(button.dataset.retry);refresh(true);}
     if(button.dataset.globalPeriod){$('[data-filter="period"]').value=button.dataset.globalPeriod;epoch++;service.invalidate();refresh(true);}
@@ -423,14 +451,16 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
     if(button.dataset.globalPage){offset=Math.max(0,offset+(button.dataset.globalPage==="next"?30:-30));epoch++;loadDetails();}
     if(button.dataset.modalPage){modalOffset=Math.max(0,modalOffset+(button.dataset.modalPage==="next"?30:-30));loadModalDetails();}
     if(button.dataset.boardPage){boardOffset=Math.max(0,boardOffset+(button.dataset.boardPage==="next"?boardLimit:-boardLimit));renderBoard();}
+    if(button.dataset.activityPage){activityOffset=Math.max(0,activityOffset+(button.dataset.activityPage==="next"?10:-10));activity();}
   });
   root.addEventListener("change",event=>{
+    if(event.target.hasAttribute("data-board-state")){boardState=event.target.value;boardOffset=0;renderBoard();return;}
     if(event.target.hasAttribute("data-board-movement")){movementOnly=event.target.checked;boardOffset=0;renderBoard();return;}
     if(event.target.hasAttribute("data-board-sort")){boardSort=event.target.value;boardOffset=0;renderBoard();return;}
     if(!event.target.dataset.config && !event.target.dataset.filter)return;
     if(event.target.dataset.config){const key=event.target.dataset.config;config[key]=Math.max(1,Math.min(720,Number(event.target.value)||GLOBAL_DASHBOARD_CONFIG[key]));config.staleHours=Math.max(config.freshHours,config.staleHours);service.invalidate();}
     if(event.target.dataset.filter){root.querySelectorAll('[data-custom]').forEach(el=>el.hidden=$('[data-filter="period"]').value!=="custom");}
-    offset=0;boardOffset=0;epoch++;service.invalidate();refresh(true);
+    offset=0;boardOffset=0;activityOffset=0;epoch++;service.invalidate();refresh(true);
   });
   $('[data-detail-search]').addEventListener("input",()=>{clearTimeout(debounce);debounce=setTimeout(()=>{offset=0;epoch++;loadDetails();},300);});
   root.addEventListener("input",event=>{if(event.target.hasAttribute("data-board-search")){boardQuery=event.target.value;boardOffset=0;renderBoard();}if(event.target.hasAttribute("data-modal-search")){clearTimeout(debounce);debounce=setTimeout(()=>{modalOffset=0;loadModalDetails();},300);}});
@@ -455,13 +485,13 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
             catch(error){snapshot.errors.executive=error.message;}
           }
           snapshot.alerts=await service.getDetails("alerts_summary",filters(),30,0,true);
-          snapshot.generated_at=new Date().toISOString();renderOverview();renderDomainCharts();activity();if(domainsToRefresh.includes(tab)||tab==="alerts")loadDetails();
+          snapshot.generated_at=new Date().toISOString();renderOverview();renderDomainCharts();activity();loadReferenceDetails();if(domainsToRefresh.includes(tab)||tab==="alerts")loadDetails();
         }catch(error){service.diagnostics.lastError=error.message;}
       },1500);
     });
     channel.subscribe(status=>{service.diagnostics.realtime=status==="SUBSCRIBED"?"Ao vivo":"Atualização periódica";onSync?.(status==="SUBSCRIBED");});
     timer=window.setInterval(()=>{if(document.visibilityState!=="hidden"&&allowed())refresh(true);},60000);
   }
-  function stop() {live=false;epoch++;window.clearInterval(timer);clearTimeout(debounce);if(channel)client.removeChannel(channel);channel=null;service.clear();snapshot={warehouses:[],errors:{}};allWarehouses=[];service.diagnostics.realtime="Parado";}
+  function stop() {live=false;epoch++;reference.stop();window.clearInterval(timer);clearTimeout(debounce);if(channel)client.removeChannel(channel);channel=null;service.clear();snapshot={warehouses:[],errors:{}};allWarehouses=[];service.diagnostics.realtime="Parado";}
   return {start,stop,refresh,diagnostics:service.diagnostics};
 }

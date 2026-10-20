@@ -22,3 +22,11 @@
 .cp-alamo .management-drawer dl { display:grid; grid-template-columns:minmax(100px,1fr) minmax(0,1.5fr); gap:12px; }
 .cp-alamo .management-drawer dd { margin:0; overflow-wrap:anywhere; }
 @media(max-width:700px) { .cp-alamo .management-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .cp-alamo .management-toolbar label { flex-basis:100%; } }
+.cp-alamo .management-band{margin:8px 0;padding:8px 0}
+.cp-alamo .management-metrics{gap:8px}
+.cp-alamo .management-metrics article{padding:8px;border-radius:4px}
+.cp-alamo .management-metrics strong{margin-top:4px;font-size:24px}
+.cp-alamo .management-workspace .table-wrapper{max-height:440px;overscroll-behavior:contain}
+.cp-alamo .management-workspace th{position:sticky;top:0}
+.cp-alamo .management-workspace td,.cp-alamo .management-workspace th{padding:8px}
+@media(max-width:700px){.cp-alamo .management-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.cp-alamo .management-metrics span{font-size:12px}.cp-alamo .management-toolbar{gap:8px;padding:8px 0}}
