@@ -3481,13 +3481,15 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
         setStatus("stockImportStatus", "Inativando " + deactivatedIds.length + " registro(s) fora da carga atual...", "warning");
         await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
       }
-      setStatus("stockImportStatus", "Validando localizacoes antigas e alertas da base...", "warning");
+      setStatus("stockImportStatus", "Conferindo enderecos da base importada...", "warning");
       var bindingSync = await syncBindingsFromLocatedStockImport(sourceType, parsed.rows, warehouseCode, now);
       metrics.locationBindingsSynced = bindingSync.synced;
       metrics.locationBindingsCreated = bindingSync.created;
       metrics.locationBindingDuplicatesRemoved = bindingSync.duplicatesRemoved;
       metrics.changedSkus = metrics.changedSkus.concat(bindingSync.changedSkus);
+      setStatus("stockImportStatus", "Conferindo vinculos sem localizacao...", "warning");
       metrics.unlocatedBindingsRemoved = await clearBindingsForUnlocatedStockImport(sourceType, parsed.rows, warehouseCode, batchId, now);
+      setStatus("stockImportStatus", "Atualizando alertas de saldo negativo...", "warning");
       metrics.alertRows = await generateNegativeStockAlerts(warehouseCode, sourceType, batchId, now);
       setStatus("stockImportStatus", "Finalizando lote da importacao...", "warning");
       updateLocalStockBatchProgress(batchId, {
@@ -3706,9 +3708,9 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     });
   }
 
-  function importedLocationAreaCode(locationCode, warehouseCode, fallbackAreaCode) {
+  function importedLocationAreaCode(locationCode, warehouseCode, fallbackAreaCode, locationAreas) {
     var normalizedLocation = locationKeyFromCode(locationCode);
-    var template = buildLinhaSeparacaoTemplateRows(warehouseCode).find(function (row) {
+    var template = locationAreas ? locationAreas.get(normalizedLocation) : buildLinhaSeparacaoTemplateRows(warehouseCode).find(function (row) {
       return locationKeyFromCode(row.locationCode) === normalizedLocation;
     });
     var code = Number(template ? template.area : fallbackAreaCode || 1);
@@ -3728,11 +3730,44 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
     var upsertById = {};
     var deleteById = {};
     var result = { synced: 0, created: 0, duplicatesRemoved: 0, changedSkus: [] };
+    var bindingIndexes = new Map();
+    var bindingsBySkuKey = new Map();
+    var locationAreas = null;
+
+    function indexBinding(binding, remove) {
+      splitSkuValues(binding.sku).forEach(function (sku) {
+        var key = normalizeSkuKey(sku);
+        if (!bindingsBySkuKey.has(key)) bindingsBySkuKey.set(key, new Map());
+        if (remove) bindingsBySkuKey.get(key).delete(binding.id);
+        else bindingsBySkuKey.get(key).set(binding.id, binding);
+      });
+    }
+    workingBindings.forEach(function (binding, index) {
+      bindingIndexes.set(binding.id, index);
+      indexBinding(binding, false);
+    });
+
+    function areaForLocation(locationCode, fallbackAreaCode) {
+      if (!locationAreas) {
+        locationAreas = new Map();
+        buildLinhaSeparacaoTemplateRows(warehouseCode).forEach(function (row) {
+          var key = locationKeyFromCode(row.locationCode);
+          if (!locationAreas.has(key)) locationAreas.set(key, row);
+        });
+      }
+      return importedLocationAreaCode(locationCode, warehouseCode, fallbackAreaCode, locationAreas);
+    }
 
     function replaceWorkingBinding(binding) {
-      var index = workingBindings.findIndex(function (item) { return item.id === binding.id; });
-      if (index >= 0) workingBindings[index] = binding;
-      else workingBindings.push(binding);
+      var index = bindingIndexes.get(binding.id);
+      if (index !== undefined) {
+        indexBinding(workingBindings[index], true);
+        workingBindings[index] = binding;
+      } else {
+        bindingIndexes.set(binding.id, workingBindings.length);
+        workingBindings.push(binding);
+      }
+      indexBinding(binding, false);
       upsertById[binding.id] = binding;
       delete deleteById[binding.id];
     }
@@ -3744,14 +3779,15 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
       result.duplicatesRemoved += 1;
     }
 
-    plans.forEach(function (plan) {
+    for (var planIndex = 0; planIndex < plans.length; planIndex += 1) {
+      var plan = plans[planIndex];
       var duplicatesBefore = result.duplicatesRemoved;
-      var matches = workingBindings.filter(function (binding) {
+      var matches = Array.from((bindingsBySkuKey.get(plan.skuKey) || new Map()).values()).filter(function (binding) {
         if (deleteById[binding.id] || locationKeyFromBinding(binding) !== plan.locationCode) return false;
         return splitSkuValues(binding.sku).some(function (candidate) {
           return normalizeSkuKey(candidate) === plan.skuKey;
         });
-      });
+      }).sort(function (first, second) { return bindingIndexes.get(first.id) - bindingIndexes.get(second.id); });
       var simpleMatches = matches.filter(function (binding) { return splitSkuValues(binding.sku).length <= 1; });
       var officialMatches = simpleMatches.filter(function (binding) {
         return locationKeyFromBinding(binding) === plan.locationCode;
@@ -3779,14 +3815,14 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
 
       var createdBinding = !keep;
       if (createdBinding) {
-        var areaCode = importedLocationAreaCode(plan.locationCode, warehouseCode, 1);
+        var areaCode = areaForLocation(plan.locationCode, 1);
         keep = createBinding(plan.sku, plan.parsed, areaCode, plan.row.nomeMaterial || findProductName(plan.sku) || "");
         keep.createdAt = now;
         result.created += 1;
       }
 
       var previousLocation = locationKeyFromBinding(keep);
-      var nextAreaCode = importedLocationAreaCode(plan.locationCode, warehouseCode, keep.areaCode || 1);
+      var nextAreaCode = areaForLocation(plan.locationCode, keep.areaCode || 1);
       var nextBinding = Object.assign({}, keep, {
         sku: plan.sku,
         sourceSkuValue: plan.sku,
@@ -3813,7 +3849,11 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
       if (bindingChanged) replaceWorkingBinding(nextBinding);
       if (previousLocation !== plan.locationCode) result.synced += 1;
       if (bindingChanged || result.duplicatesRemoved > duplicatesBefore) result.changedSkus.push(plan.sku);
-    });
+      if ((planIndex + 1) % 250 === 0) {
+        setStatus("stockImportStatus", "Conferindo enderecos: " + (planIndex + 1) + " de " + plans.length + " SKU(s)...", "warning");
+        await new Promise(function (resolve) { window.setTimeout(resolve, 0); });
+      }
+    }
 
     var deleteIds = Object.keys(deleteById);
     if (deleteIds.length) await deleteBindingsByIds(deleteIds);
