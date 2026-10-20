@@ -125,4 +125,45 @@
   .wms-mobile-v1 .mobile-module :is(button,input,select,summary){scroll-margin-top:80px;scroll-margin-bottom:88px}
   .wms-mobile-v1 .mobile-module .empty-state{min-height:80px;padding:16px;background:#fff;border-radius:6px;color:#526A88}
   .wms-mobile-v1 .mobile-module [hidden],.wms-mobile-v1 .mobile-bottom-nav [hidden],.wms-mobile-v1 .mobile-topbar [hidden]{display:none!important}
+  .wms-mobile-v1 #transferencias>.mobile-page-header{justify-content:flex-start!important}
+  .wms-mobile-v1 #transferWorkSection,
+  .wms-mobile-v1 #transferWorkSection *{min-width:0;box-sizing:border-box}
+  .wms-mobile-v1 #transferWorkSection{width:100%;max-width:100%}
+  .wms-mobile-v1 #transferWorkSection .transfer-execution-panel{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:12px;width:100%;max-width:100%}
+  .wms-mobile-v1 #transferWorkSection .panel-header{display:flex;flex-direction:column;align-items:stretch;gap:10px;text-align:left}
+  .wms-mobile-v1 #transferWorkTitle{font-size:18px;line-height:1.4;white-space:normal;overflow-wrap:anywhere;text-align:left}
+  .wms-mobile-v1 #transferWorkSection .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-work-grid,.transfer-live-panel,.transfer-scan-panel){display:grid;grid-template-columns:minmax(0,1fr);width:100%;max-width:100%;gap:12px}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-live-panel,.transfer-scan-panel){padding:0;background:transparent;border:0}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-work-summary,.transfer-final-summary,.current-item-meta,.transfer-qty-row,.transfer-stock-snapshot,.transfer-stock-guidance){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%;max-width:100%}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-work-summary,.transfer-final-summary)>div{padding:10px;border-radius:6px}
+  .wms-mobile-v1 #transferWorkSection .transfer-execution-summary>div{grid-column:1/-1;padding:8px;gap:4px}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-work-summary,.transfer-final-summary) strong{font-size:16px;line-height:1.4}
+  .wms-mobile-v1 #transferWorkSection :is(p,strong,span,b,small,label){overflow-wrap:anywhere;white-space:normal}
+  .wms-mobile-v1 #transferWorkSection .current-item-card{width:100%;max-width:100%;padding:12px;gap:10px;min-height:0;background:#fff;border:1px solid #DFE7F1;border-radius:8px}
+  .wms-mobile-v1 #transferWorkSection .current-item-compact-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+  .wms-mobile-v1 #transferWorkSection .current-item-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .wms-mobile-v1 #transferWorkSection .current-item-head strong{font-size:20px;line-height:1.3}
+  .wms-mobile-v1 #transferWorkSection .current-item-head span{margin-left:auto;font-size:12px}
+  .wms-mobile-v1 #transferWorkSection .current-item-card p{font-size:16px;font-weight:600;margin:0}
+  .wms-mobile-v1 #transferWorkSection .current-location-line{padding:10px;background:#F4F8FC;border:1px solid #DFE7F1;border-radius:6px}
+  .wms-mobile-v1 #transferWorkSection .current-location-line strong{font-size:20px;line-height:1.35;color:#10213A}
+  .wms-mobile-v1 #transferWorkSection .current-qty-highlight{padding:12px;background:#0866F5;border-radius:6px}
+  .wms-mobile-v1 #transferWorkSection .current-qty-highlight strong{font-size:30px;line-height:1.2;color:#fff}
+  .wms-mobile-v1 #transferWorkSection .current-qty-highlight span{color:#fff;font-size:14px}
+  .wms-mobile-v1 #transferWorkSection :is(.transfer-primary-actions,.transfer-completion-actions,.button-row){display:grid;grid-template-columns:minmax(0,1fr);gap:8px;width:100%}
+  .wms-mobile-v1 #transferWorkSection button{display:flex;align-items:center;justify-content:center;width:100%;height:auto;min-height:44px;padding:10px 12px;white-space:normal;overflow-wrap:anywhere;font-size:14px;line-height:1.4;text-align:center}
+  .wms-mobile-v1 #transferWorkSection :is(.inline-status,.transfer-step-help){padding:10px;font-size:14px;line-height:1.5}
+  .wms-mobile-v1 #transferWorkSection .inline-status:empty{display:none}
+  .wms-mobile-v1 #transferWorkSection .transfer-list-heading{display:flex;justify-content:space-between;gap:8px;font-size:14px}
+  .wms-mobile-v1 #transferWorkSection .transfer-work-item{padding:12px;max-width:100%}
+  .wms-mobile-v1 #transferWorkSection .transfer-work-item-head{display:flex;flex-wrap:wrap;gap:8px}
+  .wms-mobile-v1 #transferWorkSection .admin-transfer-progress{max-width:100%;margin-top:8px}
+  .wms-mobile-v1 #transferWorkSection .table-wrap{width:100%;max-width:100%;overflow-x:auto}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table{display:table;width:100%;min-width:640px}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table :is(thead,tbody){display:table-row-group}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table thead{display:table-header-group}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table tr{display:table-row;padding:0;border:0}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table :is(th,td){display:table-cell;width:auto;min-width:75px;padding:10px;font-size:13px}
+  .wms-mobile-v1 #transferWorkSection .admin-progress-table td::before{display:none}
 }
