@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   compareReplenishmentQueueItems,
   isReplenishmentVisibleInActiveQueue,
+  matchesReplenishmentQueueFilter,
   normalizeReplenishmentPriority
 } from "../src/replenishment.js";
 
@@ -10,6 +11,15 @@ test("replenishment priority accepts only NORMAL and CLIENTE", () => {
   assert.equal(normalizeReplenishmentPriority("cliente"), "CLIENTE");
   assert.equal(normalizeReplenishmentPriority("NORMAL"), "NORMAL");
   assert.equal(normalizeReplenishmentPriority("URGENTE"), "NORMAL");
+});
+
+test("attended requests stay visible until explicit completion", () => {
+  const separated = { status: "SEPARADO", finishedAt: "" };
+  assert.equal(isReplenishmentVisibleInActiveQueue(separated), true);
+  assert.equal(matchesReplenishmentQueueFilter(separated, "EM_SEPARACAO"), true);
+  assert.equal(matchesReplenishmentQueueFilter(separated, "SEPARADO"), true);
+  assert.equal(matchesReplenishmentQueueFilter(separated, "SEM_ESTOQUE"), false);
+  assert.equal(isReplenishmentVisibleInActiveQueue({ status: "CONCLUIDO" }), false);
 });
 
 test("client requests are ordered first inside the same status", () => {

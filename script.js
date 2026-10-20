@@ -31,7 +31,7 @@ import {
 } from "./src/addressing-bindings.js";
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
-import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
@@ -9314,9 +9314,10 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     setTextIfExists("replenishmentMetricSeparating", allVisible.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length);
     setTextIfExists("replenishmentMetricDoneToday", allVisible.filter(function (item) { return item.status === "CONCLUIDO" && String(item.finishedAt || item.updatedAt).slice(0, 10) === today; }).length);
     setTextIfExists("replenishmentMetricNoStock", allVisible.filter(function (item) { return item.status === "SEM_ESTOQUE"; }).length);
+    setTextIfExists("replenishmentMetricAwaitingCompletion", allVisible.filter(function (item) { return item.status === "SEPARADO"; }).length);
     var visible = allVisible.filter(isReplenishmentVisibleInActiveQueue);
     if (replenishmentState.activeFilter) {
-      visible = visible.filter(function (item) { return item.status === replenishmentState.activeFilter; });
+      visible = visible.filter(function (item) { return matchesReplenishmentQueueFilter(item, replenishmentState.activeFilter); });
     }
     var limited = visible.slice(0, replenishmentState.renderLimit);
     $("replenishmentList").innerHTML = limited.length
@@ -9559,6 +9560,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
   function displayReplenishmentStatus(status) {
     if (status === "PENDENTE") return "Na fila";
     if (status === "EM_SEPARACAO") return "Em separacao";
+    if (status === "SEPARADO") return "Separado - aguardando conclusao";
     if (status === "ATENDIDO_PARCIAL") return "Atendido parcial";
     if (status === "SEM_ESTOQUE") return "Sem estoque";
     return normalizeText(status).replace(/_/g, " ").toLowerCase().replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });

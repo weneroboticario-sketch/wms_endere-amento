@@ -150,6 +150,7 @@
     padding-top: 8px;
     gap: 8px 16px;
   }
+  .wms-mobile-v1 #reposicao .replenishment-summary-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
   .wms-mobile-v1 #transferencias .transfer-tabs {
     display: flex;
     flex-wrap: wrap;
