@@ -1,0 +1,160 @@
+@media (min-width: 761px) {
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) {
+    min-width: 0;
+    --radius: 8px;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) .page-title {
+    margin-bottom: 16px;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) .page-title h2 {
+    font-size: 26px;
+    line-height: 1.25;
+    letter-spacing: 0;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) .panel {
+    padding: 16px;
+    border-radius: 8px;
+    box-shadow: none;
+    min-width: 0;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) .panel-header {
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) :is(input:not([type=checkbox]):not([type=radio]), select, button) {
+    min-height: 38px;
+    font-size: 14px;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) :is(input, select, textarea) {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) .table-wrap {
+    max-width: 100%;
+    overflow: auto;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) :is(th, td) {
+    padding: 10px 12px;
+    font-size: 13px;
+    vertical-align: top;
+  }
+  .wms-mobile-v1 :is(#reposicao, #transferencias) :is(.replenishment-summary-grid, .transfer-summary-grid) {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .wms-mobile-v1 :is(.replenishment-summary-grid, .transfer-summary-grid) > div {
+    padding: 12px;
+    border-radius: 6px;
+    min-height: 72px;
+    box-sizing: border-box;
+  }
+  .wms-mobile-v1 :is(.replenishment-summary-grid, .transfer-summary-grid) strong {
+    font-size: 26px;
+    line-height: 1.2;
+  }
+  .wms-mobile-v1 #reposicao .replenishment-layout {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.6fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .wms-mobile-v1 body.role-atendente #reposicao .replenishment-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wms-mobile-v1 #reposicao :is(.replenishment-card, .replenishment-card-main) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-width: 0;
+    gap: 8px 12px;
+  }
+  .wms-mobile-v1 #reposicao .replenishment-card {
+    padding: 12px;
+    border-radius: 6px;
+    box-shadow: none;
+  }
+  .wms-mobile-v1 #reposicao .replenishment-card-metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: 8px;
+  }
+  .wms-mobile-v1 #reposicao .replenishment-card-metrics > span {
+    padding: 8px;
+    min-width: 0;
+  }
+  .wms-mobile-v1 #reposicao .replenishment-card-footer {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+    gap: 8px 16px;
+  }
+  .wms-mobile-v1 #transferencias .transfer-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-card {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(140px, 0.45fr);
+    gap: 12px;
+    padding: 12px;
+    border-radius: 6px;
+    box-shadow: none;
+    background-image: none;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-title strong {
+    font-size: 15px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .wms-mobile-v1 #transferencias .transfer-route-flow {
+    gap: 8px;
+    padding: 8px;
+    font-size: 13px;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-meta {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-meta > span {
+    padding: 8px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-meta strong {
+    font-size: 14px;
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-actions {
+    gap: 6px;
+  }
+  .wms-mobile-v1 #consultaSku .sku-hub-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .wms-mobile-v1 #consultaSku .sku-hub-grid > span {
+    padding: 12px;
+    min-width: 0;
+  }
+  .wms-mobile-v1 #consultaSku .sku-location-card {
+    padding: 14px;
+    box-shadow: none;
+    border-radius: 8px;
+  }
+  .wms-mobile-v1 #consultaSku .sku-location-code {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+  }
+  .wms-mobile-v1 :is(#consultaSku, #reposicao, #transferencias) button:focus-visible {
+    outline: 3px solid #0866f5;
+    outline-offset: 2px;
+  }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  .wms-mobile-v1 #reposicao .replenishment-layout,
+  .wms-mobile-v1 #transferencias .transfer-board-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wms-mobile-v1 #transferencias .transfer-board-actions {
+    display: flex;
+    flex-wrap: wrap;
+  }
+}

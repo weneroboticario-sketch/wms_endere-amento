@@ -1,5 +1,6 @@
 import { createElement, Box, Home, ClipboardList, Search, Menu, ArrowLeftRight, Bell, Plus, ChevronRight, SlidersHorizontal, X } from "lucide";
 import "./wms-mobile.css";
+import "./wms-desktop.css";
 
 const icon=(shape,size=20)=>createElement(shape,{width:size,height:size,"aria-hidden":"true",focusable:"false"});
 const button=(label,shape)=>{const node=document.createElement("button");node.type="button";node.setAttribute("aria-label",label);node.title=label;node.append(icon(shape));return node;};
