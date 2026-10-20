@@ -1742,6 +1742,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
       "total_finished_at",
       "total_duration_seconds",
       "total_items",
+      "itens_total",
       "total_skus",
       "total_expected_quantity",
       "total_separated_quantity",
@@ -2585,8 +2586,8 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
       totalStartedAt: row.total_started_at || row.iniciado_em || row.started_at || "",
       totalFinishedAt: row.total_finished_at || row.finalizado_em || row.finished_at || "",
       totalDurationSeconds: Number(row.total_duration_seconds || row.duracao_segundos || 0),
-      totalItems: Number(row.total_items || 0),
-      totalSkus: Number(row.total_skus || 0),
+      totalItems: Number(row.total_items || row.itens_total || row.total_skus || 0),
+      totalSkus: Number(row.total_skus || row.itens_total || row.total_items || 0),
       totalExpectedQuantity: Number(row.total_expected_quantity || 0),
       totalSeparatedQuantity: Number(row.total_separated_quantity || 0),
       totalPackedQuantity: Number(row.total_packed_quantity || 0),
@@ -10744,6 +10745,30 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     });
   }
 
+  var transferSummaryRepairAttempts = {};
+  var transferSummaryRepairRunning = false;
+  async function ensureVisibleTransferTotals(transfers) {
+    if (transferSummaryRepairRunning || !isSupabaseReady() || !canUseNetwork()) return;
+    var missing = transfers.filter(function (transfer) {
+      return !transferState.loadedItemTransferIds[transfer.id] &&
+        (!Number(transfer.totalItems || transfer.totalSkus || 0) || !Number(transfer.totalPreviewQuantity || transfer.totalExpectedQuantity || 0)) &&
+        !transferSummaryRepairAttempts[transfer.id];
+    });
+    if (!missing.length) return;
+    transferSummaryRepairRunning = true;
+    try {
+      for (var offset = 0; offset < missing.length; offset += 3) {
+        await Promise.all(missing.slice(offset, offset + 3).map(function (transfer) {
+          transferSummaryRepairAttempts[transfer.id] = true;
+          return loadTransferItemsForTransfer(transfer.id);
+        }));
+      }
+    } finally {
+      transferSummaryRepairRunning = false;
+      if (getActiveScreenId() === "transferencias") renderTransfers();
+    }
+  }
+
   function renderTransferPanel() {
     if (!$("transferPanelRows")) return;
     renderTransferMergePanel();
@@ -10775,6 +10800,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     $("transferPanelRows").innerHTML = visibleTransfers.length
       ? visibleTransfers.map(transferPanelRowHtml).join("") + renderTransferPanelLimitNotice(transfers.length, visibleTransfers.length)
       : "<div class=\"empty-state compact\">Nenhuma transferência encontrada.</div>";
+    ensureVisibleTransferTotals(visibleTransfers);
   }
 
   function transferPanelRowHtml(transfer) {
@@ -17012,6 +17038,14 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     try {
       transferDebugLog("Criando transferencia", { transfers: transfers.length, items: items.length, warehouse: activeWarehouseCode() });
       await enrichTransferItemsWithStock(items);
+      transfers.forEach(function (transfer) {
+        var originalItems = items.filter(function (item) { return item.transferId === transfer.id && !item.isExtra; });
+        transfer.totalItems = originalItems.length;
+        transfer.totalSkus = originalItems.length;
+        transfer.totalExpectedQuantity = originalItems.reduce(function (sum, item) { return sum + Number(item.requestedQty || 0); }, 0);
+        transfer.totalPreviewQuantity = transfer.totalExpectedQuantity;
+        transfer.pendingItems = originalItems.length;
+      });
       await insertTransferRows(transfers.map(toDbTransfer));
       try {
         await upsertTransferItemRows(items.map(toDbTransferItem));
