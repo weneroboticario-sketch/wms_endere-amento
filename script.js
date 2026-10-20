@@ -5651,7 +5651,6 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
-    if (Number(request.attendedQty || 0) < Number(request.requestedQty || 0)) throw new Error("Ainda ha quantidade pendente. Use Atender para parcial ou Sem estoque com motivo.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
     return updateReplenishmentRow(id, {
@@ -9547,7 +9546,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
       actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
       actions.push("<button class=\"secondary-button\" data-replenishment-nostock=\"" + escapeHtml(item.id) + "\" type=\"button\">Sem estoque</button>");
-      if (Number(item.attendedQty || 0) >= Number(item.requestedQty || 0) && Number(item.requestedQty || 0) > 0) actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
+      if (Number(item.attendedQty || 0) > 0) actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
     }
     if (canReturnReplenishmentRequest(item)) {
       actions.push("<button class=\"secondary-button\" data-replenishment-return=\"" + escapeHtml(item.id) + "\" type=\"button\">Devolver para fila</button>");
