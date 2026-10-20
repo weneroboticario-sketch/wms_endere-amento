@@ -118,7 +118,7 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
       const mark=icon(screen.id==="transferencias"?ArrowLeftRight:screen.id==="reposicao"?ClipboardList:Box,36);mark.classList.add("mobile-page-icon");heading?.prepend(mark);restores.push(()=>mark.remove());
       screen.querySelectorAll(".panel").forEach(panel=>{panel.classList.add("mobile-section");restores.push(()=>panel.classList.remove("mobile-section"));});
     }
-    kpis(".replenishment-summary-grid>div",Box,['[data-replenishment-filter="PENDENTE"]','[data-replenishment-filter="EM_SEPARACAO"]',null,'[data-replenishment-filter="SEM_ESTOQUE"]']);
+    kpis(".replenishment-summary-grid>div",Box,['[data-replenishment-filter="PENDENTE"]','[data-replenishment-filter="EM_SEPARACAO"]',null,'[data-replenishment-filter="SEM_ESTOQUE"]','[data-replenishment-filter="SEPARADO"]']);
     kpis(".transfer-summary-grid>div",ClipboardList);
     // Transfer status already has a change handler; keep the same filter and permissions.
     const separating=document.querySelector(".transfer-summary-grid>div:nth-child(2)");

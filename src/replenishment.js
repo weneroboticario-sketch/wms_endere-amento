@@ -10,6 +10,12 @@ export function isReplenishmentVisibleInActiveQueue(request) {
   return Boolean(request) && !REPLENISHMENT_QUEUE_HIDDEN_STATUSES.includes(String(request.status || "").trim().toUpperCase());
 }
 
+export function matchesReplenishmentQueueFilter(request, filter) {
+  if (!filter) return true;
+  if (filter === "EM_SEPARACAO") return ["EM_SEPARACAO", "SEPARADO"].includes(request.status);
+  return request.status === filter;
+}
+
 export function compareReplenishmentQueueItems(left, right) {
   if (left.status === right.status) {
     const priorityDifference = Number(right.prioridade === "CLIENTE") - Number(left.prioridade === "CLIENTE");
