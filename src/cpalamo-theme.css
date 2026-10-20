@@ -253,3 +253,100 @@
   .cp-alamo :is(.cp-user-table,#expeditionContent,#reverseLogisticsContent) td::before { content: attr(data-label); font-size: 13px; color: var(--muted); }
 }
 @media(prefers-reduced-motion:reduce) { .cp-alamo * { scroll-behavior: auto; transition: none; animation: none; } }
+/* Shared constraints keep dense operational modules inside their available space. */
+.cp-alamo{--app-bg:#F4F7FB;--bg:#F4F7FB;--ink:#10213A;--text:#10213A;--text-strong:#10213A;--muted:#506782;--border:#DFE7F1;--line:#DFE7F1;--primary:#0866F5;--primary-dark:#0755CD;--primary-hover:#0755CD;--primary-soft:#EDF4FF;--nav:#082B4B;--nav-dark:#082B4B;--nav-hover:#123C61}
+.cp-alamo .sidebar{background:#082B4B}
+.cp-alamo .sidebar .menu-label{color:#9AB8D2;font-size:11px;font-weight:500}
+.cp-alamo .sidebar .menu-item{min-height:44px;color:#E4EFF9;border-left:0;border-radius:6px;font-weight:500;font-size:13px}
+.cp-alamo .sidebar .menu-item>svg{background:transparent;padding:2px;color:#9DC5E4}
+.cp-alamo .sidebar .menu-item.active{background:#0866F5;color:white;border-left:0}
+.cp-alamo .sidebar .menu-item.active>svg{color:white}
+.cp-alamo .sidebar .menu-item:hover:not(.active){background:#ffffff10}
+.cp-alamo :is(.primary-button,.secondary-button,.danger-button){box-shadow:none;border-radius:6px;font-weight:600;font-size:14px}
+.cp-alamo .primary-button{background:#0866F5;border:1px solid #0866F5;color:white}
+.cp-alamo .primary-button:hover{background:#0755CD}
+.cp-alamo .secondary-button{background:white;border:1px solid #D8E3F0;color:#254766}
+.cp-alamo .secondary-button:hover{background:#EDF4FF}
+.cp-alamo :is(.panel,.cp-workflow-band,.global-band){border:1px solid #DFE7F1;border-radius:8px;box-shadow:none}
+.cp-alamo :is(.panel h3,.cp-workflow-band h3){font-size:16px;font-weight:650}
+.cp-alamo .transfer-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);padding-bottom:0}
+.cp-alamo .transfer-tabs>button{background:transparent;border:0;border-bottom:3px solid transparent;border-radius:0;box-shadow:none;color:#506782;padding:12px;font-weight:500}
+.cp-alamo .transfer-tabs>button.active{color:#0866F5;border-bottom-color:#0866F5}
+.cp-alamo :is(.transfer-preview-summary,.transfer-summary-grid,.replenishment-summary-grid)>div{background:#EDF3FA;border:1px solid #E4EBF3}
+.cp-alamo table th{background:#EDF3FA;color:#10213A}
+.cp-alamo table td{border-bottom:1px solid #DFE7F1}
+.cp-alamo table tbody tr:nth-child(even){background:#F5FAFF}
+.cp-alamo :is(input,select,textarea){border-color:#CDDCEE;border-radius:6px;box-shadow:none}
+.cp-alamo :is(.content,.screen,.transfer-section,.panel,.cp-workflow-band,.global-band,.dashboard-layout,.transfer-preview-group,.pb-cart,.drawer-body){min-width:0;max-width:100%;box-sizing:border-box}
+.cp-alamo .content{overflow-wrap:anywhere}
+.cp-alamo :is(.dashboard-layout,.dashboard-grid,.content-grid,.two-column-grid,.transfer-filter-grid,.users-layout,.replenishment-layout)>*{min-width:0}
+.cp-alamo :is(.panel-header,.page-title,.section-header){gap:12px;flex-wrap:wrap}
+.cp-alamo :is(.panel-header,.page-title,.section-header)>*{min-width:0}
+.cp-alamo :is(.panel-header,.page-title,.section-header) :is(h2,h3,p){overflow-wrap:anywhere;white-space:normal}
+.cp-alamo :is(.table-wrap,.table-wrapper,.global-table-wrap){display:block;width:100%;min-width:0;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+.cp-alamo :is(.table-wrap,.table-wrapper,.global-table-wrap):focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.cp-alamo :is(input:not([type=checkbox]):not([type=radio]),select,textarea){min-width:0;max-width:100%;box-sizing:border-box}
+.cp-alamo :is(button,.primary-button,.secondary-button,.danger-button){height:auto;white-space:normal;overflow-wrap:anywhere;line-height:1.4}
+.cp-alamo :is(.button-row,.panel-actions,.row-actions){gap:8px;max-width:100%;flex-wrap:wrap}
+.cp-alamo .button-row>button{max-width:100%}
+.cp-alamo :is(.inline-status,.empty-state,.transfer-board-note){overflow-wrap:anywhere;white-space:normal;line-height:1.5}
+.cp-alamo :is(.inline-status,.empty-state):empty{display:none}
+.cp-alamo :is(.transfer-preview-summary,.transfer-summary-grid,.replenishment-summary-grid){gap:8px}
+.cp-alamo :is(.transfer-preview-summary,.transfer-summary-grid,.replenishment-summary-grid)>div{min-width:0;padding:12px;border-radius:6px}
+.cp-alamo :is(.transfer-preview-summary,.transfer-summary-grid,.replenishment-summary-grid) strong{font-size:24px;line-height:1.2;font-variant-numeric:tabular-nums}
+.cp-alamo #newTransferSection>.dashboard-layout{display:grid;grid-template-columns:minmax(280px,.7fr) minmax(0,1.6fr);gap:16px;align-items:start}
+.cp-alamo #newTransferSection>.dashboard-layout>.panel{padding:16px;min-width:0}
+.cp-alamo #newTransferSection .transfer-preview-group{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,.45fr);gap:12px;align-items:start;padding:12px;border:1px solid var(--line);border-radius:6px;box-shadow:none}
+.cp-alamo #newTransferSection .transfer-preview-group>div{min-width:0}
+.cp-alamo #newTransferSection .transfer-preview-group :is(strong,p,small,span){white-space:normal;overflow-wrap:anywhere}
+.cp-alamo #newTransferSection table{table-layout:auto;width:100%;min-width:850px}
+.cp-alamo #newTransferSection :is(td,th){padding:10px;vertical-align:top;font-size:13px;line-height:1.45}
+.cp-alamo #newTransferSection td{height:auto}
+.cp-alamo #newTransferSection textarea{min-height:88px;height:120px;resize:vertical}
+.cp-alamo #newTransferSection .transfer-stock-snapshot{display:grid;grid-template-columns:repeat(2,minmax(90px,1fr));gap:6px;min-width:200px}
+.cp-alamo #newTransferSection .transfer-stock-snapshot>span{padding:8px;min-width:0}
+.cp-alamo :is(dialog,.app-modal,.decision-card,.modal-card){box-sizing:border-box;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}
+.cp-alamo :is(.drawer,.fiscal-drawer){max-width:100vw}
+.cp-alamo .drawer :is(form,label,select,input,textarea){min-width:0;max-width:100%}
+@media(min-width:761px){
+  .cp-alamo :is(.panel,.cp-workflow-band,.global-band){padding:16px}
+  .cp-alamo :is(th,td){padding:10px 12px;line-height:1.45}
+  .cp-alamo .user-strip{min-width:0;align-items:center}
+  .cp-alamo .user-strip>*{min-width:0}
+  .cp-alamo .user-strip :is(strong,span){white-space:normal;overflow-wrap:anywhere}
+  .cp-alamo :is(.transfer-board-card,.replenishment-card){grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;box-shadow:none}
+  .cp-alamo .transfer-board-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end}
+}
+@media(min-width:761px) and (max-width:1100px){
+  .cp-alamo #newTransferSection>.dashboard-layout{grid-template-columns:minmax(0,1fr)}
+  .cp-alamo #newTransferSection>.dashboard-layout>.panel:first-child{max-width:100%}
+  .cp-alamo :is(.dashboard-layout,.users-layout,.replenishment-layout){grid-template-columns:minmax(0,1fr)}
+}
+@media(min-width:1101px){
+  .cp-alamo #newTransferSection>.dashboard-layout{grid-template-columns:minmax(280px,.85fr) minmax(0,1.25fr)}
+  .cp-alamo #newTransferSection>.dashboard-layout>.panel:first-child{align-self:start}
+  .cp-alamo #newTransferSection :is(input,select,textarea){font-size:14px}
+  .cp-alamo #newTransferSection :is(input,select){min-height:42px}
+}
+@media(max-width:760px){
+  .cp-alamo .content{padding:12px 10px 24px}
+  .cp-alamo .page-title{margin-bottom:12px}
+  .cp-alamo .page-title h2{font-size:24px;line-height:1.3}
+  .cp-alamo #transferencias>.transfer-tabs{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:4px;padding-bottom:4px;scrollbar-width:thin}
+  .cp-alamo #transferencias>.transfer-tabs>button{flex:0 0 auto;width:auto;min-width:0;white-space:nowrap;padding:10px 12px}
+  .cp-alamo :is(.panel,.cp-workflow-band,.global-band){padding:12px}
+  .cp-alamo :is(.dashboard-layout,.users-layout,.replenishment-layout,.transfer-work-grid,#newTransferSection>.dashboard-layout){display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+  .cp-alamo :is(.transfer-preview-summary,.transfer-summary-grid,.replenishment-summary-grid){grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cp-alamo :is(.panel-header,.section-header){display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px}
+  .cp-alamo :is(.panel-header,.section-header) h3{font-size:17px}
+  .cp-alamo :is(input:not([type=checkbox]):not([type=radio]),select,textarea){font-size:16px}
+  .cp-alamo :is(.button-row,.panel-actions){display:flex;flex-wrap:wrap;gap:8px}
+  .cp-alamo :is(.button-row,.panel-actions)>button{flex:1 1 140px;min-height:44px;padding:10px}
+  .cp-alamo #newTransferSection>.dashboard-layout>.panel{padding:12px}
+  .cp-alamo #newTransferSection .transfer-preview-group{grid-template-columns:minmax(0,1fr)}
+  .cp-alamo #newTransferSection .transfer-preview-group select{width:100%}
+  .cp-alamo .transfer-work-grid>*{min-width:0}
+  .cp-alamo .current-item-compact-grid{grid-template-columns:minmax(0,1fr)}
+  .cp-alamo :is(.transfer-live-panel,.transfer-scan-panel,.current-item-card){max-width:100%;min-width:0}
+  .cp-alamo .user-strip{margin:-12px -10px 16px}
+}
