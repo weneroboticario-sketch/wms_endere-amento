@@ -2495,6 +2495,14 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
 
   function removeLocalTransferEverywhere(transferId) {
     if (!transferId) return;
+    function keepUnrelatedTask(task) {
+      if (task.referenceType !== "TRANSFERENCIA" || task.referenceId !== transferId) return true;
+      delete taskCenterState.historyByTaskId[task.id];
+      if (taskCenterState.selectedTaskId === task.id) taskCenterState.selectedTaskId = "";
+      return false;
+    }
+    taskCenterState.tasks = taskCenterState.tasks.filter(keepUnrelatedTask);
+    taskCenterState.archivedTasks = taskCenterState.archivedTasks.filter(keepUnrelatedTask);
     removeById(transferState.transfers, transferId);
     transferState.items = transferState.items.filter(function (item) { return item.transferId !== transferId; });
     transferState.events = transferState.events.filter(function (event) { return event.transfer_id !== transferId && event.transferId !== transferId; });
@@ -18390,7 +18398,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     ];
     var modal = $("transferDeleteModal");
     if (!modal) {
-      return Promise.resolve(window.confirm("Tem certeza que deseja excluir esta transferencia?\n\n" + details.join("\n") + "\n\nEsta acao removera a transferencia e seus dados relacionados da operacao."));
+      return Promise.resolve(window.confirm("Excluir definitivamente esta transferencia?\n\n" + details.join("\n") + "\n\nNF/XML, itens, historico e tarefas vinculadas serao apagados do banco. Esta acao e irreversivel."));
     }
     $("transferDeleteDetails").innerHTML = details.map(function (detail) {
       return "<span>" + escapeHtml(detail) + "</span>";
@@ -18417,23 +18425,6 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) throw response.error;
   }
 
-  async function cleanupTransferRelatedData(transferId) {
-    if (!isSupabaseReady() || !transferId) return;
-    var tables = [
-      { name: "wms_task_notifications", column: "transfer_id" },
-      { name: "wms_notifications", column: "transfer_id" },
-      { name: "wms_transfer_boxes", column: "transfer_id" },
-      { name: "wms_transfer_packages", column: "transfer_id" },
-      { name: "wms_transfer_divergences", column: "transfer_id" },
-      { name: "wms_transfer_merge_items", column: "merged_transfer_id" },
-      { name: "wms_transfer_merge_items", column: "original_transfer_id" },
-      { name: "wms_transfer_items", column: "transfer_id" }
-    ];
-    for (var i = 0; i < tables.length; i += 1) {
-      await deleteRelatedTransferRows(tables[i].name, tables[i].column, transferId);
-    }
-  }
-
   async function deleteTransferPermanently(id) {
     if (!isAdminOrSupervisor()) {
       showToast("Somente administrador ou supervisor pode excluir transferencia.", "error");
@@ -18454,25 +18445,19 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     if (!beginTransferAction("delete-test:" + id, actionButton, "Excluindo...")) return false;
     try {
       transferDebugLog("Excluindo transferencia", { id: id, code: transfer.code });
-      var now = nowIso();
-      var response = await updateTransferWithSchemaFallback(id, {
-        status: "CANCELADA",
-        is_deleted: true,
-        deleted_at: now,
-        deleted_by_id: (authState.currentUser || {}).id || "",
-        deleted_by_name: (authState.currentUser || {}).name || "",
-        updated_at: now,
-        last_action_at: now,
-        last_action_label: "Transferencia excluida"
-      });
+      var response = await supabaseDb.rpc("wms_delete_transfer_permanently", { p_transfer_id: id });
       if (response.error) throw response.error;
-      await cleanupTransferRelatedData(id);
+      if (response.data !== true) throw new Error("O servidor nao confirmou a exclusao.");
       removeLocalTransferEverywhere(id);
       maintenanceState.lastReport = null;
       renderTransfers();
       renderMaintenance();
-      showToast("Transferencia excluida.", "success");
+      showToast("Transferencia e dados vinculados excluidos definitivamente.", "success");
       return true;
+    } catch (error) {
+      console.error("Erro ao excluir transferencia:", error);
+      showToast("Nao foi possivel excluir a transferencia: " + formatSupabaseError(error), "error");
+      return false;
     } finally {
       endTransferAction(actionButton);
     }
