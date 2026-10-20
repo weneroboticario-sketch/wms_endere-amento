@@ -41,6 +41,14 @@ try{
     assert.equal(await page.locator("#skuSearchInput").count(),1);
     assert.equal(await page.locator(".mobile-bottom-nav").isVisible(),false);
     assert.equal(await page.locator(".content>.app-header").count(),1);
+    assert.equal(await page.locator(".sidebar .desktop-brand-icon").isVisible(),true);
+    assert.equal(await page.locator(".content>.app-header").evaluate(node=>window.getComputedStyle(node).backgroundColor),"rgb(8, 43, 75)");
+    await page.locator('.sidebar [data-screen="reposicao"]').click();
+    assert.equal(await page.locator("#replenishmentForm").isVisible(),true);
+    await page.locator('.sidebar .transfer-full-menu').click();
+    await page.locator('[data-transfer-tab="transferPanelSection"]').click();
+    await page.getByRole("button",{name:"Visualizar",exact:true}).first().click();
+    assert.ok(await page.evaluate(()=>window.mobileFixture.calls.some(call=>call.action?.transferView)));
     assert.deepEqual(await page.evaluate(()=>[...document.querySelectorAll('[id]')].map(node=>node.id).sort()),await page.evaluate(()=>window.mobileFixture.originalIds));
     assert.deepEqual(errors,[]);console.log(`PASS ${width}px: layout, original IDs, navigation, actions and desktop restoration`);await page.close();
   }

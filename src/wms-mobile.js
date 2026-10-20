@@ -13,6 +13,19 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
   const screens=["consultaSku","reposicao","transferencias"].map($).filter(Boolean);
   const header=document.querySelector(".mobile-topbar"),sidebar=$("sidebar"),appHeader=document.querySelector(".app-header");
   if(!header||!sidebar||screens.length!==3)return;
+  const desktopMark=sidebar.querySelector(".brand-mark");
+  if(desktopMark){const mark=icon(Box,34);mark.classList.add("desktop-brand-icon");desktopMark.append(mark);}
+  sidebar.querySelectorAll(".menu-item[data-screen]").forEach(item=>{
+    const shape=item.dataset.screen==="consultaSku"?Search:item.dataset.screen==="transferencias"?ArrowLeftRight:item.dataset.screen==="reposicao"?ClipboardList:Box;
+    const mark=icon(shape,20);mark.classList.add("desktop-nav-icon");item.prepend(mark);
+  });
+  screens.forEach(screen=>{
+    const mark=icon(screen.id==="transferencias"?ArrowLeftRight:screen.id==="reposicao"?ClipboardList:Search,28);
+    mark.classList.add("desktop-heading-icon");screen.querySelector(".page-title")?.prepend(mark);
+  });
+  document.querySelectorAll(".replenishment-summary-grid>div,.transfer-summary-grid>div").forEach((node,index)=>{
+    const mark=icon(index%4===1?Box:ClipboardList,24);mark.classList.add("desktop-metric-icon");node.prepend(mark);
+  });
   $("menuToggle")?.replaceChildren(icon(Menu,24));
   const brand=document.createElement("div");brand.className="mobile-brand";
   const brandText=document.createElement("span");brandText.innerHTML='<strong>WMS</strong><small>ENDEREÇAMENTO</small>';brand.append(icon(Box,32),brandText);header.append(brand);
