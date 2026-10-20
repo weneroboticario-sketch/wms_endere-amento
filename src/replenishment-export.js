@@ -27,3 +27,10 @@ export function fillReplenishmentTemplate(XLSX, workbook, rows) {
   });
   return workbook;
 }
+
+export async function getReplenishmentExportFile({ batch, loadFile, saveFile, createFile }) {
+  const existing = await loadFile(batch.id);
+  if (existing) return existing;
+  // The server's insert-once lock returns the winner if two downloads race.
+  return saveFile(batch.id, await createFile(batch));
+}
