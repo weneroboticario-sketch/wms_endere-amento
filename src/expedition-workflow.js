@@ -268,6 +268,12 @@ export function createExpeditionWorkflow(context) {
     if(action==="ASSIGN"){
       const result=await context.client().from("wms_users").select("id,name,role,default_warehouse_code,warehouse_code").eq("active",true).eq("archived",false).order("name");
       if(result.error)throw result.error;
+      if(context.user().role!=="OPERADOR"){
+        const purchases=await context.client().rpc("wms_expedition_responsible_candidates",{p_transfer_id:entity});
+        if(purchases.error)throw purchases.error;
+        result.data=[...new Map([...(result.data||[]),...(purchases.data||[])].map(user=>[user.id,user])).values()]
+          .sort((a,b)=>String(a.name||"").localeCompare(String(b.name||""),"pt-BR"));
+      }
       if(selected?.id!==entity||warehouse()!==w)return;
       const users=(result.data||[]).filter(u=>context.user().role!=="OPERADOR"||u.id===context.user().id);
       form.elements.responsible.innerHTML=users.map(u=>`<option value="${e(u.id)}">${e(u.name)} (${e(u.role)})</option>`).join("");
