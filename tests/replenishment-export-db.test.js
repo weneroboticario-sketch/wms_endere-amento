@@ -58,6 +58,9 @@ test("export batches stamp once, allow repeat downloads and new requests, and en
     assert.equal(competing.find(result => result.status === "fulfilled").value.rows[0].requests.length, 2);
     assert.equal((await db.query("select count(distinct export_batch_id)::int as total from wms_replenishment_requests where id in ('6','7')")).rows[0].total, 1);
     await assert.rejects(db.query("select public.create_wms_replenishment_export('VDCO','wrong')"), /nao autorizado/);
+    await db.exec("reset role; insert into wms_replenishment_export_batches(id,warehouse_code,requests) values('other-unit','VDCO','[{\"id\":\"3\"}]'); insert into wms_replenishment_export_files(batch_id,xlsx_base64) values('other-unit','UEsDBBBBBBBB'); set role authenticated;");
+    assert.equal((await db.query("select * from wms_replenishment_export_files where batch_id='other-unit'")).rows.length, 0);
+    await assert.rejects(db.query("select public.save_wms_replenishment_export_file('other-unit','UEsDBBBBBBBB')"), /nao autorizado/);
     assert.equal((await db.query("select * from wms_replenishment_requests where id='3'")).rows.length, 0);
     await db.exec("select set_config('test.profile','ATENDENTE',false)");
     assert.equal((await db.query("select * from wms_replenishment_export_batches")).rows.length, 0);

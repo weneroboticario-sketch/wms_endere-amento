@@ -12,7 +12,12 @@ alter table public.wms_replenishment_export_files enable row level security;
 grant select on public.wms_replenishment_export_files to authenticated;
 create policy replenishment_export_file_read on public.wms_replenishment_export_files
 for select to authenticated using (
-  exists (select 1 from public.wms_replenishment_export_batches b where b.id = batch_id)
+  (select private.has_wms_role(array['ADMINISTRADOR','SUPERVISOR','OPERADOR']))
+  and exists (
+    select 1 from public.wms_replenishment_export_batches b
+    where b.id = batch_id
+      and b.warehouse_code = any((select private.current_wms_allowed_warehouses())::text[])
+  )
 );
 
 alter table public.wms_replenishment_export_batches
