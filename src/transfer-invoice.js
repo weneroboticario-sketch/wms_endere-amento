@@ -38,7 +38,7 @@ export function createTransferInvoiceController(context) {
       if (!button?.isConnected) continue;
       button.textContent = `NF ${row.invoice_number} · XML`;
       const tr = button.closest("tr");
-      tr.querySelectorAll("[data-transfer-revalidate],[data-transfer-delete-permanent]").forEach(action => { action.hidden = true; });
+      tr.querySelectorAll("[data-transfer-revalidate]").forEach(action => { action.hidden = true; });
     }
   }
   async function open(id) {
