@@ -73,6 +73,7 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
     records.set(node,()=>{node.append(...children);details.remove();});
   }
   function searchList(input,list,empty){
+    if(!list)return;
     const query=input.value.trim().toLocaleLowerCase("pt-BR");let matches=0;
     for(const row of list.querySelectorAll(":scope>.replenishment-card")){const match=!query||row.textContent.toLocaleLowerCase("pt-BR").includes(query);row.hidden=!match;if(match)matches++;}
     empty.hidden=!query||matches>0;
@@ -84,7 +85,9 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
   const skuTabs=document.createElement("div");skuTabs.className="mobile-tabs";skuTabs.setAttribute("role","tablist");skuTabs.setAttribute("aria-label","Informações do SKU");
   for(const [key,label] of [["stock","Estoque"],["addresses","Endereços"]]){const tab=document.createElement("button");tab.type="button";tab.textContent=label;tab.dataset.mobileSkuTab=key;tab.setAttribute("role","tab");tab.addEventListener("click",()=>{skuTab=key;updateSkuTab();});skuTabs.append(tab);}
   function updateSkuTab(){
-    const hub=$("skuOperationalHub"),locations=$("skuResultCards"),available=locations.childElementCount>0;
+    const hub=$("skuOperationalHub"),locations=$("skuResultCards");
+    if(!hub||!locations)return;
+    const available=locations.childElementCount>0;
     if(!available)skuTab="stock";
     skuTabs.hidden=!hub.childElementCount;
     skuTabs.querySelector('[data-mobile-sku-tab="addresses"]').hidden=!available;
@@ -133,8 +136,8 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
     nav.querySelector('[data-mobile-nav="more"] span').textContent=active==="transferencias"?"Transferências":"Mais";
     if(mobile){
       for(const [node] of records)if(!node.isConnected)records.delete(node);
-      $("replenishmentList").querySelectorAll(":scope>.replenishment-card").forEach(node=>compactRecord(node,"replenishment"));
-      $("transferPanelRows").querySelectorAll(":scope>.transfer-board-card").forEach(node=>compactRecord(node,"transfer"));
+      $("replenishmentList")?.querySelectorAll(":scope>.replenishment-card").forEach(node=>compactRecord(node,"replenishment"));
+      $("transferPanelRows")?.querySelectorAll(":scope>.transfer-board-card").forEach(node=>compactRecord(node,"transfer"));
       searchList(query,$("replenishmentList"),noResults);updateSkuTab();
       const newSource=document.querySelector('[data-transfer-tab="newTransferSection"]');transferCreate.hidden=!newSource||newSource.hidden||window.getComputedStyle(newSource).display==="none";
     }
