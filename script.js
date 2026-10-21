@@ -34,7 +34,7 @@ import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
-import { initializeCpAppearance } from "./src/cpalamo-appearance.js";
+import { initializeCpAppearance, requestVisualFields } from "./src/cpalamo-appearance.js";
 import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
@@ -14537,7 +14537,9 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
 
   function transferWorkItemActionsHtml(item, mode) {
     var transfer = getTransferById(item.transferId);
-    if (!transfer || isFinalTransferStatus(transfer.status, transfer) || item.isExtra) return "";
+    if (!transfer || isFinalTransferStatus(transfer.status, transfer)) return "";
+    if (item.isExtra && !(IS_CP_ALAMO && mode === "MONTAGEM")) return "";
+    if (IS_CP_ALAMO && mode === "MONTAGEM" && !canCorrectTransferPacking(transfer)) return "";
     if (mode === "SEPARACAO" && Number(item.separatedQty || 0) > 0) {
       return [
         "<div class=\"transfer-card-actions\">",
@@ -14655,6 +14657,21 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
     if (!item || !transfer || isFinalTransferStatus(transfer.status, transfer)) return;
     var current = mode === "MONTAGEM" ? Number(item.packedQty || 0) : Number(item.separatedQty || 0);
     var label = mode === "MONTAGEM" ? "Quantidade na caixa" : "Quantidade separada";
+    if (IS_CP_ALAMO && mode === "MONTAGEM") {
+      if (!canCorrectTransferPacking(transfer)) return;
+      var fields = await requestVisualFields("Corrigir caixa - SKU " + item.sku, [
+        { name: "quantity", label: "Quantidade total correta na caixa (substitui " + formatQty(current) + ")", type: "number", value: current },
+        { name: "reason", label: "Justificativa da correcao" }
+      ]);
+      if (!fields) return;
+      var correctedQty = parseTransferQuantity(fields.quantity);
+      if (!Number.isFinite(correctedQty) || correctedQty < 0 || !fields.reason.trim()) {
+        setStatus("transferWorkStatus", "Informe quantidade valida e justificativa.", "error");
+        return;
+      }
+      await saveTransferItemOperationalQty(item, transfer, mode, correctedQty, button, fields.reason.trim());
+      return;
+    }
     var value = window.prompt(label + " para o SKU " + item.sku + ":", formatInputQty(current));
     if (value === null) return;
     var qty = parseTransferQuantity(value);
@@ -14669,12 +14686,42 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
     var item = transferState.items.find(function (entry) { return entry.id === itemId; });
     var transfer = item ? getTransferById(item.transferId) : null;
     if (!item || !transfer || isFinalTransferStatus(transfer.status, transfer)) return;
+    if (IS_CP_ALAMO && mode === "MONTAGEM") {
+      if (!canCorrectTransferPacking(transfer)) return;
+      var fields = await requestVisualFields("Remover da caixa - SKU " + item.sku, [
+        { name: "reason", label: "Justificativa (a quantidade na caixa sera zerada; o historico sera mantido)" }
+      ]);
+      if (!fields || !fields.reason.trim()) return;
+      await saveTransferItemOperationalQty(item, transfer, mode, 0, button, fields.reason.trim());
+      return;
+    }
     var message = mode === "MONTAGEM" ? "Remover este SKU da caixa?" : "Desfazer a coleta deste SKU?";
     if (!window.confirm(message)) return;
     await saveTransferItemOperationalQty(item, transfer, mode, 0, button);
   }
 
-  async function saveTransferItemOperationalQty(item, transfer, mode, qty, button) {
+  function canCorrectTransferPacking(transfer) {
+    return Boolean(authState.currentUser && transfer && !isPurchasesUser() &&
+      transferBelongsToActiveWarehouse(transfer) && !isFinalTransferStatus(transfer.status, transfer) &&
+      getTransferWorkMode(transfer) === "MONTAGEM" &&
+      (isAdminOrSupervisor() || transfer.responsibleId === authState.currentUser.id));
+  }
+
+  function findTransferItemForPacking(transferId, sku) {
+    var items = getTransferItems(transferId);
+    var matches = function (entry) { return isSameSku(entry.sku, sku); };
+    return (IS_CP_ALAMO && items.find(function (entry) { return !entry.isExtra && matches(entry); })) ||
+      items.find(matches);
+  }
+
+  function isPackedItemComplete(item) {
+    return Number(item.packedQty || 0) > 0 && (item.isExtra ||
+      Number(item.packedQty || 0) >= Number(item.separatedQty || item.requestedQty || 0));
+  }
+
+  async function saveTransferItemOperationalQty(item, transfer, mode, qty, button, reason) {
+    if (IS_CP_ALAMO && mode === "MONTAGEM" &&
+        (!canCorrectTransferPacking(transfer) || !Number.isFinite(qty) || qty < 0 || !reason)) return;
     var actionKey = "edit-transfer-item:" + item.id + ":" + mode;
     if (!beginTransferAction(actionKey, button, "Salvando...")) return;
     item = Object.assign({}, item);
@@ -14682,6 +14729,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       var now = new Date().toISOString();
       var update = { updated_at: now };
       if (mode === "MONTAGEM") {
+        var previousPacked = Number(item.packedQty || 0);
         item.packedQty = qty;
         if (isBoxQuantityItem(item)) {
           item.packedUnits = qty > 0 && Number(item.unitsPerBox || 0) > 0 ? qty * Number(item.unitsPerBox || 0) : qty;
@@ -14691,6 +14739,16 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
         item.excessQty = Math.max(0, qty - Number(item.separatedQty || 0));
         item.divergenceType = item.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : "";
         item.status = qty <= 0 ? (Number(item.separatedQty || 0) > 0 ? "SEPARADO" : "PENDENTE") : qty >= Number(item.separatedQty || 0) ? "ENVIADO" : "EM_CAIXA";
+        if (IS_CP_ALAMO) {
+          if (item.isExtra) {
+            item.extraQty = qty;
+            item.excessQty = qty;
+            item.divergenceType = qty > 0 ? "ITEM_EXTRA" : "";
+            item.status = qty > 0 ? "EXTRA" : "NAO_ATENDIDO";
+          }
+          item.observation = [item.observation, "Correcao da caixa em " + now + " por " +
+            authState.currentUser.name + ": " + previousPacked + " -> " + qty + ". Motivo: " + reason].filter(Boolean).join("\n");
+        }
         update.quantidade_lacrada = item.packedQty;
         update.quantidade_lacrada_unidades = item.packedUnits || 0;
         update.quantidade_total_unidades = getTransferExpectedUnits(item);
@@ -14713,10 +14771,15 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
         divergence_type: item.divergenceType || "",
         status: item.status
       }, transferItemAuditDbFields(item));
+      if (IS_CP_ALAMO && mode === "MONTAGEM") {
+        update.status_operacional = transferOperationalStatusForItem(item);
+        update.status_divergencia = transferDivergenceStatusForItem(item);
+      }
       await saveTransferItemChecked(item, update);
       invalidateTransferStatsCache();
       await persistTransferLightSummary(transfer, mode === "MONTAGEM" ? "ITEM_PACKED" : "ITEM_SEPARATED", { sku: item.sku });
       await loadTransferData();
+      if (IS_CP_ALAMO && mode === "MONTAGEM") await loadTransferItemsForTransfer(transfer.id, { force: true });
       transferState.activeTransferId = transfer.id;
       transferState.activeWorkMode = mode;
       transferState.manualSeparationQty = false;
@@ -18154,7 +18217,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       setStatus("transferWorkStatus", "Informe ou bipe o SKU.", "error");
       return;
     }
-    var item = getTransferItems(transfer.id).find(function (entry) { return isSameSku(entry.sku, sku); });
+    var item = findTransferItemForPacking(transfer.id, sku);
     if (!item) {
       transferState.selectedItemId = "";
       if (isXmlConferenceTransfer(transfer)) {
@@ -18204,6 +18267,25 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
   }
 
   async function addExtraTransferItem(transfer, sku, qty, observation, inputType) {
+    var guardedPacking = IS_CP_ALAMO && transferState.activeWorkMode === "MONTAGEM";
+    var packingButton = $("confirmTransferItemButton");
+    if (guardedPacking && !canCorrectTransferPacking(transfer)) return;
+    if (guardedPacking && !beginTransferAction("extra-pack:" + transfer.id, packingButton, "Verificando...")) return;
+    try {
+    if (guardedPacking) {
+      var freshRows = await fetchTransferItemsForTransfer(transfer.id, activeWarehouseCode());
+      var freshItems = freshRows.map(fromDbTransferItem);
+      if (!canCorrectTransferPacking(transfer)) return;
+      var matching = freshItems.find(function (entry) { return !entry.isExtra && isSameSku(entry.sku, sku); }) ||
+        freshItems.find(function (entry) { return isSameSku(entry.sku, sku); });
+      if (matching) {
+        applyLocalTransferItemUpdate(matching);
+        transferState.selectedItemId = matching.id;
+        renderTransfers();
+        setStatus("transferWorkStatus", "Este SKU ja consta na transferencia. Nenhum item extra foi criado. Use o item existente ou Editar quantidade.", "warning");
+        return;
+      }
+    }
     var now = new Date().toISOString();
     var mode = transferState.activeWorkMode;
     var item = {
@@ -18256,6 +18338,12 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
     renderTransfers();
     setStatus("transferWorkStatus", "Item extra registrado para análise do líder.", "warning");
     $("transferScanInput").focus();
+    } catch (error) {
+      if (!guardedPacking) throw error;
+      setStatus("transferWorkStatus", "Nao foi possivel registrar o item extra: " + formatSupabaseError(error), "error");
+    } finally {
+      if (guardedPacking) endTransferAction(packingButton);
+    }
   }
 
   async function addDeferredConferenceExtraItem(transfer, sku, qty, inputType) {
@@ -18348,7 +18436,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
         $("transferScanInput").focus();
         return;
       }
-      item = getTransferItems(transfer.id).find(function (entry) { return isSameSku(entry.sku, typedSku); });
+      item = findTransferItemForPacking(transfer.id, typedSku);
       if (item) transferState.selectedItemId = item.id;
       else {
         await handleUnknownTransferSku(transfer, typedSku);
@@ -18357,6 +18445,11 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
     }
     if (!transfer || !item) {
       setStatus("transferWorkStatus", mode === "MONTAGEM" ? "Bipe um SKU valido antes de confirmar." : "Selecione um item para separar.", "error");
+      return;
+    }
+    if (IS_CP_ALAMO && mode === "MONTAGEM" && isPackedItemComplete(item)) {
+      renderTransferWork();
+      setStatus("transferWorkStatus", "Este SKU ja esta na caixa. Para corrigir o total, use Editar quantidade ou Remover da caixa no item.", "warning");
       return;
     }
     if (mode === "MONTAGEM") renderTransferBoxFields();
