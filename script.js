@@ -39,6 +39,8 @@ import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
+import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer } from "./src/transfer-central.js";
+import "./src/transfer-central.css";
 
 (function () {
   "use strict";
@@ -2543,6 +2545,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       internalCode: row.codigo_interno || "",
       channel: row.canal || "",
       name: row.nome || "",
+      loja: row.loja || "",
       cnpj: row.cnpj || "",
       active: row.ativo !== false,
       createdAt: row.created_at || new Date().toISOString(),
@@ -11123,13 +11126,14 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       var responsible = $("transferResponsibleFilter").value;
       var establishment = $("transferEstablishmentFilter").value;
       var query = normalizeText($("transferCodeFilter").value).toLowerCase();
+      if (IS_CP_ALAMO) query = query.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       transfers = transfers.filter(function (transfer) {
         if (status && transfer.status !== status) return false;
         if (!status && (isFinalTransferStatus(transfer.status, transfer) || transfer.status === "CANCELADA")) return false;
         if (responsible && transfer.responsibleId !== responsible) return false;
         if (establishment && transfer.establishmentId !== establishment) return false;
         if (query) {
-          var haystack = [transfer.code, transfer.name, transfer.establishmentName, transfer.responsibleName].join(" ").toLowerCase();
+          var haystack = IS_CP_ALAMO ? transferSearchText(transfer, transferState.establishments) : [transfer.code, transfer.name, transfer.establishmentName, transfer.responsibleName].join(" ").toLowerCase();
           if (haystack.indexOf(query) === -1) return false;
         }
         return true;
@@ -11168,7 +11172,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       ? "<label class=\"transfer-reassign-control\"><span>Responsavel</span><select data-transfer-reassign=\"" + transfer.id + "\">" + transferResponsibleOptionsHtml(transfer.responsibleId) + "</select></label>"
       : "";
     var mergedInfo = transfer.isMerged ? "<div class=\"transfer-board-note\">Unificada de " + transfer.mergedFromIds.length + " transferencia(s)</div>" : transfer.mergedIntoId ? "<div class=\"transfer-board-note\">Arquivada por unificacao</div>" : "";
-    return [
+    var boardHtml = [
       "<article class=\"transfer-board-card " + stage.className + (purchaseRequest ? " purchase-transfer-stock-card" : "") + "\">",
       "<div class=\"transfer-board-main\">",
       "<div class=\"transfer-board-top\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><span class=\"transfer-stage-chip\">" + escapeHtml(stage.label) + "</span></div>",
@@ -11195,6 +11199,8 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
       "</div>",
       "</article>"
     ].join("");
+    if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
+    return '<article class="transfer-central-row"><div><strong title="' + escapeHtml(transfer.code || "") + '">' + escapeHtml(transfer.code || "-") + '</strong><small>' + escapeHtml(origin) + ' &rarr; ' + escapeHtml(destination) + '</small></div><div><strong>' + escapeHtml(transferStatusDisplayLabel(transfer.status)) + '</strong><small>' + stats.totalItems + ' SKUs · ' + formatQty(stats.requested) + ' un.</small></div><div><strong>' + escapeHtml(transfer.responsibleName || "Sem atribuicao") + '</strong><small>' + formatDateTime(transfer.createdAt) + '</small></div><button type="button" class="secondary-button" data-transfer-central="' + escapeHtml(transfer.id) + '">Detalhes</button><details><summary>Acoes e acompanhamento</summary>' + boardHtml + '</details></article>';
   }
 
   function transferPanelStageInfo(status) {
@@ -17352,6 +17358,14 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
   }
 
   function findTransferEstablishment(token) {
+    if (IS_CP_ALAMO) {
+      var match = resolveTransferUnit(transferState.establishments, token);
+      if (match) return enrichEstablishmentWithStoreReference(match, token);
+      var references = STORE_REFERENCE_ROWS.map(function (row) { return { code: row.loja, storeCode: row.codVf, internalCode: row.cod, name: row.loja, cnpj: row.cnpj, active: true, fromReference: true }; });
+      // Never resolve an ambiguous registered unit via an unrelated fallback.
+      if (transferState.establishments.some(function (item) { return resolveTransferUnit([item], token); })) return null;
+      return resolveTransferUnit(references, token);
+    }
     var wanted = normalizeHeader(token);
     if (!wanted) return null;
     var establishment = transferState.establishments.find(function (item) {
@@ -19459,6 +19473,18 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferCentral) {
+      var centralTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferCentral; });
+      if (!IS_CP_ALAMO || !centralTransfer || !transferBelongsToActiveWarehouse(centralTransfer)) return;
+      if (!isAdminOrSupervisor() && centralTransfer.responsibleId !== authState.currentUser.id) return;
+      button.disabled = true;
+      try {
+        var centralItems = await loadTransferItemsForTransfer(centralTransfer.id);
+        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: transferRouteLabel(centralTransfer), onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: true }); } });
+      } catch (error) { showToast("Nao foi possivel abrir os detalhes: " + formatSupabaseError(error), "error"); }
+      finally { button.disabled = false; }
+      return;
+    }
     if (button.dataset.transferFiscal) { await openCpTransferInvoice(button.dataset.transferFiscal); return; }
     if (button.dataset.transferLoadMore !== undefined) {
       transferState.panelRenderLimit = Number(transferState.panelRenderLimit || TRANSFER_PANEL_PAGE_SIZE) + TRANSFER_PANEL_PAGE_SIZE;
