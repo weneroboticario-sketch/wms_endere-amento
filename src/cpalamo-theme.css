@@ -1,4 +1,19 @@
 /* CP Alamo design system. The independent WMS keeps its existing theme. */
+.cp-alamo .stock-freshness-notice {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--warning);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.cp-alamo .stock-freshness-notice strong { display: block; font-size: 14px; }
+.cp-alamo .stock-freshness-notice p { margin: 4px 0 0; }
+.cp-alamo .stock-freshness-detail { font-size: 12px; }
 :root.cp-alamo {
   --app-bg: #f4f7fb; --bg: var(--app-bg); --surface: #fff; --surface-alt: #f1f5f9;
   --surface-soft: #f8fafc; --surface-raised: #fff; --surface-hover: #f3f7fb;

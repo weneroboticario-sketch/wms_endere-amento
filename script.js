@@ -38,6 +38,7 @@ import { initializeCpAppearance } from "./src/cpalamo-appearance.js";
 import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
+import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
 
 (function () {
   "use strict";
@@ -3140,6 +3141,46 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     }
   }
 
+  var cpStockFreshness = { key: "", checkedAt: 0, batches: [], loading: false, error: false };
+
+  async function refreshCpStockFreshness(force) {
+    if (!IS_CP_ALAMO) return;
+    var host = $("stockFreshnessNotice");
+    if (!host) return;
+    if (!authState.currentUser || isGlobalDashboardScope()) { host.hidden = true; return; }
+    var warehouse = activeWarehouseCode();
+    var key = authState.currentUser.id + ":" + warehouse;
+    if (cpStockFreshness.key !== key) {
+      cpStockFreshness = { key: key, checkedAt: 0, batches: [], loading: false, error: false };
+      host.hidden = true;
+      host.replaceChildren();
+    }
+    var state = cpStockFreshness;
+    var sources = pulmaoBaseEnabled() ? ["LOJA", "CAPTACAO", "PULMAO"] : ["LOJA", "CAPTACAO"];
+    function renderNotice() {
+      if (cpStockFreshness !== state || !authState.currentUser || isGlobalDashboardScope() ||
+          authState.currentUser.id + ":" + activeWarehouseCode() !== key) return;
+      renderStockFreshnessNotice(host, {
+        batches: state.batches, warehouse: warehouse, sources: sources,
+        error: state.error, now: Date.now(), formatDate: formatDateTime
+      });
+    }
+    if (state.checkedAt) renderNotice();
+    if (state.loading || (!force && state.checkedAt && Date.now() - state.checkedAt < 60000)) return;
+    state.loading = true;
+    try {
+      if (!isSupabaseReady() || !canUseNetwork()) throw new Error("Sem conexao para verificar a base.");
+      state.batches = await loadLatestStockImports(supabaseDb, warehouse, sources);
+      state.error = false;
+    } catch (error) {
+      state.error = true;
+    } finally {
+      state.checkedAt = Date.now();
+      state.loading = false;
+      renderNotice();
+    }
+  }
+
   async function countActiveStockPositions(sourceType) {
     var response = await runSupabaseRequestWithRetry("count-stock-" + sourceType, function () {
       return supabaseDb
@@ -3243,6 +3284,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
       stockState.batches = stockState.batches.slice(0, 10);
     }
     if (getActiveScreenId() === "baseEstoque") renderStockBase();
+    if (patch.status === "COMPLETED") refreshCpStockFreshness(true);
   }
 
   async function importStockFromInput(sourceType) {
@@ -6636,6 +6678,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     stopTaskPolling();
     await pauseLocalCacheForContextChange("warehouse-switch");
     setActiveWarehouse(code);
+    refreshCpStockFreshness();
     resetLazyModuleState(true);
     applyRolePermissions();
     if (isGlobalDashboardScope()) {
@@ -6913,7 +6956,10 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
   }
 
   if (IS_CP_ALAMO) window.setInterval(function () {
-    if (document.visibilityState === "visible") refreshCpWorkflowView();
+    if (document.visibilityState === "visible") {
+      refreshCpWorkflowView();
+      refreshCpStockFreshness();
+    }
   }, 30000);
 
   function isGlobalAdmin() {
@@ -8354,6 +8400,7 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    refreshCpStockFreshness();
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
     }
