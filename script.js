@@ -14553,6 +14553,8 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
         "<div class=\"transfer-card-actions\">",
         "<button class=\"secondary-button\" data-transfer-edit-pack=\"" + item.id + "\" type=\"button\">Editar quantidade</button>",
         "<button class=\"remove-small\" data-transfer-remove-pack=\"" + item.id + "\" type=\"button\">Remover da caixa</button>",
+        IS_CP_ALAMO && Number(item.packedQty || 0) > Number(item.separatedQty || 0)
+          ? "<button class=\"secondary-button\" data-transfer-correct-separated=\"" + item.id + "\" type=\"button\">Corrigir separacao</button>" : "",
         "</div>"
       ].join("");
     }
@@ -14639,6 +14641,10 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
         resetTransferItemQuantity(actionButton.dataset.transferRemovePack, "MONTAGEM", actionButton);
         return;
       }
+      if (actionButton.dataset.transferCorrectSeparated) {
+        correctTransferSeparationForPacking(actionButton.dataset.transferCorrectSeparated, actionButton);
+        return;
+      }
     }
     var card = event.target.closest("[data-transfer-work-item]");
     if (!card) return;
@@ -14717,6 +14723,51 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
   function isPackedItemComplete(item) {
     return Number(item.packedQty || 0) > 0 && (item.isExtra ||
       Number(item.packedQty || 0) >= Number(item.separatedQty || item.requestedQty || 0));
+  }
+
+  async function correctTransferSeparationForPacking(itemId, button) {
+    var item = transferState.items.find(function (entry) { return entry.id === itemId; });
+    var transfer = item ? getTransferById(item.transferId) : null;
+    if (!IS_CP_ALAMO || !item || !canCorrectTransferPacking(transfer)) return;
+    var packed = Number(item.packedQty || 0);
+    var fields = await requestVisualFields("Corrigir separacao - SKU " + item.sku, [
+      { name: "quantity", label: "Quantidade fisicamente separada (na caixa: " + formatQty(packed) + ")", type: "number", value: Math.max(packed, Number(item.separatedQty || 0)) },
+      { name: "reason", label: "Justificativa. Se este item extra foi duplicado, cancele e use Remover da caixa." }
+    ]);
+    if (!fields || !canCorrectTransferPacking(transfer)) return;
+    var quantity = parseTransferQuantity(fields.quantity);
+    var reason = fields.reason.trim();
+    if (!Number.isFinite(quantity) || quantity < packed || quantity < 0 || !reason) {
+      setStatus("transferWorkStatus", "A separacao deve refletir a quantidade fisica e nao pode ser menor que a quantidade na caixa. Ajuste a caixa primeiro se necessario.", "error");
+      return;
+    }
+    if (!beginTransferAction("correct-separated:" + item.id, button, "Salvando...")) return;
+    var corrected = Object.assign({}, item);
+    try {
+      var now = nowIso();
+      corrected.separatedQty = quantity;
+      corrected.missingQty = item.isExtra ? 0 : Math.max(0, Number(item.requestedQty || 0) - quantity);
+      corrected.excessQty = item.isExtra ? Math.max(quantity, packed) : Math.max(0, quantity - Number(item.requestedQty || 0));
+      corrected.divergenceType = item.isExtra ? "ITEM_EXTRA" : corrected.excessQty > 0 ? "QUANTIDADE_EXCEDENTE" : corrected.missingQty > 0 ? "FALTA_DE_ITEM" : "";
+      corrected.status = item.isExtra ? "EXTRA" : packed >= quantity ? "ENVIADO" : "EM_CAIXA";
+      corrected.observation = [item.observation, "Correcao da separacao em " + now + " por " +
+        authState.currentUser.name + ": " + Number(item.separatedQty || 0) + " -> " + quantity + ". Motivo: " + reason].filter(Boolean).join("\n");
+      await saveTransferItemChecked(corrected, Object.assign({
+        quantidade_separada: quantity,
+        status: corrected.status,
+        status_operacional: transferOperationalStatusForItem(corrected),
+        status_divergencia: transferDivergenceStatusForItem(corrected),
+        updated_at: now
+      }, transferItemAuditDbFields(corrected)));
+      invalidateTransferStatsCache();
+      await persistTransferLightSummary(transfer, "ITEM_SEPARATED", { sku: item.sku });
+      renderTransfers();
+      setStatus("transferWorkStatus", "Separacao corrigida com justificativa. A quantidade na caixa foi mantida.", "success");
+    } catch (error) {
+      setStatus("transferWorkStatus", "Nao foi possivel corrigir a separacao: " + formatSupabaseError(error), "error");
+    } finally {
+      endTransferAction(button);
+    }
   }
 
   async function saveTransferItemOperationalQty(item, transfer, mode, qty, button, reason) {
@@ -18728,6 +18779,19 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
   async function finishPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer || isFinalTransferStatus(transfer.status, transfer)) return;
+    if (IS_CP_ALAMO) {
+      var inconsistentItem = getTransferItems(transfer.id).find(function (item) {
+        return Number(item.packedQty || 0) > Number(item.separatedQty || 0);
+      });
+      if (inconsistentItem) {
+        transferState.selectedItemId = inconsistentItem.id;
+        renderTransferWork();
+        setStatus("transferWorkStatus", "SKU " + inconsistentItem.sku + ": " +
+          formatQty(inconsistentItem.packedQty) + " na caixa, mas " + formatQty(inconsistentItem.separatedQty || 0) +
+          " separado(s). Use Corrigir separacao para registrar a quantidade fisica. Se for um extra duplicado, use Remover da caixa. Nenhum envio para NF foi realizado.", "warning");
+        return;
+      }
+    }
     var finalBoxCount = readFinalBoxCountInput();
     var hasPackedItems = getTransferItems(transfer.id).some(function (item) { return Number(item.packedQty || 0) > 0; });
     if (finalBoxCount === null || (hasPackedItems && finalBoxCount === 0) || (!hasPackedItems && finalBoxCount > 0)) {
