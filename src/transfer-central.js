@@ -38,7 +38,8 @@ export function transferUnitLabel(units, code, fallback) {
   const matches = units.filter(unit => unit.active !== false && [unit.code, unit.storeCode, unit.internalCode].some(value => value && key(value) === key(code)));
   if (matches.length !== 1) return fallback || code || "Nao informado";
   const unit = matches[0];
-  return unit.loja || (/\D/.test(unit.code || "") ? unit.code : "") || unit.name || fallback || code;
+  const nickname = unit.loja || (/\D/.test(unit.code || "") ? unit.code : "");
+  return nickname ? String(unit.storeCode || code || unit.code) + " - " + nickname : fallback || unit.name || code;
 }
 
 export function transferMatchesQuickFilter(transfer, filter) {
@@ -55,7 +56,7 @@ export function transferCentralRowHtml({ transfer, stats, origin, destination, s
   const id = escapeHtml(transfer.id), tone = transferStatusTone(transfer);
   return `<article class="transfer-central-row tone-${tone}" data-central-row="${id}">
     <div><button class="transfer-central-code" type="button" data-transfer-central="${id}" title="${escapeHtml(transfer.code)}">${escapeHtml(transferPublicCode(transfer))}</button><small>${escapeHtml(origin)} → ${escapeHtml(destination)}</small></div>
-    <div><small>Caixas / itens / unidades</small><strong>${Number(transfer.totalBoxes || 0)} cx · ${Number(stats.totalItems || 0)} itens · ${Number(stats.requested || 0)} un.</strong>${transfer.invoiceNumber ? `<small>NF ${escapeHtml(transfer.invoiceNumber)}</small>` : ""}</div>
+    <div><small>SKUs / Volume / Caixas</small><strong>${Number(stats.totalSkus ?? stats.totalItems ?? 0)} SKUs · ${Number(stats.requested || 0)} un. · ${Number(transfer.totalBoxes || 0)} cx</strong>${transfer.invoiceNumber ? `<small>NF ${escapeHtml(transfer.invoiceNumber)}</small>` : ""}</div>
     <div><span class="transfer-central-badge tone-${tone}">${escapeHtml(status)}</span>${Number(transfer.divergenceCount || 0) ? `<small class="transfer-central-alert">${Number(transfer.divergenceCount)} divergencia(s)</small>` : ""}</div>
     <div><small>Responsavel</small><strong>${escapeHtml(transfer.responsibleName || "Sem atribuicao")}</strong><small>Prazo: nao informado</small></div>
     <div class="transfer-central-actions">${primaryAction ? `<button type="button" class="primary-button" data-transfer-execute="${id}">${escapeHtml(primaryAction)}</button>` : ""}<button type="button" class="secondary-button" data-transfer-central="${id}">Detalhes</button>${canExport ? `<button type="button" class="secondary-button" data-transfer-export-packed="${id}">Exportar retaguarda (Excel)</button>` : ""}</div>

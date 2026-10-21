@@ -42,6 +42,7 @@ import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-
 import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPrimaryAction, transferUnitLabel, transferCentralRowHtml, transferMatchesQuickFilter, canOpenTransferCentral } from "./src/transfer-central.js";
 import "./src/transfer-central.css";
 import { updateProcessNavigation } from "./src/process-navigation.js";
+import { completeMissingTransferSummaries } from "./src/transfer-summary.js";
 import "./src/process-navigation.css";
 
 (function () {
@@ -1883,13 +1884,14 @@ import "./src/process-navigation.css";
   }
 
   function establishmentSelectColumns() {
-    return "id,codigo,codigo_loja,codigo_interno,canal,nome,cnpj,ativo,created_at,updated_at";
+    return "id,codigo,codigo_loja,codigo_interno,canal,nome,cnpj,ativo,created_at,updated_at" + (IS_CP_ALAMO ? ",loja" : "");
   }
 
   async function fetchTransferSummaryRows(limit) {
     var startedAt = performance.now();
+    var summaryWarehouse = activeWarehouseCode();
     var response = await selectRowsWithMissingColumnFallback("wms_transfers", transferSummarySelectColumns(), function (query) {
-      return query.eq("warehouse_code", activeWarehouseCode()).order("updated_at", { ascending: false }).limit(limit || 200);
+      return query.eq("warehouse_code", summaryWarehouse).order("updated_at", { ascending: false }).limit(limit || 200);
     });
     if (response.error && isMissingWarehouseColumnError(response.error)) {
       assertWarehouseFallbackAllowed("wms_transfers", response.error);
@@ -1898,6 +1900,17 @@ import "./src/process-navigation.css";
       });
     }
     if (response.error) throw response.error;
+    if (IS_CP_ALAMO) {
+      response.data = await completeMissingTransferSummaries(response.data || [], async function (ids, offset, size) {
+        var result = await supabaseDb.from("wms_transfer_items")
+          .select("id,transfer_id,sku,is_extra,status,quantidade_solicitada,quantidade_separada,quantidade_lacrada")
+          .eq("warehouse_code", summaryWarehouse).in("transfer_id", ids).order("id", { ascending: true }).range(offset, offset + size - 1);
+        if (result.error) throw result.error;
+        performanceState.lastTransferQueryCount += 1;
+        return result.data || [];
+      });
+      if (summaryWarehouse !== activeWarehouseCode()) throw new Error("Estoque alterado durante a leitura dos totais.");
+    }
     recordPerformanceMetric("lastTransferListMs", startedAt);
     performanceState.lastTransferQueryCount += 1;
     return response.data || [];
@@ -14284,11 +14297,13 @@ import "./src/process-navigation.css";
   }
 
   function transferRouteOriginLabel(transfer) {
-    return normalizeText(transfer && (transfer.originName || transfer.originStoreCode)) || "-";
+    var fullOrigin = normalizeText(transfer && (transfer.originName || transfer.originStoreCode)) || "-";
+    return IS_CP_ALAMO && transfer ? transferUnitLabel(transferState.establishments, transfer.originStoreCode, fullOrigin) : fullOrigin;
   }
 
   function transferRouteDestinationLabel(transfer) {
     if (!transfer) return "-";
+    if (IS_CP_ALAMO) return transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "-");
     return storeRouteLabelWithCodVf({
       name: transfer.destinationName || transfer.establishmentName || "",
       code: transfer.destinationName || transfer.establishmentName || transfer.destinationStoreCode || transfer.establishmentCode || "",
@@ -15345,7 +15360,7 @@ import "./src/process-navigation.css";
   function getTransferStats(transferId) {
     if (transferStatsCache.statsByTransferId[transferId]) return transferStatsCache.statsByTransferId[transferId];
     var items = getTransferItems(transferId);
-    if (!items.length && transferId && !transferState.loadedItemTransferIds[transferId]) {
+    if (!items.length && transferId && (!transferState.loadedItemTransferIds[transferId] || IS_CP_ALAMO)) {
       var transfer = getTransferById(transferId);
       if (transfer) {
         var requestedSummary = Number(transfer.totalPreviewQuantity || transfer.totalExpectedQuantity || 0);
@@ -15356,7 +15371,7 @@ import "./src/process-navigation.css";
         var totalItemsSummary = Number(transfer.totalItems || transfer.totalSkus || 0);
         var statsSummary = {
           totalItems: totalItemsSummary,
-          totalSkus: totalItemsSummary,
+          totalSkus: Number(transfer.totalSkus || totalItemsSummary),
           pendingSeparation: Number(transfer.pendingItems || 0),
           pendingPacking: Number(transfer.pendingItems || 0),
           separatedItems: Number(transfer.separatedItems || 0),
@@ -15394,7 +15409,7 @@ import "./src/process-navigation.css";
     var progress = requested ? Math.round((handledQty / requested) * 100) : 0;
     var stats = {
       totalItems: totalItems,
-      totalSkus: originalItems.length,
+      totalSkus: IS_CP_ALAMO ? new Set(originalItems.map(function (item) { return normalizeSkuKey(item.sku); })).size : originalItems.length,
       pendingSeparation: pendingSeparation,
       pendingPacking: pendingPacking,
       separatedItems: separatedItems,
