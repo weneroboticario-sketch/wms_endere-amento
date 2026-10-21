@@ -24,7 +24,7 @@ const units = [
   { code: "22796", loja: "VDDRD", name: "Centro Dourados", active: true }
 ];
 test("route labels use canonical unit nickname without choosing an ambiguous unit", () => {
-  assert.equal(transferUnitLabel(units, "12423", "Long legal name"), "TLS1");
+  assert.equal(transferUnitLabel(units, "12423", "Long legal name"), "12423 - TLS1");
   assert.equal(transferUnitLabel([...units, { code: "12423", loja: "OTHER" }], "12423", "Original"), "Original");
   assert.equal(transferUnitLabel(units, "unknown", "Original"), "Original");
 });
@@ -43,7 +43,7 @@ test("quick filters use actual workflow statuses and respect fiscal handoff", ()
 
 test("compact row exposes short code, next action and real amounts while escaping data", () => {
   const html = transferCentralRowHtml({ transfer: { id: "a", publicNumber: 9, code: "full-code", totalBoxes: 2, status: "EM_SEPARACAO", responsibleName: "<script>bad</script>", invoiceNumber: "123" }, stats: { totalItems: 3, requested: 12 }, origin: "TLS1", destination: "VDDRD", status: "Em separacao", primaryAction: "Continuar separacao" });
-  for (const text of ["TRF-0009", "full-code", "2 cx", "3 itens", "12 un.", "NF 123", "data-transfer-central", "data-transfer-execute"]) assert.ok(html.includes(text));
+  for (const text of ["TRF-0009", "full-code", "2 cx", "3 SKUs", "12 un.", "NF 123", "data-transfer-central", "data-transfer-execute"]) assert.ok(html.includes(text));
   assert.ok(!html.includes("<script>"));
   assert.ok(html.includes("Prazo: nao informado"));
 });
