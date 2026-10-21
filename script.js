@@ -41,6 +41,8 @@ import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src
 import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
 import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPublicCode, transferPrimaryAction } from "./src/transfer-central.js";
 import "./src/transfer-central.css";
+import { updateProcessNavigation } from "./src/process-navigation.js";
+import "./src/process-navigation.css";
 
 (function () {
   "use strict";
@@ -6786,6 +6788,8 @@ import "./src/transfer-central.css";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (IS_CP_ALAMO && authState.currentUser.role === "GERENTE") return "managerCentral";
     if (IS_CP_ALAMO && authState.currentUser.role === "FINANCEIRO") return "lossesDre";
+    if (IS_CP_ALAMO && authState.currentUser.role === "OPERADOR" && canAccessScreen("transferencias")) return "transferencias";
+    if (IS_CP_ALAMO && authState.currentUser.role === "COMPRAS" && canAccessScreen("fiscalWorkflow")) return "fiscalWorkflow";
     if (IS_CP_ALAMO && authState.currentUser.role === "COMPRAS") return "purchaseTransfer";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6812,6 +6816,7 @@ import "./src/transfer-central.css";
       if (!canAccessScreen(screen.id)) showScreen(defaultScreenForUser());
     });
     updateMenuSectionsVisibility();
+    if (IS_CP_ALAMO) updateProcessNavigation({ role: (authState.currentUser || {}).role, screenId: (document.querySelector(".screen.active") || {}).id, canAccess: canAccessScreen, navigate: showScreen });
   }
 
   function updateMenuSectionsVisibility() {
@@ -8404,6 +8409,7 @@ import "./src/transfer-central.css";
       item.classList.toggle("active", item.dataset.screen === screenId);
     });
     $("sidebar").classList.remove("open");
+    if (IS_CP_ALAMO) updateProcessNavigation({ role: authState.currentUser.role, screenId: screenId, canAccess: canAccessScreen, navigate: showScreen });
     updateModuleSubtitle(screenId);
     refreshCpStockFreshness();
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {

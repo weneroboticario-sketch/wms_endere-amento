@@ -1,0 +1,12 @@
+.cp-alamo .process-legacy-menu { display:none; }
+.cp-alamo .process-menu { display:grid; gap:4px; padding:16px 0; }
+.cp-alamo .process-menu button { display:flex; align-items:center; gap:12px; min-height:44px; padding:12px; width:100%; border:0; border-radius:6px; background:transparent; color:#e6effb; text-align:left; font-size:14px; cursor:pointer; }
+.cp-alamo .process-menu button:hover { background:#ffffff12; }
+.cp-alamo .process-menu button[aria-current=page] { background:#0866f5; color:white; }
+.cp-alamo .process-menu svg { flex:none; }
+.cp-alamo.compact-sidebar-collapsed .process-menu button { font-size:0; justify-content:center; }
+.cp-alamo .process-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:8px 0 12px; margin-bottom:12px; border-bottom:1px solid var(--border-color,#dbe5f0); }
+.cp-alamo .process-tabs button { border:0; border-bottom:2px solid transparent; border-radius:0; background:transparent; color:var(--text-color,#334b66); min-height:44px; padding:8px 12px; font-size:13px; cursor:pointer; }
+.cp-alamo .process-tabs button[aria-current=page] { border-bottom-color:#0866f5; color:#0866f5; font-weight:700; }
+.cp-alamo .process-tabs button:focus-visible,.cp-alamo .process-menu button:focus-visible { outline:2px solid #44c4e7; outline-offset:2px; }
+@media(max-width:767px) { .cp-alamo .process-tabs { flex-wrap:nowrap; overflow-x:auto; max-width:100%; } .cp-alamo .process-tabs button { flex:none; white-space:nowrap; } }
