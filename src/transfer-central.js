@@ -18,6 +18,12 @@ export function transferPrimaryAction(transfer, user, inWarehouse) {
   return null;
 }
 
+export function canOpenTransferCentral(transfer, user, inWarehouse) {
+  if (!transfer || !user || !inWarehouse) return false;
+  if (["ADMINISTRADOR", "SUPERVISOR", "COMPRAS"].includes(user.role)) return true;
+  return user.role === "OPERADOR" && transfer.responsibleId === user.id;
+}
+
 export function transferStatusTone(transfer) {
   if (transfer.hasDivergence || Number(transfer.divergenceCount) > 0 || /DIVERGENCIA|CORRECAO/.test(transfer.status)) return "danger";
   if (/CANCELADA|ARQUIVADA|UNIFICADA/.test(transfer.status)) return "neutral";
@@ -53,7 +59,7 @@ export function transferCentralRowHtml({ transfer, stats, origin, destination, s
     <div><span class="transfer-central-badge tone-${tone}">${escapeHtml(status)}</span>${Number(transfer.divergenceCount || 0) ? `<small class="transfer-central-alert">${Number(transfer.divergenceCount)} divergencia(s)</small>` : ""}</div>
     <div><small>Responsavel</small><strong>${escapeHtml(transfer.responsibleName || "Sem atribuicao")}</strong><small>Prazo: nao informado</small></div>
     <div class="transfer-central-actions">${primaryAction ? `<button type="button" class="primary-button" data-transfer-execute="${id}">${escapeHtml(primaryAction)}</button>` : ""}<button type="button" class="secondary-button" data-transfer-central="${id}">Detalhes</button>${canExport ? `<button type="button" class="secondary-button" data-transfer-export-packed="${id}">Exportar retaguarda (Excel)</button>` : ""}</div>
-    ${moreActions ? `<details><summary>Mais acoes e acompanhamento</summary>${moreActions}</details>` : ""}</article>`;
+    ${moreActions ? `<details><summary>Mais acoes</summary>${moreActions}</details>` : ""}</article>`;
 }
 
 export function resolveTransferUnit(records, token) {
@@ -83,7 +89,7 @@ export function transferTimeline(transfer) {
     .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]));
 }
 
-export function openTransferCentralDrawer({ transfer, items, status, route, onOpen, primaryAction, onExport }) {
+export function openTransferCentralDrawer({ transfer, items, status, route, onOpen, primaryAction, onExport, moreActionsHtml, onMoreAction, onMoreChange }) {
   closeActiveDrawer?.();
   const previous = document.activeElement;
   const previousOverflow = document.body.style.overflow;
@@ -119,10 +125,30 @@ export function openTransferCentralDrawer({ transfer, items, status, route, onOp
     overlay.querySelector("footer").prepend(exportButton);
   }
   const close = () => { overlay.remove(); document.body.style.overflow = previousOverflow; selectedRow?.classList.remove("is-selected"); document.removeEventListener("keydown", keyboard); closeActiveDrawer = null; if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  if (moreActionsHtml) {
+    const more = document.createElement("details");
+    more.className = "transfer-central-more-actions";
+    const summary = document.createElement("summary");
+    summary.textContent = "Mais acoes";
+    const controls = document.createElement("div");
+    controls.innerHTML = moreActionsHtml;
+    controls.addEventListener("click", event => {
+      if (!event.target.closest("button") || !onMoreAction) return;
+      close();
+      onMoreAction(event);
+    });
+    controls.addEventListener("change", event => {
+      if (!onMoreChange) return;
+      close();
+      onMoreChange(event);
+    });
+    more.append(summary, controls);
+    overlay.querySelector("footer").append(more);
+  }
   const keyboard = event => {
     if (event.key === "Escape") close();
     if (event.key !== "Tab") return;
-    const focusable = [...overlay.querySelectorAll("button, summary")].filter(button => !button.closest("[hidden]") && !button.disabled);
+    const focusable = [...overlay.querySelectorAll("button, summary, select, input")].filter(button => !button.closest("[hidden]") && !button.disabled && button.getClientRects().length > 0);
     const first = focusable[0], last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
