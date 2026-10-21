@@ -6115,3 +6115,14 @@ body.role-atendente .replenishment-layout {
   #expedition > #expeditionContent > .button-row > label, #expedition [data-filter] > label:has(select), .cp-transfer-executive [data-filter] > label:has(select) { grid-column: 1 / -1; }
   #expedition .stock-summary-grid, .cp-transfer-executive .stock-summary-grid { grid-template-columns: minmax(0,1fr); }
 }
+.stock-freshness-alert {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid #edc56a;
+  border-left: 4px solid #d58a00;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #694700;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
