@@ -39,7 +39,7 @@ import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
-import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPublicCode, transferPrimaryAction } from "./src/transfer-central.js";
+import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPrimaryAction, transferUnitLabel, transferCentralRowHtml, transferMatchesQuickFilter } from "./src/transfer-central.js";
 import "./src/transfer-central.css";
 import { updateProcessNavigation } from "./src/process-navigation.js";
 import "./src/process-navigation.css";
@@ -11148,6 +11148,29 @@ import "./src/process-navigation.css";
       });
     }
     var operationalTransfers = getVisibleTransfers().filter(function (item) { return !isFinalTransferStatus(item.status, item); });
+    if (IS_CP_ALAMO) operationalTransfers = operationalTransfers.filter(function (item) { return !["CANCELADA", "UNIFICADA", "ARQUIVADA_POR_UNIFICACAO"].includes(item.status); });
+    if (IS_CP_ALAMO && isAdminOrSupervisor()) {
+      var quickFilters = $("transferCentralQuickFilters");
+      if (!quickFilters) {
+        quickFilters = document.createElement("div");
+        quickFilters.id = "transferCentralQuickFilters";
+        quickFilters.className = "transfer-central-filters";
+        quickFilters.setAttribute("aria-label", "Filas de transferencias");
+        $("transferPanelSection").prepend(quickFilters);
+        quickFilters.addEventListener("click", function (event) {
+          var button = event.target.closest("[data-transfer-quick]");
+          if (!button) return;
+          transferState.centralQuickFilter = button.dataset.transferQuick;
+          transferState.panelRenderLimit = TRANSFER_PANEL_RENDER_LIMIT;
+          renderTransferPanel();
+        });
+      }
+      var quickKey = transferState.centralQuickFilter || "all";
+      quickFilters.innerHTML = [["all", "Em operacao"], ["pending", "Pendentes"], ["unassigned", "Sem atribuicao"], ["separating", "Em separacao"], ["packing", "Montagem / conferencia"], ["invoice", "Aguardando NF"], ["divergent", "Divergencias"]].map(function (entry) {
+        return '<button type="button" data-transfer-quick="' + entry[0] + '" aria-pressed="' + (quickKey === entry[0]) + '"><span>' + entry[1] + '</span><strong>' + operationalTransfers.filter(function (item) { return transferMatchesQuickFilter(item, entry[0]); }).length + '</strong></button>';
+      }).join("");
+      transfers = transfers.filter(function (item) { return transferMatchesQuickFilter(item, quickKey); });
+    }
     $("transferMetricTotal").textContent = operationalTransfers.length;
     $("transferMetricSeparating").textContent = operationalTransfers.filter(function (item) { return item.status === "EM_SEPARACAO"; }).length;
     setTextIfExists("transferMetricBox", operationalTransfers.filter(function (item) { return ["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(item.status) >= 0; }).length);
@@ -11209,7 +11232,7 @@ import "./src/process-navigation.css";
     ].join("");
     if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
     var primaryAction = transferPrimaryAction(transfer, authState.currentUser, transferBelongsToActiveWarehouse(transfer));
-    return '<article class="transfer-central-row"><div><strong title="' + escapeHtml(transfer.code || "") + '">' + escapeHtml(transferPublicCode(transfer)) + '</strong><small>' + escapeHtml(origin) + ' &rarr; ' + escapeHtml(destination) + '</small></div><div><strong>' + escapeHtml(transferStatusDisplayLabel(transfer.status)) + '</strong><small>' + stats.totalItems + ' SKUs · ' + formatQty(stats.requested) + ' un.</small></div><div><strong>' + escapeHtml(transfer.responsibleName || "Sem atribuicao") + '</strong><small>' + formatDateTime(transfer.createdAt) + '</small></div><div class="transfer-central-actions">' + (primaryAction ? '<button type="button" class="primary-button" data-transfer-execute="' + escapeHtml(transfer.id) + '">' + escapeHtml(primaryAction) + '</button>' : '') + '<button type="button" class="secondary-button" data-transfer-central="' + escapeHtml(transfer.id) + '">Detalhes</button></div><details><summary>Acoes e acompanhamento</summary>' + boardHtml + '</details></article>';
+    return transferCentralRowHtml({ transfer: transfer, stats: stats, origin: transferUnitLabel(transferState.establishments, transfer.originStoreCode, origin), destination: transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, destination), status: transferStatusDisplayLabel(transfer.status), primaryAction: primaryAction, moreActions: boardHtml });
   }
 
   function transferPanelStageInfo(status) {
@@ -11242,6 +11265,17 @@ import "./src/process-navigation.css";
 
   function renderTransferMergePanel() {
     if (!$("transferMergePanel")) return;
+    if (IS_CP_ALAMO && !$("transferMergeDisclosure")) {
+      var mergeDisclosure = document.createElement("details");
+      mergeDisclosure.id = "transferMergeDisclosure";
+      mergeDisclosure.className = "transfer-central-merge";
+      var mergeSummary = document.createElement("summary");
+      mergeSummary.textContent = "Unificar transferencias";
+      mergeDisclosure.append(mergeSummary);
+      $("transferMergePanel").before(mergeDisclosure);
+      mergeDisclosure.append($("transferMergePanel"));
+    }
+    if ($("transferMergeDisclosure")) $("transferMergeDisclosure").hidden = !isAdminOrSupervisor();
     $("transferMergePanel").hidden = !isAdminOrSupervisor();
     if (!isAdminOrSupervisor()) {
       transferState.mergeSelection = {};
@@ -12046,6 +12080,9 @@ import "./src/process-navigation.css";
     if (IS_CP_ALAMO && transfer.requestOrigin === "COMPRAS") {
       return transferPanelRowHtml(transfer).replace("data-transfer-view=", "data-transfer-open=");
     }
+    if (IS_CP_ALAMO && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes((authState.currentUser || {}).role)) {
+      return transferPanelRowHtml(transfer).replace("data-transfer-view=", "data-transfer-open=");
+    }
     var stats = getTransferStats(transfer.id);
     var action = isFinalTransferStatus(transfer.status, transfer) ? "Ver resultado" : transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO" ? "Revalidar" : transfer.status === "SEPARACAO_CONCLUIDA" ? "Iniciar montagem" : transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA" || transfer.status === "EM_SEPARACAO" ? "Continuar" : "Iniciar";
     return [
@@ -12093,6 +12130,22 @@ import "./src/process-navigation.css";
     var visible = getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA";
     });
+    if (IS_CP_ALAMO && !isAttendant()) {
+      if (!$("myTransferCentralSearch")) {
+        var mySearchLabel = document.createElement("label");
+        mySearchLabel.className = "transfer-central-search";
+        mySearchLabel.textContent = "Buscar transferencia";
+        var mySearchInput = document.createElement("input");
+        mySearchInput.id = "myTransferCentralSearch";
+        mySearchInput.type = "search";
+        mySearchInput.placeholder = "TRF, NF, apelido ou responsavel";
+        mySearchInput.addEventListener("input", renderMyTransfers);
+        mySearchLabel.append(mySearchInput);
+        $("myTransfersList").before(mySearchLabel);
+      }
+      var myQuery = normalizeText($("myTransferCentralSearch").value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      if (myQuery) visible = visible.filter(function (transfer) { return transferSearchText(transfer, transferState.establishments).includes(myQuery); });
+    }
     var transfers = visible.filter(function (transfer) { return !isFinalTransferStatus(transfer.status, transfer); });
     var completed = visible.filter(function (transfer) { return isFinalTransferStatus(transfer.status, transfer); });
     var operatorTasks = getMyOperationalTasks();
@@ -19497,11 +19550,13 @@ import "./src/process-navigation.css";
       if (!isAdminOrSupervisor() && centralTransfer.responsibleId !== authState.currentUser.id) return;
       button.disabled = true;
       try {
+        button.setAttribute("aria-busy", "true");
         var centralItems = await loadTransferItemsForTransfer(centralTransfer.id);
         var drawerAction = transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer));
-        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: transferRouteLabel(centralTransfer), primaryAction: drawerAction, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
+        var drawerRoute = transferUnitLabel(transferState.establishments, centralTransfer.originStoreCode, transferRouteOriginLabel(centralTransfer)) + " → " + transferUnitLabel(transferState.establishments, centralTransfer.destinationStoreCode || centralTransfer.establishmentCode, transferRouteDestinationLabel(centralTransfer));
+        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: drawerRoute, primaryAction: drawerAction, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
       } catch (error) { showToast("Nao foi possivel abrir os detalhes: " + formatSupabaseError(error), "error"); }
-      finally { button.disabled = false; }
+      finally { button.disabled = false; button.removeAttribute("aria-busy"); }
       return;
     }
     if (button.dataset.transferFiscal) { await openCpTransferInvoice(button.dataset.transferFiscal); return; }
