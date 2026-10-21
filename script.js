@@ -976,7 +976,8 @@ import { staleStockSources } from "./src/stock-freshness.js";
     if (screenId === "usuarios") {
       var managementResults = await Promise.all([
         ensureUsersLoaded({ repair: false, force: true }),
-        ensureAccessRequestsLoaded({ force: true })
+        ensureAccessRequestsLoaded({ force: true }),
+        ensureWarehousesLoaded()
       ]);
       if (!managementResults[0]) updateSupabaseStatus("Nao foi possivel atualizar colaboradores. Exibindo os dados disponiveis.", "warning");
     }
@@ -7127,17 +7128,19 @@ import { staleStockSources } from "./src/stock-freshness.js";
     }
     try { renderUserDiagnostics(); } catch (error) { recordPerformanceError("usuarios-indicadores", error); }
     try { renderUserBulkControls(); } catch (error) { recordPerformanceError("usuarios-acoes", error); }
-    try { refreshUserFormSupervisorOptions(); } catch (error) { recordPerformanceError("usuarios-supervisores", error); }
+    try { refreshUserFormWarehouseOptions(); } catch (error) { recordPerformanceError("usuarios-estoques-formulario", error); }
     try { renderAccessRequests(); } catch (error) { recordPerformanceError("usuarios-solicitacoes", error); }
     try { renderWarehouses(); } catch (error) { recordPerformanceError("usuarios-estoques", error); }
   }
 
-  function refreshUserFormSupervisorOptions() {
+  function refreshUserFormWarehouseOptions() {
     var select = $("userSupervisorInput");
     if (!select) return;
-    renderUserSupervisorOptions({
+    renderUserWarehouseInputs({
       role: $("userRoleInput") ? $("userRoleInput").value : "OPERADOR",
       defaultWarehouseCode: $("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode(),
+      allowedWarehouseCodes: selectedUserWarehouseCodes(),
+      isGlobalAdmin: Boolean($("userGlobalAdminInput") && $("userGlobalAdminInput").checked),
       supervisorId: select.value
     });
   }
@@ -7152,7 +7155,8 @@ import { staleStockSources } from "./src/stock-freshness.js";
       renderUsers();
       var refreshResults = await Promise.all([
         ensureUsersLoaded({ repair: false, force: true }),
-        ensureAccessRequestsLoaded({ force: true })
+        ensureAccessRequestsLoaded({ force: true }),
+        loadWarehouses()
       ]);
       var loaded = refreshResults[0];
       renderUsers();
