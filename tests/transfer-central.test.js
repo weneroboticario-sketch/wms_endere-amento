@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveTransferUnit, transferSearchText, transferTimeline, transferPublicCode, transferPrimaryAction } from "../src/transfer-central.js";
+import { resolveTransferUnit, transferSearchText, transferTimeline, transferPublicCode, transferPrimaryAction, transferUnitLabel, transferMatchesQuickFilter, transferStatusTone, transferCentralRowHtml } from "../src/transfer-central.js";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 
@@ -9,6 +9,31 @@ const units = [
   { code: "22749", loja: "DRD1", name: "Loja Dourados", active: true },
   { code: "22796", loja: "VDDRD", name: "Centro Dourados", active: true }
 ];
+test("route labels use canonical unit nickname without choosing an ambiguous unit", () => {
+  assert.equal(transferUnitLabel(units, "12423", "Long legal name"), "TLS1");
+  assert.equal(transferUnitLabel([...units, { code: "12423", loja: "OTHER" }], "12423", "Original"), "Original");
+  assert.equal(transferUnitLabel(units, "unknown", "Original"), "Original");
+});
+
+test("quick filters use actual workflow statuses and respect fiscal handoff", () => {
+  assert.ok(transferMatchesQuickFilter({ status: "EM_SEPARACAO" }, "separating"));
+  assert.ok(!transferMatchesQuickFilter({ status: "ATRIBUIDA" }, "separating"));
+  assert.ok(transferMatchesQuickFilter({ status: "EM_MONTAGEM_CAIXA" }, "packing"));
+  assert.ok(transferMatchesQuickFilter({ status: "PRONTA_PARA_NOTA", invoiceStage: "NF_EM_PREPARACAO" }, "invoice"));
+  assert.ok(!transferMatchesQuickFilter({ status: "PRONTA_PARA_NOTA", invoiceStage: "LIBERADA_PARA_ENVIO" }, "invoice"));
+  assert.ok(transferMatchesQuickFilter({ hasDivergence: true }, "divergent"));
+  assert.ok(!transferMatchesQuickFilter({ responsibleId: "assigned" }, "unassigned"));
+  assert.equal(transferStatusTone({ status: "EM_SEPARACAO" }), "attention");
+  assert.equal(transferStatusTone({ status: "CANCELADA" }), "neutral");
+});
+
+test("compact row exposes short code, next action and real amounts while escaping data", () => {
+  const html = transferCentralRowHtml({ transfer: { id: "a", publicNumber: 9, code: "full-code", totalBoxes: 2, status: "EM_SEPARACAO", responsibleName: "<script>bad</script>", invoiceNumber: "123" }, stats: { totalItems: 3, requested: 12 }, origin: "TLS1", destination: "VDDRD", status: "Em separacao", primaryAction: "Continuar separacao" });
+  for (const text of ["TRF-0009", "full-code", "2 cx", "3 itens", "12 un.", "NF 123", "data-transfer-central", "data-transfer-execute"]) assert.ok(html.includes(text));
+  assert.ok(!html.includes("<script>"));
+  assert.ok(html.includes("Prazo: nao informado"));
+});
+
 test("unit lookup uses exact code, nickname and normalized name", () => {
   for (const token of ["12423", "tls1", "Loja Tres Lagoas"]) assert.equal(resolveTransferUnit(units, token), units[0]);
   assert.equal(resolveTransferUnit(units, "DRD1"), units[1]);
