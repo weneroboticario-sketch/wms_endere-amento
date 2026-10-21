@@ -64,6 +64,14 @@ export function installCompactControl(root) {
     button.addEventListener("click",()=>{
       if(key==="more"){
         list.replaceChildren();
+        const processGroups = [...sidebar.querySelectorAll(".process-menu:not([hidden]) [data-process-group]")];
+        if (processGroups.length) {
+          processGroups.forEach(source => {
+            const item = document.createElement("button"); item.type = "button"; item.textContent = source.textContent.trim();
+            item.addEventListener("click", () => { menu.close(); source.click(); }); list.append(item);
+          });
+          menu.showModal(); return;
+        }
         sidebar.querySelectorAll("[data-screen]").forEach(source=>{
           if(source.hidden||window.getComputedStyle(source).display==="none")return;
           const item=document.createElement("button");item.type="button";item.textContent=source.textContent.trim();
