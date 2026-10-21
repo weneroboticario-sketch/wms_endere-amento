@@ -330,7 +330,7 @@
   .cp-alamo .user-strip>*{min-width:0}
   .cp-alamo .user-strip :is(strong,span){white-space:normal;overflow-wrap:anywhere}
   .cp-alamo :is(.transfer-board-card,.replenishment-card){grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;box-shadow:none}
-  .cp-alamo .transfer-board-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end}
+  .cp-alamo .transfer-board-actions{grid-column:1/-1}
 }
 @media(min-width:761px) and (max-width:1100px){
   .cp-alamo #newTransferSection>.dashboard-layout{grid-template-columns:minmax(0,1fr)}
@@ -364,4 +364,111 @@
   .cp-alamo .current-item-compact-grid{grid-template-columns:minmax(0,1fr)}
   .cp-alamo :is(.transfer-live-panel,.transfer-scan-panel,.current-item-card){max-width:100%;min-width:0}
   .cp-alamo .user-strip{margin:-12px -10px 16px}
+}
+
+/* Keep transfer assignment and commands in a compact, responsive footer. */
+.cp-alamo #transferencias .transfer-board-card > .transfer-board-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.cp-alamo #transferencias .transfer-board-actions > .transfer-reassign-control {
+  display: grid;
+  flex: 1 1 280px;
+  gap: 4px;
+  min-width: 0;
+  max-width: 420px;
+  margin: 0 auto 0 0;
+}
+.cp-alamo #transferencias .transfer-reassign-control > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.cp-alamo #transferencias .transfer-board-actions > .transfer-reassign-control select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  padding: 8px 32px 8px 12px;
+  border-radius: 6px;
+}
+.cp-alamo #transferencias .transfer-board-actions > button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 100px;
+  height: 40px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.cp-alamo #transferencias .transfer-board-actions > [data-transfer-view] {
+  background: var(--primary);
+  color: #fff;
+  border: 1px solid var(--primary);
+}
+.cp-alamo #transferencias .transfer-board-actions > [data-transfer-view]:hover {
+  background: var(--primary-hover);
+}
+.cp-alamo #transferencias .transfer-board-actions > [data-transfer-cancel] {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+.cp-alamo #transferencias .transfer-board-actions > [data-transfer-delete-permanent] {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.cp-alamo #transferencias .transfer-board-actions > :is([data-transfer-cancel],[data-transfer-delete-permanent]):hover {
+  filter: brightness(.96);
+}
+.cp-alamo #transferencias .transfer-board-meta > :is(span:nth-child(4),span:nth-child(5)) > strong {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+@media(min-width:761px) and (max-width:1599px) {
+  .cp-alamo #transferencias .transfer-board-meta {
+    grid-template-columns: repeat(3,minmax(0,1fr));
+  }
+  .cp-alamo #transferencias .transfer-board-meta > span:nth-child(4) {
+    grid-column: span 2;
+  }
+}
+@media(min-width:1600px) {
+  .cp-alamo #transferencias .transfer-board-meta {
+    grid-template-columns: repeat(3,minmax(88px,.7fr)) minmax(140px,1.7fr) minmax(110px,1.3fr);
+  }
+}
+@media(max-width:1100px) {
+  .cp-alamo #transferencias .transfer-board-actions > .transfer-reassign-control {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+@media(max-width:760px) {
+  .cp-alamo #transferencias .transfer-board-actions > button {
+    flex: 1 1 80px;
+    min-width: 0;
+    min-height: 44px;
+    height: 44px;
+    padding: 8px;
+  }
+  .cp-alamo #transferencias .transfer-board-actions > .transfer-reassign-control select {
+    min-height: 44px;
+    height: 44px;
+    font-size: 16px;
+  }
 }
