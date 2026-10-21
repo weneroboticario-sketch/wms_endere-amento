@@ -45,14 +45,14 @@ export function transferMatchesQuickFilter(transfer, filter) {
   return true;
 }
 
-export function transferCentralRowHtml({ transfer, stats, origin, destination, status, primaryAction, moreActions = "" }) {
+export function transferCentralRowHtml({ transfer, stats, origin, destination, status, primaryAction, moreActions = "", canExport = false }) {
   const id = escapeHtml(transfer.id), tone = transferStatusTone(transfer);
   return `<article class="transfer-central-row tone-${tone}" data-central-row="${id}">
     <div><button class="transfer-central-code" type="button" data-transfer-central="${id}" title="${escapeHtml(transfer.code)}">${escapeHtml(transferPublicCode(transfer))}</button><small>${escapeHtml(origin)} → ${escapeHtml(destination)}</small></div>
     <div><small>Caixas / itens / unidades</small><strong>${Number(transfer.totalBoxes || 0)} cx · ${Number(stats.totalItems || 0)} itens · ${Number(stats.requested || 0)} un.</strong>${transfer.invoiceNumber ? `<small>NF ${escapeHtml(transfer.invoiceNumber)}</small>` : ""}</div>
     <div><span class="transfer-central-badge tone-${tone}">${escapeHtml(status)}</span>${Number(transfer.divergenceCount || 0) ? `<small class="transfer-central-alert">${Number(transfer.divergenceCount)} divergencia(s)</small>` : ""}</div>
     <div><small>Responsavel</small><strong>${escapeHtml(transfer.responsibleName || "Sem atribuicao")}</strong><small>Prazo: nao informado</small></div>
-    <div class="transfer-central-actions">${primaryAction ? `<button type="button" class="primary-button" data-transfer-execute="${id}">${escapeHtml(primaryAction)}</button>` : ""}<button type="button" class="secondary-button" data-transfer-central="${id}">Detalhes</button></div>
+    <div class="transfer-central-actions">${primaryAction ? `<button type="button" class="primary-button" data-transfer-execute="${id}">${escapeHtml(primaryAction)}</button>` : ""}<button type="button" class="secondary-button" data-transfer-central="${id}">Detalhes</button>${canExport ? `<button type="button" class="secondary-button" data-transfer-export-packed="${id}">Exportar retaguarda (Excel)</button>` : ""}</div>
     ${moreActions ? `<details><summary>Mais acoes e acompanhamento</summary>${moreActions}</details>` : ""}</article>`;
 }
 
@@ -83,7 +83,7 @@ export function transferTimeline(transfer) {
     .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]));
 }
 
-export function openTransferCentralDrawer({ transfer, items, status, route, onOpen, primaryAction }) {
+export function openTransferCentralDrawer({ transfer, items, status, route, onOpen, primaryAction, onExport }) {
   closeActiveDrawer?.();
   const previous = document.activeElement;
   const previousOverflow = document.body.style.overflow;
@@ -107,6 +107,17 @@ export function openTransferCentralDrawer({ transfer, items, status, route, onOp
       <section data-panel="2" hidden><h3>Historico registrado</h3>${timeline.map(([label, at]) => `<article><strong>${escapeHtml(label)}</strong><p>${escapeHtml(date(at))}</p>${label === "Solicitacao criada" && transfer.createdByName ? `<small>${escapeHtml(transfer.createdByName)}</small>` : ""}</article>`).join("")}${items.filter(item => item.observation).map(item => `<article><strong>SKU ${escapeHtml(item.sku)}</strong><p class="transfer-central-audit">${escapeHtml(item.observation)}</p></article>`).join("") || "<p>Sem observacoes registradas nos itens.</p>"}</section>
     </div><footer><button type="button" data-copy>Copiar codigo completo</button><button type="button" class="primary-button" data-open>${escapeHtml(primaryAction || "Consultar processo")}</button><small data-feedback role="status"></small></footer></section>`;
   overlay.querySelector(".transfer-central-totals strong").textContent = String(skuCount);
+  if (onExport) {
+    const exportButton = document.createElement("button");
+    exportButton.type = "button";
+    exportButton.className = "secondary-button";
+    exportButton.textContent = "Exportar retaguarda (Excel)";
+    exportButton.addEventListener("click", async () => {
+      if (exportButton.disabled) return;
+      await onExport(exportButton);
+    });
+    overlay.querySelector("footer").prepend(exportButton);
+  }
   const close = () => { overlay.remove(); document.body.style.overflow = previousOverflow; selectedRow?.classList.remove("is-selected"); document.removeEventListener("keydown", keyboard); closeActiveDrawer = null; if (previous?.isConnected) previous.focus({ preventScroll: true }); };
   const keyboard = event => {
     if (event.key === "Escape") close();

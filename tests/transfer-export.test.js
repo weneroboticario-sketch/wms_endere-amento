@@ -52,3 +52,34 @@ test("item save is scoped and rejects stale or denied writes before local confir
   assert.equal(item.updatedAt, "after");
   assert.equal(localWrites, 1);
 });
+
+test("drawer export uses the selected transfer, fresh packed quantities and unchanged XLSX format", async () => {
+  const selected = { id: "selected", code: "canonical-code", responsibleId: "u", status: "PRONTA_PARA_NOTA" };
+  const button = {};
+  const writes = [], reads = [], messages = [];
+  let serverStatus = selected.status;
+  const query = { select() { return this; }, eq(key, value) { reads.push([key, value]); return this; }, async single() { return { data: { status: serverStatus } }; } };
+  const run = getFunction("exportPackedTransfer", {
+    transferState: { activeTransferId: "another-transfer" }, authState: { currentUser: { id: "u" } },
+    getTransferById: id => id === selected.id ? selected : null,
+    getVisibleTransfers: () => [selected], canAccessScreen: () => true, isAdminOrSupervisor: () => false,
+    canExportPackedTransfer: row => row?.status === "PRONTA_PARA_NOTA", activeWarehouseCode: () => "CP",
+    $: () => { throw Error("Should use drawer button"); },
+    beginTransferAction: (_key, value) => value === button, endTransferAction: () => {},
+    supabaseDb: { from: () => query }, fetchTransferItemsForTransfer: async id => {
+      assert.equal(id, "selected"); return [{ sku: "00123", packedQty: 5 }];
+    }, fromDbTransferItem: row => row, buildPackedProductRows,
+    sanitizeFileName: text => text, writeWorkbookFromSheets: (...args) => writes.push(args),
+    showToast: text => messages.push(text), formatSupabaseError: error => error.message
+  });
+  await run("xlsx", selected.id, button);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0], "PRODUTOSBAIXAS_canonical-code.xlsx");
+  assert.equal(writes[0][1][0].name, "Produtos");
+  assert.equal(JSON.stringify(writes[0][1][0].rows), '[["00123",5]]');
+  assert.deepEqual(reads, [["id", "selected"], ["warehouse_code", "CP"]]);
+  serverStatus = "EM_SEPARACAO";
+  await run("xlsx", selected.id, button);
+  assert.equal(writes.length, 1);
+  assert.ok(messages.some(text => text.includes("reaberta")));
+});
