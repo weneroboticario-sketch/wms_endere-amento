@@ -3,6 +3,21 @@ import { escapeHtml } from "./utils.js";
 const key = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 let closeActiveDrawer;
 
+export function transferPublicCode(transfer) {
+  const number = String(transfer.publicNumber || "");
+  return /^[1-9]\d*$/.test(number) ? "TRF-" + number.padStart(4, "0") : transfer.code || "-";
+}
+
+export function transferPrimaryAction(transfer, user, inWarehouse) {
+  if (!user || !inWarehouse || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(user.role)) return null;
+  if (transfer.responsibleId !== user.id) return null;
+  if (transfer.invoiceStage && transfer.invoiceStage !== "CORRECAO_SOLICITADA") return null;
+  if (["PENDENTE", "ATRIBUIDA", "AGUARDANDO_SEPARACAO"].includes(transfer.status)) return "Iniciar separacao";
+  if (transfer.status === "EM_SEPARACAO") return "Continuar separacao";
+  if (["SEPARACAO_CONCLUIDA", "EM_LACRE", "EM_MONTAGEM_CAIXA", "CORRECAO_SOLICITADA", "EM_CORRECAO"].includes(transfer.status)) return "Abrir montagem";
+  return null;
+}
+
 export function resolveTransferUnit(records, token) {
   const wanted = key(token);
   if (!wanted) return null;
@@ -15,7 +30,7 @@ export function resolveTransferUnit(records, token) {
 }
 
 export function transferSearchText(transfer, units = []) {
-  const fields = [transfer.code, transfer.name, transfer.originName, transfer.originStoreCode,
+  const fields = [transfer.code, transferPublicCode(transfer), transfer.name, transfer.originName, transfer.originStoreCode,
     transfer.destinationName, transfer.destinationStoreCode, transfer.establishmentName,
     transfer.establishmentCode, transfer.responsibleName, transfer.invoiceNumber];
   const linked = units.filter(unit => [unit.code, unit.storeCode, unit.internalCode].some(value => value && fields.some(field => key(field) === key(value))));
@@ -30,20 +45,20 @@ export function transferTimeline(transfer) {
     .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]));
 }
 
-export function openTransferCentralDrawer({ transfer, items, status, route, onOpen }) {
+export function openTransferCentralDrawer({ transfer, items, status, route, onOpen, primaryAction }) {
   closeActiveDrawer?.();
   const previous = document.activeElement;
   const overlay = document.createElement("div");
   overlay.className = "transfer-central-overlay";
   const date = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("pt-BR") : "Nao informada";
   overlay.innerHTML = `<section class="transfer-central-drawer" role="dialog" aria-modal="true" aria-labelledby="transfer-central-title" tabindex="-1">
-    <header><div><small>Transferencia</small><h2 id="transfer-central-title">${escapeHtml(transfer.code)}</h2><span>${escapeHtml(status)}</span></div><button type="button" data-close aria-label="Fechar">&times;</button></header>
+    <header><div><small>Transferencia</small><h2 id="transfer-central-title" title="${escapeHtml(transfer.code)}">${escapeHtml(transferPublicCode(transfer))}</h2><span>${escapeHtml(status)}</span></div><button type="button" data-close aria-label="Fechar">&times;</button></header>
     <nav aria-label="Detalhes da transferencia">${["Resumo", "Itens", "Historico"].map((label, i) => `<button type="button" data-tab="${i}" aria-pressed="${i === 0}">${label}</button>`).join("")}</nav>
     <div class="transfer-central-content">
       <section data-panel="0"><h3>Origem → Destino</h3><p>${escapeHtml(route)}</p><dl><dt>Responsavel</dt><dd>${escapeHtml(transfer.responsibleName || "Sem atribuicao")}</dd><dt>Criada</dt><dd>${escapeHtml(date(transfer.createdAt))}</dd><dt>Prioridade</dt><dd>${escapeHtml(transfer.purchasePriority || "Nao informada")}</dd></dl><h3>Etapas registradas</h3><ol class="transfer-central-timeline">${transferTimeline(transfer).map(([label, at]) => `<li><strong>${label}</strong><small>${escapeHtml(date(at))}</small></li>`).join("") || "<li>Nenhuma etapa registrada.</li>"}</ol><p>${escapeHtml(transfer.observation || "")}</p></section>
       <section data-panel="1" hidden><h3>Itens (${items.length})</h3>${items.map(item => `<article><strong>SKU ${escapeHtml(item.sku)}</strong><p>${escapeHtml(item.description || "")}</p><small>Solicitado: ${Number(item.requestedQty || 0)} · Separado: ${Number(item.separatedQty || 0)} · Na caixa: ${Number(item.packedQty || 0)}</small></article>`).join("") || "<p>Nenhum item carregado.</p>"}</section>
       <section data-panel="2" hidden><h3>Historico registrado</h3>${items.filter(item => item.observation).map(item => `<article><strong>SKU ${escapeHtml(item.sku)}</strong><p class="transfer-central-audit">${escapeHtml(item.observation)}</p></article>`).join("") || "<p>Sem observacoes registradas nos itens.</p>"}</section>
-    </div><footer><button type="button" data-copy>Copiar codigo completo</button><button type="button" class="primary-button" data-open>Abrir processo</button><small data-feedback role="status"></small></footer></section>`;
+    </div><footer><button type="button" data-copy>Copiar codigo completo</button><button type="button" class="primary-button" data-open>${escapeHtml(primaryAction || "Consultar processo")}</button><small data-feedback role="status"></small></footer></section>`;
   const close = () => { overlay.remove(); document.removeEventListener("keydown", keyboard); closeActiveDrawer = null; if (previous?.isConnected) previous.focus(); };
   const keyboard = event => {
     if (event.key === "Escape") close();
