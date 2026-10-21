@@ -3,6 +3,20 @@ import assert from "node:assert/strict";
 import { resolveTransferUnit, transferSearchText, transferTimeline, transferPublicCode, transferPrimaryAction, transferUnitLabel, transferMatchesQuickFilter, transferStatusTone, transferCentralRowHtml } from "../src/transfer-central.js";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
+import { canOpenTransferCentral } from "../src/transfer-central.js";
+
+test("supervisor and purchases can open more actions only within the authorized warehouse", () => {
+  const transfer = { responsibleId: "another-operator", status: "ATRIBUIDA" };
+  for (const role of ["SUPERVISOR", "COMPRAS"]) {
+    const user = { id: "viewer", role };
+    assert.equal(canOpenTransferCentral(transfer, user, true), true);
+    assert.equal(canOpenTransferCentral(transfer, user, false), false);
+    assert.equal(transferPrimaryAction(transfer, user, true), null);
+  }
+  for (const role of ["ATENDENTE", "FINANCEIRO", "GERENTE"]) assert.equal(canOpenTransferCentral(transfer, { id: "viewer", role }, true), false);
+  assert.equal(canOpenTransferCentral(transfer, { id: "another-operator", role: "OPERADOR" }, true), true);
+  assert.equal(canOpenTransferCentral(transfer, { id: "other", role: "OPERADOR" }, true), false);
+});
 
 const units = [
   { code: "12423", loja: "TLS1", name: "Loja Tres Lagoas", active: true },

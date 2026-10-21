@@ -39,7 +39,7 @@ import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
-import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPrimaryAction, transferUnitLabel, transferCentralRowHtml, transferMatchesQuickFilter } from "./src/transfer-central.js";
+import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPrimaryAction, transferUnitLabel, transferCentralRowHtml, transferMatchesQuickFilter, canOpenTransferCentral } from "./src/transfer-central.js";
 import "./src/transfer-central.css";
 import { updateProcessNavigation } from "./src/process-navigation.js";
 import "./src/process-navigation.css";
@@ -11230,9 +11230,9 @@ import "./src/process-navigation.css";
       "</div>",
       "</article>"
     ].join("");
-    if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
+    if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR", "COMPRAS"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
     var primaryAction = transferPrimaryAction(transfer, authState.currentUser, transferBelongsToActiveWarehouse(transfer));
-    return transferCentralRowHtml({ transfer: transfer, stats: stats, origin: transferUnitLabel(transferState.establishments, transfer.originStoreCode, origin), destination: transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, destination), status: transferStatusDisplayLabel(transfer.status), primaryAction: primaryAction, moreActions: boardHtml, canExport: canExportPackedTransfer(transfer) });
+    return transferCentralRowHtml({ transfer: transfer, stats: stats, origin: transferUnitLabel(transferState.establishments, transfer.originStoreCode, origin), destination: transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, destination), status: transferStatusDisplayLabel(transfer.status), primaryAction: primaryAction, moreActions: boardHtml, canExport: !isPurchasesUser() && canExportPackedTransfer(transfer) });
   }
 
   function transferPanelStageInfo(status) {
@@ -19555,14 +19555,23 @@ import "./src/process-navigation.css";
     if (button.dataset.transferCentral) {
       var centralTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferCentral; });
       if (!IS_CP_ALAMO || !centralTransfer || !transferBelongsToActiveWarehouse(centralTransfer)) return;
-      if (!isAdminOrSupervisor() && centralTransfer.responsibleId !== authState.currentUser.id) return;
+      if (!canAccessScreen("transferencias") || !canOpenTransferCentral(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer))) return;
       button.disabled = true;
       try {
         button.setAttribute("aria-busy", "true");
         var centralItems = await loadTransferItemsForTransfer(centralTransfer.id);
         var drawerAction = transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer));
         var drawerRoute = transferUnitLabel(transferState.establishments, centralTransfer.originStoreCode, transferRouteOriginLabel(centralTransfer)) + " → " + transferUnitLabel(transferState.establishments, centralTransfer.destinationStoreCode || centralTransfer.establishmentCode, transferRouteDestinationLabel(centralTransfer));
-        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: drawerRoute, primaryAction: drawerAction, onExport: canExportPackedTransfer(centralTransfer) ? function (sourceButton) { return exportPackedTransfer("xlsx", centralTransfer.id, sourceButton); } : null, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
+        var drawerActionTemplate = document.createElement("template");
+        drawerActionTemplate.innerHTML = transferPanelRowHtml(centralTransfer);
+        var drawerExistingActions = drawerActionTemplate.content.querySelector(".transfer-board-actions");
+        var drawerMoreHtml = drawerExistingActions ? drawerExistingActions.innerHTML : "";
+        if (canRequestTransferRevalidation(centralTransfer)) drawerMoreHtml += '<button type="button" class="secondary-button" data-transfer-revalidate="' + escapeHtml(centralTransfer.id) + '">Revalidar com operador</button>';
+        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: drawerRoute,
+          primaryAction: drawerAction, moreActionsHtml: drawerMoreHtml, onMoreAction: handleTransferActionClick, onMoreChange: handleTransferMergeSelectionChange,
+          onExport: !isPurchasesUser() && canExportPackedTransfer(centralTransfer) ? function (sourceButton) { return exportPackedTransfer("xlsx", centralTransfer.id, sourceButton); } : null,
+          onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); }
+        });
       } catch (error) { showToast("Nao foi possivel abrir os detalhes: " + formatSupabaseError(error), "error"); }
       finally { button.disabled = false; button.removeAttribute("aria-busy"); }
       return;
