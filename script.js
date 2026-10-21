@@ -39,7 +39,7 @@ import "./src/cpalamo-theme.css";
 import "./src/purchases-workflow.css";
 import { hasPulmaoBase, summarizePulmao, buildPulmaoSeparationRows } from "./src/pulmao-stock.js";
 import { loadLatestStockImports, renderStockFreshnessNotice } from "./src/stock-freshness.js";
-import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer } from "./src/transfer-central.js";
+import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, transferPublicCode, transferPrimaryAction } from "./src/transfer-central.js";
 import "./src/transfer-central.css";
 
 (function () {
@@ -1711,7 +1711,7 @@ import "./src/transfer-central.css";
     return [
       "id",
       "request_origin", "requires_invoice", "invoice_stage", "status_changed_at",
-      ...(IS_CP_ALAMO ? ["purchase_priority"] : []),
+      ...(IS_CP_ALAMO ? ["purchase_priority", "public_number", "invoice_number"] : []),
       "codigo_transferencia",
       "nome_transferencia",
       "estabelecimento_id",
@@ -2563,6 +2563,8 @@ import "./src/transfer-central.css";
       invoiceStage: row.invoice_stage || "",
       purchasePriority: row.purchase_priority || "NORMAL",
       code: row.codigo_transferencia || "",
+      publicNumber: row.public_number || "",
+      invoiceNumber: row.invoice_number || "",
       name: row.nome_transferencia || "",
       establishmentId: row.estabelecimento_id || "",
       establishmentCode: row.estabelecimento_codigo || "",
@@ -11199,8 +11201,9 @@ import "./src/transfer-central.css";
       "</div>",
       "</article>"
     ].join("");
-    if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
-    return '<article class="transfer-central-row"><div><strong title="' + escapeHtml(transfer.code || "") + '">' + escapeHtml(transfer.code || "-") + '</strong><small>' + escapeHtml(origin) + ' &rarr; ' + escapeHtml(destination) + '</small></div><div><strong>' + escapeHtml(transferStatusDisplayLabel(transfer.status)) + '</strong><small>' + stats.totalItems + ' SKUs · ' + formatQty(stats.requested) + ' un.</small></div><div><strong>' + escapeHtml(transfer.responsibleName || "Sem atribuicao") + '</strong><small>' + formatDateTime(transfer.createdAt) + '</small></div><button type="button" class="secondary-button" data-transfer-central="' + escapeHtml(transfer.id) + '">Detalhes</button><details><summary>Acoes e acompanhamento</summary>' + boardHtml + '</details></article>';
+    if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
+    var primaryAction = transferPrimaryAction(transfer, authState.currentUser, transferBelongsToActiveWarehouse(transfer));
+    return '<article class="transfer-central-row"><div><strong title="' + escapeHtml(transfer.code || "") + '">' + escapeHtml(transferPublicCode(transfer)) + '</strong><small>' + escapeHtml(origin) + ' &rarr; ' + escapeHtml(destination) + '</small></div><div><strong>' + escapeHtml(transferStatusDisplayLabel(transfer.status)) + '</strong><small>' + stats.totalItems + ' SKUs · ' + formatQty(stats.requested) + ' un.</small></div><div><strong>' + escapeHtml(transfer.responsibleName || "Sem atribuicao") + '</strong><small>' + formatDateTime(transfer.createdAt) + '</small></div><div class="transfer-central-actions">' + (primaryAction ? '<button type="button" class="primary-button" data-transfer-execute="' + escapeHtml(transfer.id) + '">' + escapeHtml(primaryAction) + '</button>' : '') + '<button type="button" class="secondary-button" data-transfer-central="' + escapeHtml(transfer.id) + '">Detalhes</button></div><details><summary>Acoes e acompanhamento</summary>' + boardHtml + '</details></article>';
   }
 
   function transferPanelStageInfo(status) {
@@ -19473,6 +19476,15 @@ import "./src/transfer-central.css";
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferExecute) {
+      var executeTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferExecute; });
+      if (!IS_CP_ALAMO || !executeTransfer || !transferPrimaryAction(executeTransfer, authState.currentUser, transferBelongsToActiveWarehouse(executeTransfer))) return;
+      if (button.disabled) return;
+      button.disabled = true;
+      try { await openTransferWork(executeTransfer.id); }
+      finally { button.disabled = false; }
+      return;
+    }
     if (button.dataset.transferCentral) {
       var centralTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferCentral; });
       if (!IS_CP_ALAMO || !centralTransfer || !transferBelongsToActiveWarehouse(centralTransfer)) return;
@@ -19480,7 +19492,8 @@ import "./src/transfer-central.css";
       button.disabled = true;
       try {
         var centralItems = await loadTransferItemsForTransfer(centralTransfer.id);
-        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: transferRouteLabel(centralTransfer), onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: true }); } });
+        var drawerAction = transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer));
+        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: transferRouteLabel(centralTransfer), primaryAction: drawerAction, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
       } catch (error) { showToast("Nao foi possivel abrir os detalhes: " + formatSupabaseError(error), "error"); }
       finally { button.disabled = false; }
       return;

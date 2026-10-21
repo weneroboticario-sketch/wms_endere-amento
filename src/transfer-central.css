@@ -3,6 +3,7 @@
 .transfer-central-row small { color:var(--text-muted,#52647c); font-size:12px; margin-top:4px; }
 .transfer-central-row details { grid-column:1/-1; border-top:1px solid #e6ebf2; padding-top:8px; }
 .transfer-central-row summary { cursor:pointer; font-size:12px; }
+.transfer-central-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .transfer-central-row .transfer-board-card { margin-top:8px; }
 .transfer-central-overlay { position:fixed; inset:0; z-index:1800; background:#082b4b55; display:flex; justify-content:flex-end; }
 .transfer-central-drawer { background:var(--card-bg,#fff); color:var(--text-color,#0b1e3b); width:min(460px,100%); height:100dvh; display:flex; flex-direction:column; box-shadow:-8px 0 32px #082b4b22; }
