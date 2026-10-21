@@ -36,6 +36,7 @@ import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-serv
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
 import { initializeWmsMobile } from "./src/wms-mobile.js";
+import { staleStockSources } from "./src/stock-freshness.js";
 
 (function () {
   "use strict";
@@ -337,6 +338,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     selectedTaskId: "",
     viewMode: "ativas"
   };
+  var stockFreshnessState = { batches: [], generation: 0, loading: false };
   var stockState = {
     batches: [],
     summary: { loja: 0, captacao: 0, updatedAt: "" },
@@ -3258,6 +3260,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
       var importResult = await saveStockImportBatch(sourceType, file.name, parsed, importMode);
       invalidateStockCacheForWarehouseSource(activeWarehouseCode(), sourceType, importResult.changedSkus || []);
       await refreshStockOperationalData();
+      await refreshStockFreshness();
       if (sourceType === "CAPTACAO") {
         await publishAddressCacheInvalidation(activeWarehouseCode(), file.name, parsed.rows.length, "IMPORTACAO_BASE");
       }
@@ -9185,6 +9188,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
   }
 
   function renderAll() {
+    renderStockFreshnessAlert();
     var activeScreen = getActiveScreenId();
     if (activeScreen === "globalDashboard") {
       if ($("operatorTaskAlert")) $("operatorTaskAlert").hidden = true;
@@ -10326,6 +10330,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     if (isGlobalDashboardScope()) { ensureGlobalDashboard().start(); return; }
     realtimeState.active = true;
     realtimeState.warehouseCode = activeWarehouseCode();
+    refreshStockFreshness();
     realtimeState.failureCount = 0;
     realtimeState.operationalSubscribed = false;
     realtimeState.transferTasksLoaded = false;
@@ -10374,6 +10379,7 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
     }
     realtimeState.pollTimer = window.setInterval(function () {
       if (document.visibilityState === "hidden") return;
+      refreshStockFreshness();
       scheduleTransferRealtimeRefresh("poll", 0);
     }, 60000);
     scheduleTransferRealtimeRefresh("start", 250);
@@ -10389,6 +10395,10 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
   }
 
   function stopLeaderLiveSync() {
+    stockFreshnessState.generation += 1;
+    stockFreshnessState.batches = [];
+    stockFreshnessState.loading = false;
+    if ($("stockFreshnessAlert")) $("stockFreshnessAlert").hidden = true;
     if (globalDashboardController) globalDashboardController.stop();
     realtimeState.active = false;
     realtimeState.refreshPending = false;
@@ -10521,6 +10531,43 @@ import { initializeWmsMobile } from "./src/wms-mobile.js";
         recordPerformanceError("stock-realtime-refresh", error);
       });
     }, 1500);
+  }
+
+  async function refreshStockFreshness() {
+    if (IS_CP_ALAMO || !authState.currentUser || !isSupabaseReady() || !canUseNetwork() || stockFreshnessState.loading) return;
+    var warehouseCode = activeWarehouseCode();
+    var generation = stockFreshnessState.generation;
+    stockFreshnessState.loading = true;
+    renderStockFreshnessAlert();
+    try {
+      var responses = await Promise.all(["LOJA", "CAPTACAO"].map(function (sourceType) {
+        return supabaseDb.from("wms_stock_import_batches")
+          .select("warehouse_code,source_type,status,finished_at,updated_at,created_at")
+          .eq("warehouse_code", warehouseCode).eq("source_type", sourceType).eq("status", "COMPLETED")
+          .order("finished_at", { ascending: false, nullsFirst: false }).limit(1);
+      }));
+      if (generation !== stockFreshnessState.generation || warehouseCode !== activeWarehouseCode()) return;
+      var failed = responses.find(function (response) { return response.error; });
+      if (failed) throw failed.error;
+      stockFreshnessState.batches = responses.flatMap(function (response) { return response.data || []; });
+      renderStockFreshnessAlert();
+    } catch (error) {
+      recordPerformanceError("stock-freshness", error);
+    } finally {
+      if (generation === stockFreshnessState.generation) stockFreshnessState.loading = false;
+    }
+  }
+
+  function renderStockFreshnessAlert() {
+    var alert = $("stockFreshnessAlert");
+    if (!alert) return;
+    var sources = staleStockSources(stockFreshnessState.batches, activeWarehouseCode());
+    alert.hidden = IS_CP_ALAMO || !authState.currentUser || isGlobalDashboardScope() || !sources.length;
+    if (alert.hidden) return;
+    alert.textContent = "Atenção: a base de estoque está há mais de 4 horas sem atualização em " + activeWarehouseCode() + ". " +
+      sources.map(function (source) {
+        return (source.sourceType === "LOJA" ? "Loja" : "Captação") + ": última carga em " + formatDateTime(new Date(source.updatedAt).toISOString());
+      }).join(". ") + ". Para consultar saldos mais precisos, recomendamos alimentar novamente essas bases. Este aviso é informativo; você pode continuar usando o sistema normalmente.";
   }
 
   function applyReplenishmentRealtimePayload(payload) {
