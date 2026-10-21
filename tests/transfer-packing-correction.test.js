@@ -154,3 +154,63 @@ test("fresh server lookup prevents adding a duplicate extra and double-click wri
   assert.equal(context.transferState.selectedItemId, "original");
   assert.equal(locked, false);
 });
+
+function separationContext(quantity = "5") {
+  const state = saveContext();
+  const item = { ...extra, id: "original", isExtra: false, requestedQty: 5, separatedQty: 0, packedQty: 5 };
+  Object.assign(state.context, {
+    transferState: { items: [item] }, getTransferById: () => transfer,
+    nowIso: () => "2026-10-21T15:00:00Z", formatQty: String, parseTransferQuantity: Number,
+    requestVisualFields: async () => ({ quantity, reason: "Five physically separated units verified" })
+  });
+  return { ...state, item };
+}
+
+test("explicit separation correction keeps packed and requested quantities unchanged", async () => {
+  const { context, writes, item } = separationContext();
+  await fn("correctTransferSeparationForPacking", context)("original", {});
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].update.quantidade_separada, 5);
+  assert.equal(writes[0].item.packedQty, 5);
+  assert.equal(writes[0].item.requestedQty, 5);
+  assert.equal(writes[0].update.quantidade_lacrada, undefined);
+  assert.equal(writes[0].update.divergence_type, "");
+  assert.match(writes[0].update.observation, /Correcao da separacao.*0 -> 5.*physically/);
+  assert.equal(item.separatedQty, 0);
+});
+
+test("separation below the packed quantity is rejected rather than discarding boxed goods", async () => {
+  const { context, writes, statuses } = separationContext("3");
+  await fn("correctTransferSeparationForPacking", context)("original", {});
+  assert.equal(writes.length, 0);
+  assert.ok(statuses.some(args => args[2] === "error"));
+});
+
+test("cancelled, unreasoned or unauthorized separation corrections never write", async () => {
+  const { context, writes } = separationContext();
+  const correct = fn("correctTransferSeparationForPacking", context);
+  context.requestVisualFields = async () => null;
+  await correct("original", {});
+  context.requestVisualFields = async () => ({ quantity: "5", reason: " " });
+  await correct("original", {});
+  context.canCorrectTransferPacking = () => false;
+  await correct("original", {});
+  assert.equal(writes.length, 0);
+});
+
+test("invoice handoff explains inconsistent quantities without updating data or totals", async () => {
+  const statuses = [];
+  let renders = 0;
+  const context = {
+    IS_CP_ALAMO: true, transferState: { activeTransferId: "transfer" },
+    getTransferById: () => transfer, isFinalTransferStatus: () => false,
+    getTransferItems: () => [{ ...extra, packedQty: 5, separatedQty: 0 }],
+    renderTransferWork: () => { renders++; },
+    formatQty: String, setStatus: (...args) => statuses.push(args)
+  };
+  await fn("finishPacking", context)();
+  assert.equal(context.transferState.selectedItemId, "extra");
+  assert.equal(renders, 1);
+  assert.match(statuses[0][1], /SKU 88699.*5 na caixa.*0 separado.*Remover da caixa/);
+  assert.equal(statuses[0][2], "warning");
+});
