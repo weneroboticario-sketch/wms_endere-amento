@@ -5,6 +5,16 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { canOpenTransferCentral } from "../src/transfer-central.js";
 
+test("expanded CP transfer title uses compact route without changing canonical identity or independent WMS", async () => {
+  const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
+  const start = source.indexOf("  function transferPanelRowHtml(");
+  const stop = source.indexOf("\n  function ", start + 1);
+  const panel = source.slice(start, stop);
+  assert.ok(panel.includes('escapeHtml(IS_CP_ALAMO ? origin + " → " + destination : transferDisplayName(transfer))'));
+  assert.ok(panel.includes('escapeHtml(transfer.code || "-")'));
+  assert.ok(!panel.includes("transfer.name ="));
+});
+
 test("supervisor and purchases can open more actions only within the authorized warehouse", () => {
   const transfer = { responsibleId: "another-operator", status: "ATRIBUIDA" };
   for (const role of ["SUPERVISOR", "COMPRAS"]) {

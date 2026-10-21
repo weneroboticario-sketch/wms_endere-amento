@@ -11222,7 +11222,7 @@ import "./src/process-navigation.css";
       "<div class=\"transfer-board-top\"><span class=\"transfer-source-pill\">" + escapeHtml(source) + "</span><span class=\"transfer-stage-chip\">" + escapeHtml(stage.label) + "</span></div>",
       IS_CP_ALAMO ? "<small>Origem da solicitacao: " + escapeHtml(transfer.requestOrigin === "COMPRAS" ? "Compras" : transfer.requestOrigin === "LEGADO" ? "Legado" : "Estoque") + "</small>" : "",
       purchaseRequest ? "<small>Prioridade: " + escapeHtml(transfer.purchasePriority || "NORMAL") + " | NF obrigatoria</small>" : "",
-      "<div class=\"transfer-board-title\"><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
+      "<div class=\"transfer-board-title\"><strong>" + escapeHtml(IS_CP_ALAMO ? origin + " → " + destination : transferDisplayName(transfer)) + "</strong><small>" + escapeHtml(transfer.code || "-") + "</small></div>",
       "<div class=\"transfer-route-flow\"><div><span>Sai de</span><strong>" + escapeHtml(origin) + "</strong></div><span class=\"route-arrow\">&rarr;</span><div><span>Vai para</span><strong>" + escapeHtml(destination) + "</strong></div></div>",
       "</div>",
       "<div class=\"transfer-board-status\">",
