@@ -34,6 +34,12 @@ test("compact row exposes short code, next action and real amounts while escapin
   assert.ok(html.includes("Prazo: nao informado"));
 });
 
+test("retaguarda export is only presented when existing workflow eligibility allows it", () => {
+  const options = { transfer: { id: "t", code: "full" }, stats: {}, origin: "A", destination: "B", status: "Pronta" };
+  assert.ok(!transferCentralRowHtml(options).includes("data-transfer-export-packed"));
+  assert.ok(transferCentralRowHtml({ ...options, canExport: true }).includes('data-transfer-export-packed="t"'));
+});
+
 test("unit lookup uses exact code, nickname and normalized name", () => {
   for (const token of ["12423", "tls1", "Loja Tres Lagoas"]) assert.equal(resolveTransferUnit(units, token), units[0]);
   assert.equal(resolveTransferUnit(units, "DRD1"), units[1]);

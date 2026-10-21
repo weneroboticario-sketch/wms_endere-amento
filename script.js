@@ -11232,7 +11232,7 @@ import "./src/process-navigation.css";
     ].join("");
     if (!IS_CP_ALAMO || !["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(authState.currentUser && authState.currentUser.role)) return boardHtml;
     var primaryAction = transferPrimaryAction(transfer, authState.currentUser, transferBelongsToActiveWarehouse(transfer));
-    return transferCentralRowHtml({ transfer: transfer, stats: stats, origin: transferUnitLabel(transferState.establishments, transfer.originStoreCode, origin), destination: transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, destination), status: transferStatusDisplayLabel(transfer.status), primaryAction: primaryAction, moreActions: boardHtml });
+    return transferCentralRowHtml({ transfer: transfer, stats: stats, origin: transferUnitLabel(transferState.establishments, transfer.originStoreCode, origin), destination: transferUnitLabel(transferState.establishments, transfer.destinationStoreCode || transfer.establishmentCode, destination), status: transferStatusDisplayLabel(transfer.status), primaryAction: primaryAction, moreActions: boardHtml, canExport: canExportPackedTransfer(transfer) });
   }
 
   function transferPanelStageInfo(status) {
@@ -15719,10 +15719,11 @@ import "./src/process-navigation.css";
       ["PRONTA_PARA_NOTA", "PRONTA_PARA_NOTA_COM_DIVERGENCIA", "FINALIZADA", "CONCLUIDA_SEM_DIVERGENCIA", "CONCLUIDA_COM_DIVERGENCIA", "FINALIZADA_PARA_ANALISE", "LACRE_CONCLUIDO", "MONTAGEM_CAIXA_CONCLUIDA"].indexOf(transfer.status) >= 0;
   }
 
-  async function exportPackedTransfer(format) {
-    var transfer = getTransferById(transferState.activeTransferId);
+  async function exportPackedTransfer(format, transferId, sourceButton) {
+    var transfer = getTransferById(transferId || transferState.activeTransferId);
+    if (transferId && (!authState.currentUser || !canAccessScreen("transferencias") || !getVisibleTransfers().some(function (item) { return item.id === transferId; }) || (!isAdminOrSupervisor() && transfer && transfer.responsibleId !== authState.currentUser.id))) return;
     if (!canExportPackedTransfer(transfer)) return;
-    var button = $(format === "csv" ? "exportPackedCsvButton" : "exportPackedExcelButton");
+    var button = sourceButton || $(format === "csv" ? "exportPackedCsvButton" : "exportPackedExcelButton");
     if (!beginTransferAction("export-packed:" + transfer.id, button, "Exportando...")) return;
     try {
       var warehouseCode = activeWarehouseCode();
@@ -19535,6 +19536,13 @@ import "./src/process-navigation.css";
   async function handleTransferActionClick(event) {
     var button = event.target.closest("button");
     if (!button) return;
+    if (button.dataset.transferExportPacked) {
+      var exportTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferExportPacked; });
+      if (!IS_CP_ALAMO || !exportTransfer || !canExportPackedTransfer(exportTransfer)) return;
+      if (!isAdminOrSupervisor() && exportTransfer.responsibleId !== authState.currentUser.id) return;
+      await exportPackedTransfer("xlsx", exportTransfer.id, button);
+      return;
+    }
     if (button.dataset.transferExecute) {
       var executeTransfer = getVisibleTransfers().find(function (item) { return item.id === button.dataset.transferExecute; });
       if (!IS_CP_ALAMO || !executeTransfer || !transferPrimaryAction(executeTransfer, authState.currentUser, transferBelongsToActiveWarehouse(executeTransfer))) return;
@@ -19554,7 +19562,7 @@ import "./src/process-navigation.css";
         var centralItems = await loadTransferItemsForTransfer(centralTransfer.id);
         var drawerAction = transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer));
         var drawerRoute = transferUnitLabel(transferState.establishments, centralTransfer.originStoreCode, transferRouteOriginLabel(centralTransfer)) + " → " + transferUnitLabel(transferState.establishments, centralTransfer.destinationStoreCode || centralTransfer.establishmentCode, transferRouteDestinationLabel(centralTransfer));
-        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: drawerRoute, primaryAction: drawerAction, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
+        openTransferCentralDrawer({ transfer: centralTransfer, items: centralItems, status: transferStatusDisplayLabel(centralTransfer.status), route: drawerRoute, primaryAction: drawerAction, onExport: canExportPackedTransfer(centralTransfer) ? function (sourceButton) { return exportPackedTransfer("xlsx", centralTransfer.id, sourceButton); } : null, onOpen: function () { return openTransferWork(centralTransfer.id, { viewOnly: !transferPrimaryAction(centralTransfer, authState.currentUser, transferBelongsToActiveWarehouse(centralTransfer)) }); } });
       } catch (error) { showToast("Nao foi possivel abrir os detalhes: " + formatSupabaseError(error), "error"); }
       finally { button.disabled = false; button.removeAttribute("aria-busy"); }
       return;
