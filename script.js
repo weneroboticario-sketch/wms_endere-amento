@@ -18117,9 +18117,10 @@ import { staleStockSources } from "./src/stock-freshness.js";
         return;
       }
       var boxPatternDiff = isBoxQuantityItem(item) && referenceUnits > 0 ? Number(boxPacking.packedUnitsDelta || 0) - referenceUnits : 0;
+      var packedUnitsBefore = getTransferPackedUnits(item);
       item.packedQty = packCurrent + qty;
       if (isBoxQuantityItem(item)) {
-        item.packedUnits = getTransferPackedUnits(item) + Number(boxPacking.packedUnitsDelta || 0);
+        item.packedUnits = packedUnitsBefore + Number(boxPacking.packedUnitsDelta || 0);
         if (boxPacking.unitsPerBox > 0) item.unitsPerBox = boxPacking.unitsPerBox;
         item.totalUnits = boxPacking.mixed ? item.packedUnits : (Number(item.unitsPerBox || 0) > 0 ? Number(item.boxQty || item.requestedQty || 0) * Number(item.unitsPerBox || 0) : Number(item.requestedQty || item.boxQty || 0));
         item.packagingObservation = boxPacking.observation || item.packagingObservation || "";
