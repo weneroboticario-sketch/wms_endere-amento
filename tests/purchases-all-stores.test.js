@@ -6,20 +6,21 @@ import {workflowDatabase} from "./purchases-workflow-db.test.js";
 
 const migration=new URL("../supabase/migrations/20261014185927_purchases_all_active_warehouses.sql",import.meta.url);
 
-test("COMPRAS sees every operational store in both navigation and workflow contexts",async()=>{
+test("COMPRAS navigation and workflow contexts use only explicitly assigned stores",async()=>{
   const source=await readFile(new URL("../script.js",import.meta.url),"utf8");
   const fn=source.match(/  function allowedWarehouseCodesForUser\(user\) \{[\s\S]*?\n  }/)[0];
   const context={IS_CP_ALAMO:true,activeWarehouseCodes:()=>["A","B","DOURADOS"],DEFAULT_WAREHOUSE_CODE:"A",warehouseState:{tableAvailable:true},parseWarehouseCodes:v=>String(v||"").split(",").filter(Boolean),normalizeWarehouseCodeOrBlank:v=>v||"",removeAccidentalDefaultWarehouse:(defaultCode,allowed)=>({defaultCode,allowed})};
   vm.createContext(context);vm.runInContext(fn,context);
   const buyer={role:"COMPRAS",defaultWarehouseCode:"A",allowedWarehouseCodes:"A"};
-  assert.deepEqual(Array.from(context.allowedWarehouseCodesForUser(buyer)),["A","B"]);
+  assert.deepEqual(Array.from(context.allowedWarehouseCodesForUser(buyer)),["A"]);
+  assert.deepEqual(Array.from(context.allowedWarehouseCodesForUser({...buyer,allowedWarehouseCodes:"A,B"})),["A","B"]);
   for(const role of ["OPERADOR","SUPERVISOR","ATENDENTE"])assert.deepEqual(Array.from(context.allowedWarehouseCodesForUser({...buyer,role})),["A"]);
   context.IS_CP_ALAMO=false;
   assert.deepEqual(Array.from(context.allowedWarehouseCodesForUser(buyer)),["A"]);
   assert.match(source,/isGlobalAdmin\(\) \|\| isPurchasesUser\(\) \? allowedWarehouseCodesForUser\(authState.currentUser\)/);
 });
 
-test("buyer scope automatically includes active stores but excludes control/inactive units and preserves other roles",async()=>{
+test("explicit buyer scope excludes unassigned new stores and preserves other roles",async()=>{
   const db=await workflowDatabase();
   try {
     await db.exec(`reset role;
@@ -30,19 +31,25 @@ test("buyer scope automatically includes active stores but excludes control/inac
       insert into wms_warehouses(id,code,name,active) values('control','DOURADOS','Control',true),('inactive','C','Inactive',false);
       select set_config('test.uid','11111111-1111-1111-1111-111111111111',false);`);
     const sql=await readFile(migration,"utf8");await db.exec(sql);await db.exec(sql);
+    await db.exec("alter function private.current_wms_allowed_warehouses() rename to legacy_wms_allowed_warehouses;select set_config('test.role','COMPRAS',false);");
+    await db.exec(await readFile(new URL("../supabase/migrations/20261022120000_purchases_explicit_warehouse_scope.sql",import.meta.url),"utf8"));
     const scope=async()=> (await db.query("select private.current_wms_allowed_warehouses() allowed")).rows[0].allowed;
-    assert.deepEqual(await scope(),["A","B"]);
+    assert.deepEqual(await scope(),["A"]);
     await db.exec("insert into wms_warehouses(id,code,name,active) values('future','D','Future',true)");
+    assert.deepEqual(await scope(),["A"]);
+    await db.exec("update wms_users set allowed_warehouse_codes='A,B,D' where id='actor'");
     assert.deepEqual(await scope(),["A","B","D"]);
+    await db.exec("update wms_users set allowed_warehouse_codes='A' where id='actor'");
     for(const role of ["OPERADOR","SUPERVISOR","ATENDENTE","ADMINISTRADOR"]){
       await db.query("update wms_users set role=$1 where id='actor'",[role]);
+      await db.query("select set_config('test.role',$1,false)",[role]);
       assert.deepEqual(await scope(),["A"]);
     }
     await db.exec("update wms_users set is_global_admin=true where id='actor'");
     assert.deepEqual(await scope(),["A","B","D","DOURADOS"]);
-    await db.exec("update wms_users set role='COMPRAS',is_global_admin=false,active=false where id='actor'");
-    assert.equal(await scope(),null);
-    await db.exec("update wms_users set active=true,archived=true where id='actor'");assert.equal(await scope(),null);
-    await db.exec("update wms_users set archived=false where id='actor';select set_config('test.uid','',false)");assert.equal(await scope(),null);
+    await db.exec("select set_config('test.role','COMPRAS',false);update wms_users set role='COMPRAS',is_global_admin=false,active=false where id='actor'");
+    assert.deepEqual(await scope(),[]);
+    await db.exec("update wms_users set active=true,archived=true where id='actor'");assert.deepEqual(await scope(),[]);
+    await db.exec("update wms_users set archived=false where id='actor';select set_config('test.uid','',false)");assert.deepEqual(await scope(),[]);
   }finally{await db.close();}
 });
