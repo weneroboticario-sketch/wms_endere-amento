@@ -43,6 +43,7 @@ import { resolveTransferUnit, transferSearchText, openTransferCentralDrawer, tra
 import "./src/transfer-central.css";
 import { updateProcessNavigation } from "./src/process-navigation.js";
 import { completeMissingTransferSummaries } from "./src/transfer-summary.js";
+import { verifySavedWarehouseSelection, purchasesQueryWarehouse } from "./src/user-warehouse-access.js";
 import "./src/process-navigation.css";
 
 (function () {
@@ -1279,7 +1280,11 @@ import "./src/process-navigation.css";
     var activeCodes = activeWarehouseCodes();
     if (!user) return [DEFAULT_WAREHOUSE_CODE];
     if (user.isGlobalAdmin || user.role === "ADMINISTRADOR") return activeCodes.length ? activeCodes : WAREHOUSE_SEED.map(function (warehouse) { return warehouse.code; });
-    if (IS_CP_ALAMO && user.role === "COMPRAS" && activeCodes.length) return activeCodes.filter(function (code) { return code !== "DOURADOS"; });
+    if (IS_CP_ALAMO && user.role === "COMPRAS") {
+      var purchaseAllowed = parseWarehouseCodes(user.allowedWarehouseCodes);
+      if (!purchaseAllowed.length) purchaseAllowed = parseWarehouseCodes(user.defaultWarehouseCode || user.warehouseCode);
+      return purchaseAllowed.filter(function (code) { return activeCodes.includes(code) || !warehouseState.tableAvailable; });
+    }
     var allowed = parseWarehouseCodes(user.allowedWarehouseCodes);
     var defaultCode = normalizeWarehouseCodeOrBlank(user.defaultWarehouseCode || user.warehouseCode);
     var repaired = removeAccidentalDefaultWarehouse(defaultCode, allowed, false, user.warehouseAccessConfirmed === true);
@@ -6411,6 +6416,7 @@ import "./src/process-navigation.css";
     var changed = false;
     for (var i = 0; i < authState.users.length; i += 1) {
       var user = authState.users[i];
+      if (IS_CP_ALAMO && user.role === "COMPRAS") continue;
       var patch = canonicalUserWarehousePatch(user);
       var currentAllowed = unique(parseWarehouseCodes(user.allowedWarehouseCodes)).join(",");
       if (
@@ -6924,29 +6930,65 @@ import "./src/process-navigation.css";
   var cpDashboardSummaryPending = false;
   var cpDashboardSummaryAt = 0;
   var cpDashboardSummaryWarehouse = "";
+  function cpDashboardConsultationWarehouse() {
+    if (isPurchasesUser()) {
+      var scopeSelect = $("cpPurchasesQueryScope");
+      return purchasesQueryWarehouse(authState.currentUser, allowedWarehouseCodesForUser(authState.currentUser), scopeSelect ? scopeSelect.value : "");
+    }
+    return isGlobalDashboardScope() ? null : activeWarehouseCode();
+  }
+
+  function syncCpDashboardConsultationScope(screen) {
+    var scope = $("cpPurchasesQueryScope");
+    if (!isPurchasesUser()) {
+      if (scope) scope.closest("label").remove();
+      return;
+    }
+    if (!scope) {
+      var label = document.createElement("label");
+      label.className = "cp-purchases-query-scope";
+      label.textContent = "Escopo de consulta — Compras / NF e indicadores";
+      scope = document.createElement("select"); scope.id = "cpPurchasesQueryScope";
+      label.append(scope); screen.prepend(label);
+      scope.addEventListener("change", function () { cpDashboardSummaryAt = 0; refreshCpDashboardSummary(); });
+    }
+    var allowed = allowedWarehouseCodesForUser(authState.currentUser);
+    var signature = JSON.stringify([authState.currentUser.id, allowed]);
+    if (scope.dataset.scopeSignature !== signature) {
+      var previous = scope.dataset.actor === authState.currentUser.id ? scope.value : "";
+      scope.innerHTML = '<option value="">Todas as unidades autorizadas</option>' + allowed.map(function (unit) {
+        return '<option value="' + escapeHtml(unit) + '">' + escapeHtml(unit + " - " + warehouseNameForCode(unit)) + '</option>';
+      }).join("");
+      scope.value = allowed.includes(previous) ? previous : "";
+      scope.dataset.actor = authState.currentUser.id; scope.dataset.scopeSignature = signature;
+    }
+  }
+
   async function refreshCpDashboardSummary() {
     if (!IS_CP_ALAMO || !authState.currentUser || !isSupabaseReady() || !canUseNetwork()) return;
-    var code = activeWarehouseCode();
-    var actor = authState.currentUser.id;
-    if (cpDashboardSummaryPending || (cpDashboardSummaryWarehouse===code && Date.now()-cpDashboardSummaryAt<30000)) return;
     var screen = $(getActiveScreenId());
     if (!screen || ["dashboard","globalDashboard"].indexOf(screen.id)<0) return;
+    syncCpDashboardConsultationScope(screen);
+    var code = cpDashboardConsultationWarehouse();
+    var actor = authState.currentUser.id;
+    var queryScopeKey = JSON.stringify([actor, code, allowedWarehouseCodesForUser(authState.currentUser)]);
+    if (cpDashboardSummaryPending || (cpDashboardSummaryWarehouse===queryScopeKey && Date.now()-cpDashboardSummaryAt<30000)) return;
     var host = screen.querySelector(".cp-workflow-summary");
     if (!host) { host=document.createElement("section");host.className="cp-workflow-summary";screen.appendChild(host); }
     cpDashboardSummaryPending=true;
     try {
       var date=new Date();var month=date.getFullYear()+"-"+String(date.getMonth()+1).padStart(2,"0")+"-01";
       var result=await Promise.all([
-        supabaseDb.rpc("wms_fiscal_summary",{p_warehouse:isGlobalDashboardScope()?null:code}),
-        supabaseDb.rpc("wms_reverse_summary",{p_month:month,p_unit:isGlobalDashboardScope()?null:code})
+        supabaseDb.rpc("wms_fiscal_summary",{p_warehouse:code}),
+        supabaseDb.rpc("wms_reverse_summary",{p_month:month,p_unit:code})
       ]);
-      if (!authState.currentUser || authState.currentUser.id!==actor || activeWarehouseCode()!==code) return;
+      if (!authState.currentUser || JSON.stringify([authState.currentUser.id, cpDashboardConsultationWarehouse(), allowedWarehouseCodesForUser(authState.currentUser)]) !== queryScopeKey) return;
       if(result[0].error || result[1].error)throw result[0].error || result[1].error;
       var existingExecutiveHost = host.querySelector(".cp-transfer-executive");
       host.innerHTML="<h3>Compras e Logistica Reversa</h3><div class=\"metric-grid\">"+Object.entries(result[0].data || {}).map(function(pair){return "<article class=\"metric-card\"><span>"+escapeHtml(pair[0])+"</span><strong>"+Number(pair[1])+"</strong></article>";}).join("")+"</div><div class=\"table-wrap\"><table><thead><tr><th>Unidade</th><th>Meta mensal</th><th>Caixas realizadas</th><th>Percentual</th><th>Pendencias</th></tr></thead><tbody>"+(result[1].data || []).map(function(row){return "<tr><td>"+escapeHtml(row.unit_code)+"</td><td>"+Number(row.target_boxes)+"</td><td>"+Number(row.completed_boxes)+"</td><td>"+(Number(row.target_boxes)>0?(Number(row.completed_boxes)/Number(row.target_boxes)*100).toFixed(1)+"%":"Meta nao definida")+"</td><td>"+Number(row.pending)+"</td></tr>";}).join("")+"</tbody></table></div>";
       if (canAccessScreen("purchaseTransfer")) {
         var attention = await supabaseDb.rpc("wms_purchase_attention", { p_target: 3 });
-        if (!attention.error && authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === code) {
+        if (!attention.error && authState.currentUser && authState.currentUser.id === actor && cpDashboardConsultationWarehouse() === code) {
           host.insertAdjacentHTML("beforeend", "<h3>Lojas que precisam de atencao</h3><div class=\"table-wrap\"><table><thead><tr><th>Loja</th><th>Zerados</th><th>Baixo estoque</th><th>Transferencias abertas</th><th>Ultima atualizacao</th><th>Acao</th></tr></thead><tbody>" + (attention.data || []).map(function (row) {
             return "<tr><td>" + escapeHtml(row.code + " - " + row.name) + "</td><td>" + (row.zero === null ? "Sem base" : Number(row.zero)) + "</td><td>" + (row.low === null ? "Sem base" : Number(row.low)) + "</td><td>" + Number(row.open_transfers) + "</td><td>" + (row.updated_at ? formatDateTime(row.updated_at) : "Sem base LOJA") + "</td><td><button class=\"secondary-button\" data-purchase-destination=\"" + escapeHtml(row.code) + "\">Ver necessidade</button></td></tr>";
           }).join("") + "</tbody></table></div>");
@@ -6970,12 +7012,15 @@ import "./src/process-navigation.css";
             var allowed = allowedWarehouseCodesForUser(authState.currentUser);
             return warehouseState.warehouses.filter(function (w) { return w.active !== false && allowed.indexOf(w.code) >= 0; });
           }
-        }, function () { return isGlobalDashboardScope() ? null : activeWarehouseCode(); }, false);
+        }, cpDashboardConsultationWarehouse, false);
       }
       await executiveHost.controller.refresh();
-      cpDashboardSummaryAt=Date.now();cpDashboardSummaryWarehouse=code;
+      cpDashboardSummaryAt=Date.now();cpDashboardSummaryWarehouse=queryScopeKey;
     }catch(error){recordPerformanceError("cp-workflow-summary",error);host.textContent="Indicadores fiscais indisponiveis no momento.";}
-    finally{cpDashboardSummaryPending=false;}
+    finally{
+      cpDashboardSummaryPending=false;
+      if (authState.currentUser && authState.currentUser.id === actor && code !== cpDashboardConsultationWarehouse()) refreshCpDashboardSummary();
+    }
   }
 
   if (IS_CP_ALAMO) window.setInterval(function () {
@@ -7149,6 +7194,8 @@ import "./src/process-navigation.css";
       setStatus("userFormStatus", "Acesso restrito ao administrador ou supervisor.", "error");
       return;
     }
+    var pendingWarehouseSelection = selectedUserWarehouseCodes().slice();
+    var pendingDefaultWarehouse = $("userDefaultWarehouseInput").value;
     if (!await ensureWarehousesLoaded()) {
       setStatus("userFormStatus", "Nao foi possivel carregar os estoques. Atualize antes de salvar o usuario.", "error");
       return;
@@ -7161,8 +7208,8 @@ import "./src/process-navigation.css";
     var role = $("userRoleInput").value;
     var active = $("userActiveInput").checked;
     var availableForTasks = $("userAvailableInput").checked;
-    var defaultWarehouseCode = normalizeWarehouseCode($("userDefaultWarehouseInput") ? $("userDefaultWarehouseInput").value : activeWarehouseCode());
-    var allowedWarehouses = selectedUserWarehouseCodes();
+    var defaultWarehouseCode = normalizeWarehouseCode(pendingDefaultWarehouse || activeWarehouseCode());
+    var allowedWarehouses = pendingWarehouseSelection;
     var supervisorId = $("userSupervisorInput") ? $("userSupervisorInput").value : "";
     var previousUser = id ? authState.users.find(function (item) { return item.id === id; }) : null;
     if (previousUser && !canManageUserRecord(previousUser)) {
@@ -7295,12 +7342,15 @@ import "./src/process-navigation.css";
       setStatus("userFormStatus", "Erro ao confirmar estoque salvo. Esperado " + defaultWarehouseCode + ", gravado " + savedUser.defaultWarehouseCode + ".", "error");
       return;
     }
+    try { verifySavedWarehouseSelection(allowedWarehouses, confirmResponse.data.allowed_warehouse_codes); }
+    catch (error) { setStatus("userFormStatus", error.message, "error"); return; }
     var expectedSupervisorId = supervisor ? supervisor.id : "";
     if ((savedUser.supervisorId || "") !== expectedSupervisorId) {
       setStatus("userFormStatus", "Usuario salvo, mas o vinculo com o supervisor nao foi confirmado no Supabase. Atualize a tela e tente novamente.", "error");
       return;
     }
     await loadUsers({ repair: false });
+    renderActiveWarehouseUi();
     await recordAuthHistory(id ? "Usuário atualizado" : "Usuário criado", username, "", name + " - " + role + " - Estoque " + defaultWarehouseCode);
     if (previousWarehouseCode && previousWarehouseCode !== defaultWarehouseCode) {
       await recordAuthHistory("Estoque do usuario alterado", username, "", "De " + previousWarehouseCode + " para " + defaultWarehouseCode + " por " + authState.currentUser.username);
@@ -7423,7 +7473,7 @@ import "./src/process-navigation.css";
 
   function renderUsers() {
     if (!$("userGroups")) return;
-    if (moduleLoadState.warehouses) {
+    if (moduleLoadState.warehouses && (!$("userAllowedWarehousesInput").querySelector("input[type=checkbox]") || !warehouseExistsAndActive($("userDefaultWarehouseInput").value))) {
       renderUserWarehouseInputs({
         role: $("userRoleInput").value,
         defaultWarehouseCode: $("userDefaultWarehouseInput").value || activeWarehouseCode(),
