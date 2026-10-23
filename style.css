@@ -6126,3 +6126,21 @@ body.role-atendente .replenishment-layout {
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+.addressing-presence-alert:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #a8caed;
+  border-radius: 8px;
+  background: #edf6ff;
+  color: #123b64;
+  overflow-wrap: anywhere;
+}
+
+.addressing-presence-alert button {
+  flex-shrink: 0;
+}
