@@ -37,6 +37,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
 import { initializeWmsMobile } from "./src/wms-mobile.js";
 import { staleStockSources } from "./src/stock-freshness.js";
+import { readStockPages } from "./src/stock-pagination.js";
 
 (function () {
   "use strict";
@@ -3203,6 +3204,11 @@ import { staleStockSources } from "./src/stock-freshness.js";
       status.className = "status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning");
       status.textContent = batch.status || "-";
       statusCell.appendChild(status);
+      if (batch.status === "PROCESSING" && batch.notes) {
+        var progressNote = document.createElement("small");
+        progressNote.textContent = batch.notes;
+        statusCell.appendChild(progressNote);
+      }
       row.appendChild(statusCell);
       appendStockBatchTextCell(row, batch.imported_by_name || "-", "stock-batch-user");
       body.appendChild(row);
@@ -3421,7 +3427,16 @@ import { staleStockSources } from "./src/stock-freshness.js";
     if (batchResponse.error) throw batchResponse.error;
     updateLocalStockBatchProgress(batchId, batch);
     try {
-      var currentRows = await fetchActiveStockPositions(sourceType);
+      var lastReadProgressAt = 0;
+      var currentRows = await fetchActiveStockPositions(sourceType, async function (count) {
+        var message = "Lendo base atual: " + count + " registro(s) conferido(s). Aguarde a comparacao antes da gravacao.";
+        setStatus("stockImportStatus", message, "warning");
+        updateLocalStockBatchProgress(batchId, { notes: message });
+        if (Date.now() - lastReadProgressAt >= 10000) {
+          await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, { notes: message, updated_at: nowIso() });
+          lastReadProgressAt = Date.now();
+        }
+      });
       setStatus("stockImportStatus", "Base atual carregada. Preparando gravacao no Supabase...", "warning");
       var currentByKey = {};
       var duplicateActiveIds = {};
@@ -3589,7 +3604,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
           .eq("warehouse_code", activeWarehouseCode())
           .eq("source_type", sourceType)
           .eq("status", "PROCESSING")
-          .lt("created_at", cutoff)
+          .lt("updated_at", cutoff)
           .limit(20);
       });
       if (response.error) throw response.error;
@@ -3606,6 +3621,10 @@ import { staleStockSources } from "./src/stock-freshness.js";
             updated_at: now,
             finished_at: now
           })
+          .eq("warehouse_code", activeWarehouseCode())
+          .eq("source_type", sourceType)
+          .eq("status", "PROCESSING")
+          .lt("updated_at", cutoff)
           .in("id", ids);
       });
       if (updateResponse.error) throw updateResponse.error;
@@ -4424,43 +4443,40 @@ import { staleStockSources } from "./src/stock-freshness.js";
     return sourceType === "LOJA" ? "Loja" : "Captacao";
   }
 
-  async function fetchActiveStockPositions(sourceType) {
+  async function fetchActiveStockPositions(sourceType, onProgress) {
     if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
-    var allRows = [];
-    var from = 0;
-    var pageSize = 500;
-    while (true) {
+    var warehouseCode = activeWarehouseCode();
+    var allRows = await readStockPages(async function (from, pageSize) {
       var response = await runSupabaseRequestWithRetry("fetch-stock-positions", function () {
         var query = supabaseDb
           .from("wms_stock_positions")
           .select(stockPositionSelectColumns())
-          .eq("warehouse_code", activeWarehouseCode())
+          .eq("warehouse_code", warehouseCode)
           .eq("active", true)
           .order("codigo_material", { ascending: true })
           .order("id", { ascending: true });
         if (sourceType) query = query.eq("source_type", sourceType);
-        return query.range(from, from + pageSize - 1);
+        return query.range(from, from + pageSize - 1).abortSignal(window.AbortSignal.timeout(30000));
       });
       if (response.error && isMissingColumnError(response.error)) {
         response = await runSupabaseRequestWithRetry("fetch-stock-positions-legacy", function () {
           var fallbackQuery = supabaseDb
             .from("wms_stock_positions")
             .select(stockPositionLegacySelectColumns())
-            .eq("warehouse_code", activeWarehouseCode())
+            .eq("warehouse_code", warehouseCode)
             .eq("active", true)
             .order("codigo_material", { ascending: true })
             .order("id", { ascending: true });
           if (sourceType) fallbackQuery = fallbackQuery.eq("source_type", sourceType);
-          return fallbackQuery.range(from, from + pageSize - 1);
+          return fallbackQuery.range(from, from + pageSize - 1).abortSignal(window.AbortSignal.timeout(30000));
         });
       }
       if (response.error) throw response.error;
       var rows = response.data || [];
-      allRows = allRows.concat(rows.map(fromDbStockPosition));
-      if (rows.length < pageSize) break;
-      from += pageSize;
-    }
-    return allRows;
+      return rows;
+    }, onProgress);
+    if (warehouseCode !== activeWarehouseCode()) throw new Error("O estoque ativo mudou durante a leitura. Repita a operacao no estoque desejado.");
+    return allRows.map(fromDbStockPosition);
   }
 
   function stockPositionExportRow(position) {
@@ -4526,7 +4542,9 @@ import { staleStockSources } from "./src/stock-freshness.js";
   }
 
   async function getStockAlerts(kind) {
-    var positions = await fetchActiveStockPositions("");
+    var positions = await fetchActiveStockPositions("", function (count) {
+      setStatus("stockExportStatus", "Calculando alertas: " + count + " registro(s) lido(s)...", "warning");
+    });
     var grouped = {};
     positions.forEach(function (position) {
       var key = position.codigoMaterial || "";
@@ -4812,7 +4830,9 @@ import { staleStockSources } from "./src/stock-freshness.js";
       var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
       var warehouseCode = activeWarehouseCode();
       setStatus("stockExportStatus", "Carregando estoque e enderecos para exportacao...", "warning");
-      var rows = await fetchActiveStockPositions(sourceType);
+      var rows = await fetchActiveStockPositions(sourceType, function (count) {
+        setStatus("stockExportStatus", "Carregando exportacao: " + count + " registro(s) lido(s)...", "warning");
+      });
       var addressSync = sourceType === "LOJA"
         ? { rows: rows, addressed: 0 }
         : await prepareStockExportRows(rows, warehouseCode);
