@@ -37,6 +37,7 @@ import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
 import { initializeWmsMobile } from "./src/wms-mobile.js";
 import { staleStockSources } from "./src/stock-freshness.js";
+import { readStockPages } from "./src/stock-pagination.js";
 
 (function () {
   "use strict";
@@ -451,7 +452,9 @@ import { staleStockSources } from "./src/stock-freshness.js";
   };
   var moduleLoadPromises = {
     core: null,
-    coreWarehouseCode: ""
+    coreWarehouseCode: "",
+    transfers: null,
+    stock: null
   };
   var protectedAppShell = null;
   var protectedAppShellMarker = null;
@@ -815,6 +818,8 @@ import { staleStockSources } from "./src/stock-freshness.js";
     moduleLoadState.stock = false;
     moduleLoadPromises.core = null;
     moduleLoadPromises.coreWarehouseCode = "";
+    moduleLoadPromises.transfers = null;
+    moduleLoadPromises.stock = null;
     replenishmentState.loadingPromise = null;
     replenishmentState.loadingWarehouseCode = "";
     var refreshes = [ensureCoreDataLoaded()];
@@ -837,6 +842,8 @@ import { staleStockSources } from "./src/stock-freshness.js";
     moduleLoadState.stock = false;
     moduleLoadPromises.core = null;
     moduleLoadPromises.coreWarehouseCode = "";
+    moduleLoadPromises.transfers = null;
+    moduleLoadPromises.stock = null;
     replenishmentState.loadingPromise = null;
     replenishmentState.loadingWarehouseCode = "";
     if (!keepUsers) {
@@ -925,7 +932,10 @@ import { staleStockSources } from "./src/stock-freshness.js";
   async function ensureTransferDataLoaded() {
     if (moduleLoadState.transfers) return true;
     if (!canAccessScreen("transferencias")) return false;
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
     var loaded = await loadTransferData();
+    if (warehouse !== activeWarehouseCode() || !authState.currentUser || actor !== authState.currentUser.id) return false;
     moduleLoadState.transfers = loaded === true;
     return loaded;
   }
@@ -941,7 +951,10 @@ import { staleStockSources } from "./src/stock-freshness.js";
   async function ensureStockDataLoaded() {
     if (moduleLoadState.stock) return true;
     if (!canAccessScreen("baseEstoque")) return false;
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
     var loaded = await loadStockOperationalData();
+    if (warehouse !== activeWarehouseCode() || !authState.currentUser || actor !== authState.currentUser.id) return false;
     moduleLoadState.stock = loaded === true;
     return loaded;
   }
@@ -1001,7 +1014,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
       await Promise.all([ensureCoreDataLoaded(), ensureReplenishmentDataLoaded()]);
       return true;
     }
-    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "manutencao", "baseEstoque"].indexOf(screenId) >= 0) {
+    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "manutencao", "exportar"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
@@ -1885,21 +1898,15 @@ import { staleStockSources } from "./src/stock-freshness.js";
   async function fetchTransferItemsForTransfer(transferId, warehouseCode) {
     var startedAt = performance.now();
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
-    var response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-      return query.eq("transfer_id", transferId).eq("warehouse_code", warehouse).order("created_at", { ascending: true }).limit(2000);
-    });
+    var response = await fetchTransferItemPages(transferId, warehouse);
     if (response.error && isMissingWarehouseColumnError(response.error)) {
       assertWarehouseFallbackAllowed("wms_transfer_items", response.error);
-      response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
-      });
+      response = await fetchTransferItemPages(transferId, null);
     }
     if (response.error) throw response.error;
     var rows = response.data || [];
     if (!rows.length && isMultiWarehouseMode()) {
-      var fallbackResponse = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
-      });
+      var fallbackResponse = await fetchTransferItemPages(transferId, null);
       if (fallbackResponse.error) throw fallbackResponse.error;
       rows = (fallbackResponse.data || []).filter(function (row) {
         var explicitWarehouse = rawWarehouseCodeValue(row);
@@ -2291,9 +2298,39 @@ import { staleStockSources } from "./src/stock-freshness.js";
     }
   }
 
+  async function fetchTransferItemPages(transferId, warehouseCode) {
+    var rows = [];
+    var pageSize = 500;
+    for (var offset = 0; ; offset += pageSize) {
+      var response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
+        query = query.eq("transfer_id", transferId);
+        if (warehouseCode) query = query.eq("warehouse_code", warehouseCode);
+        return query.order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + pageSize - 1);
+      });
+      if (response.error) return response;
+      var page = response.data || [];
+      rows = rows.concat(page);
+      if (page.length < pageSize) return { data: rows, error: null };
+    }
+  }
+
   async function loadTransferData() {
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
+    var pending = moduleLoadPromises.transfers;
+    if (pending && pending.warehouse === warehouse && pending.actor === actor) return pending.promise;
+    var request = { warehouse: warehouse, actor: actor };
+    moduleLoadPromises.transfers = request;
+    request.promise = performTransferDataLoad().finally(function () {
+      if (moduleLoadPromises.transfers === request) moduleLoadPromises.transfers = null;
+    });
+    return request.promise;
+  }
+
+  async function performTransferDataLoad() {
     var loadStartedAt = performance.now();
     var currentWarehouse = activeWarehouseCode();
+    var currentActor = authState.currentUser && authState.currentUser.id;
     var previousItems = transferState.items.filter(function (item) {
       return processRowMatchesActiveWarehouse(item) && item.transferId && transferState.loadedItemTransferIds[item.transferId];
     });
@@ -2306,6 +2343,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
     transferState.loadedItemTransferIds = previousLoaded;
     performanceState.lastTransferQueryCount = 0;
     var cachedTransfers = await readModuleCache("transferData");
+    if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
     var loadedFromCache = false;
     if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
       transferState.establishments = cachedTransfers.establishments || [];
@@ -2335,8 +2373,11 @@ import { staleStockSources } from "./src/stock-freshness.js";
       if (establishmentResponse.error) throw establishmentResponse.error;
       performanceState.lastTransferQueryCount += 1;
       var establishmentRows = establishmentResponse.data || [];
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var transferRows = await fetchTransferSummaryRows(220);
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var packagingRows = await fetchProductPackagingRows();
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
@@ -2354,17 +2395,19 @@ import { staleStockSources } from "./src/stock-freshness.js";
         if (pattern.sku) transferState.productPackaging[normalizeSkuKey(pattern.sku)] = pattern;
       });
       transferState.tablesAvailable = true;
-      await writeModuleCache("transferData", {
+      await writeModuleCacheForWarehouse("transferData", currentWarehouse, {
         establishments: transferState.establishments,
         transfers: transferState.transfers,
         productPackaging: transferState.productPackaging
       });
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       performanceState.lastTransferLoadedItems = transferState.items.length;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       setSyncStatus(realtimeState.operationalSubscribed ? "Ao vivo" : "Sincronizado", "success");
       moduleLoadState.transfers = true;
       return true;
     } catch (error) {
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("transferencias", error);
       transferState.tablesAvailable = !isMissingTransferTableError(error);
@@ -2403,10 +2446,13 @@ import { staleStockSources } from "./src/stock-freshness.js";
     if (!options.force && transferState.loadedItemTransferIds[transferId]) return getTransferItems(transferId);
     if (transferState.loadingTransferItems[transferId]) return transferState.loadingTransferItems[transferId];
     if (!isSupabaseReady() || !canUseNetwork()) return getTransferItems(transferId);
+    var currentWarehouse = activeWarehouseCode();
+    var currentActor = authState.currentUser && authState.currentUser.id;
     var loadPromise = (async function () {
       var startedAt = performance.now();
       try {
         var rows = await fetchTransferItemsForTransfer(transferId, (transfer && transfer.warehouseCode) || activeWarehouseCode());
+        if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return [];
         var loadedItems = rows.map(fromDbTransferItem).filter(function (item) {
           return item.transferId === transferId && processRowMatchesActiveWarehouse(item);
         });
@@ -2419,12 +2465,13 @@ import { staleStockSources } from "./src/stock-freshness.js";
         writeTransferCacheSoon();
         return loadedItems;
       } catch (error) {
+        if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return [];
         recordPerformanceMetric("lastTransferDetailMs", startedAt);
         recordPerformanceError("transfer-detail", error);
         showToast("Nao foi possivel carregar itens da transferencia: " + formatSupabaseError(error), "error");
         return getTransferItems(transferId);
       } finally {
-        delete transferState.loadingTransferItems[transferId];
+        if (transferState.loadingTransferItems[transferId] === loadPromise) delete transferState.loadingTransferItems[transferId];
       }
     })();
     transferState.loadingTransferItems[transferId] = loadPromise;
@@ -3091,6 +3138,19 @@ import { staleStockSources } from "./src/stock-freshness.js";
   }
 
   async function loadStockOperationalData() {
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
+    var pending = moduleLoadPromises.stock;
+    if (pending && pending.warehouse === warehouse && pending.actor === actor) return pending.promise;
+    var request = { warehouse: warehouse, actor: actor };
+    moduleLoadPromises.stock = request;
+    request.promise = performStockOperationalLoad(warehouse, actor).finally(function () {
+      if (moduleLoadPromises.stock === request) moduleLoadPromises.stock = null;
+    });
+    return request.promise;
+  }
+
+  async function performStockOperationalLoad(warehouse, actor) {
     var startedAt = performance.now();
     stockState.batches = [];
     stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
@@ -3102,12 +3162,14 @@ import { staleStockSources } from "./src/stock-freshness.js";
           closeInterruptedStockImportBatches("CAPTACAO", 10)
         ]);
       }
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       var stockResults = await Promise.all([
         loadStockImportBatchRows(),
         countActiveStockPositions("LOJA"),
         countActiveStockPositions("CAPTACAO")
       ]);
       var batchResponse = stockResults[0];
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
       stockState.summary.loja = stockResults[1];
@@ -3120,6 +3182,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
       recordPerformanceMetric("lastStockLoadMs", startedAt);
       return true;
     } catch (error) {
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       stockState.tablesAvailable = !isMissingStockTableError(error);
       recordPerformanceError("base-estoque", error);
       if (getActiveScreenId() === "baseEstoque") setStatus("stockImportStatus", missingStockSchemaMessage(error), "error");
@@ -3203,6 +3266,11 @@ import { staleStockSources } from "./src/stock-freshness.js";
       status.className = "status-badge " + (batch.status === "COMPLETED" ? "active" : batch.status === "FAILED" ? "inactive" : "warning");
       status.textContent = batch.status || "-";
       statusCell.appendChild(status);
+      if (batch.status === "PROCESSING" && batch.notes) {
+        var progressNote = document.createElement("small");
+        progressNote.textContent = batch.notes;
+        statusCell.appendChild(progressNote);
+      }
       row.appendChild(statusCell);
       appendStockBatchTextCell(row, batch.imported_by_name || "-", "stock-batch-user");
       body.appendChild(row);
@@ -3421,7 +3489,16 @@ import { staleStockSources } from "./src/stock-freshness.js";
     if (batchResponse.error) throw batchResponse.error;
     updateLocalStockBatchProgress(batchId, batch);
     try {
-      var currentRows = await fetchActiveStockPositions(sourceType);
+      var lastReadProgressAt = 0;
+      var currentRows = await fetchActiveStockPositions(sourceType, async function (count) {
+        var message = "Lendo base atual: " + count + " registro(s) conferido(s). Aguarde a comparacao antes da gravacao.";
+        setStatus("stockImportStatus", message, "warning");
+        updateLocalStockBatchProgress(batchId, { notes: message });
+        if (Date.now() - lastReadProgressAt >= 10000) {
+          await updateRowWithSchemaFallback("wms_stock_import_batches", "id", batchId, { notes: message, updated_at: nowIso() });
+          lastReadProgressAt = Date.now();
+        }
+      });
       setStatus("stockImportStatus", "Base atual carregada. Preparando gravacao no Supabase...", "warning");
       var currentByKey = {};
       var duplicateActiveIds = {};
@@ -3589,7 +3666,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
           .eq("warehouse_code", activeWarehouseCode())
           .eq("source_type", sourceType)
           .eq("status", "PROCESSING")
-          .lt("created_at", cutoff)
+          .lt("updated_at", cutoff)
           .limit(20);
       });
       if (response.error) throw response.error;
@@ -3606,6 +3683,10 @@ import { staleStockSources } from "./src/stock-freshness.js";
             updated_at: now,
             finished_at: now
           })
+          .eq("warehouse_code", activeWarehouseCode())
+          .eq("source_type", sourceType)
+          .eq("status", "PROCESSING")
+          .lt("updated_at", cutoff)
           .in("id", ids);
       });
       if (updateResponse.error) throw updateResponse.error;
@@ -4424,43 +4505,40 @@ import { staleStockSources } from "./src/stock-freshness.js";
     return sourceType === "LOJA" ? "Loja" : "Captacao";
   }
 
-  async function fetchActiveStockPositions(sourceType) {
+  async function fetchActiveStockPositions(sourceType, onProgress) {
     if (!isSupabaseReady()) throw new Error("Supabase nao conectado.");
-    var allRows = [];
-    var from = 0;
-    var pageSize = 500;
-    while (true) {
+    var warehouseCode = activeWarehouseCode();
+    var allRows = await readStockPages(async function (from, pageSize) {
       var response = await runSupabaseRequestWithRetry("fetch-stock-positions", function () {
         var query = supabaseDb
           .from("wms_stock_positions")
           .select(stockPositionSelectColumns())
-          .eq("warehouse_code", activeWarehouseCode())
+          .eq("warehouse_code", warehouseCode)
           .eq("active", true)
           .order("codigo_material", { ascending: true })
           .order("id", { ascending: true });
         if (sourceType) query = query.eq("source_type", sourceType);
-        return query.range(from, from + pageSize - 1);
+        return query.range(from, from + pageSize - 1).abortSignal(window.AbortSignal.timeout(30000));
       });
       if (response.error && isMissingColumnError(response.error)) {
         response = await runSupabaseRequestWithRetry("fetch-stock-positions-legacy", function () {
           var fallbackQuery = supabaseDb
             .from("wms_stock_positions")
             .select(stockPositionLegacySelectColumns())
-            .eq("warehouse_code", activeWarehouseCode())
+            .eq("warehouse_code", warehouseCode)
             .eq("active", true)
             .order("codigo_material", { ascending: true })
             .order("id", { ascending: true });
           if (sourceType) fallbackQuery = fallbackQuery.eq("source_type", sourceType);
-          return fallbackQuery.range(from, from + pageSize - 1);
+          return fallbackQuery.range(from, from + pageSize - 1).abortSignal(window.AbortSignal.timeout(30000));
         });
       }
       if (response.error) throw response.error;
       var rows = response.data || [];
-      allRows = allRows.concat(rows.map(fromDbStockPosition));
-      if (rows.length < pageSize) break;
-      from += pageSize;
-    }
-    return allRows;
+      return rows;
+    }, onProgress);
+    if (warehouseCode !== activeWarehouseCode()) throw new Error("O estoque ativo mudou durante a leitura. Repita a operacao no estoque desejado.");
+    return allRows.map(fromDbStockPosition);
   }
 
   function stockPositionExportRow(position) {
@@ -4526,7 +4604,9 @@ import { staleStockSources } from "./src/stock-freshness.js";
   }
 
   async function getStockAlerts(kind) {
-    var positions = await fetchActiveStockPositions("");
+    var positions = await fetchActiveStockPositions("", function (count) {
+      setStatus("stockExportStatus", "Calculando alertas: " + count + " registro(s) lido(s)...", "warning");
+    });
     var grouped = {};
     positions.forEach(function (position) {
       var key = position.codigoMaterial || "";
@@ -4812,7 +4892,9 @@ import { staleStockSources } from "./src/stock-freshness.js";
       var sourceType = $("stockExportSourceFilter") ? $("stockExportSourceFilter").value : "";
       var warehouseCode = activeWarehouseCode();
       setStatus("stockExportStatus", "Carregando estoque e enderecos para exportacao...", "warning");
-      var rows = await fetchActiveStockPositions(sourceType);
+      var rows = await fetchActiveStockPositions(sourceType, function (count) {
+        setStatus("stockExportStatus", "Carregando exportacao: " + count + " registro(s) lido(s)...", "warning");
+      });
       var addressSync = sourceType === "LOJA"
         ? { rows: rows, addressed: 0 }
         : await prepareStockExportRows(rows, warehouseCode);
@@ -6405,7 +6487,7 @@ import { staleStockSources } from "./src/stock-freshness.js";
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
     await initialScreenPromise;
     replenishmentPreload.catch(function (error) { recordPerformanceError("reposicao-preload", error); });
-    ensureCoreDataLoaded().then(applyDataMigrations).catch(function (error) {
+    if (moduleLoadState.core) applyDataMigrations().catch(function (error) {
       recordPerformanceError("dados-principais-segundo-plano", error);
     });
   }

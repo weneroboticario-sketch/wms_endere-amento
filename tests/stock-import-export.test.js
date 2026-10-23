@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
+import { readStockPages } from "../src/stock-pagination.js";
 
 const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
 function loadFunctions(names, overrides = {}) {
   const context = vm.createContext({
+    readStockPages, window: { AbortSignal: globalThis.AbortSignal },
     normalizeSku: value => String(value).trim(),
     normalizeText: value => String(value || "").trim(),
     normalizeWarehouseCode: value => String(value).trim().toUpperCase(),
@@ -104,7 +106,8 @@ test("stock pagination orders equal SKUs by ID, including the legacy fallback", 
     supabaseDb: { from: () => {
       const query = { select: () => query, eq: () => query,
         order: column => { orders.push(column); return query; },
-        range: () => { reads++; return reads === 1 ? { error: { code: "42703" } } : { data: [] }; } };
+        range: () => query,
+        abortSignal: () => { reads++; return reads === 1 ? { error: { code: "42703" } } : { data: [] }; } };
       return query;
     } },
     runSupabaseRequestWithRetry: async (_, callback) => callback()
