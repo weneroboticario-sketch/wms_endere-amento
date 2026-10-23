@@ -452,7 +452,9 @@ import { readStockPages } from "./src/stock-pagination.js";
   };
   var moduleLoadPromises = {
     core: null,
-    coreWarehouseCode: ""
+    coreWarehouseCode: "",
+    transfers: null,
+    stock: null
   };
   var protectedAppShell = null;
   var protectedAppShellMarker = null;
@@ -816,6 +818,8 @@ import { readStockPages } from "./src/stock-pagination.js";
     moduleLoadState.stock = false;
     moduleLoadPromises.core = null;
     moduleLoadPromises.coreWarehouseCode = "";
+    moduleLoadPromises.transfers = null;
+    moduleLoadPromises.stock = null;
     replenishmentState.loadingPromise = null;
     replenishmentState.loadingWarehouseCode = "";
     var refreshes = [ensureCoreDataLoaded()];
@@ -838,6 +842,8 @@ import { readStockPages } from "./src/stock-pagination.js";
     moduleLoadState.stock = false;
     moduleLoadPromises.core = null;
     moduleLoadPromises.coreWarehouseCode = "";
+    moduleLoadPromises.transfers = null;
+    moduleLoadPromises.stock = null;
     replenishmentState.loadingPromise = null;
     replenishmentState.loadingWarehouseCode = "";
     if (!keepUsers) {
@@ -926,7 +932,10 @@ import { readStockPages } from "./src/stock-pagination.js";
   async function ensureTransferDataLoaded() {
     if (moduleLoadState.transfers) return true;
     if (!canAccessScreen("transferencias")) return false;
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
     var loaded = await loadTransferData();
+    if (warehouse !== activeWarehouseCode() || !authState.currentUser || actor !== authState.currentUser.id) return false;
     moduleLoadState.transfers = loaded === true;
     return loaded;
   }
@@ -942,7 +951,10 @@ import { readStockPages } from "./src/stock-pagination.js";
   async function ensureStockDataLoaded() {
     if (moduleLoadState.stock) return true;
     if (!canAccessScreen("baseEstoque")) return false;
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
     var loaded = await loadStockOperationalData();
+    if (warehouse !== activeWarehouseCode() || !authState.currentUser || actor !== authState.currentUser.id) return false;
     moduleLoadState.stock = loaded === true;
     return loaded;
   }
@@ -1002,7 +1014,7 @@ import { readStockPages } from "./src/stock-pagination.js";
       await Promise.all([ensureCoreDataLoaded(), ensureReplenishmentDataLoaded()]);
       return true;
     }
-    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "manutencao", "baseEstoque"].indexOf(screenId) >= 0) {
+    if (["bipagem", "consultaSku", "consultaPrateleira", "etiquetas", "manutencao", "exportar"].indexOf(screenId) >= 0) {
       await ensureCoreDataLoaded();
     }
     if (screenId === "baseEstoque") await ensureStockDataLoaded();
@@ -1886,21 +1898,15 @@ import { readStockPages } from "./src/stock-pagination.js";
   async function fetchTransferItemsForTransfer(transferId, warehouseCode) {
     var startedAt = performance.now();
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
-    var response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-      return query.eq("transfer_id", transferId).eq("warehouse_code", warehouse).order("created_at", { ascending: true }).limit(2000);
-    });
+    var response = await fetchTransferItemPages(transferId, warehouse);
     if (response.error && isMissingWarehouseColumnError(response.error)) {
       assertWarehouseFallbackAllowed("wms_transfer_items", response.error);
-      response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
-      });
+      response = await fetchTransferItemPages(transferId, null);
     }
     if (response.error) throw response.error;
     var rows = response.data || [];
     if (!rows.length && isMultiWarehouseMode()) {
-      var fallbackResponse = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
-        return query.eq("transfer_id", transferId).order("created_at", { ascending: true }).limit(2000);
-      });
+      var fallbackResponse = await fetchTransferItemPages(transferId, null);
       if (fallbackResponse.error) throw fallbackResponse.error;
       rows = (fallbackResponse.data || []).filter(function (row) {
         var explicitWarehouse = rawWarehouseCodeValue(row);
@@ -2292,9 +2298,39 @@ import { readStockPages } from "./src/stock-pagination.js";
     }
   }
 
+  async function fetchTransferItemPages(transferId, warehouseCode) {
+    var rows = [];
+    var pageSize = 500;
+    for (var offset = 0; ; offset += pageSize) {
+      var response = await selectRowsWithMissingColumnFallback("wms_transfer_items", transferItemDetailSelectColumns(), function (query) {
+        query = query.eq("transfer_id", transferId);
+        if (warehouseCode) query = query.eq("warehouse_code", warehouseCode);
+        return query.order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + pageSize - 1);
+      });
+      if (response.error) return response;
+      var page = response.data || [];
+      rows = rows.concat(page);
+      if (page.length < pageSize) return { data: rows, error: null };
+    }
+  }
+
   async function loadTransferData() {
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
+    var pending = moduleLoadPromises.transfers;
+    if (pending && pending.warehouse === warehouse && pending.actor === actor) return pending.promise;
+    var request = { warehouse: warehouse, actor: actor };
+    moduleLoadPromises.transfers = request;
+    request.promise = performTransferDataLoad().finally(function () {
+      if (moduleLoadPromises.transfers === request) moduleLoadPromises.transfers = null;
+    });
+    return request.promise;
+  }
+
+  async function performTransferDataLoad() {
     var loadStartedAt = performance.now();
     var currentWarehouse = activeWarehouseCode();
+    var currentActor = authState.currentUser && authState.currentUser.id;
     var previousItems = transferState.items.filter(function (item) {
       return processRowMatchesActiveWarehouse(item) && item.transferId && transferState.loadedItemTransferIds[item.transferId];
     });
@@ -2307,6 +2343,7 @@ import { readStockPages } from "./src/stock-pagination.js";
     transferState.loadedItemTransferIds = previousLoaded;
     performanceState.lastTransferQueryCount = 0;
     var cachedTransfers = await readModuleCache("transferData");
+    if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
     var loadedFromCache = false;
     if (cachedTransfers && Array.isArray(cachedTransfers.transfers)) {
       transferState.establishments = cachedTransfers.establishments || [];
@@ -2336,8 +2373,11 @@ import { readStockPages } from "./src/stock-pagination.js";
       if (establishmentResponse.error) throw establishmentResponse.error;
       performanceState.lastTransferQueryCount += 1;
       var establishmentRows = establishmentResponse.data || [];
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var transferRows = await fetchTransferSummaryRows(220);
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var packagingRows = await fetchProductPackagingRows();
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       var transferIds = {};
       transferRows.forEach(function (row) { transferIds[row.id] = true; });
       transferState.establishments = establishmentRows.map(fromDbEstablishment);
@@ -2355,17 +2395,19 @@ import { readStockPages } from "./src/stock-pagination.js";
         if (pattern.sku) transferState.productPackaging[normalizeSkuKey(pattern.sku)] = pattern;
       });
       transferState.tablesAvailable = true;
-      await writeModuleCache("transferData", {
+      await writeModuleCacheForWarehouse("transferData", currentWarehouse, {
         establishments: transferState.establishments,
         transfers: transferState.transfers,
         productPackaging: transferState.productPackaging
       });
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       performanceState.lastTransferLoadedItems = transferState.items.length;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       setSyncStatus(realtimeState.operationalSubscribed ? "Ao vivo" : "Sincronizado", "success");
       moduleLoadState.transfers = true;
       return true;
     } catch (error) {
+      if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return false;
       recordPerformanceMetric("lastTransferLoadMs", loadStartedAt);
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("transferencias", error);
       transferState.tablesAvailable = !isMissingTransferTableError(error);
@@ -2404,10 +2446,13 @@ import { readStockPages } from "./src/stock-pagination.js";
     if (!options.force && transferState.loadedItemTransferIds[transferId]) return getTransferItems(transferId);
     if (transferState.loadingTransferItems[transferId]) return transferState.loadingTransferItems[transferId];
     if (!isSupabaseReady() || !canUseNetwork()) return getTransferItems(transferId);
+    var currentWarehouse = activeWarehouseCode();
+    var currentActor = authState.currentUser && authState.currentUser.id;
     var loadPromise = (async function () {
       var startedAt = performance.now();
       try {
         var rows = await fetchTransferItemsForTransfer(transferId, (transfer && transfer.warehouseCode) || activeWarehouseCode());
+        if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return [];
         var loadedItems = rows.map(fromDbTransferItem).filter(function (item) {
           return item.transferId === transferId && processRowMatchesActiveWarehouse(item);
         });
@@ -2420,12 +2465,13 @@ import { readStockPages } from "./src/stock-pagination.js";
         writeTransferCacheSoon();
         return loadedItems;
       } catch (error) {
+        if (activeWarehouseCode() !== currentWarehouse || !authState.currentUser || authState.currentUser.id !== currentActor) return [];
         recordPerformanceMetric("lastTransferDetailMs", startedAt);
         recordPerformanceError("transfer-detail", error);
         showToast("Nao foi possivel carregar itens da transferencia: " + formatSupabaseError(error), "error");
         return getTransferItems(transferId);
       } finally {
-        delete transferState.loadingTransferItems[transferId];
+        if (transferState.loadingTransferItems[transferId] === loadPromise) delete transferState.loadingTransferItems[transferId];
       }
     })();
     transferState.loadingTransferItems[transferId] = loadPromise;
@@ -3092,6 +3138,19 @@ import { readStockPages } from "./src/stock-pagination.js";
   }
 
   async function loadStockOperationalData() {
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
+    var pending = moduleLoadPromises.stock;
+    if (pending && pending.warehouse === warehouse && pending.actor === actor) return pending.promise;
+    var request = { warehouse: warehouse, actor: actor };
+    moduleLoadPromises.stock = request;
+    request.promise = performStockOperationalLoad(warehouse, actor).finally(function () {
+      if (moduleLoadPromises.stock === request) moduleLoadPromises.stock = null;
+    });
+    return request.promise;
+  }
+
+  async function performStockOperationalLoad(warehouse, actor) {
     var startedAt = performance.now();
     stockState.batches = [];
     stockState.summary = { loja: 0, captacao: 0, updatedAt: "" };
@@ -3103,12 +3162,14 @@ import { readStockPages } from "./src/stock-pagination.js";
           closeInterruptedStockImportBatches("CAPTACAO", 10)
         ]);
       }
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       var stockResults = await Promise.all([
         loadStockImportBatchRows(),
         countActiveStockPositions("LOJA"),
         countActiveStockPositions("CAPTACAO")
       ]);
       var batchResponse = stockResults[0];
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       if (batchResponse.error) throw batchResponse.error;
       stockState.batches = batchResponse.data || [];
       stockState.summary.loja = stockResults[1];
@@ -3121,6 +3182,7 @@ import { readStockPages } from "./src/stock-pagination.js";
       recordPerformanceMetric("lastStockLoadMs", startedAt);
       return true;
     } catch (error) {
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actor) return false;
       stockState.tablesAvailable = !isMissingStockTableError(error);
       recordPerformanceError("base-estoque", error);
       if (getActiveScreenId() === "baseEstoque") setStatus("stockImportStatus", missingStockSchemaMessage(error), "error");
@@ -6425,7 +6487,7 @@ import { readStockPages } from "./src/stock-pagination.js";
     if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
     await initialScreenPromise;
     replenishmentPreload.catch(function (error) { recordPerformanceError("reposicao-preload", error); });
-    ensureCoreDataLoaded().then(applyDataMigrations).catch(function (error) {
+    if (moduleLoadState.core) applyDataMigrations().catch(function (error) {
       recordPerformanceError("dados-principais-segundo-plano", error);
     });
   }
