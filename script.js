@@ -38,6 +38,7 @@ import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.j
 import { initializeWmsMobile } from "./src/wms-mobile.js";
 import { staleStockSources } from "./src/stock-freshness.js";
 import { readStockPages } from "./src/stock-pagination.js";
+import { createAddressingPresence } from "./src/addressing-presence.js";
 
 (function () {
   "use strict";
@@ -340,6 +341,7 @@ import { readStockPages } from "./src/stock-pagination.js";
     viewMode: "ativas"
   };
   var stockFreshnessState = { batches: [], generation: 0, loading: false };
+  var addressingPresenceController = null;
   var stockState = {
     batches: [],
     summary: { loja: 0, captacao: 0, updatedAt: "" },
@@ -8154,6 +8156,7 @@ import { readStockPages } from "./src/stock-pagination.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (addressingPresenceController) addressingPresenceController.update();
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
     }
@@ -10416,6 +10419,15 @@ import { readStockPages } from "./src/stock-pagination.js";
     if (isGlobalDashboardScope()) { ensureGlobalDashboard().start(); return; }
     realtimeState.active = true;
     realtimeState.warehouseCode = activeWarehouseCode();
+    if (!IS_CP_ALAMO && $("addressingPresenceAlert")) {
+      addressingPresenceController = createAddressingPresence({
+        client: supabaseDb,
+        warehouse: activeWarehouseCode(),
+        user: authState.currentUser,
+        element: $("addressingPresenceAlert"),
+        isAddressing: function () { return getActiveScreenId() === "bipagem"; }
+      });
+    }
     refreshStockFreshness();
     realtimeState.failureCount = 0;
     realtimeState.operationalSubscribed = false;
@@ -10481,6 +10493,8 @@ import { readStockPages } from "./src/stock-pagination.js";
   }
 
   function stopLeaderLiveSync() {
+    if (addressingPresenceController) addressingPresenceController.stop();
+    addressingPresenceController = null;
     stockFreshnessState.generation += 1;
     stockFreshnessState.batches = [];
     stockFreshnessState.loading = false;
@@ -15839,12 +15853,31 @@ import { readStockPages } from "./src/stock-pagination.js";
     return node ? normalizeText(node.textContent) : "";
   }
 
+  async function fetchCurrentSkuAddresses(sku, warehouseCode) {
+    if (!isSupabaseReady() || !canUseNetwork()) return findBySku(sku);
+    var legacyLocations = findBySku(sku).filter(function (binding) {
+      return splitSkuValues(binding.sourceSkuValue || binding.sku).length > 1 && bindingMatchesWarehouseCode(binding, warehouseCode);
+    });
+    var response = await runSupabaseRequestWithRetry("sku-current-addresses", function () {
+      return supabaseDb.from("wms_bindings").select("*")
+        .eq("warehouse_code", warehouseCode)
+        .in("sku", unique([normalizeSku(sku), normalizeSkuKey(sku)]))
+        .order("updated_at", { ascending: false });
+    });
+    if (response.error) throw response.error;
+    var current = expandDbBindingRows(response.data || []);
+    return current.concat(legacyLocations.filter(function (binding) {
+      return !current.some(function (remote) { return remote.id === binding.id; });
+    }));
+  }
+
   async function renderSkuSearch() {
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
     var list = [];
     var requestSeq = ++skuSearchRequestSeq;
+    var requestedWarehouse = activeWarehouseCode();
     if (!sku) {
       setStatus("skuSearchStatus", "Informe ou bipe um SKU.", "error");
       $("skuResults").innerHTML = "";
@@ -15861,12 +15894,19 @@ import { readStockPages } from "./src/stock-pagination.js";
     var stockSuggestion = null;
     var stockError = "";
     try {
+      list = await fetchCurrentSkuAddresses(sku, requestedWarehouse);
+      refreshProductNamesForBindings(list);
+    } catch (addressError) {
+      recordPerformanceError("consulta-sku-endereco", addressError);
+    }
+    if (requestSeq !== skuSearchRequestSeq || requestedWarehouse !== activeWarehouseCode()) return;
+    try {
       stockSuggestion = await stockService().getReplenishmentSuggestion(sku, activeWarehouseCode());
     } catch (error) {
       stockError = missingStockSchemaMessage(error);
       recordPerformanceError("consulta-sku-estoque", error);
     }
-    if (requestSeq !== skuSearchRequestSeq) return;
+    if (requestSeq !== skuSearchRequestSeq || requestedWarehouse !== activeWarehouseCode()) return;
     addHistory("SKU consultado", sku, "", stockSuggestion && stockSuggestion.baseFound !== false ? "Consulta CAPTACAO encontrou o produto." : "Produto não encontrado na base da CAPTAÇÃO.");
     var hasStockData = stockSuggestion && stockSuggestion.baseFound !== false;
     if (isAttendant()) {
@@ -15874,7 +15914,7 @@ import { readStockPages } from "./src/stock-pagination.js";
     } else if (!hasStockData) {
       setStatus("skuSearchStatus", stockError || "Produto não encontrado na base da CAPTAÇÃO.", stockError ? "error" : "warning");
     } else if (!stockSuggestion.captureLocation) {
-      setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO, sem localização cadastrada.", "warning");
+      setStatus("skuSearchStatus", list.length ? "Enderecamento WMS encontrado. A base importada da CAPTACAO ainda esta sem localizacao." : "Produto encontrado na CAPTAÇÃO, sem localização cadastrada.", "warning");
     } else {
       setStatus("skuSearchStatus", "Produto encontrado na CAPTAÇÃO.", "success");
     }
@@ -15964,6 +16004,7 @@ import { readStockPages } from "./src/stock-pagination.js";
       grid.appendChild(skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)));
       grid.appendChild(skuHubTile("Quantidade disponivel", formatQty(suggestion.captureAvailable)));
     } else {
+      grid.appendChild(skuHubTile("Enderecamento WMS", suggestion.officialLocation || "Sem enderecamento WMS"));
       grid.appendChild(skuHubTile("Localizacao CAPTACAO", suggestion.captureLocation || "Sem localizacao"));
       grid.appendChild(skuHubTile("Saldo Loja", suggestion.storeAvailable === null || suggestion.storeAvailable === undefined ? "Nao importado" : formatQty(suggestion.storeAvailable)));
       grid.appendChild(skuHubTile("Captacao fisico", formatQty(suggestion.capturePhysical)));
@@ -16022,7 +16063,11 @@ import { readStockPages } from "./src/stock-pagination.js";
     var classification = classifyReplenishmentSuggestion(suggestion);
     suggestion.sku = sku;
     suggestion.name = suggestion.name || findProductName(sku) || "";
-    suggestion.officialLocation = "";
+    var officialBinding = (locations || []).filter(function (binding) {
+      return normalizeLocation(locationKeyFromBinding(binding)).valid;
+    }).sort(sortByDateDesc)[0];
+    var officialLocation = officialBinding ? normalizeLocation(locationKeyFromBinding(officialBinding)) : null;
+    suggestion.officialLocation = officialLocation ? officialLocation.code : "";
     suggestion.suggestionType = classification ? classification.type : "MANUAL";
     suggestion.suggestionPriority = classification ? classification.priority : 5;
     suggestion.suggestedReplenishmentQty = classification ? classification.qty : 0;
@@ -16033,11 +16078,11 @@ import { readStockPages } from "./src/stock-pagination.js";
       name: suggestion.name,
       storeBalance: suggestion.storeAvailable,
       captureBalance: suggestion.captureAvailable,
-      wmsLocation: "",
-      wmsStation: "",
-      wmsRack: "",
-      wmsLine: "",
-      wmsColumn: "",
+      wmsLocation: suggestion.officialLocation,
+      wmsStation: officialLocation ? officialLocation.rua : "",
+      wmsRack: officialLocation ? officialLocation.rack : "",
+      wmsLine: officialLocation ? officialLocation.linha : "",
+      wmsColumn: officialLocation ? officialLocation.letra : "",
       captureLocation: suggestion.captureLocation || "",
       captureStation: suggestion.captureStation || "",
       captureRack: suggestion.captureRack || "",
