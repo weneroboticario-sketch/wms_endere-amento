@@ -668,7 +668,7 @@ grant usage, select on sequence public.seq_codigo_tarefa to authenticated;
 grant execute on function public.wms_perfil() to authenticated;
 grant execute on function public.wms_estoque() to authenticated;
 grant execute on function public.gerar_codigo_tarefa(public.tipo_tarefa_enum) to authenticated;
-grant execute on function public.validar_responsavel_mesmo_estoque(text, varchar) to authenticated;
+grant execute on function public.validar_responsavel_mesmo_estoque(text, text) to authenticated;
 grant execute on function public.criar_tarefa(public.tipo_tarefa_enum, varchar, text, varchar, text, text, numeric, varchar, varchar, text, public.prioridade_tarefa_enum, timestamptz, jsonb) to authenticated;
 grant execute on function public.atribuir_tarefa(uuid, text, text) to authenticated;
 grant execute on function public.iniciar_tarefa(uuid, text) to authenticated;
