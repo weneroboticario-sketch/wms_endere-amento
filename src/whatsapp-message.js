@@ -1,4 +1,5 @@
 const fold = value => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const unformatNumbers = value => value.replace(/(\*{1,2}|_{1,2}|~)(\d+(?:[.,]\d+)?)\1/g, "$2");
 
 export function interpretWhatsAppMessage(original) {
   if (typeof original !== "string" || original.length > 20000) throw new Error("Cole uma mensagem de até 20.000 caracteres.");
@@ -11,7 +12,7 @@ export function interpretWhatsAppMessage(original) {
   original.split(/\r?\n/).forEach((text, index) => {
     if (!text.trim()) return;
     if (/^\s*>/.test(text)) { review.push(`Linha ${index + 1}: citação ignorada; origem não identificada.`); return; }
-    const match = text.trim().match(/^(?:(?:ajuste|produto\s+c[oó]digo)\s+)?(\d{2,}(?:\.\d{3})*|\d{1,3}(?:\.\d{3})+)\b(.*)$/i);
+    const match = unformatNumbers(text.trim()).match(/^(?:(?:ajuste|produto\s+c[oó]digo)\s+)?(\d{2,}(?:\.\d{3})*|\d{1,3}(?:\.\d{3})+)\b(.*)$/i);
     if (!match || match[1].replaceAll(".", "").length < 4 || match[1].replaceAll(".", "").length > 8) {
       review.push(`Linha ${index + 1}: texto não reconhecido; confira manualmente.`);
       return;

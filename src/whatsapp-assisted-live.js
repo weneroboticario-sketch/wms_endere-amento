@@ -48,16 +48,27 @@ export function renderWhatsAppAssistedLive(host, context) {
     const button = element("button", label, parent);
     button.type = "button";
     button.className = "secondary-button";
+    const feedback = element("p", "", parent);
+    feedback.dataset.assistedFeedback = "true";
+    feedback.setAttribute("role", "alert");
+    feedback.hidden = true;
     button.addEventListener("click", async () => {
       if (busy || !active()) return;
       busy = true;
       button.disabled = true;
+      panel.querySelectorAll("[data-assisted-feedback]").forEach(notice => { notice.hidden = true; });
       status.textContent = "Processando…";
       try {
         await handler();
         if (active()) status.textContent = "Operação concluída. Dados atualizados.";
       } catch (error) {
-        if (active()) status.textContent = `Não confirmado: ${error.message}. Se a conexão caiu, atualize para conferir antes de repetir. Não houve confirmação de sucesso.`;
+        if (active()) {
+          const uncertainty = error.confirmedFailure === false ? " Se a conexão caiu, atualize para conferir antes de repetir." : "";
+          status.textContent = `Não foi possível concluir: ${error.message}${uncertainty}`;
+          feedback.textContent = status.textContent;
+          feedback.hidden = false;
+          feedback.scrollIntoView({ block: "nearest" });
+        }
       } finally { busy = false; if (active()) button.disabled = false; }
     });
     return button;
@@ -202,7 +213,9 @@ export function renderWhatsAppAssistedLive(host, context) {
     action(editor, "Aprovar e criar tarefas", async () => {
       if (!data.intakeEnabled && !pending) throw new Error("Novas importações estão pausadas. Retome a entrada antes de aprovar.");
       if (!draft || !acknowledge.checked) throw new Error("Revise e confirme todos os itens antes de aprovar.");
-      if (!draft.lines.length || draft.lines.length > 100 || draft.lines.some(line => !/^\d{4,8}$/.test(line.sku) || !Number.isSafeInteger(line.quantity) || line.quantity < 1)) throw new Error("Revise os SKUs e quantidades (até 100 itens).");
+      if (!draft.lines.length || draft.lines.length > 100) throw new Error("Informe de 1 a 100 itens revisados.");
+      const invalid = draft.lines.find(line => !/^\d{4,8}$/.test(line.sku) || !Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > 9999999);
+      if (invalid) throw new Error(`Linha ${invalid.sourceLine}, SKU ${invalid.sku || "não informado"}: confira o código e preencha uma quantidade inteira positiva.`);
       pending ||= { draft: JSON.parse(JSON.stringify(draft)), duplicate: duplicate.checked };
       submitted = true;
       raw.readOnly = true;
@@ -221,6 +234,7 @@ export function renderWhatsAppAssistedLive(host, context) {
       context.onChanged?.();
     });
     action(editor, "Conferir aprovação anterior e liberar nova mensagem", async () => {
+      if (!pending) throw new Error("Não há aprovação anterior para conferir. A mensagem foi preservada: revise os itens e use Aprovar e criar tarefas.");
       await refresh();
       if (pending && !data.requests.some(request => request.id === pending.draft.id)) throw new Error("A aprovação não consta nas últimas 50 solicitações; tente reenviar a mesma aprovação ou peça conferência ao administrador.");
       submitted = false; pending = null; draft = null; raw.readOnly = false; raw.value = ""; review.replaceChildren(); acknowledge.checked = false;

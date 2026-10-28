@@ -56,3 +56,16 @@ test("original text is preserved and oversized messages are rejected", () => {
   assert.throws(() => interpretWhatsAppMessage("x".repeat(20001)), /20.000/);
   assert.equal(interpretWhatsAppMessage("54150 produto CLINICA 1 UN").lines[0].client, false);
 });
+
+test("WhatsApp formatted numbers are explicit quantities without changing original audit text", () => {
+  for (const value of ["*1*", "**1**", "_1_", "__1__", "~1~"]) {
+    const original = `54150 Produto demonstrativo 250ml 1 UNID CLIE\n54150 Produto demonstrativo 250ml ${value} UN CLIENTE`;
+    const result = interpretWhatsAppMessage(original);
+    assert.deepEqual(result.lines.map(line => line.quantity),[1,1]);
+    assert.equal(result.original,original);
+    assert.equal(result.lines[1].original,original.split("\n")[1]);
+    assert.equal(result.lines[1].confidence,"REVIEW");
+  }
+  assert.equal(interpretWhatsAppMessage("*54150* Produto 75ml *2*UN").lines[0].quantity,2);
+  assert.equal(interpretWhatsAppMessage("54150 Produto 75ml *2 UN").lines[0].quantity,null);
+});
