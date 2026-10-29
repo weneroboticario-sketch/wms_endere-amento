@@ -1,4 +1,6 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
+import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
 import JsBarcode from "jsbarcode";
 import {
@@ -5715,10 +5717,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function updateReplenishmentQuantity(id, qty, observation) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
-    qty = Number(qty || 0);
-    if (qty < 0) throw new Error("Quantidade atendida invalida.");
+    qty = Number(qty ?? 0);
+    if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
     var requested = Number(request.requestedQty || 0);
-    var attended = Math.min(requested, Number(request.attendedQty || 0) + qty);
+    var attended = Number(request.attendedQty || 0) + qty;
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
     if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
@@ -9817,10 +9819,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
-        var qty = window.prompt("Quantidade atendida agora:", request ? String(request.pendingQty || request.requestedQty || "") : "");
+        var qty = window.prompt("Quantidade adicional atendida agora (já atendida: " + (request ? formatQty(request.attendedQty || 0) : "0") + "). Pode superar a solicitada:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
         if (qty === null) return;
         var note = "";
-        if (Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
+        if (Number((request && request.attendedQty) || 0) + Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
         await updateReplenishmentQuantity(id, Number(qty || 0), note);
       }
       if (target.dataset.replenishmentNostock) {
@@ -11869,6 +11871,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderMyTransfers() {
+    if ($("myTransfersSection") && whatsappAssistedEnabled) {
+      renderWhatsAppAssistedReview($("myTransfersSection"), whatsappAssistedContext());
+    }
     if (!$("myTransfersList")) return;
     var visible = getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA";
@@ -11977,7 +11982,28 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function whatsappAssistedContext() {
+    var actor = authState.currentUser && authState.currentUser.id;
+    var actorRole = authState.currentUser && authState.currentUser.role;
+    var warehouse = activeWarehouseCode();
+    var supervisor = !!isAdminOrSupervisor();
+    var live = whatsappAssistedEnabled;
+    return {
+      live: live,
+      intake: whatsappAssistedIntakeEnabled,
+      client: supabaseDb,
+      supervisor: supervisor,
+      allowed: !IS_CP_ALAMO && !!actor && (supervisor || (live && authState.currentUser.role === "OPERADOR")),
+      actor: actor,
+      warehouse: warehouse,
+      users: getTaskAssignableUsers(),
+      isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === actorRole && activeWarehouseCode() === warehouse && !!isAdminOrSupervisor() === supervisor; },
+      onChanged: function () { loadTaskCenterData({ force: true }).then(function () { renderTransfers(); renderOperatorTasksAlert(); }).catch(function (error) { recordPerformanceError("whatsapp-task-refresh", error); }); }
+    };
+  }
+
   function renderTaskCenter() {
+    if ($("taskCenterSection")) renderWhatsAppAssistedReview($("taskCenterSection"), whatsappAssistedContext());
     if (!$("taskCenterRows")) return;
     if (!isAdminOrSupervisor()) {
       $("taskCenterRows").innerHTML = '<div class="empty-state">Acesso restrito.</div>';
