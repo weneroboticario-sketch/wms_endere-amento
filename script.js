@@ -104,7 +104,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
+    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -976,6 +976,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
+    if (screenId === "consultaSku" && authState.currentUser.role === "CAIXA") return true;
     if (screenId === "reposicao" && authState.currentUser.role === "CAIXA") return true;
     if (screenId === "stockOverview") {
       if (!stockOverviewController) stockOverviewController = mountStockOverview({
@@ -15932,6 +15933,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function renderSkuSearch() {
+    if (authState.currentUser && authState.currentUser.role === "CAIXA") return renderCaixaItemLookup();
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
@@ -15997,6 +15999,43 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("allocateSkuSearchButton").hidden = isAttendant();
     clearSkuSearchInput();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
+  }
+
+  async function renderCaixaItemLookup() {
+    var sku = firstSkuValue($("skuSearchInput").value);
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser.id;
+    var sequence = ++skuSearchRequestSeq;
+    var hub = $("skuOperationalHub");
+    $("skuResults").replaceChildren();
+    $("skuResultCards").replaceChildren();
+    $("skuResultActions").hidden = true;
+    $("allocateSkuSearchButton").hidden = true;
+    hub.replaceChildren(); hub.hidden = true;
+    if (!/^\d{4,8}$/.test(sku)) { setStatus("skuSearchStatus", "Informe ou bipe um SKU com 4 a 8 dígitos.", "error"); return; }
+    setStatus("skuSearchStatus", "Consultando item...", "warning");
+    try {
+      var response = await supabaseDb.rpc("lookup_wms_caixa_item", { code: warehouse, product_code: sku });
+      if (!authState.currentUser || authState.currentUser.id !== actor || authState.currentUser.role !== "CAIXA" || activeWarehouseCode() !== warehouse || sequence !== skuSearchRequestSeq) return;
+      if (response.error) throw response.error;
+      var item = response.data;
+      if (!item || !item.found) { setStatus("skuSearchStatus", "Item não encontrado.", "warning"); return; }
+      var card = skuHubTextElement("section", "", "sku-hub-card");
+      card.appendChild(skuHubTextElement("h3", sku + " — " + (item.name || "Produto sem nome")));
+      var grid = skuHubTextElement("div", "", "sku-hub-grid");
+      grid.appendChild(skuHubTile("Saldo Loja", item.storeAvailable === null ? "Não importado" : formatQty(item.storeAvailable)));
+      grid.appendChild(skuHubTile("Quantidade disponível CAPTAÇÃO", item.captureAvailable === null ? "Não importado" : formatQty(item.captureAvailable)));
+      card.appendChild(grid);
+      var updated = item.updatedAt ? new Date(item.updatedAt) : null;
+      card.appendChild(skuHubTextElement("p", updated ? "Base atualizada em " + updated.toLocaleString("pt-BR") : "Sem data de atualização disponível."));
+      if (updated && Date.now() - updated.getTime() > 4 * 60 * 60 * 1000) card.appendChild(skuHubTextElement("p", "Atenção: base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque."));
+      var requestButton = skuHubTextElement("button", "Solicitar produto ou ajuste urgente", "primary-button");
+      requestButton.type = "button"; requestButton.addEventListener("click", function () { showScreen("reposicao"); });
+      card.appendChild(requestButton); hub.replaceChildren(card); hub.hidden = false;
+      setStatus("skuSearchStatus", "Item consultado no estoque " + warehouse + ".", "success");
+    } catch (error) {
+      if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse && sequence === skuSearchRequestSeq) setStatus("skuSearchStatus", "Não foi possível consultar o item. Tente novamente.", "error");
+    }
   }
 
   function clearSkuSearchInput() {

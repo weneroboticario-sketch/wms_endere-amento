@@ -129,3 +129,21 @@ test("every Caixa product is urgent even when the client flag is false",async()=
     assert.equal((await db.query("select prioridade from wms_replenishment_requests")).rows[0].prioridade,"CLIENTE");
   } finally {await db.close();}
 });
+
+test("Caixa lookup returns one SKU only in permitted warehouse without granting stock table access",async()=>{
+  const db=await fixture(); try {
+    await db.exec(`create table wms_products(sku text,product_name text);
+      create table wms_stock_positions(warehouse_code text,codigo_material text,nome_material text,source_type text,total_disponivel numeric,active boolean,archived boolean,updated_at timestamptz);
+      insert into wms_stock_positions values ('VDCG','00123','Produto sintético','LOJA',3,true,false,now()),('VDCG','00123','Produto sintético','CAPTACAO',16,true,false,now()),('VDAR','00123','Outro estoque','CAPTACAO',999,true,false,now()),('VDCG','00123','Inativo','CAPTACAO',500,false,false,now());`);
+    await db.exec(fs.readFileSync(new URL("../supabase/proposals/caixa_item_lookup.sql",import.meta.url),"utf8"));
+    await db.exec("set role authenticated");
+    const lookup=(code,sku)=>db.query("select lookup_wms_caixa_item($1,$2) item",[code,sku]);
+    const item=(await lookup("VDCG","00123")).rows[0].item;
+    assert.equal(item.sku,"00123"); assert.equal(item.storeAvailable,3); assert.equal(item.captureAvailable,16);
+    assert.equal((await lookup("VDCG","99999")).rows[0].item.found,false);
+    await assert.rejects(lookup("VDAR","00123"),/autorizado/);
+    await assert.rejects(lookup("VDCG","%"),/SKU/);
+    await assert.rejects(db.query("select * from wms_stock_positions"),/permission denied/);
+    await db.exec("set app.role='OPERADOR'"); await assert.rejects(lookup("VDCG","00123"),/Caixa ativo/);
+  } finally {await db.close();}
+});
