@@ -6507,6 +6507,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     authState.currentUser = null;
     authState.currentSession = null;
     applyRoleClass();
@@ -9305,6 +9306,31 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      openRequestsScreen: function () { return showScreen("reposicao"); },
+      onUnreadMessages: function (info) {
+        var scope = actor + ":" + warehouse + ":" + role;
+        var banner = $("caixaUnreadAlert");
+        var sameSession = authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse;
+        if (!sameSession || !info.count) {
+          if (banner && banner.dataset.scope === scope) banner.remove();
+          return;
+        }
+        if (!banner || banner.dataset.scope !== scope) {
+          if (banner) banner.remove();
+          banner = document.createElement("aside"); banner.id = "caixaUnreadAlert"; banner.dataset.scope = scope;
+          banner.setAttribute("role", "status"); banner.setAttribute("aria-live", "polite");
+          var text = document.createElement("strong"); banner.appendChild(text);
+          var button = document.createElement("button"); button.type = "button"; button.textContent = "Ver mensagem";
+          button.addEventListener("click", function () { if (banner.caixaOpen) banner.caixaOpen(); }); banner.appendChild(button);
+          document.body.appendChild(banner);
+        }
+        banner.caixaOpen = info.open;
+        var signature = info.count + ":" + info.requestId;
+        if (banner.dataset.signature !== signature) {
+          banner.firstElementChild.textContent = info.count + (info.count === 1 ? " mensagem não lida no atendimento" : " mensagens não lidas no atendimento");
+          banner.dataset.signature = signature;
+        }
+      },
       claimProduct: async function (id) {
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
         await refreshReplenishmentData();

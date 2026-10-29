@@ -4,7 +4,7 @@ function node(tag, text, parent) {
   const element = document.createElement(tag); if (text !== undefined) element.textContent = text; parent?.append(element); return element;
 }
 
-export function mountCaixaChat({ host, context, rpc, canChat, notify }) {
+export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) {
   const states = new Map();
   let request = null;
   const current = () => host.isConnected && context.isCurrent();
@@ -71,6 +71,7 @@ export function mountCaixaChat({ host, context, rpc, canChat, notify }) {
       earlier.hidden = !state.hasEarlier;
       if (!initial && !older) batch.filter(message => !known.has(String(message.id)) && message.sender_id !== context.actor).forEach(message => notify(`message:${captured.id}:${message.id}`, `Nova mensagem · SKU ${captured.sku}`));
       drawMessages(state, older);
+      onRead?.(captured.id, state.messages);
       if (!state.pending) status.textContent = isCaixaClosed(request) ? "Solicitação encerrada. Histórico preservado." : "";
     } catch (error) { if (current() && request?.id === captured.id) status.textContent = "Conversa indisponível: " + error.message; }
     finally { state.loading = false; }

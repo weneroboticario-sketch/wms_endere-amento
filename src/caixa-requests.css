@@ -47,6 +47,9 @@
 #caixaRequestsRoot .ca-chat-bubble :is(small,time) { color:#60758a; font-size:10px; display:block; }
 #caixaRequestsRoot .ca-chat-form { display:flex; flex-direction:column; gap:8px; padding-top:9px; border-top:1px solid #e6edf5; }
 #caixaRequestsRoot .ca-chat-form textarea { min-height:65px; max-height:130px; font-size:13px; margin:0; }
+#caixaUnreadAlert { position:fixed; z-index:1600; top:18px; right:18px; display:flex; align-items:center; gap:12px; max-width:min(430px,calc(100vw - 36px)); padding:13px 15px; background:#fff7df; color:#102542; border:1px solid #f1c963; border-radius:10px; box-shadow:0 5px 22px #10254230; }
+#caixaUnreadAlert strong { font-size:13px; line-height:1.4; }
+#caixaUnreadAlert button { width:auto; flex:0 0 auto; border:0; border-radius:7px; background:#0864e9; color:white; padding:9px 12px; font-size:12px; cursor:pointer; }
 @media(max-width:650px) {
   #caixaRequestsRoot { padding:10px; }
   #caixaRequestsRoot .ca-tabs button { flex:1 1 44%; }

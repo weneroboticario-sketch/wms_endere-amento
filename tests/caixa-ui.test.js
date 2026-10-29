@@ -127,3 +127,21 @@ test("cashier sees confirmation and return actions while completed adjustments h
     assert.ok(labels.includes("Passou / deu certo"));assert.ok(labels.includes("Não passou"));assert.ok(!labels.includes("Assumir atendimento"));
   } finally {globalThis.document=previous;}
 });
+
+test("cashier receives existing unread messages before opening chat and the alert clears only after reading",async()=>{
+  const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
+  try {
+    const host=new Element("main");host.root=true;const alerts=[];let screenOpened=0;
+    const values=new Map();const storage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};
+    const request={id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:2,requested_by:"cashier",status:"AGUARDANDO_CONFIRMACAO_CAIXA",created_at:new Date().toISOString()};
+    const messages=[1,2].map(id=>({id,request_id:"a",sender_id:"stock",body:"Pode testar?",created_at:new Date().toISOString()}));
+    const client={async rpc(){return {data:[request]};},from(){const query={then(resolve){return Promise.resolve({data:messages}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;}};
+    mountCaixaRequests(host,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,storage,isCurrent:()=>true,onUnreadMessages:info=>alerts.push(info),openRequestsScreen:async()=>{screenOpened++;}});
+    await setImmediate();assert.equal(alerts.at(-1).count,2);
+    assert.ok(host.querySelectorAll("button").some(button=>button.textContent==="Conversar com estoque (2 não lidas)"));
+    await alerts.at(-1).open();assert.equal(screenOpened,1);assert.equal(alerts.at(-1).count,0);
+    const reopened=new Element("main");reopened.root=true;const next=[];
+    mountCaixaRequests(reopened,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,storage,isCurrent:()=>true,onUnreadMessages:info=>next.push(info)});
+    await setImmediate();assert.equal(next.at(-1).count,0);
+  } finally {globalThis.document=previous;}
+});

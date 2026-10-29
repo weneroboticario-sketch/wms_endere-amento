@@ -1,5 +1,6 @@
 import { caixaAttendanceView } from "./caixa-attendance.js";
 import { mountCaixaChat } from "./caixa-chat.js";
+import { createCaixaUnread } from "./caixa-unread.js";
 
 export function validateCaixaRequest(request) {
   if (!["PRODUCT", "ADJUSTMENT"].includes(request.kind)) throw new Error("Selecione produto ou ajuste.");
@@ -59,8 +60,26 @@ export function mountCaixaRequests(host, context) {
     seenNotices.add(key); notices.push(text); notice.textContent = notices.slice(-3).join(" · ");
   };
   const observed = new Map();
-  let observedInitialized = false, feedInitialized = false, feedLoading = false;
-  const feedSeen = new Set();
+  let observedInitialized = false, feedLoading = false, messageFeed = [];
+  let storage = context.storage;
+  if (!storage) { try { storage = globalThis.localStorage; } catch { storage = null; } }
+  const unread = createCaixaUnread({ actor: context.actor, warehouse: context.warehouse, storage });
+  function showUnread() {
+    if (!current()) { context.onUnreadMessages?.({ count: 0 }); return; }
+    const pendingMessages = unread.unread(messageFeed).filter(message => { const request = observed.get(message.request_id); return request && canChat(request); });
+    for (const button of host.querySelectorAll("button")) {
+      if (!button.dataset.chatRequest) continue;
+      const count = pendingMessages.filter(message => message.request_id === button.dataset.chatRequest).length;
+      button.textContent = (context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa") + (count ? ` (${count} não lidas)` : "");
+    }
+    const latest = pendingMessages[0];
+    context.onUnreadMessages?.({ count: pendingMessages.length, requestId: latest?.request_id, open: async () => {
+      if (!current() || !latest) return;
+      await context.openRequestsScreen?.();
+      const request = observed.get(latest.request_id);
+      if (current() && request && canChat(request)) await chat.open(request);
+    } });
+  }
   function observeRequests(nextRows) {
     for (const request of nextRows) {
       const prior = observed.get(request.id);
@@ -80,16 +99,12 @@ export function mountCaixaRequests(host, context) {
     try {
       const response = await context.client.from("wms_caixa_request_messages").select("id,request_id,sender_id,created_at").eq("warehouse_code", context.warehouse).order("id", { ascending: false }).limit(100);
       if (!current() || response.error) return;
-      for (const message of response.data || []) {
-        if (message.id === undefined || !message.request_id) continue;
-        const key = String(message.id);
-        if (feedInitialized && !feedSeen.has(key) && message.sender_id !== context.actor) {
-          const request = observed.get(message.request_id);
-          notify("message:" + message.request_id + ":" + message.id, "Nova mensagem" + (request ? " · SKU " + request.sku : " em atendimento autorizado"));
-        }
-        feedSeen.add(key);
+      messageFeed = response.data || [];
+      for (const message of unread.unread(messageFeed)) {
+        const request = observed.get(message.request_id);
+        if (request && canChat(request)) notify("message:" + message.request_id + ":" + message.id, "Mensagem não lida · SKU " + request.sku);
       }
-      feedInitialized = true;
+      showUnread();
     } finally { feedLoading = false; }
   }
   const rpc = async (name, args) => {
@@ -119,7 +134,9 @@ export function mountCaixaRequests(host, context) {
     if (context.role === "CAIXA") return request.requested_by === context.actor;
     return canSupervise || (isStock && request.claimed_by === context.actor);
   }
-  const chat = mountCaixaChat({ host, context, rpc, canChat, notify });
+  const chat = mountCaixaChat({ host, context, rpc, canChat, notify, onRead: (requestId, messages) => {
+    unread.acknowledge(requestId, messages); showUnread();
+  } });
   const refresh = async (automatic = false) => {
     const sequence = ++revision, actor = context.actor, warehouse = context.warehouse;
     const response = await context.client.rpc("list_wms_caixa_attendance", { code: warehouse });
@@ -234,7 +251,10 @@ export function mountCaixaRequests(host, context) {
         if (!request.claimed_by && request.status === "PENDENTE" && context.claimProduct) action(actions, "Assumir atendimento", async () => { await context.claimProduct(request.replenishment_id); snapshot = ""; await refresh(); filter.tab = "mine"; renderList(); }).className = "primary-button";
         else if (request.claimed_by === context.actor && context.openProduct && !["CONCLUIDO", "CANCELADO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE"].includes(request.status)) action(actions, "Atender na reposição", () => context.openProduct(request.replenishment_id)).className = "primary-button";
       }
-      if (canChat(request)) action(actions, context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa", () => chat.open(request));
+      if (canChat(request)) {
+        const button = action(actions, context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa", () => chat.open(request));
+        button.dataset.chatRequest = request.id;
+      }
       const details = node("details", undefined, card); details.className = "ca-card-details"; details.open = state.open;
       details.addEventListener("toggle", () => { state.open = details.open; });
       node("summary", "Detalhes e histórico", details);
@@ -255,6 +275,7 @@ export function mountCaixaRequests(host, context) {
         state.history = response.data || []; showHistory();
       });
     });
+    showUnread();
   }
   action(compactControls, "Atualizar", async () => { snapshot = ""; await refresh(); });
 
@@ -308,11 +329,11 @@ export function mountCaixaRequests(host, context) {
   }
 
   refresh().then(() => pollMessageNotices()).catch(error => { if (current()) feedback.textContent = error.message; });
-  const timer = globalThis.setInterval(() => {
-    if (host.dataset.scope !== scope || !host.isConnected) { chat.clear(); globalThis.clearInterval(timer); return; }
-    if (!current()) { chat.clear(); return; }
-    chat.poll().catch(() => {});
-    pollMessageNotices().catch(() => {});
+  const timer = globalThis.setInterval(async () => {
+    if (host.dataset.scope !== scope || !host.isConnected) { chat.clear(); context.onUnreadMessages?.({ count: 0 }); globalThis.clearInterval(timer); return; }
+    if (!current()) { chat.clear(); context.onUnreadMessages?.({ count: 0 }); return; }
+    await chat.poll();
+    await pollMessageNotices().catch(() => {});
     if (busy) return;
     if ((document.activeElement && host.contains(document.activeElement)) ||
       (Array.from(host.querySelectorAll("textarea")).some(input => input.value))) return;
