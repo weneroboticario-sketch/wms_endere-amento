@@ -6,7 +6,7 @@ import { validateCaixaRequest } from "../src/caixa-requests.js";
 
 const proposal=fs.readFileSync(new URL("../supabase/proposals/caixa_profile.sql",import.meta.url),"utf8");
 const key="00000000-0000-4000-8000-000000000001";
-async function fixture() {
+async function fixture(urgent=false) {
   const db=new PGlite();
   await db.exec(`
     create role anon; create role authenticated; create schema auth; create schema private;
@@ -36,6 +36,10 @@ async function fixture() {
     set app.uid='00000000-0000-4000-8000-000000000011'; set app.actor='c1'; set app.role='CAIXA'; set app.warehouse='VDCG';
   `);
   await db.exec(proposal);
+  if (urgent) {
+    await db.exec("alter table operacao_tarefas add column atribuido_para text, add column data_inicio timestamptz");
+    await db.exec(fs.readFileSync(new URL("../supabase/proposals/caixa_urgent_replenishment.sql",import.meta.url),"utf8"));
+  }
   return db;
 }
 const submit=(db,id=key,kind="PRODUCT",warehouse="VDCG")=>db.query("select submit_wms_caixa_request($1::uuid,$2,$3,'00123',15,true,'Conferir quantidade')",[id,warehouse,kind]);
@@ -90,5 +94,38 @@ test("adjustment awaits supervisor, creates one verification task and mirrors co
     await db.exec("reset role"); assert.equal((await db.query("select * from operacao_tarefas")).rows.length,1);
     await db.exec("update operacao_tarefas set status='CONCLUIDA'; set app.role='CAIXA'; set role authenticated");
     assert.equal((await db.query("select status from wms_caixa_requests")).rows[0].status,"CONCLUIDO");
+  } finally {await db.close();}
+});
+
+test("urgent adjustment is claimed by one stock worker and only the requesting cashier can confirm or reopen",async()=>{
+  const db=await fixture(true); try {
+    await db.exec("set role authenticated"); await submit(db,key,"ADJUSTMENT");
+    const act=(operation,observation="")=>db.query("select act_wms_caixa_adjustment($1,$2,$3)",[key,operation,observation]);
+    await assert.rejects(act("CLAIM"),/equipe de estoque/);
+    await db.exec("set app.role='OPERADOR'"); await act("CLAIM");
+    const request=(await db.query("select * from wms_caixa_requests")).rows[0];
+    assert.equal(request.claimed_by,"c1"); assert.equal(request.claimed_by_name,"Caixa um");
+    await assert.rejects(act("RESOLVE"),/Descreva/);
+    await db.exec("set app.actor='c2'"); await assert.rejects(act("CLAIM"),/Outro estoquista/); await assert.rejects(act("RESOLVE","Resolvido"),/estoquista que puxou/);
+    await db.exec("set app.actor='c1'; set app.warehouse='VDAR'"); await assert.rejects(act("RESOLVE","Resolvido"),/autorizado/);
+    await db.exec("set app.warehouse='VDCG'"); await act("RESOLVE","Conferido e liberado");
+    await assert.rejects(act("CONFIRM"),/caixa solicitante/);
+    await db.exec("set app.role='CAIXA'; set app.actor='c2'"); await assert.rejects(act("CONFIRM"),/caixa solicitante/);
+    await db.exec("set app.actor='c1'"); await act("REOPEN","Ainda não entrou no pedido");
+    assert.equal((await db.query("select status from wms_caixa_requests")).rows[0].status,"EM_VERIFICACAO");
+    await db.exec("set app.role='OPERADOR'"); await act("RESOLVE","Corrigido e liberado novamente");
+    await db.exec("set app.role='CAIXA'"); await act("CONFIRM"); await act("CONFIRM");
+    const closed=(await db.query("select * from wms_caixa_requests")).rows[0]; assert.ok(closed.confirmed_at); assert.equal(closed.status,"CONCLUIDO");
+    const events=(await db.query("select * from wms_caixa_request_events where event_type='REOPEN'")).rows; assert.equal(events[0].observation,"Ainda não entrou no pedido");
+    await db.exec("reset role"); assert.equal((await db.query("select quantity from wms_stock")).rows[0].quantity,"5");
+  } finally {await db.close();}
+});
+
+test("every Caixa product is urgent even when the client flag is false",async()=>{
+  const db=await fixture(true); try {
+    await db.exec("set role authenticated");
+    await db.query("select submit_wms_caixa_request($1,'VDCG','PRODUCT','00123',2,false,'')",[key]);
+    await db.exec("reset role");
+    assert.equal((await db.query("select prioridade from wms_replenishment_requests")).rows[0].prioridade,"CLIENTE");
   } finally {await db.close();}
 });

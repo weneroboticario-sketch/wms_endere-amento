@@ -16,6 +16,7 @@ function node(tag, text, parent) {
 const labels = { PENDENTE: "Na fila", EM_SEPARACAO: "Em separação", ATENDIDO_PARCIAL: "Atendido parcialmente", SEPARADO: "Separado", CONCLUIDO: "Concluído", ENTREGUE_NA_LOJA: "Entregue na loja", SEM_ESTOQUE: "Sem estoque", CANCELADO: "Cancelado", EM_VERIFICACAO: "Em verificação", AGUARDANDO_VALIDACAO: "Aguardando validação", SUBMITTED: "Solicitação enviada", REVIEW_REQUESTED: "Verificação encaminhada", STATUS_UPDATED: "Situação atualizada" };
 
 export function mountCaixaRequests(host, context) {
+  Object.assign(labels, { AGUARDANDO_CONFIRMACAO_CAIXA: "Resolvido pelo estoque — aguardando confirmação do caixa", CLAIM: "Estoquista puxou o ajuste", RESOLVE: "Estoquista informou a resolução", CONFIRM: "Caixa confirmou que deu certo", REOPEN: "Caixa devolveu para correção" });
   const scope = `${context.actor}:${context.warehouse}:${context.role}`;
   if (host.dataset.scope === scope) return;
   host.replaceChildren(); host.dataset.scope = scope;
@@ -23,8 +24,9 @@ export function mountCaixaRequests(host, context) {
   let busy = false;
   let pending;
   let rows = [];
-  node("h2", "Pedidos do Caixa", host);
-  node("p", context.role === "CAIXA" ? "Solicite produtos e acompanhe seus próprios pedidos. Ajustes são pedidos de verificação: nenhum saldo é alterado automaticamente." : "Acompanhe os pedidos dos caixas deste estoque. Produtos entram na fila de reposição; ajustes precisam ser encaminhados à verificação.", host);
+  let showClosed = false;
+  node("h2", context.role === "CAIXA" ? "Pedidos de Reposição" : "URGENTE — Cliente no caixa", host);
+  node("p", "Solicitações urgentes de produtos e ajustes. Ajustes aguardam a confirmação do caixa após a resolução.", host);
   const feedback = node("p", "", host); feedback.setAttribute("role", "status");
   const controls = node("div", undefined, host);
   const list = node("div", undefined, host);
@@ -55,27 +57,47 @@ export function mountCaixaRequests(host, context) {
     if (!current()) return;
     if (response.error) throw new Error(response.error.message || "Não foi possível atualizar seus pedidos.");
     rows = response.data || []; list.replaceChildren();
-    node("p", "Até 100 pedidos mais recentes. Atualização manual.", list);
-    rows.forEach(request => {
+    node("p", "Até 100 pedidos mais recentes. Atualização automática a cada 15 segundos.", list);
+    const isClosed = request => !!request.confirmed_at || request.status === "CANCELADO" || (request.kind === "PRODUCT" && ["CONCLUIDO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE"].includes(request.status));
+    rows.filter(request => showClosed ? isClosed(request) : !isClosed(request)).forEach(request => {
       const card = node("fieldset", undefined, list);
-      node("legend", `${request.kind === "PRODUCT" ? "Produto" : "Verificação de ajuste"} — SKU ${request.sku}`, card);
+      node("legend", `URGENTE — ${request.kind === "PRODUCT" ? "Produto" : "Ajuste"} — SKU ${request.sku}`, card);
       node("p", `${labels[request.status] || request.status} | ${new Date(request.created_at).toLocaleString("pt-BR")}`, card);
       node("p", request.kind === "PRODUCT" ? `Solicitada: ${request.quantity} | Atendida: ${request.attended} | Pendente: ${Math.max(0, request.quantity - request.attended)}` : `Quantidade informada para verificação: ${request.quantity}. Sem indicação automática de entrada ou saída.`, card);
       if (request.customer_service) node("strong", "ATENDIMENTO AO CLIENTE", card);
       node("p", request.notes, card);
-      if (context.role !== "CAIXA" && request.kind === "ADJUSTMENT" && !request.task_id) action(card, "Encaminhar à verificação", async () => { await rpc("review_wms_caixa_adjustment", { request_key: request.id }); await refresh(); });
+      if (request.claimed_by_name) node("p", `Estoquista: ${request.claimed_by_name}`, card);
+      if (request.resolution_notes) node("p", `Resposta do estoque: ${request.resolution_notes}`, card);
+      if (request.kind === "ADJUSTMENT" && !request.confirmed_at) {
+        const change = async (operation, observation = "") => { await rpc("act_wms_caixa_adjustment", { request_key: request.id, operation, observation }); await refresh(); };
+        if (["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(context.role)) {
+          if (!request.claimed_by) action(card, "Puxar ajuste urgente", () => change("CLAIM"));
+          if (request.claimed_by === context.actor && request.status !== "AGUARDANDO_CONFIRMACAO_CAIXA") {
+            const responseLabel = node("label", "O que foi resolvido? ", card);
+            const response = node("textarea", undefined, responseLabel); response.maxLength = 2000;
+            action(card, "Informar resolução ao caixa", () => change("RESOLVE", response.value.trim()));
+          }
+        }
+        if (context.role === "CAIXA" && request.status === "AGUARDANDO_CONFIRMACAO_CAIXA") {
+          action(card, "Deu certo / entrou no pedido", () => change("CONFIRM"));
+          const failureLabel = node("label", "Se não deu certo, informe o motivo ", card);
+          const failure = node("textarea", undefined, failureLabel); failure.maxLength = 2000;
+          action(card, "Não deu certo — devolver ao estoquista", () => change("REOPEN", failure.value.trim()));
+        }
+      }
       const events = node("div", undefined, card);
       action(card, "Histórico", async () => {
-        const history = await context.client.from("wms_caixa_request_events").select("created_at,event_type,status").eq("request_id", request.id).order("created_at");
+        const history = await context.client.from("wms_caixa_request_events").select("created_at,event_type,status,observation").eq("request_id", request.id).order("created_at");
         if (!current()) return;
         if (history.error) throw new Error(history.error.message);
         events.replaceChildren();
-        (history.data || []).forEach(event => node("p", `${new Date(event.created_at).toLocaleString("pt-BR")} | ${labels[event.event_type] || event.event_type} | ${labels[event.status] || event.status}`, events));
+        (history.data || []).forEach(event => node("p", `${new Date(event.created_at).toLocaleString("pt-BR")} | ${labels[event.event_type] || event.event_type} | ${labels[event.status] || event.status} ${event.observation || ""}`, events));
       });
     });
     if (!rows.length) node("p", "Nenhum pedido neste estoque.", list);
   };
   action(controls, "Atualizar pedidos", refresh);
+  action(controls, "Alternar ativos / histórico de confirmados", async () => { showClosed = !showClosed; await refresh(); });
   if (context.role === "CAIXA") {
     const form = node("fieldset", undefined); host.insertBefore(form, controls);
     node("legend", "Nova solicitação", form);
@@ -87,8 +109,7 @@ export function mountCaixaRequests(host, context) {
     const quantity = field("Quantidade", "number"); quantity.min = "1"; quantity.step = "1";
     const notesLabel = node("label", "Observação / motivo do ajuste ", form);
     const notes = node("textarea", undefined, notesLabel); notes.maxLength = 2000;
-    const customer = field("Atendimento ao cliente", "checkbox"); customer.checked = true;
-    kind.addEventListener("change", () => { customer.disabled = kind.value === "ADJUSTMENT"; });
+    const customer = field("Urgente — cliente aguardando no caixa", "checkbox"); customer.checked = true; customer.disabled = true;
     action(form, "Enviar solicitação", async () => {
       const request = pending || validateCaixaRequest({ id: crypto.randomUUID(), kind: kind.value, sku: sku.value.trim(), quantity: Number(quantity.value), customer: kind.value === "PRODUCT" && customer.checked, notes: notes.value.trim() });
       pending = request;
@@ -97,12 +118,19 @@ export function mountCaixaRequests(host, context) {
         await rpc("submit_wms_caixa_request", { request_key: request.id, code: context.warehouse, request_kind: request.kind, product_code: request.sku, units: request.quantity, customer: request.customer, observation: request.notes });
         await refresh();
       } catch (error) {
-        if (error.confirmedFailure) { pending = null; form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = kind.value === "ADJUSTMENT"; }
+        if (error.confirmedFailure) { pending = null; form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = true; }
         throw error;
       }
       pending = null; sku.value = ""; quantity.value = ""; notes.value = "";
-      form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = kind.value === "ADJUSTMENT";
+      form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = true;
     });
   }
   refresh().catch(error => { if (current()) feedback.textContent = error.message; });
+  const timer = globalThis.setInterval(() => {
+    if (host.dataset.scope !== scope || !host.isConnected) { globalThis.clearInterval(timer); return; }
+    if (document.activeElement && host.contains(document.activeElement)) return;
+    if (Array.from(host.querySelectorAll("textarea")).some(input => input.value)) return;
+    if (current() && !busy) refresh().catch(error => { if (current()) feedback.textContent = error.message; });
+  }, 15000);
+  timer.unref?.();
 }
