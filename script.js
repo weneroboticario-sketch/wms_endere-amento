@@ -1,5 +1,6 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-requests.js";
+import "./src/caixa-requests.css";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
