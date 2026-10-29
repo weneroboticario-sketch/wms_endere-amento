@@ -102,5 +102,10 @@ export function mountCaixaRequestComposer(host, context) {
     } finally { sending = false; if (context.isCurrent()) { update(); if (!pending && !code.value) code.focus?.(); } }
   });
   clearProduct();
-  return { lookupNow };
+  return { lookupNow, newAdjustment() {
+    if (sending || pending || !context.isCurrent()) return false;
+    buttons.find(button => button.dataset.requestKind === "ADJUSTMENT").click();
+    code.focus?.(); code.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    return true;
+  } };
 }

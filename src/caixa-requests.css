@@ -35,6 +35,14 @@
 #caixaRequestsRoot .ca-pending-row p { margin:5px 0; font-size:12px; }
 #caixaRequestsRoot .ca-pending-row :is(small,time) { display:block; color:#62758c; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
 #caixaRequestsRoot .ca-pending-row button { font-size:11px; margin:7px 0 0; padding:5px 9px; min-height:30px; }
+#caixaRequestsRoot .ca-pending-row .ca-pending-actions { display:flex; justify-content:flex-start; flex-wrap:wrap; gap:5px; }
+#caixaRequestsRoot .ca-pending-actions button { width:auto; flex:0 1 auto; margin:5px 0 0; min-height:34px; max-width:100%; }
+#caixaRequestsRoot .ca-pending-actions .primary-button { background:#0864e9; color:white; border-color:#0864e9; }
+#caixaRequestsRoot .ca-new-adjustment { width:100%; margin:0 0 8px; min-height:36px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-status { font-weight:700; color:#165ba7; }
+#caixaRequestsRoot .ca-pending-failure textarea { box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:8px 0 0; min-height:60px; font-size:12px; }
+#caixaRequestsRoot .ca-side-feedback { font-size:12px; color:#165ba7; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-side-feedback:empty { display:none; }
 #caixaRequestsRoot .ca-pending-history { border-top:1px solid #e4ebf4; margin-top:12px; padding-top:12px; font-size:12px; }
 #caixaRequestsRoot .ca-pending-history summary { cursor:pointer; font-weight:600; }
 #caixaRequestsRoot .ca-history-row { padding:9px 0; border-bottom:1px solid #edf2f8; }

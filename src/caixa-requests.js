@@ -68,7 +68,7 @@ export function mountCaixaRequests(host, context) {
     for (const button of host.querySelectorAll("button")) {
       if (!button.dataset.chatRequest) continue;
       const count = pendingMessages.filter(message => message.request_id === button.dataset.chatRequest).length;
-      button.textContent = (context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa") + (count ? ` (${count} não lidas)` : "");
+      button.textContent = (button.dataset.compactChat ? "Conversar" : context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa") + (count ? ` (${count} não lidas)` : "");
     }
     const latest = pendingMessages[0];
     context.onUnreadMessages?.({ count: pendingMessages.length, requestId: latest?.request_id, open: async () => {
@@ -227,29 +227,12 @@ export function mountCaixaRequests(host, context) {
             finally { busy = false; submit.disabled = false; }
           });
         }
-        if (context.role === "CAIXA" && request.status === "AGUARDANDO_CONFIRMACAO_CAIXA") {
-          action(actions, "Passou / deu certo", () => change("CONFIRM")).className = "primary-button";
-          const button = node("button", "Não passou", actions); button.type = "button"; button.className = "secondary-button";
-          const form = node("form", undefined, card); form.className = "ca-resolution"; form.hidden = true;
-          const input = node("textarea", undefined, form); input.maxLength = 2000; input.placeholder = "Informe o que continua errado";
-          input.value = state.drafts.failure || ""; input.addEventListener("input", () => { state.drafts.failure = input.value; });
-          button.addEventListener("click", () => { form.hidden = !form.hidden; state.failureOpen = !form.hidden; });
-          const send = node("button", "Devolver para correção", form); send.type = "submit";
-          form.addEventListener("submit", async event => {
-            event.preventDefault(); if (busy) return;
-            if (input.value.trim().length < 3) { feedback.textContent = "Informe por que não passou."; return; }
-            busy = true; send.disabled = true;
-            try { await change("REOPEN", input.value.trim()); state.drafts.failure = ""; }
-            catch (error) { feedback.textContent = error.message; }
-            finally { busy = false; send.disabled = false; }
-          });
-        }
       }
       if (request.kind === "PRODUCT" && isStock) {
         if (!request.claimed_by && request.status === "PENDENTE" && context.claimProduct) action(actions, "Assumir atendimento", async () => { await context.claimProduct(request.replenishment_id); snapshot = ""; await refresh(); filter.tab = "mine"; renderList(); }).className = "primary-button";
         else if (request.claimed_by === context.actor && context.openProduct && !["CONCLUIDO", "CANCELADO", "ENTREGUE_NA_LOJA", "SEM_ESTOQUE"].includes(request.status)) action(actions, "Atender na reposição", () => context.openProduct(request.replenishment_id)).className = "primary-button";
       }
-      if (canChat(request)) {
+      if (canChat(request) && !(context.role === "CAIXA" && request.kind === "ADJUSTMENT" && !isCaixaClosed(request))) {
         const button = action(actions, context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa", () => chat.open(request));
         button.dataset.chatRequest = request.id;
       }
@@ -283,11 +266,29 @@ export function mountCaixaRequests(host, context) {
     const composer = node("section", undefined, layout); composer.className = "ca-composer-panel";
     const side = node("aside", undefined, layout); side.className = "ca-pending-panel";
     const tracking = node("details", undefined, host); tracking.className = "ca-cashier-tracking";
-    node("summary", "Acompanhar pedidos e conversar", tracking);
+    node("summary", "Pedidos e histórico detalhado", tracking);
     for (const element of [controls, feedback, compactControls, secondary, list]) tracking.append(element);
     const descriptions = new Map(), requestedDescriptions = new Set();
     let pendingRows = [], showAll = false, historyOpen = false;
+    const pendingCards = new Map();
+    const heading = node("div", undefined, side); heading.className = "ca-pending-heading";
+    node("h3", "Pendentes de Ajuste", heading); const count = node("strong", "0", heading);
+    const newAdjustment = node("button", "+ Novo ajuste", side); newAdjustment.type = "button"; newAdjustment.className = "secondary-button ca-new-adjustment";
+    const sideFeedback = node("p", "", side); sideFeedback.className = "ca-side-feedback"; sideFeedback.setAttribute("role", "status");
+    const pendingList = node("div", undefined, side);
+    const more = node("button", "", side); more.type = "button"; more.className = "secondary-button";
+    more.addEventListener("click", () => { showAll = !showAll; renderPending(pendingRows); });
+    const history = node("details", undefined, side); history.className = "ca-pending-history";
+    history.addEventListener("toggle", () => { historyOpen = history.open; });
+    node("small", "Estoque " + context.warehouse + " · atualização automática a cada 15 s · até 100 solicitações.", side).className = "ca-pending-limit";
+    async function changePending(id, operation, observation = "") {
+      const request = pendingRows.find(row => row.id === id);
+      if (!current() || !request || request.status !== "AGUARDANDO_CONFIRMACAO_CAIXA" || isCaixaClosed(request)) throw new Error("Aguarde a resposta do estoquista ou atualize o painel.");
+      await rpc("act_wms_caixa_adjustment", { request_key: id, operation, observation });
+      snapshot = ""; await refresh();
+    }
     function reveal(request) {
+      rows = pendingRows;
       tracking.open = true;
       filter.tab = isCaixaClosed(request) ? "closed" : request.status === "AGUARDANDO_CONFIRMACAO_CAIXA" ? "waiting" : "available";
       filter.search = ""; search.value = "";
@@ -299,34 +300,69 @@ export function mountCaixaRequests(host, context) {
     renderPending = nextRows => {
       if (!current()) return;
       pendingRows = nextRows.filter(request => request.warehouse_code === context.warehouse && request.requested_by === context.actor);
-      side.replaceChildren();
       const open = pendingRows.filter(request => request.kind === "ADJUSTMENT" && !isCaixaClosed(request) && request.status !== "CONCLUIDO")
         .sort((a,b) => Number(!!b.customer_service)-Number(!!a.customer_service) || Date.parse(a.created_at)-Date.parse(b.created_at));
-      const header = node("div", undefined, side); header.className = "ca-pending-heading";
-      node("h3", "Pendentes de Ajuste", header); node("strong", String(open.length), header);
+      count.textContent = String(open.length);
       const visible = showAll ? open : open.slice(0,5);
-      if (!open.length) node("p", "Nenhum ajuste pendente", side).className = "ca-pending-empty";
+      for (const [id, cached] of pendingCards) {
+        if (!visible.some(request => request.id === id)) { cached.row.remove(); pendingCards.delete(id); }
+      }
+      const empty = pendingList.querySelectorAll("p");
+      for (const element of empty) { if (element.className === "ca-pending-empty") element.remove(); }
+      if (!open.length) node("p", "Nenhum ajuste pendente", pendingList).className = "ca-pending-empty";
       for (const request of visible) {
-        const row = node("article", undefined, side); row.className = "ca-pending-row"; row.dataset.pendingId = request.id;
+        const signature = JSON.stringify([request, descriptions.get(request.sku)]);
+        const cached = pendingCards.get(request.id);
+        if (cached?.signature === signature) continue;
+        // Keep an active correction draft attached while an unrelated field updates.
+        if (cached?.row.contains(document.activeElement) && request.status === "AGUARDANDO_CONFIRMACAO_CAIXA") continue;
+        const row = cached?.row || node("article", undefined, pendingList); row.replaceChildren(); row.className = "ca-pending-row"; row.dataset.pendingId = request.id;
+        pendingCards.set(request.id, { row, signature });
         const top = node("div", undefined, row); node("strong", request.sku, top); node("span", request.quantity + " un.", top);
         node("p", request.product_name || request.nome_material || descriptions.get(request.sku) || "Ajuste solicitado", row);
-        node("small", labels[request.status] || request.status, row);
+        // Existing REOPEN preserves the resolution text/owner but clears resolved_at.
+        const returned = request.status === "EM_VERIFICACAO" && request.claimed_by && request.resolution_notes && !request.resolved_at;
+        const status = request.status === "AGUARDANDO_CONFIRMACAO_CAIXA" ? "AGUARDANDO CAIXA" : returned ? "DEVOLVIDO PARA CORREÇÃO" : request.claimed_by ? "EM ATENDIMENTO" : "AGUARDANDO ESTOQUE";
+        node("small", status, row).className = "ca-pending-status";
         if (request.claimed_by_name) node("small", "Responsável: " + request.claimed_by_name, row);
         if (request.notes) node("small", "Motivo: " + request.notes, row);
-        node("time", new Date(request.created_at).toLocaleString("pt-BR"), row);
-        const button = node("button", "Ver detalhes", row); button.type = "button"; button.className = "secondary-button"; button.addEventListener("click", () => reveal(request));
+        const time = node("time", new Date(request.updated_at || request.created_at).toLocaleString("pt-BR"), row);
+        if (!request.claimed_by) time.textContent += " · na fila há " + Math.max(0, Math.floor((Date.now() - Date.parse(request.created_at)) / 60000)) + " min";
+        if (request.resolution_notes && request.status === "AGUARDANDO_CONFIRMACAO_CAIXA") node("small", "Resolução: " + request.resolution_notes, row);
+        const actions = node("div", undefined, row); actions.className = "ca-pending-actions";
+        const state = detailsState.get(request.id) || { drafts: {}, history: null }; detailsState.set(request.id,state);
+        const sideAction = (label, execute) => action(actions, label, async () => {
+          try { await execute(); if (current() && label !== "Conversar") sideFeedback.textContent = "Solicitação atualizada."; }
+          catch (error) { if (current()) sideFeedback.textContent = error.message; throw error; }
+        });
+        if (request.status === "AGUARDANDO_CONFIRMACAO_CAIXA") {
+          sideAction("Passou", () => changePending(request.id, "CONFIRM")).className = "primary-button";
+          const failure = node("form", undefined, row); failure.className = "ca-pending-failure"; failure.hidden = !state.failureOpen;
+          const input = node("textarea", undefined, failure); input.maxLength = 2000; input.rows = 2; input.placeholder = "Informe o que continua errado"; input.setAttribute("aria-label", "Motivo da correção · SKU " + request.sku);
+          input.value = state.drafts.failure || ""; input.addEventListener("input", () => { state.drafts.failure = input.value; });
+          const button = node("button", "Não passou", actions); button.type = "button"; button.className = "secondary-button";
+          button.addEventListener("click", () => { failure.hidden = !failure.hidden; state.failureOpen = !failure.hidden; if (!failure.hidden) input.focus?.(); });
+          const send = node("button", "Devolver para correção", failure); send.type = "submit"; send.className = "secondary-button";
+          failure.addEventListener("submit", async event => {
+            event.preventDefault(); if (busy || !current()) return;
+            const value = input.value.trim();
+            if (value.length < 3) { sideFeedback.textContent = "Informe por que não passou."; return; }
+            busy = true; send.disabled = true;
+            try { await changePending(request.id,"REOPEN",value); state.drafts.failure = ""; state.failureOpen = false; if (current()) sideFeedback.textContent = "Devolvido para correção."; }
+            catch (error) { if (current()) sideFeedback.textContent = error.message; }
+            finally { busy = false; if (current()) send.disabled = false; }
+          });
+        }
+        if (canChat(request)) { const button = sideAction("Conversar", () => chat.open(pendingRows.find(row => row.id === request.id) || request)); button.dataset.chatRequest = request.id; button.dataset.compactChat = "true"; }
+        const button = node("button", "Ver detalhes", actions); button.type = "button"; button.className = "secondary-button"; button.addEventListener("click", () => reveal(request));
         if (!request.product_name && !request.nome_material && !descriptions.has(request.sku) && !requestedDescriptions.has(request.sku)) {
           requestedDescriptions.add(request.sku);
           lookup.lookup(request.sku).then(result => { if (current() && result.state === "found" && result.item.name) { descriptions.set(request.sku,result.item.name); renderPending(pendingRows); } }).catch(() => {});
         }
       }
-      if (open.length > 5) {
-        const more = node("button", showAll ? "Mostrar menos" : "Ver todos os ajustes (" + open.length + ")", side); more.type = "button"; more.className = "secondary-button";
-        more.addEventListener("click", () => { showAll = !showAll; renderPending(pendingRows); });
-      }
+      more.hidden = open.length <= 5; more.textContent = showAll ? "Mostrar menos" : "Ver todos os ajustes (" + open.length + ")";
       const closed = pendingRows.filter(isCaixaClosed).sort((a,b) => Date.parse(b.updated_at || b.created_at)-Date.parse(a.updated_at || a.created_at));
-      const history = node("details", undefined, side); history.className = "ca-pending-history"; history.open = historyOpen;
-      history.addEventListener("toggle", () => { historyOpen = history.open; }); node("summary", "Histórico de solicitações (" + closed.length + ")", history);
+      history.replaceChildren(); history.open = historyOpen; node("summary", "Histórico de solicitações (" + closed.length + ")", history);
       for (const request of closed.slice(0,5)) {
         const row = node("div", undefined, history); row.className = "ca-history-row";
         node("strong", request.sku + " · " + request.quantity + " un.", row);
@@ -335,9 +371,10 @@ export function mountCaixaRequests(host, context) {
       if (closed.length) {
         const all = node("button", "Ver todas", history); all.type = "button"; all.className = "secondary-button"; all.addEventListener("click", () => reveal(closed[0]));
       } else node("p", "Nenhuma solicitação encerrada.", history);
-      node("small", "Estoque " + context.warehouse + " · até 100 solicitações carregadas.", side).className = "ca-pending-limit";
+      showUnread();
     };
-    mountCaixaRequestComposer(composer, { ...context, lookup, rpc, isCurrent: current, onSubmitted: refresh, onFound: item => { if (item.name) { descriptions.set(item.sku,item.name); renderPending(pendingRows); } } });
+    const requestComposer = mountCaixaRequestComposer(composer, { ...context, lookup, rpc, isCurrent: current, onSubmitted: refresh, onFound: item => { if (item.name) { descriptions.set(item.sku,item.name); renderPending(pendingRows); } } });
+    newAdjustment.addEventListener("click", () => { if (!requestComposer.newAdjustment()) sideFeedback.textContent = "Confirme o envio em andamento antes de iniciar outro ajuste."; });
   }
 
   refresh().then(() => pollMessageNotices()).catch(error => { if (current()) feedback.textContent = error.message; });
