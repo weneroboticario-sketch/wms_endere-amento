@@ -105,6 +105,27 @@ export function mountCaixaRequests(host, context) {
     const kindLabel = node("label", "Tipo ", form);
     const kind = node("select", undefined, kindLabel);
     for (const [value, label] of [["PRODUCT", "Pedir produto"], ["ADJUSTMENT", "Solicitar verificação de ajuste"]]) { const option = node("option", label, kind); option.value = value; }
+    kind.value = "PRODUCT";
+    kindLabel.hidden = true;
+    node("p", "O que você precisa solicitar?", form);
+    const kindButtons = node("div", undefined, form);
+    kindButtons.setAttribute("role", "group"); kindButtons.setAttribute("aria-label", "Tipo da solicitação urgente");
+    const choices = [];
+    for (const [value, label] of [["PRODUCT", "Pedir produto"], ["ADJUSTMENT", "Solicitar ajuste"]]) {
+      const button = node("button", label, kindButtons); button.type = "button";
+      button.className = value === kind.value ? "primary-button" : "secondary-button";
+      button.setAttribute("aria-pressed", String(value === kind.value));
+      choices.push({ value, button });
+      button.addEventListener("click", () => {
+        if (busy || pending || !current()) return;
+        kind.value = value;
+        for (const choice of choices) {
+          choice.button.className = choice.value === value ? "primary-button" : "secondary-button";
+          choice.button.setAttribute("aria-pressed", String(choice.value === value));
+        }
+        notes.placeholder = value === "ADJUSTMENT" ? "Descreva o ajuste necessário para liberar o pedido do cliente." : "Informe os detalhes do produto solicitado.";
+      });
+    }
     const sku = field("SKU", "text"); sku.maxLength = 8; sku.inputMode = "numeric";
     const quantity = field("Quantidade", "number"); quantity.min = "1"; quantity.step = "1";
     const notesLabel = node("label", "Observação / motivo do ajuste ", form);

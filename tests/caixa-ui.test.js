@@ -35,6 +35,15 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
     await send.listeners.click(); assert.equal(calls.length,2); assert.deepEqual(calls[0],calls[1]);
     assert.equal(calls[0].args.units,16); assert.equal(calls[0].args.product_code,"00123");
     assert.equal(inputs[0].value,""); assert.equal(inputs[0].disabled,false);
+    const adjustment=host.querySelectorAll("button").find(button=>button.textContent==="Solicitar ajuste");
+    assert.ok(adjustment);
+    adjustment.listeners.click();
+    assert.equal(host.querySelectorAll("select")[0].value,"ADJUSTMENT");
+    inputs[0].value="94133"; inputs[1].value="2";
+    host.querySelectorAll("textarea")[0].value="Liberar quantidade no pedido";
+    await send.listeners.click();
+    assert.equal(calls[2].args.request_kind,"ADJUSTMENT");
+    assert.equal(calls[2].args.product_code,"94133");
     assert.ok(!host.querySelectorAll("button").some(button=>button.textContent==="Encaminhar à verificação"));
   } finally {globalThis.document=previous;}
 });
