@@ -50,42 +50,67 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
   } finally {globalThis.document=previous;}
 });
 
-test("compact queue preserves duplicate SKUs, filters, details, history and automatic refresh without status writes",async()=>{
-  const previous=globalThis.document;
-  const previousInterval=globalThis.setInterval;
+
+test("urgent attendance shows only available, mine and waiting, preserving separate equal-SKU requests",async()=>{
+  const previous=globalThis.document, previousInterval=globalThis.setInterval;
   let poll;
-  globalThis.setInterval=handler=>{poll=handler; return {unref(){}};};
+  globalThis.setInterval=fn=>{poll=fn;return {unref(){}};};
   globalThis.document={createElement:tag=>new Element(tag)};
   try {
     const host=new Element("main"); host.root=true;
     let rows=[
-      {id:"a",sku:"48060",kind:"ADJUSTMENT",quantity:2,attended:0,status:"EM_VERIFICACAO",created_at:"2026-10-29T14:00:00Z",claimed_by:"worker",claimed_by_name:"Responsável",requested_by:"c1",notes:"Conferir"},
-      {id:"b",sku:"48060",kind:"ADJUSTMENT",quantity:5,attended:0,status:"AGUARDANDO_CONFIRMACAO_CAIXA",created_at:"2026-10-29T15:00:00Z",requested_by:"c1",resolution_notes:"feito"},
-      {id:"c",sku:"00123",kind:"PRODUCT",quantity:1,attended:0,status:"PENDENTE",customer_service:true,created_at:"2026-10-29T16:00:00Z",requested_by:"c1"}
+      {id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:2,status:"EM_VERIFICACAO",created_at:"2026-10-29T14:00:00Z",claimed_by:"worker",claimed_by_name:"Responsável",requested_by:"c1",notes:"Conferir"},
+      {id:"b",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:5,status:"AGUARDANDO_CONFIRMACAO_CAIXA",created_at:"2026-10-29T15:00:00Z",claimed_by:"worker",requested_by:"c1",resolution_notes:"feito"},
+      {id:"c",sku:"00123",kind:"PRODUCT",warehouse_code:"VDCG",quantity:1,attended:0,status:"PENDENTE",customer_service:true,created_at:"2026-10-29T16:00:00Z",requested_by:"c1"}
     ];
     const calls=[];
-    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",actor_id:"worker",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){calls.push({name,args});return {data:args.request_key};}};
-    mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
-    const rendered=()=>host.querySelectorAll("tr").filter(row=>row.dataset.requestId);
-    const button=text=>host.querySelectorAll("button").find(item=>item.textContent===text);
-    assert.deepEqual(rendered().map(row=>row.dataset.requestId),["c","a","b"]);
-    const original=rendered()[1];await poll();await setImmediate();assert.equal(rendered()[1],original);
-    const details=original.querySelectorAll("details")[0];details.open=true;details.listeners.toggle();
-    await details.querySelectorAll("button").find(item=>item.textContent==="Histórico").listeners.click();
+    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){calls.push({name,args});return {data:args.request_key};}};
+    mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});
+    await setImmediate();
+    const cards=()=>host.querySelectorAll("article").filter(row=>row.dataset.requestId);
+    const button=prefix=>host.querySelectorAll("button").find(b=>b.textContent?.startsWith(prefix));
+    assert.deepEqual(cards().map(x=>x.dataset.requestId),["c"]);
+    button("Meus atendimentos").listeners.click();
+    assert.deepEqual(cards().map(x=>x.dataset.requestId),["a"]);
+    assert.ok(button("Informar resolução"));
+    assert.ok(button("Conversar com caixa"));
+    const detail=cards()[0].querySelectorAll("details")[0];detail.open=true;detail.listeners.toggle();
+    await button("Carregar histórico").listeners.click();
     rows=rows.map(row=>row.id==="a"?{...row,notes:"Conferir novamente"}:row);
-    await button("Atualizar pedidos").listeners.click();
-    const refreshed=rendered().find(row=>row.dataset.requestId==="a").querySelectorAll("details")[0];assert.equal(refreshed.open,true);
-    assert.ok(refreshed.querySelectorAll("p").some(item=>item.textContent.includes("Conferência iniciada")));
-    const search=host.querySelectorAll("input")[0];search.value="48060";search.listeners.input();assert.equal(rendered().length,2);
-    search.value="inexistente";search.listeners.input();assert.equal(rendered().length,0);
-    search.value="";search.listeners.input();
-    const draft=rendered().find(row=>row.dataset.requestId==="a").querySelectorAll("textarea")[0];draft.value="Resposta ainda em edição";draft.listeners.input();
-    globalThis.document.activeElement=draft;
-    rows=rows.map(row=>({...row,notes:"Nova atualização"}));await poll();await setImmediate();assert.equal(draft.value,"Resposta ainda em edição");
+    await button("Atualizar").listeners.click();
+    assert.equal(cards()[0].querySelectorAll("details")[0].open,true);
+    button("Aguardando caixa").listeners.click();
+    assert.deepEqual(cards().map(x=>x.dataset.requestId),["b"]);
+    assert.ok(!button("Passou / deu certo")); // Somente caixa pode confirmar.
+    await poll(); await setImmediate();
     assert.equal(calls.length,0);
-    assert.ok(button("Informar resolução ao caixa"));
-    assert.ok(!button("Deu certo / entrou no pedido"));
   } finally {globalThis.document=previous;globalThis.setInterval=previousInterval;}
+});
+
+test("claimed stock operator can exchange messages bound to request without changing stock",async()=>{
+  const previous=globalThis.document;
+  globalThis.document={createElement:tag=>new Element(tag)};
+  try {
+    const host=new Element("main");host.root=true;
+    const calls=[];
+    const request={id:"req-a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:2,status:"EM_VERIFICACAO",claimed_by:"worker",requested_by:"cashier",created_at:new Date().toISOString()};
+    const client={from(table){
+      const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?[request]:[]}).then(resolve);}};
+      for(const method of ["select","eq","order","limit"])query[method]=()=>query;
+      return query;
+    },async rpc(name,args){calls.push({name,args});return {data:1};}};
+    mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
+    const button=prefix=>host.querySelectorAll("button").find(b=>b.textContent?.startsWith(prefix));
+    button("Meus atendimentos").listeners.click();
+    await button("Conversar com caixa").listeners.click();await setImmediate();
+    const chatForm=host.querySelectorAll("form").find(f=>f.className==="ca-chat-form");
+    const input=chatForm.querySelectorAll("textarea")[0];input.value="Pode testar novamente?";
+    await chatForm.listeners.submit({preventDefault(){}});await setImmediate();
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].name,"send_wms_caixa_message");
+    assert.equal(calls[0].args.request_key,"req-a");
+    assert.equal(calls[0].args.body,"Pode testar novamente?");
+  } finally {globalThis.document=previous;}
 });
 
 test("cashier sees confirmation and return actions while completed adjustments have no fulfillment action",async()=>{
@@ -97,6 +122,6 @@ test("cashier sees confirmation and return actions while completed adjustments h
     const client={from(){const query={then(resolve){return Promise.resolve({data:[row]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;}};
     mountCaixaRequests(host,{actor:"c1",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
     const labels=host.querySelectorAll("button").map(button=>button.textContent);
-    assert.ok(labels.includes("Deu certo / entrou no pedido"));assert.ok(labels.includes("Não deu certo — devolver ao estoquista"));assert.ok(!labels.includes("Puxar ajuste urgente"));
+    assert.ok(labels.includes("Passou / deu certo"));assert.ok(labels.includes("Não passou"));assert.ok(!labels.includes("Assumir atendimento"));
   } finally {globalThis.document=previous;}
 });

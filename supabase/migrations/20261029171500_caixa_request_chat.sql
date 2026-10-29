@@ -18,7 +18,7 @@ grant select on public.wms_caixa_request_messages to authenticated;
 create policy wms_caixa_chat_read on public.wms_caixa_request_messages for select to authenticated using (
   auth.uid() is not null and exists (
     select 1 from public.wms_caixa_requests r
-    where r.id=request_id and r.warehouse_code=warehouse_code
+    where r.id=wms_caixa_request_messages.request_id and r.warehouse_code=wms_caixa_request_messages.warehouse_code
       and private.can_access_warehouse(r.warehouse_code)
       and (
         (private.current_wms_role()='CAIXA' and r.requested_by=private.current_wms_profile_id())
@@ -50,8 +50,8 @@ begin
   if req.confirmed_at is not null or req.status in ('CANCELADO','CONCLUIDO','ENTREGUE_NA_LOJA','SEM_ESTOQUE') then
     raise exception 'Solicitação encerrada. Converse em uma solicitação ativa.';
   end if;
-  select id, body into existing from public.wms_caixa_request_messages
-    where request_id=request_key and sender_id=actor and client_action_id=action_key;
+  select m.id, m.body into existing from public.wms_caixa_request_messages m
+    where m.request_id=request_key and m.sender_id=actor and m.client_action_id=action_key;
   if found then
     if existing.body<>btrim(body) then raise exception 'Identificador da mensagem já utilizado com outro conteúdo.'; end if;
     return existing.id;
@@ -60,8 +60,8 @@ begin
     values(request_key,req.warehouse_code,actor,action_key,btrim(body))
     on conflict(request_id,sender_id,client_action_id) do nothing returning id into message_id;
   if message_id is null then
-    select id,body into existing from public.wms_caixa_request_messages
-      where request_id=request_key and sender_id=actor and client_action_id=action_key;
+    select m.id,m.body into existing from public.wms_caixa_request_messages m
+      where m.request_id=request_key and m.sender_id=actor and m.client_action_id=action_key;
     if existing.body<>btrim(body) then raise exception 'Mensagem duplicada com conteúdo divergente.'; end if;
     message_id:=existing.id;
   end if;

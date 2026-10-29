@@ -153,9 +153,9 @@ export function mountCaixaRequests(host, context) {
     updated.textContent = "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     const next = JSON.stringify(response.data || []);
     if (next === snapshot) return;
+    if (automatic && ((document.activeElement && host.contains(document.activeElement)) || chatInput.value)) return;
     rows = response.data || []; snapshot = next;
-    if (automatic && (document.activeElement && host.contains(document.activeElement) || chatInput.value)) return;
-    if (!busy) renderList();
+    renderList();
   };
   function renderList() {
     const view = caixaAttendanceView(rows, context.actor, context.role, filter.tab, filter.search);
