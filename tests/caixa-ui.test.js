@@ -6,7 +6,7 @@ import { mountCaixaRequests } from "../src/caixa-requests.js";
 class Element {
   constructor(tag) { this.tag=tag; this.children=[]; this.dataset={}; this.listeners={}; this.value=""; }
   get isConnected() { return this.root || this.parent?.isConnected; }
-  append(child) { child.parent=this; this.children.push(child); }
+  append(child) { if(child.parent) child.parent.children=child.parent.children.filter(node=>node!==child); child.parent=this; this.children.push(child); }
   replaceChildren() { this.children=[]; }
   insertBefore(child,ref) { if(child.parent) child.parent.children=child.parent.children.filter(node=>node!==child); child.parent=this; this.children.splice(this.children.indexOf(ref),0,child); }
   setAttribute(name,value) { this.attributes ||= {}; this.attributes[name]=value; }
@@ -24,24 +24,25 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
     const calls=[];
     const client={
       from() {const chain={then(resolve){return Promise.resolve({data:[]}).then(resolve);}}; for(const method of ["select","eq","order","limit"]) chain[method]=()=>chain; return chain;},
-      async rpc(name,args) {if(name==="list_wms_caixa_attendance")return {data:[]};calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
+      async rpc(name,args) {if(name==="list_wms_caixa_attendance")return {data:[]};if(name==="lookup_wms_caixa_item")return {data:{found:true,sku:args.product_code,name:"Produto real de teste",captureAvailable:10,storeAvailable:null}};calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
     };
     mountCaixaRequests(host,{actor:"c1",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});
     await setImmediate();
     const form=host.querySelectorAll("fieldset")[0];
     const inputs=form.querySelectorAll("input"); inputs[0].value="00123"; inputs[1].value="16";
-    form.querySelectorAll("select")[0].value="PRODUCT";
+    await inputs[0].listeners.keydown({key:"Enter",preventDefault(){}});
     form.querySelectorAll("textarea")[0].value="Cliente aguardando";
-    const send=host.querySelectorAll("button").find(button=>button.textContent==="Enviar solicitação");
+    const send=form.querySelectorAll("button").find(button=>button.dataset.requestSubmit);
     await send.listeners.click(); assert.equal(inputs[0].disabled,true);
     await send.listeners.click(); assert.equal(calls.length,2); assert.deepEqual(calls[0],calls[1]);
     assert.equal(calls[0].args.units,16); assert.equal(calls[0].args.product_code,"00123");
     assert.equal(inputs[0].value,""); assert.equal(inputs[0].disabled,false);
-    const adjustment=host.querySelectorAll("button").find(button=>button.textContent==="Solicitar ajuste");
+    const adjustment=form.querySelectorAll("button").find(button=>button.dataset.requestKind==="ADJUSTMENT");
     assert.ok(adjustment);
     adjustment.listeners.click();
-    assert.equal(form.querySelectorAll("select")[0].value,"ADJUSTMENT");
+    assert.equal(adjustment.attributes["aria-pressed"],"true");
     inputs[0].value="94133"; inputs[1].value="2";
+    await inputs[0].listeners.keydown({key:"Enter",preventDefault(){}});
     form.querySelectorAll("textarea")[0].value="Liberar quantidade no pedido";
     await send.listeners.click();
     assert.equal(calls[2].args.request_kind,"ADJUSTMENT");
@@ -143,5 +144,21 @@ test("cashier receives existing unread messages before opening chat and the aler
     const reopened=new Element("main");reopened.root=true;const next=[];
     mountCaixaRequests(reopened,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,storage,isCurrent:()=>true,onUnreadMessages:info=>next.push(info)});
     await setImmediate();assert.equal(next.at(-1).count,0);
+  } finally {globalThis.document=previous;}
+});
+
+test("cashier adjustment panel excludes closed, foreign-stock and other-cashier records and preserves equal-SKU requests",async()=>{
+  const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
+  try {
+    const host=new Element("main");host.root=true;
+    const base={sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:2,requested_by:"cashier",status:"PENDENTE",created_at:new Date().toISOString()};
+    const rows=[{...base,id:"a"},{...base,id:"b",quantity:5,status:"AGUARDANDO_CONFIRMACAO_CAIXA"},{...base,id:"closed",status:"CONCLUIDO",confirmed_at:new Date().toISOString()},{...base,id:"foreign",warehouse_code:"VDAR"},{...base,id:"other",requested_by:"other-cashier"},{...base,id:"product",kind:"PRODUCT"}];
+    const client={async rpc(name){return name==="lookup_wms_caixa_item"?{data:{found:true,name:"Produto de teste",captureAvailable:4}}:{data:rows};},from(){const query={then(resolve){return Promise.resolve({data:[]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;}};
+    mountCaixaRequests(host,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
+    const pending=host.querySelectorAll("article").filter(article=>article.dataset.pendingId);
+    assert.deepEqual(pending.map(article=>article.dataset.pendingId),["a","b"]);
+    const tracking=host.querySelectorAll("details").find(details=>details.className==="ca-cashier-tracking");assert.ok(!tracking.open);
+    pending[1].querySelectorAll("button")[0].listeners.click();assert.equal(tracking.open,true);
+    assert.ok(host.querySelectorAll("article").some(article=>article.dataset.requestId==="b"));
   } finally {globalThis.document=previous;}
 });

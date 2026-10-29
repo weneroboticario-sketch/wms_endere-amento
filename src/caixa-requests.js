@@ -1,14 +1,11 @@
 import { caixaAttendanceView } from "./caixa-attendance.js";
 import { mountCaixaChat } from "./caixa-chat.js";
 import { createCaixaUnread } from "./caixa-unread.js";
+import { createCaixaProductLookup } from "./caixa-product-lookup.js";
+import { mountCaixaRequestComposer } from "./caixa-request-composer.js";
+import { isCaixaClosed } from "./caixa-queue-view.js";
 
-export function validateCaixaRequest(request) {
-  if (!["PRODUCT", "ADJUSTMENT"].includes(request.kind)) throw new Error("Selecione produto ou ajuste.");
-  if (!/^\d{4,8}$/.test(request.sku)) throw new Error("Informe o SKU com 4 a 8 dígitos, mantendo zeros à esquerda.");
-  if (!Number.isSafeInteger(request.quantity) || request.quantity < 1 || request.quantity > 9999999) throw new Error("Informe uma quantidade inteira positiva.");
-  if (request.notes.length > 2000 || (request.kind === "ADJUSTMENT" && request.notes.trim().length < 3)) throw new Error("Informe o motivo da verificação do ajuste (até 2.000 caracteres).");
-  return request;
-}
+export { validateCaixaRequest } from "./caixa-request-composer.js";
 
 function node(tag, text, parent) {
   const result = document.createElement(tag);
@@ -27,13 +24,14 @@ export function mountCaixaRequests(host, context) {
   const current = () => host.isConnected && context.isCurrent();
   const isStock = ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(context.role);
   const canSupervise = ["SUPERVISOR", "ADMINISTRADOR"].includes(context.role);
-  let busy = false, pending, rows = [], revision = 0, snapshot = "", initialized = false;
+  let busy = false, rows = [], revision = 0, snapshot = "", initialized = false;
   const filter = { tab: "available", search: "" };
   const detailsState = new Map();
+  let renderPending = () => {};
   const header = node("header", undefined, host); header.className = "ca-header";
   const title = node("div", undefined, header);
   node("h2", "CLIENTE NO CAIXA", title);
-  node("p", "Fila de atendimento prioritário · cliente sempre tem preferência", title);
+  node("p", context.role === "CAIXA" ? "Solicitações prioritárias para o estoque" : "Fila de atendimento prioritário · cliente sempre tem preferência", title);
   const controls = node("div", undefined, host); controls.className = "ca-toolbar";
   const tabs = node("nav", undefined, controls); tabs.className = "ca-tabs";
   const tabButtons = {};
@@ -145,7 +143,7 @@ export function mountCaixaRequests(host, context) {
     updated.textContent = "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     if (!Array.isArray(response.data)) throw new Error("A central aguarda ativação da migration de atendimento.");
     const nextRows = response.data;
-    observeRequests(nextRows); chat.reconcile(nextRows);
+    observeRequests(nextRows); chat.reconcile(nextRows); renderPending(nextRows);
     if (!initialized) {
       const firstView = caixaAttendanceView(nextRows, context.actor, context.role);
       if (isStock && firstView.counts.mine) filter.tab = "mine";
@@ -280,52 +278,66 @@ export function mountCaixaRequests(host, context) {
   action(compactControls, "Atualizar", async () => { snapshot = ""; await refresh(); });
 
   if (context.role === "CAIXA") {
-    const form = node("fieldset", undefined); host.insertBefore(form, controls);
-    node("legend", "Nova solicitação", form);
-    const field = (label, type) => { const wrapper = node("label", label + " ", form); const input = node("input", undefined, wrapper); input.type = type; return input; };
-    const kindLabel = node("label", "Tipo ", form);
-    const kind = node("select", undefined, kindLabel);
-    for (const [value, label] of [["PRODUCT", "Pedir produto"], ["ADJUSTMENT", "Solicitar verificação de ajuste"]]) { const option = node("option", label, kind); option.value = value; }
-    kind.value = "PRODUCT";
-    kindLabel.hidden = true;
-    node("p", "O que você precisa solicitar?", form);
-    const kindButtons = node("div", undefined, form);
-    kindButtons.setAttribute("role", "group"); kindButtons.setAttribute("aria-label", "Tipo da solicitação urgente");
-    const choices = [];
-    for (const [value, label] of [["PRODUCT", "Pedir produto"], ["ADJUSTMENT", "Solicitar ajuste"]]) {
-      const button = node("button", label, kindButtons); button.type = "button";
-      button.className = value === kind.value ? "primary-button" : "secondary-button";
-      button.setAttribute("aria-pressed", String(value === kind.value));
-      choices.push({ value, button });
-      button.addEventListener("click", () => {
-        if (busy || pending || !current()) return;
-        kind.value = value;
-        for (const choice of choices) {
-          choice.button.className = choice.value === value ? "primary-button" : "secondary-button";
-          choice.button.setAttribute("aria-pressed", String(choice.value === value));
-        }
-        notes.placeholder = value === "ADJUSTMENT" ? "Descreva o ajuste necessário para liberar o pedido do cliente." : "Informe os detalhes do produto solicitado.";
-      });
+    const lookup = createCaixaProductLookup({ client: context.client, warehouse: context.warehouse, isCurrent: current });
+    const layout = node("div", undefined); layout.className = "ca-cashier-layout"; host.insertBefore(layout, controls);
+    const composer = node("section", undefined, layout); composer.className = "ca-composer-panel";
+    const side = node("aside", undefined, layout); side.className = "ca-pending-panel";
+    const tracking = node("details", undefined, host); tracking.className = "ca-cashier-tracking";
+    node("summary", "Acompanhar pedidos e conversar", tracking);
+    for (const element of [controls, feedback, compactControls, secondary, list]) tracking.append(element);
+    const descriptions = new Map(), requestedDescriptions = new Set();
+    let pendingRows = [], showAll = false, historyOpen = false;
+    function reveal(request) {
+      tracking.open = true;
+      filter.tab = isCaixaClosed(request) ? "closed" : request.status === "AGUARDANDO_CONFIRMACAO_CAIXA" ? "waiting" : "available";
+      filter.search = ""; search.value = "";
+      const state = detailsState.get(request.id) || { drafts: {}, history: null }; state.open = true; detailsState.set(request.id, state);
+      renderList();
+      const row = Array.from(list.querySelectorAll("article")).find(element => element.dataset.requestId === request.id);
+      row?.scrollIntoView({ block: "center", behavior: "smooth" });
     }
-    const sku = field("SKU", "text"); sku.maxLength = 8; sku.inputMode = "numeric";
-    const quantity = field("Quantidade", "number"); quantity.min = "1"; quantity.step = "1";
-    const notesLabel = node("label", "Observação / motivo do ajuste ", form);
-    const notes = node("textarea", undefined, notesLabel); notes.maxLength = 2000;
-    const customer = field("Urgente — cliente aguardando no caixa", "checkbox"); customer.checked = true; customer.disabled = true;
-    action(form, "Enviar solicitação", async () => {
-      const request = pending || validateCaixaRequest({ id: crypto.randomUUID(), kind: kind.value, sku: sku.value.trim(), quantity: Number(quantity.value), customer: kind.value === "PRODUCT" && customer.checked, notes: notes.value.trim() });
-      pending = request;
-      form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = true; });
-      try {
-        await rpc("submit_wms_caixa_request", { request_key: request.id, code: context.warehouse, request_kind: request.kind, product_code: request.sku, units: request.quantity, customer: request.customer, observation: request.notes });
-        await refresh();
-      } catch (error) {
-        if (error.confirmedFailure) { pending = null; form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = true; }
-        throw error;
+    renderPending = nextRows => {
+      if (!current()) return;
+      pendingRows = nextRows.filter(request => request.warehouse_code === context.warehouse && request.requested_by === context.actor);
+      side.replaceChildren();
+      const open = pendingRows.filter(request => request.kind === "ADJUSTMENT" && !isCaixaClosed(request) && request.status !== "CONCLUIDO")
+        .sort((a,b) => Number(!!b.customer_service)-Number(!!a.customer_service) || Date.parse(a.created_at)-Date.parse(b.created_at));
+      const header = node("div", undefined, side); header.className = "ca-pending-heading";
+      node("h3", "Pendentes de Ajuste", header); node("strong", String(open.length), header);
+      const visible = showAll ? open : open.slice(0,5);
+      if (!open.length) node("p", "Nenhum ajuste pendente", side).className = "ca-pending-empty";
+      for (const request of visible) {
+        const row = node("article", undefined, side); row.className = "ca-pending-row"; row.dataset.pendingId = request.id;
+        const top = node("div", undefined, row); node("strong", request.sku, top); node("span", request.quantity + " un.", top);
+        node("p", request.product_name || request.nome_material || descriptions.get(request.sku) || "Ajuste solicitado", row);
+        node("small", labels[request.status] || request.status, row);
+        if (request.claimed_by_name) node("small", "Responsável: " + request.claimed_by_name, row);
+        if (request.notes) node("small", "Motivo: " + request.notes, row);
+        node("time", new Date(request.created_at).toLocaleString("pt-BR"), row);
+        const button = node("button", "Ver detalhes", row); button.type = "button"; button.className = "secondary-button"; button.addEventListener("click", () => reveal(request));
+        if (!request.product_name && !request.nome_material && !descriptions.has(request.sku) && !requestedDescriptions.has(request.sku)) {
+          requestedDescriptions.add(request.sku);
+          lookup.lookup(request.sku).then(result => { if (current() && result.state === "found" && result.item.name) { descriptions.set(request.sku,result.item.name); renderPending(pendingRows); } }).catch(() => {});
+        }
       }
-      pending = null; sku.value = ""; quantity.value = ""; notes.value = "";
-      form.querySelectorAll("input,select,textarea").forEach(input => { input.disabled = false; }); customer.disabled = true;
-    });
+      if (open.length > 5) {
+        const more = node("button", showAll ? "Mostrar menos" : "Ver todos os ajustes (" + open.length + ")", side); more.type = "button"; more.className = "secondary-button";
+        more.addEventListener("click", () => { showAll = !showAll; renderPending(pendingRows); });
+      }
+      const closed = pendingRows.filter(isCaixaClosed).sort((a,b) => Date.parse(b.updated_at || b.created_at)-Date.parse(a.updated_at || a.created_at));
+      const history = node("details", undefined, side); history.className = "ca-pending-history"; history.open = historyOpen;
+      history.addEventListener("toggle", () => { historyOpen = history.open; }); node("summary", "Histórico de solicitações (" + closed.length + ")", history);
+      for (const request of closed.slice(0,5)) {
+        const row = node("div", undefined, history); row.className = "ca-history-row";
+        node("strong", request.sku + " · " + request.quantity + " un.", row);
+        node("small", (labels[request.status] || request.status) + " · " + new Date(request.updated_at || request.created_at).toLocaleString("pt-BR"), row);
+      }
+      if (closed.length) {
+        const all = node("button", "Ver todas", history); all.type = "button"; all.className = "secondary-button"; all.addEventListener("click", () => reveal(closed[0]));
+      } else node("p", "Nenhuma solicitação encerrada.", history);
+      node("small", "Estoque " + context.warehouse + " · até 100 solicitações carregadas.", side).className = "ca-pending-limit";
+    };
+    mountCaixaRequestComposer(composer, { ...context, lookup, rpc, isCurrent: current, onSubmitted: refresh, onFound: item => { if (item.name) { descriptions.set(item.sku,item.name); renderPending(pendingRows); } } });
   }
 
   refresh().then(() => pollMessageNotices()).catch(error => { if (current()) feedback.textContent = error.message; });
@@ -335,8 +347,6 @@ export function mountCaixaRequests(host, context) {
     await chat.poll();
     await pollMessageNotices().catch(() => {});
     if (busy) return;
-    if ((document.activeElement && host.contains(document.activeElement)) ||
-      (Array.from(host.querySelectorAll("textarea")).some(input => input.value))) return;
     refresh(true).catch(error => { if (current()) feedback.textContent = error.message; });
   }, 15000);
   timer.unref?.();

@@ -2,6 +2,48 @@
 #caixaRequestsRoot [hidden] { display:none !important; }
 #caixaRequestsRoot .ca-header h2 { font-size:23px; letter-spacing:-.35px; margin:0 0 4px; }
 #caixaRequestsRoot .ca-header p { font-size:12px; color:#64748b; margin:0; }
+#caixaRequestsRoot .ca-cashier-layout { display:grid; grid-template-columns:minmax(0,1.85fr) minmax(280px,1fr); gap:16px; margin-top:16px; align-items:start; }
+#caixaRequestsRoot .ca-composer-panel, #caixaRequestsRoot .ca-pending-panel { min-width:0; border:1px solid #dce6f1; background:#fff; border-radius:10px; padding:16px; }
+#caixaRequestsRoot .ca-quick-form { border:0; margin:0; padding:0; }
+#caixaRequestsRoot .ca-quick-form legend { font-size:16px; font-weight:700; padding:0 0 12px; }
+#caixaRequestsRoot .ca-quick-form label { font-size:12px; font-weight:600; display:block; margin:10px 0; }
+#caixaRequestsRoot .ca-quick-form input:not([type=checkbox]) { width:100%; max-width:none; min-height:40px; margin:6px 0 0; box-sizing:border-box; }
+#caixaRequestsRoot .ca-operation { display:flex; gap:6px; margin-bottom:12px; }
+#caixaRequestsRoot .ca-operation button { flex:1; margin:0; padding:9px 10px; font-size:12px; min-height:38px; }
+#caixaRequestsRoot .ca-operation button[aria-pressed=true] { background:#0864e9; color:white; border-color:#0864e9; }
+#caixaRequestsRoot .ca-product-preview { background:#f3f7fc; border:1px solid #e0e8f2; padding:12px; border-radius:8px; margin:12px 0; }
+#caixaRequestsRoot .ca-product-preview strong { font-size:18px; }
+#caixaRequestsRoot .ca-product-preview p { font-size:13px; margin:5px 0; }
+#caixaRequestsRoot .ca-product-preview small { font-size:11px; color:#64748b; display:block; margin-top:7px; line-height:1.4; }
+#caixaRequestsRoot .ca-product-balances { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+#caixaRequestsRoot .ca-product-balances span { background:#fff; border-radius:6px; padding:6px 9px; font-size:12px; font-weight:600; }
+#caixaRequestsRoot .ca-stepper { display:flex; align-items:center; max-width:210px; gap:0; margin-top:7px; }
+#caixaRequestsRoot .ca-stepper button { margin:0; width:42px; min-height:40px; padding:0; border:1px solid #d0ddeb; background:#f4f8fc; font-size:20px; color:#195293; }
+#caixaRequestsRoot .ca-stepper input { margin:0 !important; width:85px !important; border-radius:0; text-align:center; font-weight:700; }
+#caixaRequestsRoot .ca-default-reason, #caixaRequestsRoot .ca-balance-warning { font-size:11px; line-height:1.5; color:#667b95; margin:8px 0; }
+#caixaRequestsRoot .ca-balance-warning { color:#916000; }
+#caixaRequestsRoot .ca-balance-warning:empty { display:none; }
+#caixaRequestsRoot .ca-optional-notes { margin:12px 0; font-size:12px; color:#42628a; }
+#caixaRequestsRoot .ca-optional-notes summary { cursor:pointer; }
+#caixaRequestsRoot .ca-optional-notes textarea { width:100%; max-width:none; min-height:55px; margin-top:7px; }
+#caixaRequestsRoot .ca-request-submit { width:100%; min-height:40px; margin:8px 0 0; background:#0864e9; border-color:#0864e9; color:white; font-size:13px; }
+#caixaRequestsRoot .ca-pending-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px; }
+#caixaRequestsRoot .ca-pending-heading h3 { margin:0; font-size:15px; }
+#caixaRequestsRoot .ca-pending-heading > strong { background:#eef4ff; color:#075dde; border-radius:20px; padding:4px 9px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-row { border-top:1px solid #e4ebf4; padding:11px 0; }
+#caixaRequestsRoot .ca-pending-row > div { display:flex; justify-content:space-between; font-size:13px; }
+#caixaRequestsRoot .ca-pending-row p { margin:5px 0; font-size:12px; }
+#caixaRequestsRoot .ca-pending-row :is(small,time) { display:block; color:#62758c; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-pending-row button { font-size:11px; margin:7px 0 0; padding:5px 9px; min-height:30px; }
+#caixaRequestsRoot .ca-pending-history { border-top:1px solid #e4ebf4; margin-top:12px; padding-top:12px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-history summary { cursor:pointer; font-weight:600; }
+#caixaRequestsRoot .ca-history-row { padding:9px 0; border-bottom:1px solid #edf2f8; }
+#caixaRequestsRoot .ca-history-row small { display:block; font-size:11px; margin-top:4px; color:#62758c; }
+#caixaRequestsRoot .ca-pending-limit { display:block; font-size:10px; color:#7a8ca1; margin-top:10px; }
+#caixaRequestsRoot .ca-pending-empty { font-size:12px; padding:12px 0; color:#62758c; }
+#caixaRequestsRoot .ca-cashier-tracking { border:1px solid #dce6f1; border-radius:10px; padding:13px 16px; margin-top:14px; }
+#caixaRequestsRoot .ca-cashier-tracking > summary { font-size:13px; font-weight:600; cursor:pointer; color:#185ead; }
+@media(max-width:1050px) { #caixaRequestsRoot .ca-cashier-layout { grid-template-columns:minmax(0,1fr); } }
 #caixaRequestsRoot .ca-toolbar { margin:16px 0 8px; }
 #caixaRequestsRoot .ca-tabs { display:flex; flex-wrap:wrap; gap:7px; }
 #caixaRequestsRoot .ca-tabs button { font-size:13px; border:1px solid #d9e3f0; border-radius:9px; padding:8px 12px; min-height:37px; }

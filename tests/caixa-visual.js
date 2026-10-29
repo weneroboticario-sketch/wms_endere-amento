@@ -24,6 +24,7 @@ const client = {
   },
   async rpc(name,args) {
     if (name === "list_wms_caixa_attendance") return {data:rows.map(row=>({...row}))};
+    if (name === "lookup_wms_caixa_item") return {data:{found:["48060","00123","84862","84859","83823"].includes(args.product_code),sku:args.product_code,name:"Creme hidratante · demonstração visual",captureAvailable:24,storeAvailable:3,updatedAt:now}};
     if (name === "send_wms_caixa_message") {
       messages.push({ id: messages.length+1, request_id:args.request_key, warehouse_code:"VDCG", sender_id:cashier?"caixa-demo":"worker-demo", sender_name:cashier?"Caixa · demonstração":"Estoquista · demonstração", body:args.body, created_at:new Date().toISOString() });
       return {data:messages.length};
