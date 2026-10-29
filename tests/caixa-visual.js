@@ -11,6 +11,7 @@ const rows = [
   { ...base, id: "done", sku: "85828", kind: "ADJUSTMENT", status: "CONCLUIDO", confirmed_at: now }
 ];
 const cashier = new globalThis.URLSearchParams(globalThis.location.search).has("caixa");
+const admin = new globalThis.URLSearchParams(globalThis.location.search).has("admin");
 const messages = [{ id: 1, warehouse_code: "VDCG", request_id: "adjustment-1", sender_id: "caixa-demo", sender_name: "Caixa · demonstração", body: "O cliente está aguardando. Pode conferir o ajuste?", created_at: now }];
 const client = {
   from(table) {
@@ -32,4 +33,4 @@ const client = {
     return { error: { code: "P0001", message: "Prévia visual: nenhuma alteração é enviada ao sistema real." } };
   }
 };
-mountCaixaRequests(document.getElementById("caixaRequestsRoot"), { actor: cashier ? "caixa-demo" : "worker-demo", role: cashier ? "CAIXA" : "OPERADOR", warehouse: "VDCG", client, isCurrent: () => true });
+mountCaixaRequests(document.getElementById("caixaRequestsRoot"), { actor: admin ? "admin-demo" : cashier ? "caixa-demo" : "worker-demo", role: admin ? "ADMINISTRADOR" : cashier ? "CAIXA" : "OPERADOR", canDeletePermanently: admin, warehouse: "VDCG", client, isCurrent: () => true });

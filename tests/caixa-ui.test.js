@@ -236,3 +236,43 @@ test("side conversation stays bound to the selected request when two adjustments
     assert.equal(calls[0].name,"send_wms_caixa_message");assert.equal(calls[0].args.request_key,"b");
   } finally {globalThis.document=previous;}
 });
+
+test("permanent deletion is visible only to global admin and requires explicit confirmation of the exact request",async()=>{
+  const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
+  try {
+    const base={id:"delete-a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"EM_VERIFICACAO",updated_at:new Date().toISOString(),created_at:new Date().toISOString()};
+    let rows=[base,{...base,id:"keep-b",quantity:5}],deleted=0;const writes=[];
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){
+      if(name==="list_wms_caixa_attendance")return {data:rows.map(row=>({...row}))};
+      if(name==="lookup_wms_caixa_item")return {data:{found:true,name:"Produto"}};
+      writes.push({name,args});rows=rows.filter(row=>row.id!==args.request_key);return {data:true};
+    }};
+    for(const [role,allowed] of [["CAIXA",true],["OPERADOR",true],["SUPERVISOR",true],["ADMINISTRADOR",false]]){
+      const denied=new Element("main");denied.root=true;mountCaixaRequests(denied,{actor:"cashier",role,warehouse:"VDCG",client,canDeletePermanently:allowed,isCurrent:()=>true});await setImmediate();
+      assert.ok(!denied.querySelectorAll("button").some(node=>node.textContent==="Excluir definitivamente"));
+    }
+    const host=new Element("main");host.root=true;mountCaixaRequests(host,{actor:"admin",role:"ADMINISTRADOR",warehouse:"VDCG",client,canDeletePermanently:true,isCurrent:()=>true,onDeleted:async()=>{deleted++;}});await setImmediate();
+    const card=host.querySelectorAll("article").find(node=>node.dataset.requestId==="delete-a");
+    card.querySelectorAll("button").find(node=>node.textContent==="Excluir definitivamente").click();
+    const form=card.querySelectorAll("form").find(node=>node.className==="ca-delete-form"),input=form.querySelectorAll("input")[0];
+    assert.equal(form.hidden,false);await form.listeners.submit({preventDefault(){}});assert.equal(writes.length,0);
+    input.value="EXCLUIR";await form.listeners.submit({preventDefault(){}});
+    assert.deepEqual(writes,[{name:"delete_wms_caixa_request_permanently",args:{request_key:"delete-a",code:"VDCG",confirmation:"EXCLUIR",expected_updated_at:base.updated_at}}]);
+    assert.equal(deleted,1);assert.ok(!host.querySelectorAll("article").some(node=>node.dataset.requestId==="delete-a"));assert.ok(host.querySelectorAll("article").some(node=>node.dataset.requestId==="keep-b"));
+  }finally{globalThis.document=previous;}
+});
+
+test("cancel, scope changes and unconfirmed server failures never remove an attendance locally",async()=>{
+  const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
+  try {
+    let current=true,writes=0;const row={id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"PENDENTE",created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name){if(name==="list_wms_caixa_attendance")return {data:[row]};writes++;return {error:{code:"42501",message:"Sem permissão"}};}};
+    const host=new Element("main");host.root=true;mountCaixaRequests(host,{actor:"admin",role:"ADMINISTRADOR",warehouse:"VDCG",client,canDeletePermanently:true,isCurrent:()=>current});await setImmediate();
+    const card=host.querySelectorAll("article")[0],form=card.querySelectorAll("form").find(node=>node.className==="ca-delete-form"),input=form.querySelectorAll("input")[0];
+    card.querySelectorAll("button").find(node=>node.textContent==="Excluir definitivamente").click();input.value="EXCLUIR";
+    form.querySelectorAll("button").find(node=>node.textContent==="Cancelar").click();assert.equal(form.hidden,true);assert.equal(input.value,"");assert.equal(writes,0);
+    input.value="EXCLUIR";current=false;await form.listeners.submit({preventDefault(){}});assert.equal(writes,0);
+    current=true;await form.listeners.submit({preventDefault(){}});assert.equal(writes,1);assert.ok(host.querySelectorAll("article").some(node=>node.dataset.requestId==="a"));
+    assert.ok(form.querySelectorAll("p").some(node=>node.textContent?.includes("Sem permissão")));
+  }finally{globalThis.document=previous;}
+});

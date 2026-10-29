@@ -79,6 +79,7 @@ export function mountCaixaRequests(host, context) {
     } });
   }
   function observeRequests(nextRows) {
+    for (const id of observed.keys()) if (!nextRows.some(request => request.id === id)) observed.delete(id);
     for (const request of nextRows) {
       const prior = observed.get(request.id);
       const key = request.id + ":" + request.status + ":" + (request.updated_at || request.confirmed_at || request.resolved_at || request.claimed_at || "");
@@ -202,6 +203,40 @@ export function mountCaixaRequests(host, context) {
       const actions = node("div", undefined, card); actions.className = "ca-card-actions";
       const state = detailsState.get(request.id) || { open: false, drafts: {}, history: null };
       detailsState.set(request.id, state);
+      if (context.role === "ADMINISTRADOR" && context.canDeletePermanently === true) {
+        const toggle = node("button", "Excluir definitivamente", actions); toggle.type = "button"; toggle.className = "danger-button";
+        const deletion = node("form", undefined, card); deletion.className = "ca-delete-form"; deletion.hidden = !state.deleteOpen;
+        node("p", "Excluir definitivamente SKU " + request.sku + " · " + request.quantity + " un. · estoque " + context.warehouse + " · solicitação " + request.id + "?", deletion);
+        node("p", "Serão apagados esta solicitação, mensagens, histórico, tarefas e reposição vinculada, inclusive seus registros de exportação no sistema. Esta ação não pode ser desfeita e não estorna saldos ou arquivos já baixados.", deletion);
+        const label = node("label", "Digite EXCLUIR para confirmar", deletion);
+        const input = node("input", undefined, label); input.type = "text"; input.autocomplete = "off"; input.maxLength = 7; input.value = state.drafts.deletion || "";
+        input.setAttribute("aria-label", "Confirmar exclusão · solicitação " + request.id);
+        input.addEventListener("input", () => { state.drafts.deletion = input.value; });
+        const error = node("p", "", deletion); error.setAttribute("role", "status");
+        const send = node("button", "Confirmar exclusão definitiva", deletion); send.type = "submit"; send.className = "danger-button";
+        const cancel = node("button", "Cancelar", deletion); cancel.type = "button"; cancel.className = "secondary-button";
+        toggle.addEventListener("click", () => { deletion.hidden = !deletion.hidden; state.deleteOpen = !deletion.hidden; if (!deletion.hidden) input.focus?.(); });
+        cancel.addEventListener("click", () => { deletion.hidden = true; state.deleteOpen = false; state.drafts.deletion = ""; input.value = ""; });
+        deletion.addEventListener("submit", async event => {
+          event.preventDefault(); if (busy || !current()) return;
+          if (input.value !== "EXCLUIR") { error.textContent = "Digite EXCLUIR para confirmar."; return; }
+          busy = true; send.disabled = true; cancel.disabled = true;
+          let deleted = false;
+          try {
+            const result = await rpc("delete_wms_caixa_request_permanently", { request_key: request.id, code: context.warehouse, confirmation: input.value, expected_updated_at: request.updated_at });
+            if (result !== true) throw new Error("O servidor não confirmou a exclusão.");
+            if (!current()) return;
+            deleted = true; ++revision; rows = rows.filter(row => row.id !== request.id); snapshot = "";
+            observed.delete(request.id); detailsState.delete(request.id); messageFeed = messageFeed.filter(message => message.request_id !== request.id);
+            notices.length = 0; notice.textContent = ""; chat.reconcile(rows); renderPending(rows); renderList(); showUnread();
+            feedback.textContent = "Solicitação e dados vinculados excluídos definitivamente.";
+            await context.onDeleted?.(request); await refresh();
+          } catch (failure) {
+            if (current()) { if (deleted) feedback.textContent = "Exclusão concluída. Atualize a fila para recarregar os demais dados.";
+              else error.textContent = failure.message + " Nenhum sucesso de exclusão foi confirmado. Atualize antes de tentar novamente."; }
+          } finally { busy = false; if (current()) { send.disabled = false; cancel.disabled = false; } }
+        });
+      }
       const change = async (operation, observation = "") => {
         await rpc("act_wms_caixa_adjustment", { request_key: request.id, operation, observation });
         snapshot = ""; await refresh();

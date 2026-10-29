@@ -9306,6 +9306,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      canDeletePermanently: isGlobalAdminUser(authState.currentUser),
+      onDeleted: async function (request) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) return;
+        if (request.replenishment_id) {
+          replenishmentState.requests = replenishmentState.requests.filter(function (item) { return item.id !== request.replenishment_id; });
+          await refreshReplenishmentData();
+          if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse) renderReplenishment();
+        }
+      },
       openRequestsScreen: function () { return showScreen("reposicao"); },
       onUnreadMessages: function (info) {
         var scope = actor + ":" + warehouse + ":" + role;
