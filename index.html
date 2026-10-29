@@ -56,6 +56,7 @@
       <select id="requestRoleInput">
         <option value="OPERADOR">Operador de estoque</option>
         <option value="ATENDENTE">Atendente de loja</option>
+        <option value="CAIXA">Caixa — solicitar produtos e ajustes</option>
       </select>
       <label for="requestJobInput">Função ou cargo</label>
       <input id="requestJobInput" type="text" placeholder="Opcional">
@@ -116,6 +117,7 @@
           <p class="menu-label">Processos</p>
           <button class="menu-item transfer-full-menu" data-icon="TRF" data-screen="transferencias" type="button">Transferencias</button>
           <button class="menu-item" data-icon="REP" data-screen="reposicao" type="button">Pedidos de Reposicao <span class="menu-badge" id="replenishmentMenuBadge" hidden>0</span></button>
+          <button class="menu-item" data-icon="REP" data-screen="pedidosCaixa" type="button" hidden>Pedidos do Caixa</button>
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
@@ -539,6 +541,7 @@
         </section>
       </section>
 
+      <section class="screen" id="pedidosCaixa" hidden><div class="panel" id="caixaRequestsRoot"></div></section>
       <section class="screen" id="reposicao">
         <div class="page-title">
           <div>
@@ -1146,6 +1149,7 @@
               <select id="userRoleInput">
                 <option value="OPERADOR">OPERADOR</option>
                 <option value="ATENDENTE">ATENDENTE</option>
+                <option value="CAIXA">CAIXA</option>
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="ADMINISTRADOR">ADMINISTRADOR</option>
               </select>

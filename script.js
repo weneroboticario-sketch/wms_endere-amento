@@ -1,4 +1,5 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import { mountCaixaRequests } from "./src/caixa-requests.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
@@ -99,8 +100,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
-  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
+  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
+    pedidosCaixa: ["ADMINISTRADOR", "SUPERVISOR", "CAIXA"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
@@ -6475,6 +6477,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
       return;
     }
+    if (authState.currentUser.role === "CAIXA") {
+      await ensureWarehousesLoaded();
+      resetSessionInactivityTimeout();
+      await showScreen("pedidosCaixa");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6631,6 +6639,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       await showScreen("globalDashboard");
       return;
     }
+    if (authState.currentUser.role === "CAIXA") {
+      await showScreen("pedidosCaixa");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6713,13 +6725,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-caixa");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
+    if (authState.currentUser.role === "CAIXA") return "pedidosCaixa";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6773,6 +6786,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "pedidosCaixa" && IS_CP_ALAMO) return false;
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema";
@@ -6963,7 +6977,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       supervisor = null;
       supervisorId = "";
     }
-    if (role === "ATENDENTE") availableForTasks = false;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) availableForTasks = false;
     if (supervisor && (supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, defaultWarehouseCode))) {
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
@@ -7106,7 +7120,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function renderUserRoleOptions(selectedRole) {
     var select = $("userRoleInput");
     if (!select) return;
-    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE"] : ROLES;
+    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE", "CAIXA"] : ROLES;
     select.innerHTML = roles.map(function (role) {
       var label = role === "ATENDENTE" ? "ATENDENTE" : role;
       return "<option value=\"" + escapeHtml(role) + "\">" + escapeHtml(label) + "</option>";
@@ -7119,8 +7133,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function syncUserAvailabilityForRole(role) {
     var input = $("userAvailableInput");
     if (!input) return;
-    input.disabled = role === "ATENDENTE";
-    if (role === "ATENDENTE") input.checked = false;
+    input.disabled = ["ATENDENTE", "CAIXA"].indexOf(role) >= 0;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) input.checked = false;
   }
 
   function renderUserWarehouseInputs(user) {
@@ -7270,7 +7284,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { value: "ADMINISTRADOR", label: "Administrador" },
       { value: "SUPERVISOR", label: "Supervisor" },
       { value: "OPERADOR", label: "Operador" },
-      { value: "ATENDENTE", label: "Atendente" }
+      { value: "ATENDENTE", label: "Atendente" },
+      { value: "CAIXA", label: "Caixa" }
     ], userFilterValue("userRoleFilter"));
     fillUserSelect("userSupervisorFilter", userSupervisorFilterOptions(), userFilterValue("userSupervisorFilter"));
   }
@@ -8011,7 +8026,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       auth_email: request.email,
       role: approvedRole,
       active: true,
-      available_for_tasks: approvedRole !== "ATENDENTE",
+      available_for_tasks: ["ATENDENTE", "CAIXA"].indexOf(approvedRole) < 0,
       default_warehouse_id: activeWarehouseId(),
       default_warehouse_code: activeWarehouseCode(),
       warehouse_id: activeWarehouseId(),
@@ -8195,6 +8210,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "pedidosCaixa") return "Pedidos do Caixa";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
@@ -9278,7 +9294,22 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function renderCaixaRequestsScreen() {
+    if (!$("caixaRequestsRoot") || !canAccessScreen("pedidosCaixa")) return;
+    var actor = authState.currentUser.id;
+    var role = authState.currentUser.role;
+    var warehouse = activeWarehouseCode();
+    mountCaixaRequests($("caixaRequestsRoot"), {
+      client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; }
+    });
+  }
+
   function renderAll() {
+    if (getActiveScreenId() === "pedidosCaixa") {
+      renderCaixaRequestsScreen();
+      return;
+    }
     renderStockFreshnessAlert();
     var activeScreen = getActiveScreenId();
     if (activeScreen === "globalDashboard") {

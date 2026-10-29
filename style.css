@@ -6174,3 +6174,34 @@ body.role-atendente .replenishment-layout {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+#caixaRequestsRoot fieldset {
+  border: 1px solid #cbdced;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 16px 0;
+  min-width: 0;
+}
+
+#caixaRequestsRoot label {
+  display: block;
+  margin: 12px 0;
+}
+
+#caixaRequestsRoot input:not([type="checkbox"]),
+#caixaRequestsRoot select,
+#caixaRequestsRoot textarea {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  margin-top: 6px;
+}
+
+#caixaRequestsRoot button {
+  margin: 8px 8px 8px 0;
+}
+
+#caixaRequestsRoot p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

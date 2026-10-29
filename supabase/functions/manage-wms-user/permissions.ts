@@ -1,4 +1,4 @@
-export const STORE_STAFF_ROLES = new Set(["OPERADOR", "ATENDENTE"]);
+export const STORE_STAFF_ROLES = new Set(["OPERADOR", "ATENDENTE", "CAIXA"]);
 
 export function maySupervisorManageStoreUser({
   callerRole,
