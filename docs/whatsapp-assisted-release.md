@@ -1,5 +1,13 @@
 # WhatsApp — importação assistida: entrega e ativação
 
+## Exclusão da fila — atualização preparada em 29/10/2026
+
+Atualização autorizada para publicação em 29/10/2026. Aplicada somente no WMS a migration `20261029134824_whatsapp_assisted_archive_requests.sql`, a partir da proposta complementar `supabase/proposals/whatsapp_assisted_archive.sql`. Confirmado após a instalação: zero solicitações excluídas. A interface oferece Excluir solicitação da fila, com motivo de 3 a 500 caracteres e confirmação explícita, somente na visão da supervisão. Excluídas podem ser consultadas pelo filtro Solicitações → Excluídas com autor, motivo e histórico preservados.
+
+Operação protegida e transacional cancela tarefas abertas usando cancelar_tarefa, preserva concluídas e quantidades atendidas, marca o pedido com deleted_at/deleted_by/delete_reason e registra REQUEST_ARCHIVED. Repetição não duplica o evento. Locks de tarefas/itens precedem o pedido para serializar com o atendimento; falha de cancelamento reverte tudo. Operadores não enxergam itens de origem excluída e o banco impede reabertura das tarefas. Não há DELETE físico, alteração de saldo, reinterpretação ou criação de pedido.
+
+Publicação depende de aprovação da alteração complementar de banco e do frontend juntos; publicar apenas o frontend antes de instalar as colunas interromperia a leitura da fila. Nenhuma solicitação real foi excluída nos testes. Motivo e checkbox não autorizam exclusão automática pelo agente: a exclusão individual será confirmada pelo usuário na interface.
+
 ## Registro da publicação autorizada
 
 Em 28/10/2026, após autorização específica para preparar o banco e publicar desativado, aplicada no WMS `bzqulgdtfpcmkyaldssy` a migration `20261028210821_whatsapp_assisted_import_paused.sql`. Conferidos: entrada VDCG pausada, zero solicitações/itens/tarefas da integração, RLS nas quatro tabelas e ausência de escrita direta pelos clientes. Variável de ativação ausente no projeto Vercel do WMS. O restante deste documento descreve os procedimentos de homologação/ativação ainda pendentes. Não há autorização para retomar a entrada ou criar tarefas reais nesta publicação. A demonstração fica somente no arquivo local preview-whatsapp.html e não aparece no WMS com a integração desligada.

@@ -74,6 +74,8 @@ export function renderWhatsAppAssistedLive(host, context) {
     return button;
   };
   const filters = element("div", undefined, panel);
+  const requestView = context.supervisor ? selectField(filters, "Solicitações", [["active", "Ativas"], ["deleted", "Excluídas"]]) : null;
+  if (requestView) requestView.value = "active";
   const clientFilter = selectField(filters, "Cliente", [["", "Todos"], ["yes", "Atendimento ao cliente"]]);
   const priorityFilter = selectField(filters, "Prioridade", [["", "Todas"], ["1", "Cliente"], ["2", "Urgência"], ["3", "Abastecimento"], ["4", "Verificação / rotina"]]);
   const stateFilter = selectField(filters, "Status", [["", "Todos"], ...["PENDENTE", "PARCIAL", "VERIFICACAO", "AGUARDANDO_VALIDACAO", "CONCLUIDA", "CANCELADA"].map(state => [state, state])]);
@@ -144,6 +146,7 @@ export function renderWhatsAppAssistedLive(host, context) {
       const closed = completed === items.length && items.length;
       const cancelled = items.some(item => assistedItemState(item) === "CANCELADA");
       element("summary", `Solicitação ${request.id}: ${completed}/${items.length} resolvidos — ${closed ? cancelled ? "encerrada com cancelamentos" : "concluída" : "com pendências"}`, details);
+      if (request.deleted_at) element("p", `Excluída da fila em ${new Date(request.deleted_at).toLocaleString("pt-BR")} por ${request.deleted_by}. Motivo: ${request.delete_reason}`, details);
       element("p", `${request.source_group} | Aprovada por: ${request.approved_by} | ${new Date(request.approved_at).toLocaleString("pt-BR")}`, details);
       element("pre", request.original_text, details);
       const history = element("div", undefined, details);
@@ -153,15 +156,33 @@ export function renderWhatsAppAssistedLive(host, context) {
         history.replaceChildren();
         events.forEach(event => element("p", `${new Date(event.created_at).toLocaleString("pt-BR")} | ${event.actor_id} | ${event.event_type} | ${event.amount ?? ""} ${event.note || ""}`, history));
       });
+      if (!request.deleted_at) {
+        element("p", "Excluir da fila cancela tarefas abertas, sem apagar quantidades já atendidas, tarefas concluídas ou histórico. Não altera saldos.", details);
+        const reason = inputField(details, "Motivo da exclusão");
+        reason.maxLength = 500;
+        const confirmation = inputField(details, "Confirmo a exclusão da fila e o cancelamento das tarefas ainda abertas", "checkbox");
+        let attemptedReason;
+        action(details, "Excluir solicitação da fila", async () => {
+          if (!confirmation.checked || reason.value.trim().length < 3) throw new Error("Informe o motivo e confirme a exclusão da solicitação.");
+          attemptedReason ??= reason.value.trim();
+          reason.readOnly = true;
+          try { await gateway.archive(request.id, attemptedReason); }
+          catch (error) { if (error.confirmedFailure) { attemptedReason = null; reason.readOnly = false; } throw error; }
+          await changed();
+        });
+      }
     });
   };
+  let refreshGeneration = 0;
   const refresh = async () => {
+    const generation = ++refreshGeneration;
     try {
-      const result = await gateway.load();
-      if (active()) { data = result; renderQueue(); connection.textContent = `Conexão disponível. Última consulta: ${new Date().toLocaleString("pt-BR")}. Atualização manual, sem leitura do WhatsApp.`; }
+      const result = await gateway.load({ archived: requestView?.value === "deleted" });
+      if (active() && generation === refreshGeneration) { data = result; renderQueue(); connection.textContent = `Conexão disponível. Última consulta: ${new Date().toLocaleString("pt-BR")}. Atualização manual, sem leitura do WhatsApp.`; }
     } catch (error) { if (active()) connection.textContent = "Falha na consulta. Os dados exibidos podem estar desatualizados."; throw error; }
   };
   const changed = async () => { await refresh(); if (active()) context.onChanged?.(); };
+  requestView?.addEventListener("change", () => { refresh().catch(error => { if (active()) status.textContent = error.message; }); });
   [clientFilter, priorityFilter, stateFilter, ownerFilter, fromFilter, toFilter].forEach(filter => filter.addEventListener("change", renderQueue));
   action(panel, "Atualizar solicitações", refresh);
   if (context.supervisor) {

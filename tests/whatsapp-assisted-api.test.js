@@ -42,3 +42,10 @@ test("request completion requires quantity and validation; adjustments are separ
   assert.equal(assistedItemState({ kind: "ADJUSTMENT", verified_at: null, task: { status: "CONCLUIDA" } }), "VERIFICACAO");
   assert.equal(assistedItemState({ kind: "ADJUSTMENT", verified_at: "2026-10-28", task: { status: "CONCLUIDA" } }), "CONCLUIDA");
 });
+
+test("archive uses the protected RPC instead of deleting request or task rows directly", async () => {
+  const calls=[];
+  const gateway=createAssistedGateway({rpc:async(name,payload)=>{calls.push({name,payload});return {data:"request"};}},{isCurrent:()=>true,warehouse:"VDCG"});
+  await gateway.archive("request","Motivo sintético");
+  assert.deepEqual(calls,[{name:"archive_whatsapp_assisted_request",payload:{request_key:"request",reason:"Motivo sintético"}}]);
+});

@@ -38,7 +38,7 @@ async function fixture(run) {
       rpc: async (name,payload) => { calls.push({ name,payload }); return { data: payload.request_key }; },
       from(table) {
         const query = { then(resolve,reject) { return Promise.resolve({ data: table === "wms_assisted_settings" ? [{ intake_enabled:true }] : [] }).then(resolve,reject); } };
-        for (const method of ["select","eq","order","limit","range","in"]) query[method] = () => query;
+        for (const method of ["select","eq","order","limit","range","in","is","not"]) query[method] = () => query;
         return query;
       }
     };

@@ -71,6 +71,75 @@ const approve = (database, requestKey = key, items = payload, reviewed = false) 
   [requestKey, "Mensagem sintética de teste", JSON.stringify(items), reviewed]
 );
 
+async function archiveFixture() {
+  const database = await fixture();
+  await database.exec("alter table public.operacao_tarefas add column motivo_cancelamento text");
+  const source = fs.readFileSync(new URL("../supabase/migrations/20261007123000_central_tarefas.sql", import.meta.url),"utf8");
+  await database.exec(source.match(/create or replace function public\.cancelar_tarefa\([\s\S]*?\n\$\$;/)[0]);
+  await database.exec(fs.readFileSync(new URL("../supabase/proposals/whatsapp_assisted_archive.sql", import.meta.url),"utf8"));
+  return database;
+}
+
+test("archive cancels open tasks once and preserves completed work, quantities and history", async () => {
+  const database = await archiveFixture();
+  try {
+    await approve(database,key,[...payload,{...payload[0],sku:"54150",sourceLine:3,quantity:1}]);
+    const items = (await database.query("select * from public.wms_assisted_request_items order by source_line")).rows;
+    await database.query("select public.record_whatsapp_assisted_work($1,$2,0,1)",[items[0].id,"00000000-0000-4000-8000-000000000051"]);
+    await database.query("select public.record_whatsapp_assisted_work($1,$2,0,1)",[items[2].id,"00000000-0000-4000-8000-000000000052"]);
+    await database.query("select public.archive_whatsapp_assisted_request($1,'Pedido lançado em duplicidade')",[key]);
+    await database.query("select public.archive_whatsapp_assisted_request($1,'Pedido lançado em duplicidade')",[key]);
+    assert.deepEqual((await database.query("select status from public.operacao_tarefas task join public.wms_assisted_request_items item on item.task_id=task.id order by item.source_line")).rows.map(row=>row.status),["CANCELADA","CANCELADA","CONCLUIDA"]);
+    assert.equal((await database.query("select attended from public.wms_assisted_request_items where id=$1",[items[0].id])).rows[0].attended,1);
+    const request=(await database.query("select deleted_at,deleted_by,delete_reason from public.wms_assisted_requests where id=$1",[key])).rows[0];
+    assert.ok(request.deleted_at);
+    assert.equal(request.deleted_by,"admin");
+    assert.equal((await database.query("select count(*)::int as total from public.wms_assisted_request_events where event_type='REQUEST_ARCHIVED'")).rows[0].total,1);
+    await assert.rejects(database.query("update public.operacao_tarefas set status='ATRIBUIDA' where id=$1",[items[0].task_id]),/não é permitido reabrir/);
+  } finally { await database.close(); }
+});
+
+test("archive requires supervisor warehouse permission and a reason; operators cannot see archived items", async () => {
+  const database = await archiveFixture();
+  try {
+    await approve(database);
+    await database.exec("update public.operacao_tarefas set atribuido_para='admin'; set app.role='OPERADOR'");
+    await assert.rejects(database.query("select public.archive_whatsapp_assisted_request($1,'Motivo sintético')",[key]),/restrita/);
+    await database.exec("set app.role='ADMINISTRADOR'; set app.warehouse='VDAR'");
+    await assert.rejects(database.query("select public.archive_whatsapp_assisted_request($1,'Motivo sintético')",[key]),/restrita/);
+    await database.exec("set app.warehouse='VDCG'");
+    await assert.rejects(database.query("select public.archive_whatsapp_assisted_request($1,'')",[key]),/motivo/);
+    await database.query("select public.archive_whatsapp_assisted_request($1,'Motivo sintético')",[key]);
+    await database.exec("set role authenticated; set app.role='OPERADOR'");
+    assert.equal((await database.query("select count(*)::int as total from public.wms_assisted_request_items")).rows[0].total,0);
+    await database.exec("reset role");
+    assert.equal((await database.query("select has_function_privilege('anon','public.archive_whatsapp_assisted_request(uuid,text)','EXECUTE') as allowed")).rows[0].allowed,false);
+  } finally { await database.close(); }
+});
+
+test("archive failure rolls back all task cancellations and parent archive", async () => {
+  const database = await archiveFixture();
+  try {
+    await approve(database);
+    await database.exec(`
+      create table public.archive_test_counter(calls integer);
+      insert into public.archive_test_counter values(0);
+      create or replace function public.cancelar_tarefa(p_tarefa_id uuid,p_motivo_cancelamento text)
+      returns public.operacao_tarefas language plpgsql as $$
+      declare total integer; result public.operacao_tarefas;
+      begin
+        update public.archive_test_counter set calls=calls+1 returning calls into total;
+        if total=2 then raise exception 'synthetic cancellation failure'; end if;
+        update public.operacao_tarefas set status='CANCELADA' where id=p_tarefa_id returning * into result;
+        return result;
+      end $$;
+    `);
+    await assert.rejects(database.query("select public.archive_whatsapp_assisted_request($1,'Motivo sintético')",[key]),/synthetic cancellation failure/);
+    assert.equal((await database.query("select count(*)::int as total from public.operacao_tarefas where status='CANCELADA'")).rows[0].total,0);
+    assert.equal((await database.query("select deleted_at from public.wms_assisted_requests where id=$1",[key])).rows[0].deleted_at,null);
+  } finally { await database.close(); }
+});
+
 test("server-side pause blocks new approvals but preserves retries and work already approved", async () => {
   const database = await fixture();
   try {

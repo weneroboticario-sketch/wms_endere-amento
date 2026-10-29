@@ -32,12 +32,16 @@ export function createAssistedGateway(client, context) {
     return result.data || [];
   };
   return {
-    async load() {
+    async load({ archived = false } = {}) {
       check();
       const settings = context.supervisor ? await read(client.from("wms_assisted_settings").select("intake_enabled").eq("warehouse_code", "VDCG")) : [];
       const intakeEnabled = settings[0]?.intake_enabled === true;
-      const requests = context.supervisor
-        ? await read(client.from("wms_assisted_requests").select("*").eq("warehouse_code", "VDCG").order("approved_at", { ascending: false }).limit(50)) : [];
+      let requests = [];
+      if (context.supervisor) {
+        let query = client.from("wms_assisted_requests").select("*").eq("warehouse_code", "VDCG");
+        query = archived ? query.not("deleted_at", "is", null) : query.is("deleted_at", null);
+        requests = await read(query.order("approved_at", { ascending: false }).limit(50));
+      }
       const ids = requests.map(request => request.id);
       const items = [];
       if (context.supervisor && !ids.length) return { requests, items, intakeEnabled };
@@ -62,6 +66,7 @@ export function createAssistedGateway(client, context) {
     start: item => rpc("iniciar_tarefa", { p_tarefa_id: item.task_id, p_observacao: "Início de atendimento WhatsApp." }),
     validate: item => rpc("validar_tarefa", { p_tarefa_id: item.task_id, p_observacao: "Validação do item WhatsApp atendido." }),
     setIntake: enabled => rpc("set_whatsapp_assisted_intake", { enabled }),
+    archive: (requestId, reason) => rpc("archive_whatsapp_assisted_request", { request_key: requestId, reason }),
     async history(requestId) {
       const events = await read(client.from("wms_assisted_request_events").select("event_type,created_at,actor_id,item_id,amount,note").eq("request_id", requestId).order("created_at"));
       const items = await read(client.from("wms_assisted_request_items").select("task_id").eq("request_id", requestId));
