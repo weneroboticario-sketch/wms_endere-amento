@@ -42,7 +42,7 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
     adjustment.listeners.click();
     assert.equal(form.querySelectorAll("select")[0].value,"ADJUSTMENT");
     inputs[0].value="94133"; inputs[1].value="2";
-    host.querySelectorAll("textarea")[0].value="Liberar quantidade no pedido";
+    form.querySelectorAll("textarea")[0].value="Liberar quantidade no pedido";
     await send.listeners.click();
     assert.equal(calls[2].args.request_kind,"ADJUSTMENT");
     assert.equal(calls[2].args.product_code,"94133");
