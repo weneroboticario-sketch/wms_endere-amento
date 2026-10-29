@@ -73,6 +73,7 @@ Deno.serve(async (request) => {
   if (action === "create-user") {
     const profile = body.profile || {};
     const role = String(profile.role || "OPERADOR").toUpperCase();
+    if (!["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].includes(role)) return json({ ok: false, error: "Perfil invalido." }, 400);
     const warehouse = String(profile.default_warehouse_code || "").toUpperCase();
     const mayCreate = globalAdmin || maySupervisorManageStoreUser({
       callerRole: callerProfile.role,
@@ -104,13 +105,13 @@ Deno.serve(async (request) => {
       role,
       profile: role,
       active: profile.active !== false,
-      available_for_tasks: role === "ATENDENTE" ? false : profile.available_for_tasks !== false,
+      available_for_tasks: ["ATENDENTE", "CAIXA"].includes(role) ? false : profile.available_for_tasks !== false,
       default_warehouse_id: textValue(profile.default_warehouse_id),
       default_warehouse_code: warehouse,
       warehouse_id: textValue(profile.warehouse_id || profile.default_warehouse_id),
       warehouse_code: warehouse,
       allowed_warehouse_codes: isSupervisorCreation ? warehouse : warehouseCodes(profile.allowed_warehouse_codes, warehouse),
-      is_global_admin: globalAdmin && profile.is_global_admin === true,
+      is_global_admin: globalAdmin && role === "ADMINISTRADOR" && profile.is_global_admin === true,
       supervisor_id: isSupervisorCreation ? callerProfile.id : textValue(profile.supervisor_id),
       supervisor_name: isSupervisorCreation ? callerProfile.name : textValue(profile.supervisor_name),
       archived: false,
@@ -142,6 +143,7 @@ Deno.serve(async (request) => {
     if (targetError || !target) return json({ ok: false, error: "Usuario nao encontrado." }, 404);
     const nextRole = String(profile.role || target.role || "OPERADOR").toUpperCase();
     const nextWarehouse = String(profile.default_warehouse_code || target.default_warehouse_code || "").toUpperCase();
+    if (!["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].includes(nextRole)) return json({ ok: false, error: "Perfil invalido." }, 400);
     const mayUpdate = globalAdmin || maySupervisorManageStoreUser({
       callerRole: callerProfile.role,
       allowedWarehouses: allowed,
@@ -171,7 +173,7 @@ Deno.serve(async (request) => {
       role: nextRole,
       profile: nextRole,
       active: profile.active !== false,
-      available_for_tasks: nextRole === "ATENDENTE" ? false : profile.available_for_tasks !== false,
+      available_for_tasks: ["ATENDENTE", "CAIXA"].includes(nextRole) ? false : profile.available_for_tasks !== false,
       default_warehouse_id: textValue(profile.default_warehouse_id),
       default_warehouse_code: nextWarehouse,
       warehouse_id: textValue(profile.warehouse_id || profile.default_warehouse_id),
@@ -179,7 +181,7 @@ Deno.serve(async (request) => {
       allowed_warehouse_codes: globalAdmin
         ? warehouseCodes(profile.allowed_warehouse_codes, nextWarehouse)
         : nextWarehouse,
-      is_global_admin: globalAdmin && profile.is_global_admin === true,
+      is_global_admin: globalAdmin && nextRole === "ADMINISTRADOR" && profile.is_global_admin === true,
       supervisor_id: globalAdmin ? textValue(profile.supervisor_id) : callerProfile.id,
       supervisor_name: globalAdmin ? textValue(profile.supervisor_name) : callerProfile.name,
       auth_email: email,

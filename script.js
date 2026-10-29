@@ -1,4 +1,5 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import { mountCaixaRequests } from "./src/caixa-requests.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
@@ -99,16 +100,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
-  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
+  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
+    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
+    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     saudeSistema: ["ADMINISTRADOR"],
     manutencao: ["ADMINISTRADOR"],
@@ -975,6 +976,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function ensureScreenDataLoaded(screenId) {
     if (!authState.currentUser) return false;
+    if (screenId === "consultaSku" && authState.currentUser.role === "CAIXA") return true;
+    if (screenId === "reposicao" && authState.currentUser.role === "CAIXA") return true;
     if (screenId === "stockOverview") {
       if (!stockOverviewController) stockOverviewController = mountStockOverview({
         root: $("stockOverview"), client: supabaseDb,
@@ -6475,6 +6478,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
       return;
     }
+    if (authState.currentUser.role === "CAIXA") {
+      await ensureWarehousesLoaded();
+      resetSessionInactivityTimeout();
+      await showScreen("reposicao");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6631,6 +6640,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       await showScreen("globalDashboard");
       return;
     }
+    if (authState.currentUser.role === "CAIXA") {
+      await showScreen("reposicao");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6713,13 +6726,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-caixa");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
+    if (authState.currentUser.role === "CAIXA") return "reposicao";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6963,7 +6977,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       supervisor = null;
       supervisorId = "";
     }
-    if (role === "ATENDENTE") availableForTasks = false;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) availableForTasks = false;
     if (supervisor && (supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, defaultWarehouseCode))) {
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
@@ -7106,7 +7120,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function renderUserRoleOptions(selectedRole) {
     var select = $("userRoleInput");
     if (!select) return;
-    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE"] : ROLES;
+    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE", "CAIXA"] : ROLES;
     select.innerHTML = roles.map(function (role) {
       var label = role === "ATENDENTE" ? "ATENDENTE" : role;
       return "<option value=\"" + escapeHtml(role) + "\">" + escapeHtml(label) + "</option>";
@@ -7119,8 +7133,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function syncUserAvailabilityForRole(role) {
     var input = $("userAvailableInput");
     if (!input) return;
-    input.disabled = role === "ATENDENTE";
-    if (role === "ATENDENTE") input.checked = false;
+    input.disabled = ["ATENDENTE", "CAIXA"].indexOf(role) >= 0;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) input.checked = false;
   }
 
   function renderUserWarehouseInputs(user) {
@@ -7270,7 +7284,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { value: "ADMINISTRADOR", label: "Administrador" },
       { value: "SUPERVISOR", label: "Supervisor" },
       { value: "OPERADOR", label: "Operador" },
-      { value: "ATENDENTE", label: "Atendente" }
+      { value: "ATENDENTE", label: "Atendente" },
+      { value: "CAIXA", label: "Caixa" }
     ], userFilterValue("userRoleFilter"));
     fillUserSelect("userSupervisorFilter", userSupervisorFilterOptions(), userFilterValue("userSupervisorFilter"));
   }
@@ -8011,7 +8026,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       auth_email: request.email,
       role: approvedRole,
       active: true,
-      available_for_tasks: approvedRole !== "ATENDENTE",
+      available_for_tasks: ["ATENDENTE", "CAIXA"].indexOf(approvedRole) < 0,
       default_warehouse_id: activeWarehouseId(),
       default_warehouse_code: activeWarehouseCode(),
       warehouse_id: activeWarehouseId(),
@@ -8178,14 +8193,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
-    if (screenId === "reposicao" && $("replenishmentSkuInput")) {
+    if (screenId === "reposicao" && authState.currentUser.role !== "CAIXA" && $("replenishmentSkuInput")) {
       $("replenishmentSkuInput").focus();
       if (!isAttendant() && !replenishmentState.suggestionsLoaded) refreshReplenishmentSuggestions(true);
     }
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
     if (screenId === "transferencias") loadTaskCenterData({ force: false });
     if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
-    if (screenId === "reposicao" && !realtimeState.active) startLeaderLiveSync();
+    if (screenId === "reposicao" && authState.currentUser.role !== "CAIXA" && !realtimeState.active) startLeaderLiveSync();
   }
 
   function updateModuleSubtitle(screenId) {
@@ -9278,7 +9293,26 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function renderCaixaRequestsScreen() {
+    if (!$("caixaRequestsRoot") || IS_CP_ALAMO) return;
+    var caixaOnly = authState.currentUser.role === "CAIXA";
+    Array.from($("reposicao").children).forEach(function (child) { if (child.id !== "caixaRequestsRoot") child.hidden = caixaOnly; });
+    $("caixaRequestsRoot").hidden = authState.currentUser.role === "ATENDENTE";
+    if ($("caixaRequestsRoot").hidden) return;
+    var actor = authState.currentUser.id;
+    var role = authState.currentUser.role;
+    var warehouse = activeWarehouseCode();
+    mountCaixaRequests($("caixaRequestsRoot"), {
+      client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; }
+    });
+  }
+
   function renderAll() {
+    if (getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
+      renderCaixaRequestsScreen();
+      return;
+    }
     renderStockFreshnessAlert();
     var activeScreen = getActiveScreenId();
     if (activeScreen === "globalDashboard") {
@@ -9398,6 +9432,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishment() {
+    renderCaixaRequestsScreen();
     if (!$("replenishmentList")) return;
     var attendantView = isAttendant();
     applyReplenishmentRoleView(attendantView);
@@ -9602,7 +9637,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function replenishmentPriorityBadgeHtml(priority) {
     return normalizeReplenishmentPriority(priority) === "CLIENTE"
-      ? "<span class=\"replenishment-priority-badge\">CLIENTE</span>"
+      ? "<span class=\"replenishment-priority-badge\">URGENTE — CLIENTE</span>"
       : "";
   }
 
@@ -15898,6 +15933,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function renderSkuSearch() {
+    if (authState.currentUser && authState.currentUser.role === "CAIXA") return renderCaixaItemLookup();
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
@@ -15963,6 +15999,43 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("allocateSkuSearchButton").hidden = isAttendant();
     clearSkuSearchInput();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
+  }
+
+  async function renderCaixaItemLookup() {
+    var sku = firstSkuValue($("skuSearchInput").value);
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser.id;
+    var sequence = ++skuSearchRequestSeq;
+    var hub = $("skuOperationalHub");
+    $("skuResults").replaceChildren();
+    $("skuResultCards").replaceChildren();
+    $("skuResultActions").hidden = true;
+    $("allocateSkuSearchButton").hidden = true;
+    hub.replaceChildren(); hub.hidden = true;
+    if (!/^\d{4,8}$/.test(sku)) { setStatus("skuSearchStatus", "Informe ou bipe um SKU com 4 a 8 dígitos.", "error"); return; }
+    setStatus("skuSearchStatus", "Consultando item...", "warning");
+    try {
+      var response = await supabaseDb.rpc("lookup_wms_caixa_item", { code: warehouse, product_code: sku });
+      if (!authState.currentUser || authState.currentUser.id !== actor || authState.currentUser.role !== "CAIXA" || activeWarehouseCode() !== warehouse || sequence !== skuSearchRequestSeq) return;
+      if (response.error) throw response.error;
+      var item = response.data;
+      if (!item || !item.found) { setStatus("skuSearchStatus", "Item não encontrado.", "warning"); return; }
+      var card = skuHubTextElement("section", "", "sku-hub-card");
+      card.appendChild(skuHubTextElement("h3", sku + " — " + (item.name || "Produto sem nome")));
+      var grid = skuHubTextElement("div", "", "sku-hub-grid");
+      grid.appendChild(skuHubTile("Saldo Loja", item.storeAvailable === null ? "Não importado" : formatQty(item.storeAvailable)));
+      grid.appendChild(skuHubTile("Quantidade disponível CAPTAÇÃO", item.captureAvailable === null ? "Não importado" : formatQty(item.captureAvailable)));
+      card.appendChild(grid);
+      var updated = item.updatedAt ? new Date(item.updatedAt) : null;
+      card.appendChild(skuHubTextElement("p", updated ? "Base atualizada em " + updated.toLocaleString("pt-BR") : "Sem data de atualização disponível."));
+      if (updated && Date.now() - updated.getTime() > 4 * 60 * 60 * 1000) card.appendChild(skuHubTextElement("p", "Atenção: base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque."));
+      var requestButton = skuHubTextElement("button", "Solicitar produto ou ajuste urgente", "primary-button");
+      requestButton.type = "button"; requestButton.addEventListener("click", function () { showScreen("reposicao"); });
+      card.appendChild(requestButton); hub.replaceChildren(card); hub.hidden = false;
+      setStatus("skuSearchStatus", "Item consultado no estoque " + warehouse + ".", "success");
+    } catch (error) {
+      if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse && sequence === skuSearchRequestSeq) setStatus("skuSearchStatus", "Não foi possível consultar o item. Tente novamente.", "error");
+    }
   }
 
   function clearSkuSearchInput() {

@@ -56,6 +56,7 @@
       <select id="requestRoleInput">
         <option value="OPERADOR">Operador de estoque</option>
         <option value="ATENDENTE">Atendente de loja</option>
+        <option value="CAIXA">Caixa — solicitar produtos e ajustes</option>
       </select>
       <label for="requestJobInput">Função ou cargo</label>
       <input id="requestJobInput" type="text" placeholder="Opcional">
@@ -540,6 +541,7 @@
       </section>
 
       <section class="screen" id="reposicao">
+        <div class="panel" id="caixaRequestsRoot" hidden></div>
         <div class="page-title">
           <div>
             <p class="eyebrow">Operacao CAPTACAO</p>
@@ -1146,6 +1148,7 @@
               <select id="userRoleInput">
                 <option value="OPERADOR">OPERADOR</option>
                 <option value="ATENDENTE">ATENDENTE</option>
+                <option value="CAIXA">CAIXA</option>
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="ADMINISTRADOR">ADMINISTRADOR</option>
               </select>
