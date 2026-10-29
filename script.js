@@ -9305,6 +9305,21 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      claimProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        await refreshReplenishmentData();
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        return claimReplenishmentRequest(id);
+      },
+      openProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        replenishmentState.activeFilter = "";
+        replenishmentState.renderLimit = Math.max(replenishmentState.renderLimit, replenishmentState.requests.length);
+        renderReplenishment();
+        var row = Array.from($("replenishmentList").querySelectorAll("[data-replenishment-id]")).find(function (element) { return element.dataset.replenishmentId === id; });
+        if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
+        else showToast("Atualize a fila de reposição para localizar este pedido.", "warning");
+      },
       isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; }
     });
   }

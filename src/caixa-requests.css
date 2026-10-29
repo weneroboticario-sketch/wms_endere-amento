@@ -11,6 +11,9 @@
 #caixaRequestsRoot .ca-utilities small { color:#64748b; }
 #caixaRequestsRoot .ca-utilities button, #caixaRequestsRoot .ca-secondary button { font-size:12px; min-height:33px; }
 #caixaRequestsRoot .ca-secondary { display:flex; gap:8px; margin:5px 0 12px; }
+#caixaRequestsRoot .ca-notice:empty { display:none; }
+#caixaRequestsRoot .ca-notice { font-size:12px; color:#0956a7; background:#edf5ff; padding:8px 12px; border-radius:8px; }
+#caixaRequestsRoot .ca-chat-context { font-size:11px; line-height:1.5; color:#526581; margin:7px 0; }
 #caixaRequestsRoot .ca-list { display:grid; gap:10px; }
 #caixaRequestsRoot .ca-card { padding:13px 15px; border:1px solid #dae5f0; border-left:4px solid #e42e4d; background:#fff; border-radius:10px; box-shadow:0 2px 7px #1a35600a; }
 #caixaRequestsRoot .ca-card-head { display:flex; justify-content:space-between; gap:10px; align-items:start; }
@@ -34,6 +37,8 @@
 #caixaRequestsRoot .ca-chat { position:fixed; z-index:50; right:16px; bottom:16px; width:min(410px,calc(100vw - 32px)); height:min(570px,calc(100vh - 40px)); background:#fff; border:1px solid #c9d8eb; border-radius:14px; box-shadow:0 12px 42px #1025454a; padding:12px; display:flex; flex-direction:column; box-sizing:border-box; }
 #caixaRequestsRoot .ca-chat header { display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid #e6edf5; padding-bottom:10px; }
 #caixaRequestsRoot .ca-chat header strong { font-size:14px; }
+#caixaRequestsRoot .ca-chat header button { width:auto; flex:0 0 auto; min-height:32px; padding:6px 10px; margin:0; font-size:12px; }
+#caixaRequestsRoot .ca-chat .primary-button { background:#0864e9; border-color:#0864e9; color:#fff; }
 #caixaRequestsRoot .ca-chat > [role=status] { min-height:18px; color:#64748b; font-size:11px; margin:6px 0; }
 #caixaRequestsRoot .ca-chat-messages { flex:1; min-height:0; overflow-y:auto; padding:7px 1px; display:flex; flex-direction:column; gap:9px; }
 #caixaRequestsRoot .ca-chat-bubble { align-self:flex-start; max-width:88%; background:#eff4fb; padding:9px 12px; border-radius:10px; }

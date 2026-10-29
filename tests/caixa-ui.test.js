@@ -24,7 +24,7 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
     const calls=[];
     const client={
       from() {const chain={then(resolve){return Promise.resolve({data:[]}).then(resolve);}}; for(const method of ["select","eq","order","limit"]) chain[method]=()=>chain; return chain;},
-      async rpc(name,args) {calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
+      async rpc(name,args) {if(name==="list_wms_caixa_attendance")return {data:[]};calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
     };
     mountCaixaRequests(host,{actor:"c1",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});
     await setImmediate();
@@ -64,11 +64,13 @@ test("urgent attendance shows only available, mine and waiting, preserving separ
       {id:"c",sku:"00123",kind:"PRODUCT",warehouse_code:"VDCG",quantity:1,attended:0,status:"PENDENTE",customer_service:true,created_at:"2026-10-29T16:00:00Z",requested_by:"c1"}
     ];
     const calls=[];
-    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){calls.push({name,args});return {data:args.request_key};}};
+    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_attendance")return {data:rows};calls.push({name,args});return {data:args.request_key};}};
     mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});
     await setImmediate();
     const cards=()=>host.querySelectorAll("article").filter(row=>row.dataset.requestId);
     const button=prefix=>host.querySelectorAll("button").find(b=>b.textContent?.startsWith(prefix));
+    assert.deepEqual(cards().map(x=>x.dataset.requestId),["a"]);
+    button("Disponíveis").listeners.click();
     assert.deepEqual(cards().map(x=>x.dataset.requestId),["c"]);
     button("Meus atendimentos").listeners.click();
     assert.deepEqual(cards().map(x=>x.dataset.requestId),["a"]);
@@ -98,7 +100,7 @@ test("claimed stock operator can exchange messages bound to request without chan
       const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?[request]:[]}).then(resolve);}};
       for(const method of ["select","eq","order","limit"])query[method]=()=>query;
       return query;
-    },async rpc(name,args){calls.push({name,args});return {data:1};}};
+    },async rpc(name,args){if(name==="list_wms_caixa_attendance")return {data:[request]};calls.push({name,args});return {data:1};}};
     mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
     const button=prefix=>host.querySelectorAll("button").find(b=>b.textContent?.startsWith(prefix));
     button("Meus atendimentos").listeners.click();
@@ -119,7 +121,7 @@ test("cashier sees confirmation and return actions while completed adjustments h
   try {
     const host=new Element("main");host.root=true;
     const row={id:"a",sku:"48060",kind:"ADJUSTMENT",quantity:5,status:"AGUARDANDO_CONFIRMACAO_CAIXA",created_at:new Date().toISOString()};
-    const client={from(){const query={then(resolve){return Promise.resolve({data:[row]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;}};
+    const client={from(){const query={then(resolve){return Promise.resolve({data:[row]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(){return {data:[row]};}};
     mountCaixaRequests(host,{actor:"c1",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
     const labels=host.querySelectorAll("button").map(button=>button.textContent);
     assert.ok(labels.includes("Passou / deu certo"));assert.ok(labels.includes("Não passou"));assert.ok(!labels.includes("Assumir atendimento"));

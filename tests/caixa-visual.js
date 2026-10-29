@@ -11,12 +11,24 @@ const rows = [
   { ...base, id: "done", sku: "85828", kind: "ADJUSTMENT", status: "CONCLUIDO", confirmed_at: now }
 ];
 const cashier = new globalThis.URLSearchParams(globalThis.location.search).has("caixa");
+const messages = [{ id: 1, warehouse_code: "VDCG", request_id: "adjustment-1", sender_id: "caixa-demo", sender_name: "Caixa · demonstração", body: "O cliente está aguardando. Pode conferir o ajuste?", created_at: now }];
 const client = {
   from(table) {
-    const query = { then(resolve) { return Promise.resolve({ data: table === "wms_caixa_requests" ? rows : [{ created_at: now, actor_id: "Equipe · demonstração", status: "EM_VERIFICACAO", event_type: "CLAIM", observation: "Ajuste assumido para conferência." }] }).then(resolve); } };
-    for (const method of ["select", "eq", "order", "limit"]) query[method] = () => query;
+    const filters = {}; let descending = false, limit = 100;
+    const query = { then(resolve) {
+      let data = table === "wms_caixa_request_messages" ? messages.filter(message => (!filters.request_id || message.request_id === filters.request_id) && (!filters.before || message.id < filters.before)) : [{ created_at: now, actor_id: "Equipe · demonstração", status: "EM_VERIFICACAO", event_type: "CLAIM", observation: "Ajuste assumido para conferência." }];
+      if (table === "wms_caixa_request_messages") data = [...data].sort((a,b) => descending ? b.id-a.id : a.id-b.id).slice(0,limit);
+      return Promise.resolve({data}).then(resolve);
+    }, select(){return query;}, eq(key,value){filters[key]=value;return query;}, lt(key,value){filters.before=value;return query;}, order(key,options){descending=options?.ascending===false;return query;}, limit(value){limit=value;return query;} };
     return query;
   },
-  async rpc() { return { error: { code: "P0001", message: "Prévia visual: nenhuma alteração é enviada ao sistema real." } }; }
+  async rpc(name,args) {
+    if (name === "list_wms_caixa_attendance") return {data:rows.map(row=>({...row}))};
+    if (name === "send_wms_caixa_message") {
+      messages.push({ id: messages.length+1, request_id:args.request_key, warehouse_code:"VDCG", sender_id:cashier?"caixa-demo":"worker-demo", sender_name:cashier?"Caixa · demonstração":"Estoquista · demonstração", body:args.body, created_at:new Date().toISOString() });
+      return {data:messages.length};
+    }
+    return { error: { code: "P0001", message: "Prévia visual: nenhuma alteração é enviada ao sistema real." } };
+  }
 };
 mountCaixaRequests(document.getElementById("caixaRequestsRoot"), { actor: cashier ? "caixa-demo" : "worker-demo", role: cashier ? "CAIXA" : "OPERADOR", warehouse: "VDCG", client, isCurrent: () => true });
