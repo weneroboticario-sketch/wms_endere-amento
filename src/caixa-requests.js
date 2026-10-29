@@ -98,7 +98,7 @@ export function mountCaixaRequests(host, context) {
     conversation.messages.forEach(message => {
       const bubble = node("article", undefined, chatMessages);
       bubble.className = "ca-chat-bubble" + (message.sender_id === context.actor ? " ca-chat-mine" : "");
-      node("small", message.sender_id === context.actor ? "Você" : context.role === "CAIXA" ? "Estoque" : "Caixa", bubble);
+      node("small", message.sender_id === context.actor ? "Você" : message.sender_id === conversation.request?.requested_by ? "Caixa" : "Equipe de estoque", bubble);
       node("p", message.body, bubble);
       node("time", new Date(message.created_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }), bubble);
     });
@@ -208,7 +208,7 @@ export function mountCaixaRequests(host, context) {
         snapshot = ""; await refresh();
       };
       if (request.kind === "ADJUSTMENT" && !request.confirmed_at && request.status !== "CANCELADO") {
-        if (isStock && !request.claimed_by) action(actions, "Assumir atendimento", () => change("CLAIM")).className = "primary-button";
+        if (isStock && !request.claimed_by) action(actions, "Assumir atendimento", async () => { await change("CLAIM"); filter.tab = "mine"; renderList(); }).className = "primary-button";
         if (isStock && request.claimed_by === context.actor && request.status !== "AGUARDANDO_CONFIRMACAO_CAIXA") {
           const btn = node("button", "Informar resolução", actions); btn.type = "button"; btn.className = "primary-button";
           const form = node("form", undefined, card); form.className = "ca-resolution"; form.hidden = true;
@@ -223,7 +223,7 @@ export function mountCaixaRequests(host, context) {
             const value = input.value.trim();
             if (value.length < 3) { feedback.textContent = "Informe o que foi resolvido."; return; }
             busy = true; submit.disabled = true;
-            try { await change("RESOLVE", value); state.drafts.resolution = ""; feedback.textContent = "Aguardando confirmação do caixa."; }
+            try { await change("RESOLVE", value); state.drafts.resolution = ""; filter.tab = "waiting"; renderList(); feedback.textContent = "Aguardando confirmação do caixa."; }
             catch (error) { feedback.textContent = error.message; }
             finally { busy = false; submit.disabled = false; }
           });
