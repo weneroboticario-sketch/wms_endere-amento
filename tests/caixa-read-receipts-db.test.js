@@ -36,7 +36,7 @@ async function fixture() {
   await db.exec(sql("migrations/20261029153333_caixa_profile_requests.sql"));
   await db.exec(sql("migrations/20261029154622_caixa_urgent_replenishment.sql"));
   await db.exec(sql("migrations/20261029181023_caixa_request_chat_reviewed.sql"));
-  await db.exec(sql("migrations/20261030125348_caixa_message_read_receipts.sql"));
+  await db.exec(sql("migrations/20261030130608_caixa_message_read_receipts.sql"));
   return db;
 }
 async function login(db, name) {
@@ -61,7 +61,7 @@ test('read receipts enforce identity, request membership, warehouse and monotoni
  await login(db,'c2');assert.equal((await unread(db)).length,0);await assert.rejects(mark(db,second),/autorizada/);
  await login(db,'otherWarehouse');await assert.rejects(mark(db,second),/autorizada/);
  await login(db,'w1');assert.equal(Number((await unread(db)).find(r=>r.request_id===key).unread_count),1);
- await db.exec('reset role');await db.exec(sql('migrations/20261030125348_caixa_message_read_receipts.sql'));await db.exec('set role anon');await assert.rejects(mark(db,second),/permission denied/);
+ await db.exec('reset role');await db.exec(sql('migrations/20261030130608_caixa_message_read_receipts.sql'));await db.exec('set role anon');await assert.rejects(mark(db,second),/permission denied/);
  }finally{await db.close();}});
 test('closed conversations have no active counters, history remains and new messages are counted independently',async()=>{const db=await fixture();try{
  await login(db,'c1');await submit(db);await submit(db,secondKey);await login(db,'w1');await act(db,'CLAIM');await send(db,'Ainda não lida');await act(db,'RESOLVE','Ajuste pronto');

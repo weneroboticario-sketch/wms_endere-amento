@@ -1,6 +1,6 @@
 # Notificações por solicitação — 30/10/2026
 
-Status: implementado e testado localmente, NÃO publicado.
+Status: migration aplicada em 30/10/2026 após autorização específica para dispensar comprovação de backup somente nesta correção; publicação do frontend em andamento.
 
 Branch: fix/wms-caixa-unread-20261030. Base de produção: 27d5b9dbad8546eafe368bc416f3e7a82e366c0c.
 
@@ -16,9 +16,9 @@ Contagem exata feita no banco por solicitação, destinada ao solicitante e ao r
 
 Lint, 256 testes e build aprovados. Testes cobrem: nova mensagem por ajuste; visualização; resposta sem notificação própria; nova mensagem posterior; concluídos sem alertas; histórico preservado; nova instância e duas sessões usando marcador do servidor; contadores independentes; usuário/estoque não autorizado; atualização atrasada sem retrocesso; reaplicação da migration; histórico reaberto sem reviver mensagens anteriores à confirmação; aba oculta e bolhas fora da área visível não marcadas. A prévia local usa cliente fictício, não o banco real.
 
-## Publicação bloqueada
+## Publicação autorizada
 
-Migration isolada: supabase/migrations/20261030125348_caixa_message_read_receipts.sql, criada pelo CLI oficial. Não foi aplicada em produção. A condição anterior de recuperação verificável do banco continua pendente (sem acesso de backup pelo CLI/MCP e dashboard sem sessão autenticada). Não publicar este frontend sem a migration: os contadores dependem dos novos RPCs.
+Migration isolada: supabase/migrations/20261030130608_caixa_message_read_receipts.sql, criada pelo CLI oficial. Aplicada em produção com o identificador 20261030130608, retornado pelo Supabase. O usuário autorizou expressamente dispensar comprovação de recuperação somente nesta correção. As demais migrations pendentes não foram aplicadas. O registro de permissões e das contagens operacionais foi conferido antes e depois, sem perda de registros.
 
 Não é necessário aplicar as outras migrations da missão anterior para esta correção: depende somente do chat e atendimento já publicados. Após comprovar recuperação, aplicar esta migration, verificar permissões/contagens em homologação e produção, publicar frontend com atualização de cache, e validar com dois usuários de teste autorizados. Não alterar políticas globais nem habilitar o Realtime pendente como atalho.
 
