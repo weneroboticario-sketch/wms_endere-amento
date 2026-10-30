@@ -112,3 +112,9 @@
   #caixaRequestsRoot .ca-card-summary { gap:8px 18px; }
   #caixaRequestsRoot .ca-chat { bottom:0; right:0; width:100vw; height:85vh; border-radius:12px 12px 0 0; }
 }
+
+#caixaRequestsRoot .ca-pending-row { position:relative; padding-right:80px; }
+#caixaRequestsRoot .ca-chat-indicator { display:inline-flex; align-items:center; gap:4px; padding:6px; width:auto; min-width:30px; }
+#caixaRequestsRoot .ca-pending-row > .ca-chat-indicator { position:absolute; right:10px; top:10px; }
+#caixaRequestsRoot .ca-chat-unread { color:#b91c1c; }
+#caixaRequestsRoot .ca-chat-count { border-radius:999px; background:#dc2626; color:#fff; font-size:11px; min-width:17px; line-height:17px; text-align:center; }

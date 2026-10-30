@@ -1,26 +1,24 @@
-function greater(a, b) {
-  a = String(a || "0").replace(/^0+/, "") || "0"; b = String(b || "0").replace(/^0+/, "") || "0";
-  return a.length > b.length || (a.length === b.length && a > b);
-}
-
-export function createCaixaUnread({ actor, warehouse, storage }) {
-  const key = `wms:caixa:read:${actor}:${warehouse}`;
-  const read = new Map();
-  function restore() {
-    try {
-      const saved = JSON.parse(storage?.getItem(key) || "{}");
-      for (const [request, id] of Object.entries(saved)) if (/^\d+$/.test(String(id)) && greater(id, read.get(request))) read.set(request, String(id));
-    } catch { return; }
+// Supabase is the source of truth. No browser-persistent read state.
+export function createCaixaUnread({ client, warehouse, isCurrent = () => true }) {
+ let counts = new Map(), revision = 0;
+ return {
+  count: request => counts.get(request) || 0,
+  async refresh() {
+   if (!isCurrent()) return;
+   const sequence = ++revision;
+   const result = await client.rpc('list_wms_caixa_unread', {code:warehouse});
+   if (!isCurrent() || sequence !== revision) return;
+   if (result.error || !Array.isArray(result.data)) return;
+   counts = new Map(result.data.map(row=>[row.request_id,Number(row.unread_count)||0]));
+  },
+  async acknowledge(request, messages) {
+   const ids = messages.filter(m=>m.request_id===request && /^\d+$/.test(String(m.id))).map(m=>BigInt(m.id));
+   if (!ids.length || !isCurrent()) return;
+   ++revision; // Invalidate a poll begun before this read.
+   const result = await client.rpc('mark_wms_caixa_read', {request_key:request,message_key:String(ids.reduce((a,b)=>a>b?a:b))});
+   if (!isCurrent()) return;
+   if (result.error) throw new Error('Não foi possível sincronizar a leitura.');
+   await this.refresh();
   }
-  return {
-    unread(messages) {
-      restore();
-      return messages.filter(message => message.request_id && /^\d+$/.test(String(message.id)) && message.sender_id !== actor && (!message.warehouse_code || message.warehouse_code === warehouse) && greater(message.id, read.get(message.request_id)));
-    },
-    acknowledge(request, messages) {
-      restore();
-      for (const message of messages) if (message.request_id === request && /^\d+$/.test(String(message.id)) && greater(message.id, read.get(request))) read.set(request, String(message.id));
-      try { storage?.setItem(key, JSON.stringify(Object.fromEntries(read))); } catch { return; }
-    }
-  };
+ };
 }

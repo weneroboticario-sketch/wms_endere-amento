@@ -4,7 +4,7 @@ function node(tag, text, parent) {
   const element = document.createElement(tag); if (text !== undefined) element.textContent = text; parent?.append(element); return element;
 }
 
-export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) {
+export function mountCaixaChat({ host, context, rpc, canChat, onRead }) {
   const states = new Map();
   let request = null;
   const current = () => host.isConnected && context.isCurrent();
@@ -21,7 +21,7 @@ export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) 
   const input = node("textarea", undefined, form); input.maxLength = 1000; input.placeholder = "Escreva ao caixa ou estoquista..."; input.setAttribute("aria-label", "Mensagem");
   const submit = node("button", "Enviar mensagem", form); submit.type = "submit"; submit.className = "primary-button";
   const stateFor = id => {
-    if (!states.has(id)) states.set(id, { draft: "", pending: null, sending: false, loading: false, messages: [], snapshot: "", hasEarlier: false, loaded: false });
+    if (!states.has(id)) states.set(id, { draft: "", pending: null, sending: false, loading: false, messages: [], snapshot: "", hasEarlier: false, loaded: false, lastRead: "0" });
     return states.get(id);
   };
   const saveDraft = () => { if (request) stateFor(request.id).draft = input.value; };
@@ -42,13 +42,34 @@ export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) 
     state.snapshot = snapshot; messages.replaceChildren();
     if (!state.messages.length) node("p", "Nenhuma mensagem ainda.", messages);
     for (const message of state.messages) {
-      const bubble = node("article", undefined, messages); bubble.className = "ca-chat-bubble" + (message.sender_id === context.actor ? " ca-chat-mine" : "");
+      const bubble = node("article", undefined, messages); bubble.dataset.messageId = String(message.id); bubble.className = "ca-chat-bubble" + (message.sender_id === context.actor ? " ca-chat-mine" : "");
       node("small", message.sender_id === context.actor ? "Você" : message.sender_name || (message.sender_id === request.requested_by ? "Caixa" : "Equipe de estoque"), bubble);
       node("p", message.body, bubble);
       node("time", new Date(message.created_at).toLocaleString("pt-BR"), bubble);
     }
     messages.scrollTop = prepend ? oldTop + (messages.scrollHeight || 0) - oldHeight : atBottom ? messages.scrollHeight : oldTop;
   }
+  let reading = false;
+  async function acknowledgeVisible() {
+    if (reading || !request || chat.hidden || !current() || document.visibilityState === "hidden" || !messages.getBoundingClientRect) return;
+    const captured = request, state = stateFor(captured.id), viewport = messages.getBoundingClientRect();
+    if (viewport.height <= 0) return;
+    const visibleIds = new Set([...messages.querySelectorAll("article")].filter(bubble=>{
+      const box = bubble.getBoundingClientRect();
+      return box.bottom > viewport.top && box.top < viewport.bottom;
+    }).map(bubble=>bubble.dataset.messageId));
+    const visible = state.messages.filter(message=>visibleIds.has(String(message.id)));
+    if (!visible.length) return;
+    const marker = visible.reduce((max,m)=>BigInt(m.id)>BigInt(max)?String(m.id):max,"0");
+    if (BigInt(marker)<=BigInt(state.lastRead)) return;
+    reading = true;
+    try { await onRead?.(captured.id, visible); state.lastRead = marker; }
+    catch { if (current() && request?.id===captured.id) status.textContent = "Leitura ainda não sincronizada. Tentaremos novamente."; }
+    finally { reading = false; }
+  }
+  const visibleChanged = () => { void acknowledgeVisible(); };
+  messages.addEventListener("scroll", visibleChanged);
+  document.addEventListener?.("visibilitychange", visibleChanged);
   async function loadMessages(older = false) {
     const captured = request;
     if (!captured || !current() || !canChat(captured)) return;
@@ -56,22 +77,20 @@ export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) 
     if (state.loading) return;
     state.loading = true;
     try {
-      let query = context.client.from("wms_caixa_request_messages").select("id,request_id,sender_id,sender_name,body,created_at").eq("request_id", captured.id).order("id", { ascending: false }).limit(100);
+      let query = context.client.from("wms_caixa_request_messages").select("id::text,request_id,sender_id,sender_name,body,created_at").eq("request_id", captured.id).order("id", { ascending: false }).limit(100);
       if (older && state.messages.length) query = query.lt("id", state.messages[0].id);
       const response = await query;
       if (!current() || request?.id !== captured.id || !canChat(request)) return;
       if (response.error) throw new Error(response.error.message || "Não foi possível carregar a conversa.");
       const batch = response.data || [], initial = !state.loaded;
       state.loaded = true;
-      const known = new Set(state.messages.map(message => String(message.id)));
       const merged = new Map(state.messages.map(message => [String(message.id), message]));
       batch.forEach(message => merged.set(String(message.id), message));
       state.messages = [...merged.values()].sort((a, b) => String(a.id).localeCompare(String(b.id), "en", { numeric: true }));
       if (older || initial) state.hasEarlier = batch.length === 100;
       earlier.hidden = !state.hasEarlier;
-      if (!initial && !older) batch.filter(message => !known.has(String(message.id)) && message.sender_id !== context.actor).forEach(message => notify(`message:${captured.id}:${message.id}`, `Nova mensagem · SKU ${captured.sku}`));
       drawMessages(state, older);
-      onRead?.(captured.id, state.messages);
+      await acknowledgeVisible();
       if (!state.pending) status.textContent = isCaixaClosed(request) ? "Solicitação encerrada. Histórico preservado." : "";
     } catch (error) { if (current() && request?.id === captured.id) status.textContent = "Conversa indisponível: " + error.message; }
     finally { state.loading = false; }
@@ -120,6 +139,6 @@ export function mountCaixaChat({ host, context, rpc, canChat, notify, onRead }) 
       request = next; drawInput();
     },
     hasDraft: () => !!input.value,
-    clear: () => close(true)
+    clear: () => { close(true); document.removeEventListener?.("visibilitychange", visibleChanged); }
   };
 }

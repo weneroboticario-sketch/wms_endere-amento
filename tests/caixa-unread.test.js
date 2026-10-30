@@ -1,33 +1,10 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { createCaixaUnread } from "../src/caixa-unread.js";
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createCaixaUnread} from '../src/caixa-unread.js';
+function server(){const reads=new Map(),messages=[{id:'1',request:'a',sender:'stock'},{id:'2',request:'b',sender:'stock'},{id:'3',request:'a',sender:'cashier'}];const closed=new Set();return {reads,messages,closed,client(actor){return {async rpc(name,args){if(name==='mark_wms_caixa_read'){const key=actor+args.request_key;reads.set(key,String(BigInt(reads.get(key)||0)>BigInt(args.message_key)?reads.get(key):args.message_key));return {data:reads.get(key)};}return {data:['a','b'].filter(id=>!closed.has(id)).map(request_id=>({request_id,unread_count:messages.filter(m=>m.request===request_id&&m.sender!==actor&&BigInt(m.id)>BigInt(reads.get(actor+request_id)||0)).length}))};}};}};}
+test('server persists reads across reload and another device; own messages and independent requests',async()=>{const s=server(),make=()=>createCaixaUnread({client:s.client('cashier'),warehouse:'VDCG'});const a=make();await a.refresh();assert.equal(a.count('a'),1);assert.equal(a.count('b'),1);await a.acknowledge('a',[{id:'1',request_id:'a'}]);const b=make();await b.refresh();assert.equal(b.count('a'),0);assert.equal(b.count('b'),1);s.messages.push({id:'4',request:'a',sender:'stock'});await b.refresh();assert.equal(b.count('a'),1);s.closed.add('a');await b.refresh();assert.equal(b.count('a'),0);});
+test('read state cannot move backwards and preserves bigint precision',async()=>{const s=server(),a=createCaixaUnread({client:s.client('cashier'),warehouse:'VDCG'});await a.acknowledge('a',[{id:'9007199254740993',request_id:'a'},{id:'9999999999999999',request_id:'b'}]);await a.acknowledge('a',[{id:'1',request_id:'a'}]);assert.equal(s.reads.get('cashiera'),'9007199254740993');assert.ok(!s.reads.has('cashierb'));});
+test('old responses and logout cannot restore stale counts',async()=>{let resolve,active=true;const client={rpc:()=>new Promise(r=>{resolve=r;})};const a=createCaixaUnread({client,warehouse:'VDCG',isCurrent:()=>active});const poll=a.refresh();active=false;resolve({data:[{request_id:'a',unread_count:4}]});await poll;assert.equal(a.count('a'),0);});
+test('failed persistence is not treated as a successful read',async()=>{const a=createCaixaUnread({client:{rpc:async()=>({error:{message:'offline'}})},warehouse:'VDCG'});await assert.rejects(a.acknowledge('a',[{id:1,request_id:'a'}]),/sincronizar/);});
 
-function memory() { const values=new Map(); return {getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)}; }
-const message=(id,request_id="a",sender_id="stock")=>({id,request_id,sender_id,warehouse_code:"VDCG"});
-test("existing messages are unread on first opening and are acknowledged only after reading the conversation",()=>{
-  const storage=memory();const tracker=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage});
-  assert.equal(tracker.unread([message(1),message(2)]).length,2);
-  assert.equal(tracker.unread([message(1),message(2)]).length,2);
-  tracker.acknowledge("a",[message(1),message(2)]);
-  const reopened=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage});
-  assert.equal(reopened.unread([message(1),message(2)]).length,0);
-  assert.equal(reopened.unread([message(1),message(2),message(3)]).length,1);
-});
-test("reading one request cannot mark another request or another user or warehouse as read",()=>{
-  const storage=memory();const tracker=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage});
-  tracker.acknowledge("a",[message(10),message(20,"b")]);
-  assert.deepEqual(tracker.unread([message(10),message(20,"b"),message(21,"a","cashier")]).map(item=>item.id),[20]);
-  assert.equal(createCaixaUnread({actor:"other-cashier",warehouse:"VDCG",storage}).unread([message(10)]).length,1);
-  assert.equal(createCaixaUnread({actor:"cashier",warehouse:"VDAR",storage}).unread([{...message(10),warehouse_code:"VDAR"}]).length,1);
-});
-test("read marks synchronize between tabs and remain usable when browser storage is blocked",()=>{
-  const storage=memory(),first=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage}),second=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage});
-  first.acknowledge("a",[message(9)]);assert.equal(second.unread([message(9)]).length,0);
-  const blocked=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage:{getItem(){throw Error("blocked");},setItem(){throw Error("blocked");}}});
-  blocked.acknowledge("a",[message(9)]);assert.equal(blocked.unread([message(9)]).length,0);
-});
-test("message ordering does not lose precision for large PostgreSQL identifiers",()=>{
-  const tracker=createCaixaUnread({actor:"cashier",warehouse:"VDCG",storage:memory()});
-  tracker.acknowledge("a",[message("9007199254740992")]);
-  assert.equal(tracker.unread([message("9007199254740993")]).length,1);
-});
+test('a temporary polling failure preserves the last server-confirmed count',async()=>{let fail=false;const a=createCaixaUnread({client:{rpc:async()=>fail?{error:{message:'offline'}}:{data:[{request_id:'a',unread_count:2}]}},warehouse:'VDCG'});await a.refresh();fail=true;await a.refresh();assert.equal(a.count('a'),2);});

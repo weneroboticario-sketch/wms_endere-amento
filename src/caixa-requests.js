@@ -1,3 +1,4 @@
+import { createElement, MessageCircle } from "lucide";
 import { caixaAttendanceView } from "./caixa-attendance.js";
 import { mountCaixaChat } from "./caixa-chat.js";
 import { createCaixaUnread } from "./caixa-unread.js";
@@ -62,25 +63,23 @@ export function mountCaixaRequests(host, context) {
     seenNotices.add(key); notices.push(text); notice.textContent = notices.slice(-3).join(" · ");
   };
   const observed = new Map();
-  let observedInitialized = false, feedLoading = false, messageFeed = [];
-  let storage = context.storage;
-  if (!storage) { try { storage = globalThis.localStorage; } catch { storage = null; } }
-  const unread = createCaixaUnread({ actor: context.actor, warehouse: context.warehouse, storage });
+  let observedInitialized = false, feedLoading = false;
+  const unread = createCaixaUnread({ client: context.client, warehouse: context.warehouse, isCurrent: current });
   function showUnread() {
-    if (!current()) { context.onUnreadMessages?.({ count: 0 }); return; }
-    const pendingMessages = unread.unread(messageFeed).filter(message => { const request = observed.get(message.request_id); return request && canChat(request); });
+    context.onUnreadMessages?.({ count: 0 }); // Retire the legacy global banner.
+    if (!current()) return;
     for (const button of host.querySelectorAll("button")) {
-      if (!button.dataset.chatRequest) continue;
-      const count = pendingMessages.filter(message => message.request_id === button.dataset.chatRequest).length;
-      button.textContent = (button.dataset.compactChat ? "Conversar" : context.role === "CAIXA" ? "Conversar com estoque" : "Conversar com caixa") + (count ? ` (${count} não lidas)` : "");
+      const id = button.dataset.chatRequest;
+      if (!id) continue;
+      const request = observed.get(id);
+      const count = request && canChat(request) && !isCaixaClosed(request) && request.status !== "CONCLUIDO" ? unread.count(id) : 0;
+      button.replaceChildren();
+      button.className = "secondary-button ca-chat-indicator" + (count ? " ca-chat-unread" : "");
+      if (document.createElementNS) button.append(createElement(MessageCircle, {width:18,height:18,"aria-hidden":"true"}));
+      if (count) node("span", String(count), button).className = "ca-chat-count";
+      button.setAttribute("aria-label", "Conversar · SKU " + (request?.sku || "") + (count ? " · " + count + " não lidas" : ""));
+      button.title = count ? count + " mensagens não lidas" : "Conversar";
     }
-    const latest = pendingMessages[0];
-    context.onUnreadMessages?.({ count: pendingMessages.length, requestId: latest?.request_id, open: async () => {
-      if (!current() || !latest) return;
-      await context.openRequestsScreen?.();
-      const request = observed.get(latest.request_id);
-      if (current() && request && canChat(request)) await chat.open(request);
-    } });
   }
   function observeRequests(nextRows) {
     for (const id of observed.keys()) if (!nextRows.some(request => request.id === id)) observed.delete(id);
@@ -100,13 +99,8 @@ export function mountCaixaRequests(host, context) {
     if (!current() || feedLoading) return;
     feedLoading = true;
     try {
-      const response = await context.client.from("wms_caixa_request_messages").select("id,request_id,sender_id,created_at").eq("warehouse_code", context.warehouse).order("id", { ascending: false }).limit(100);
-      if (!current() || response.error) return;
-      messageFeed = response.data || [];
-      for (const message of unread.unread(messageFeed)) {
-        const request = observed.get(message.request_id);
-        if (request && canChat(request)) notify("message:" + message.request_id + ":" + message.id, "Mensagem não lida · SKU " + request.sku);
-      }
+      await unread.refresh();
+      if (!current()) return;
       showUnread();
     } finally { feedLoading = false; }
   }
@@ -138,8 +132,8 @@ export function mountCaixaRequests(host, context) {
     if (context.role === "CAIXA") return request.requested_by === context.actor;
     return canSupervise || (isStock && request.claimed_by === context.actor);
   }
-  const chat = mountCaixaChat({ host, context, rpc, canChat, notify, onRead: (requestId, messages) => {
-    unread.acknowledge(requestId, messages); showUnread();
+  const chat = mountCaixaChat({ host, context, rpc, canChat, onRead: async (requestId, messages) => {
+    await unread.acknowledge(requestId, messages); showUnread();
   } });
   const refresh = async (automatic = false) => {
     const sequence = ++revision, actor = context.actor, warehouse = context.warehouse;
@@ -232,7 +226,7 @@ export function mountCaixaRequests(host, context) {
             if (result !== true) throw new Error("O servidor não confirmou a exclusão.");
             if (!current()) return;
             deleted = true; ++revision; rows = rows.filter(row => row.id !== request.id); snapshot = "";
-            observed.delete(request.id); detailsState.delete(request.id); messageFeed = messageFeed.filter(message => message.request_id !== request.id);
+            observed.delete(request.id); detailsState.delete(request.id);
             notices.length = 0; notice.textContent = ""; chat.reconcile(rows); renderPending(rows); renderList(); showUnread();
             feedback.textContent = "Solicitação e dados vinculados excluídos definitivamente.";
             await context.onDeleted?.(request); await refresh();
@@ -393,7 +387,7 @@ export function mountCaixaRequests(host, context) {
             finally { busy = false; if (current()) send.disabled = false; }
           });
         }
-        if (canChat(request)) { const button = sideAction("Conversar", () => chat.open(pendingRows.find(row => row.id === request.id) || request)); button.dataset.chatRequest = request.id; button.dataset.compactChat = "true"; }
+        if (canChat(request)) { const button = sideAction("Conversar", () => chat.open(pendingRows.find(row => row.id === request.id) || request)); button.dataset.chatRequest = request.id; button.dataset.compactChat = "true"; row.append(button); }
         const button = node("button", "Ver detalhes", actions); button.type = "button"; button.className = "secondary-button"; button.addEventListener("click", () => reveal(request));
         if (!request.product_name && !request.nome_material && !descriptions.has(request.sku) && !requestedDescriptions.has(request.sku)) {
           requestedDescriptions.add(request.sku);
@@ -406,6 +400,7 @@ export function mountCaixaRequests(host, context) {
       for (const request of closed.slice(0,5)) {
         const row = node("div", undefined, history); row.className = "ca-history-row";
         node("strong", request.sku + " · " + request.quantity + " un.", row);
+        if (canChat(request)) action(row, "Consultar conversa", () => chat.open(request));
         node("small", (labels[request.status] || request.status) + " · " + new Date(request.updated_at || request.created_at).toLocaleString("pt-BR"), row);
       }
       if (closed.length) {

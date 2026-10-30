@@ -27,7 +27,7 @@ test("Caixa retry reuses the exact operation after a lost response and never exp
     const calls=[];
     const client={
       from() {const chain={then(resolve){return Promise.resolve({data:[]}).then(resolve);}}; for(const method of ["select","eq","order","limit"]) chain[method]=()=>chain; return chain;},
-      async rpc(name,args) {if(name==="list_wms_caixa_attendance")return {data:[]};if(name==="lookup_wms_caixa_item")return {data:{found:true,sku:args.product_code,name:"Produto real de teste",captureAvailable:10,storeAvailable:null}};calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
+      async rpc(name,args) {if(name==="list_wms_caixa_unread")return {data:[]};if(name==="list_wms_caixa_attendance")return {data:[]};if(name==="lookup_wms_caixa_item")return {data:{found:true,sku:args.product_code,name:"Produto real de teste",captureAvailable:10,storeAvailable:null}};calls.push({name,args}); return calls.length===1?{error:{message:"Resposta perdida"}}:{data:args.request_key};}
     };
     mountCaixaRequests(host,{actor:"c1",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});
     await setImmediate();
@@ -68,7 +68,7 @@ test("urgent attendance shows only available, mine and waiting, preserving separ
       {id:"c",sku:"00123",kind:"PRODUCT",warehouse_code:"VDCG",quantity:1,attended:0,status:"PENDENTE",customer_service:true,created_at:"2026-10-29T16:00:00Z",requested_by:"c1"}
     ];
     const calls=[];
-    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_attendance")return {data:rows};calls.push({name,args});return {data:args.request_key};}};
+    const client={from(table){const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?rows:[{created_at:"2026-10-29T14:00:00Z",event_type:"CLAIM",status:"EM_VERIFICACAO",observation:"Conferência iniciada"}]}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};if(name==="list_wms_caixa_attendance")return {data:rows};calls.push({name,args});return {data:args.request_key};}};
     mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});
     await setImmediate();
     const cards=()=>host.querySelectorAll("article").filter(row=>row.dataset.requestId);
@@ -104,11 +104,11 @@ test("claimed stock operator can exchange messages bound to request without chan
       const query={then(resolve){return Promise.resolve({data:table==="wms_caixa_requests"?[request]:[]}).then(resolve);}};
       for(const method of ["select","eq","order","limit"])query[method]=()=>query;
       return query;
-    },async rpc(name,args){if(name==="list_wms_caixa_attendance")return {data:[request]};calls.push({name,args});return {data:1};}};
+    },async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};if(name==="list_wms_caixa_attendance")return {data:[request]};calls.push({name,args});return {data:1};}};
     mountCaixaRequests(host,{actor:"worker",role:"OPERADOR",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
     const button=prefix=>host.querySelectorAll("button").find(b=>b.textContent?.startsWith(prefix));
     button("Meus atendimentos").listeners.click();
-    await button("Conversar com caixa").listeners.click();await setImmediate();
+    await host.querySelectorAll("button").find(b=>b.dataset.chatRequest).listeners.click();await setImmediate();
     const chatForm=host.querySelectorAll("form").find(f=>f.className==="ca-chat-form");
     const input=chatForm.querySelectorAll("textarea")[0];input.value="Pode testar novamente?";
     await chatForm.listeners.submit({preventDefault(){}});await setImmediate();
@@ -133,22 +133,15 @@ test("cashier sees confirmation and return actions while completed adjustments h
   } finally {globalThis.document=previous;}
 });
 
-test("cashier receives existing unread messages before opening chat and the alert clears only after reading",async()=>{
-  const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
-  try {
-    const host=new Element("main");host.root=true;const alerts=[];let screenOpened=0;
-    const values=new Map();const storage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};
-    const request={id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",quantity:2,requested_by:"cashier",status:"AGUARDANDO_CONFIRMACAO_CAIXA",created_at:new Date().toISOString()};
-    const messages=[1,2].map(id=>({id,request_id:"a",sender_id:"stock",body:"Pode testar?",created_at:new Date().toISOString()}));
-    const client={async rpc(){return {data:[request]};},from(){const query={then(resolve){return Promise.resolve({data:messages}).then(resolve);}};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;}};
-    mountCaixaRequests(host,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,storage,isCurrent:()=>true,onUnreadMessages:info=>alerts.push(info),openRequestsScreen:async()=>{screenOpened++;}});
-    await setImmediate();assert.equal(alerts.at(-1).count,2);
-    assert.ok(host.querySelectorAll("button").some(button=>button.textContent==="Conversar (2 não lidas)"));
-    await alerts.at(-1).open();assert.equal(screenOpened,1);assert.equal(alerts.at(-1).count,0);
-    const reopened=new Element("main");reopened.root=true;const next=[];
-    mountCaixaRequests(reopened,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,storage,isCurrent:()=>true,onUnreadMessages:info=>next.push(info)});
-    await setImmediate();assert.equal(next.at(-1).count,0);
-  } finally {globalThis.document=previous;}
+test("per-request badges are independent and closed chats never show active counts or global message alerts",async()=>{
+ const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
+ try {const host=new Element('main');host.root=true;const alerts=[];
+ const row={sku:'48060',kind:'ADJUSTMENT',warehouse_code:'VDCG',quantity:2,requested_by:'cashier',status:'AGUARDANDO_CONFIRMACAO_CAIXA',created_at:new Date().toISOString()};
+ const rows=[{...row,id:'a'},{...row,id:'b'},{...row,id:'closed',confirmed_at:new Date().toISOString(),status:'CONCLUIDO'}];
+ const client={async rpc(name){return {data:name==='list_wms_caixa_unread'?[{request_id:'a',unread_count:2},{request_id:'b',unread_count:0},{request_id:'closed',unread_count:8}]:rows};}};
+ mountCaixaRequests(host,{actor:'cashier',role:'CAIXA',warehouse:'VDCG',client,isCurrent:()=>true,onUnreadMessages:info=>alerts.push(info)});await setImmediate();
+ const buttons=host.querySelectorAll('button').filter(b=>b.dataset.chatRequest);assert.ok(buttons.find(b=>b.dataset.chatRequest==='a').className.includes('ca-chat-unread'));assert.ok(!buttons.find(b=>b.dataset.chatRequest==='b').className.includes('ca-chat-unread'));assert.ok(alerts.every(a=>a.count===0));
+ }finally{globalThis.document=previous;}
 });
 
 test("cashier adjustment panel excludes closed, foreign-stock and other-cashier records and preserves equal-SKU requests",async()=>{
@@ -174,7 +167,7 @@ test("side actions confirm and reopen the exact equal-SKU request, preserve draf
     const host=new Element("main");host.root=true;const calls=[];
     const base={sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"AGUARDANDO_CONFIRMACAO_CAIXA",claimed_by:"stock",claimed_by_name:"Equipe",resolution_notes:"Resolvido",resolved_at:new Date().toISOString(),created_at:new Date().toISOString()};
     let rows=[{...base,id:"a"},{...base,id:"b",quantity:5}];
-    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};
       if(name==="list_wms_caixa_attendance")return {data:rows.map(row=>({...row}))};
       if(name==="lookup_wms_caixa_item")return {data:{found:true,name:"Produto",sku:args.product_code}};
       calls.push({name,args});rows=rows.map(row=>row.id!==args.request_key?row:{...row,status:args.operation==="CONFIRM"?"CONCLUIDO":"EM_VERIFICACAO",confirmed_at:args.operation==="CONFIRM"?new Date().toISOString():null,resolved_at:args.operation==="REOPEN"?null:row.resolved_at});return {data:args.request_key};
@@ -203,7 +196,7 @@ test("two cashier sessions observe stock progress and confirmation through exist
   globalThis.document={createElement:tag=>new Element(tag)};globalThis.setInterval=fn=>{polls.push(fn);return {unref(){}};};
   try {
     let request={id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"EM_VERIFICACAO",created_at:new Date().toISOString()};
-    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};
       if(name==="lookup_wms_caixa_item")return {data:{found:true,name:"Produto",sku:args.product_code}};
       if(name==="act_wms_caixa_adjustment")request={...request,status:"CONCLUIDO",confirmed_at:new Date().toISOString()};
       return {data:name==="list_wms_caixa_attendance"?[{...request}]:request.id};
@@ -227,11 +220,11 @@ test("side conversation stays bound to the selected request when two adjustments
   try {
     const host=new Element("main");host.root=true;const calls=[];
     const base={sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"EM_VERIFICACAO",claimed_by:"stock",created_at:new Date().toISOString()};
-    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};
       if(name==="list_wms_caixa_attendance")return {data:[{...base,id:"a"},{...base,id:"b"}]};if(name==="lookup_wms_caixa_item")return {data:{found:true,name:"Produto"}};calls.push({name,args});return {data:1};
     }};
     mountCaixaRequests(host,{actor:"cashier",role:"CAIXA",warehouse:"VDCG",client,isCurrent:()=>true});await setImmediate();
-    const card=host.querySelectorAll("article").find(node=>node.dataset.pendingId==="b");await card.querySelectorAll("button").find(node=>node.textContent==="Conversar").click();
+    const card=host.querySelectorAll("article").find(node=>node.dataset.pendingId==="b");await card.querySelectorAll("button").find(node=>!!node.dataset.chatRequest).click();
     const form=host.querySelectorAll("form").find(node=>node.className==="ca-chat-form");form.querySelectorAll("textarea")[0].value="Pode conferir?";await form.listeners.submit({preventDefault(){}});
     assert.equal(calls[0].name,"send_wms_caixa_message");assert.equal(calls[0].args.request_key,"b");
   } finally {globalThis.document=previous;}
@@ -242,7 +235,7 @@ test("permanent deletion is visible only to global admin and requires explicit c
   try {
     const base={id:"delete-a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"EM_VERIFICACAO",updated_at:new Date().toISOString(),created_at:new Date().toISOString()};
     let rows=[base,{...base,id:"keep-b",quantity:5}],deleted=0;const writes=[];
-    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name,args){if(name==="list_wms_caixa_unread")return {data:[]};
       if(name==="list_wms_caixa_attendance")return {data:rows.map(row=>({...row}))};
       if(name==="lookup_wms_caixa_item")return {data:{found:true,name:"Produto"}};
       writes.push({name,args});rows=rows.filter(row=>row.id!==args.request_key);return {data:true};
@@ -266,7 +259,7 @@ test("cancel, scope changes and unconfirmed server failures never remove an atte
   const previous=globalThis.document;globalThis.document={createElement:tag=>new Element(tag)};
   try {
     let current=true,writes=0;const row={id:"a",sku:"48060",kind:"ADJUSTMENT",warehouse_code:"VDCG",requested_by:"cashier",quantity:2,status:"PENDENTE",created_at:new Date().toISOString(),updated_at:new Date().toISOString()};
-    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name){if(name==="list_wms_caixa_attendance")return {data:[row]};writes++;return {error:{code:"42501",message:"Sem permissão"}};}};
+    const client={from(){const query={then:resolve=>Promise.resolve({data:[]}).then(resolve)};for(const method of ["select","eq","order","limit"])query[method]=()=>query;return query;},async rpc(name){if(name==="list_wms_caixa_unread")return {data:[]};if(name==="list_wms_caixa_attendance")return {data:[row]};writes++;return {error:{code:"42501",message:"Sem permissão"}};}};
     const host=new Element("main");host.root=true;mountCaixaRequests(host,{actor:"admin",role:"ADMINISTRADOR",warehouse:"VDCG",client,canDeletePermanently:true,isCurrent:()=>current});await setImmediate();
     const card=host.querySelectorAll("article")[0],form=card.querySelectorAll("form").find(node=>node.className==="ca-delete-form"),input=form.querySelectorAll("input")[0];
     card.querySelectorAll("button").find(node=>node.textContent==="Excluir definitivamente").click();input.value="EXCLUIR";

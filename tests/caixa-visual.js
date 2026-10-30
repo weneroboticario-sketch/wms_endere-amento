@@ -13,6 +13,8 @@ let rows = [
 const cashier = new globalThis.URLSearchParams(globalThis.location.search).has("caixa");
 const admin = new globalThis.URLSearchParams(globalThis.location.search).has("admin");
 let messages = [{ id: 1, warehouse_code: "VDCG", request_id: "adjustment-1", sender_id: "caixa-demo", sender_name: "Caixa · demonstração", body: "O cliente está aguardando. Pode conferir o ajuste?", created_at: now }];
+const demoReads = new Map();
+if (new globalThis.URLSearchParams(globalThis.location.search).has('unread-demo')) messages.push({id:2,request_id:'adjustment-1',warehouse_code:'VDCG',sender_id:'worker-demo',sender_name:'Estoque · demonstração',body:'Pode testar novamente?',created_at:now});
 const integrationRun = new globalThis.URLSearchParams(globalThis.location.search).get("integration");
 let bridge;
 function publishSyntheticState() {
@@ -37,6 +39,8 @@ const client = {
     return query;
   },
   async rpc(name,args) {
+    if (name === 'list_wms_caixa_unread') return {data:rows.filter(r=>!r.confirmed_at && !['CONCLUIDO','CANCELADO','SEM_ESTOQUE','ENTREGUE_NA_LOJA'].includes(r.status)).map(r=>({request_id:r.id,unread_count:messages.filter(m=>m.request_id===r.id && m.sender_id!==(cashier?'caixa-demo':'worker-demo') && Number(m.id)>Number(demoReads.get(r.id)||0)).length}))};
+    if (name === 'mark_wms_caixa_read') {demoReads.set(args.request_key,Math.max(Number(demoReads.get(args.request_key)||0),Number(args.message_key)));return {data:String(demoReads.get(args.request_key))};}
     if (name === "list_wms_caixa_attendance") return {data:rows.map(row=>({...row}))};
     if (name === "lookup_wms_caixa_item") return {data:{found:["48060","00123","84862","84859","83823"].includes(args.product_code),sku:args.product_code,name:"Creme hidratante · demonstração visual",captureAvailable:24,storeAvailable:3,updatedAt:now}};
     if (integrationRun && name === "act_wms_caixa_adjustment") {
