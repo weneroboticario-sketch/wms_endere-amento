@@ -1,6 +1,5 @@
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
-import { mountCaixaRequests } from "./src/caixa-requests.js";
-import "./src/caixa-requests.css";
+import { mountCaixaRequests } from "./src/caixa-loader.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
@@ -27,6 +26,8 @@ import {
 } from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
+import { operationalDiagnostics } from "./src/operational-diagnostics.js";
+import { createScopedSingleFlight } from "./src/request-coalescing.js";
 import {
   buildAddressingOccupantSnapshot,
   planBindingRemoval,
@@ -66,6 +67,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var globalDashboardController = null;
   var stockOverviewController = null;
   var operationalCatalogPromise = null;
+  var productCatalogSingleFlight = createScopedSingleFlight();
 
   async function ensureOperationalCatalog() {
     if (!operationalCatalogPromise) operationalCatalogPromise = loadBuiltinProducts().then(function (products) { BUILTIN_PRODUCTS = products; });
@@ -2191,6 +2193,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function fetchProductCatalogWithAuthRecovery() {
+    var catalogScope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":");
+    return productCatalogSingleFlight(catalogScope, async function () {
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      var catalogRows = await performProductCatalogWithAuthRecovery();
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      return catalogRows;
+    });
+  }
+
+  async function performProductCatalogWithAuthRecovery() {
     var readCatalog = function () {
       return fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 });
     };
@@ -9306,6 +9318,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      allowOperationalRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
       canDeletePermanently: isGlobalAdminUser(authState.currentUser),
       onDeleted: async function (request) {
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) return;
@@ -10581,6 +10594,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stopLeaderLiveSync() {
+    realtimeState.syncGeneration = (realtimeState.syncGeneration || 0) + 1;
     if (addressingPresenceController) addressingPresenceController.stop();
     addressingPresenceController = null;
     stockFreshnessState.generation += 1;
@@ -10811,10 +10825,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     realtimeState.refreshRunning = true;
     realtimeState.refreshPending = false;
+    var scopeGeneration = realtimeState.syncGeneration || 0;
+    var scopeWarehouse = activeWarehouseCode();
+    var scopeActor = authState.currentUser && authState.currentUser.id;
+    var currentScope = function () { return realtimeState.active && (realtimeState.syncGeneration || 0) === scopeGeneration && activeWarehouseCode() === scopeWarehouse && authState.currentUser && authState.currentUser.id === scopeActor; };
     var retryDelay = 0;
     try {
       var startedAt = performance.now();
       await checkLatestAddressCacheInvalidation();
+      if (!currentScope()) return;
       var since = realtimeState.lastLiveUpdateAt || "";
       var activeScreen = getActiveScreenId();
       var shouldLoadFullTransfers = moduleLoadState.transfers || activeScreen === "transferencias";
@@ -10827,8 +10846,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       } else {
         var shouldFetchTransferRows = moduleLoadState.transfers || realtimeState.transferTasksLoaded;
         var transferRows = shouldFetchTransferRows ? await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since) : [];
+        if (!currentScope()) return;
         var shouldFetchItemRows = moduleLoadState.transfers && (transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0);
         var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
+        if (!currentScope()) return;
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
@@ -10836,17 +10857,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         realtimeState.lastLiveUpdateAt = newest || nowIso();
         writeTransferCacheSoon();
       }
+      if (!currentScope()) return;
       recordPerformanceMetric("lastTransferQueryMs", startedAt);
       renderTransferRealtimeViews();
       realtimeState.failureCount = 0;
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
+      if (!currentScope()) return;
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("live-transfer", error);
       // A sincronização incremental é recuperável: um schema antigo ou uma resposta
       // interrompida não deve bloquear a operação nem deixar o status em erro permanente.
       try {
         moduleLoadState.transfers = false;
         var recovered = await loadTransferData();
+        if (!currentScope()) return;
         if (recovered) {
           renderTransferRealtimeViews();
           realtimeState.failureCount = 0;
@@ -10857,6 +10881,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           setSyncStatus("Conexão instável • nova tentativa", "warning");
         }
       } catch (recoveryError) {
+        if (!currentScope()) return;
         recordPerformanceError("live-transfer-recovery", recoveryError);
         realtimeState.failureCount += 1;
         retryDelay = nextRealtimeRetryDelay(realtimeState.failureCount);
@@ -10864,9 +10889,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
       realtimeState.refreshPending = false;
     } finally {
-      realtimeState.refreshRunning = false;
-      if (retryDelay) scheduleTransferRealtimeRefresh("retry", retryDelay);
-      else if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
+      if (currentScope()) {
+        realtimeState.refreshRunning = false;
+        if (retryDelay) scheduleTransferRealtimeRefresh("retry", retryDelay);
+        else if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
+      }
     }
   }
 
@@ -12460,6 +12487,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
+      "<p><strong>Comunicação Caixa/Estoque:</strong> " + escapeHtml(JSON.stringify(operationalDiagnostics().filter(function (entry) { return entry.warehouse === warehouse; }).slice(-8))) + ".</p>",
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
       "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
       "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",

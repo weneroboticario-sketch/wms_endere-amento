@@ -1,5 +1,10 @@
 export const STORE_STAFF_ROLES = new Set(["OPERADOR", "ATENDENTE", "CAIXA"]);
 
+export function readBearerToken(authorization: string) {
+  if (authorization.length > 16384) return "";
+  return /^Bearer\s+(\S+)$/i.exec(authorization)?.[1] || "";
+}
+
 export function maySupervisorManageStoreUser({
   callerRole,
   allowedWarehouses,

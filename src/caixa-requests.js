@@ -4,6 +4,8 @@ import { createCaixaUnread } from "./caixa-unread.js";
 import { createCaixaProductLookup } from "./caixa-product-lookup.js";
 import { mountCaixaRequestComposer } from "./caixa-request-composer.js";
 import { isCaixaClosed } from "./caixa-queue-view.js";
+import { createOperationalSync } from "./operational-sync.js";
+import { recordOperationalDiagnostic } from "./operational-diagnostics.js";
 
 export { validateCaixaRequest } from "./caixa-request-composer.js";
 
@@ -20,8 +22,9 @@ export function mountCaixaRequests(host, context) {
   Object.assign(labels, { AGUARDANDO_CONFIRMACAO_CAIXA: "Aguardando caixa", CLAIM: "Atendimento assumido", RESOLVE: "Resolução informada", CONFIRM: "Caixa confirmou", REOPEN: "Devolvido para correção" });
   const scope = context.actor + ":" + context.warehouse + ":" + context.role;
   if (host.dataset.scope === scope) return;
+  host.caixaStop?.();
   host.replaceChildren(); host.dataset.scope = scope;
-  const current = () => host.isConnected && context.isCurrent();
+  const current = () => host.isConnected && host.dataset.scope === scope && context.isCurrent();
   const isStock = ["OPERADOR", "SUPERVISOR", "ADMINISTRADOR"].includes(context.role);
   const canSupervise = ["SUPERVISOR", "ADMINISTRADOR"].includes(context.role);
   let busy = false, rows = [], revision = 0, snapshot = "", initialized = false;
@@ -32,6 +35,7 @@ export function mountCaixaRequests(host, context) {
   const title = node("div", undefined, header);
   node("h2", "CLIENTE NO CAIXA", title);
   node("p", context.role === "CAIXA" ? "Solicitações prioritárias para o estoque" : "Fila de atendimento prioritário · cliente sempre tem preferência", title);
+  const syncState = node("small", "Sincronização: conectando…", title); syncState.setAttribute("role", "status");
   const controls = node("div", undefined, host); controls.className = "ca-toolbar";
   const tabs = node("nav", undefined, controls); tabs.className = "ca-tabs";
   const tabButtons = {};
@@ -111,6 +115,7 @@ export function mountCaixaRequests(host, context) {
     const response = await context.client.rpc(name, args);
     if (!current()) throw new Error("Usuário ou estoque mudou. Reabra a tela.");
     if (response.error) {
+      recordOperationalDiagnostic({ module: "caixa", event: "rpc", warehouse: context.warehouse, operationId: args.request_key, category: response.error.code || "api", result: "failed" });
       const error = new Error(response.error.message || "Falha na operação.");
       error.confirmedFailure = /^(?:[0-9A-Z]{5}|PGRST\d+)$/.test(response.error.code || "");
       throw error;
@@ -413,13 +418,16 @@ export function mountCaixaRequests(host, context) {
   }
 
   refresh().then(() => pollMessageNotices()).catch(error => { if (current()) feedback.textContent = error.message; });
-  const timer = globalThis.setInterval(async () => {
-    if (host.dataset.scope !== scope || !host.isConnected) { chat.clear(); context.onUnreadMessages?.({ count: 0 }); globalThis.clearInterval(timer); return; }
-    if (!current()) { chat.clear(); context.onUnreadMessages?.({ count: 0 }); return; }
-    await chat.poll();
-    await pollMessageNotices().catch(() => {});
-    if (busy) return;
-    refresh(true).catch(error => { if (current()) feedback.textContent = error.message; });
-  }, 15000);
-  timer.unref?.();
+  const synchronization = createOperationalSync({ client: context.client, actor: context.actor, role: context.role, warehouse: context.warehouse, isCurrent: current,
+    allowRealtime: context.allowOperationalRealtime === true,
+    onStop: () => { chat.clear(); context.onUnreadMessages?.({ count: 0 }); },
+    onState: value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", DADOS_POSSIVELMENTE_DESATUALIZADOS: "consulta de segurança ativa", FALHA_SINCRONIZACAO: "falha ao atualizar; nova tentativa automática" }[value] || value); },
+    onRefresh: async ({ tables }) => {
+      if (busy) return false;
+      if (tables.includes("all") || tables.includes("wms_caixa_requests")) await refresh(true);
+      if (tables.includes("all") || tables.includes("wms_caixa_request_messages")) { await pollMessageNotices(); await chat.poll(); }
+      return true;
+    }
+  });
+  host.caixaStop = () => { synchronization.stop(); chat.clear(); context.onUnreadMessages?.({ count: 0 }); };
 }

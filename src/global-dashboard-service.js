@@ -1,3 +1,4 @@
+import { classifyImportFreshness } from "./stock-freshness.js";
 export const GLOBAL_SCOPE_CODE = "DOURADOS";
 export const GLOBAL_DASHBOARD_CONFIG = Object.freeze({
   cacheSeconds: 30,
@@ -24,11 +25,8 @@ export function operationalWarehouses(warehouses) {
 }
 
 export function captacaoFreshness(batch, config = GLOBAL_DASHBOARD_CONFIG, now = Date.now()) {
-  if (!batch) return "DESATUALIZADO";
-  if (batch.status === "FAILED") return "ERRO";
-  if (batch.status !== "COMPLETED") return "ATENCAO";
-  const age = (now - new Date(batch.finished_at || batch.created_at).getTime()) / 3600000;
-  return age >= config.staleHours ? "DESATUALIZADO" : age >= config.freshHours ? "ATENCAO" : "ATUALIZADO";
+  const result = classifyImportFreshness(batch, { now, warningMs: config.freshHours * 3600000, staleMs: config.staleHours * 3600000, inclusive: true });
+  return { MISSING: "DESATUALIZADO", FAILED: "ERRO", PENDING: "ATENCAO", STALE: "DESATUALIZADO", WARNING: "ATENCAO", FRESH: "ATUALIZADO" }[result.state];
 }
 
 export function warehouseAttention(warehouse, config = GLOBAL_DASHBOARD_CONFIG) {

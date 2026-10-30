@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 
 const source = (await readFile(new URL("../src/stock-overview.js", import.meta.url), "utf8"))
   .replace('import { escapeHtml as esc } from "./utils.js";', 'const esc = value => String(value);')
+  .replace('from "./stock-freshness.js"', 'from ' + JSON.stringify(new URL('../src/stock-freshness.js', import.meta.url).href))
   .replace('import "./stock-overview.css";', "");
 const { canViewStockOverview, importHealth, readStockOverview } = await import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
 const admin = { id: "admin", active: true, role: "ADMINISTRADOR", isGlobalAdmin: true };
@@ -24,6 +25,7 @@ test("failed and stale imports never appear healthy", () => {
   assert.equal(importHealth({ status: "PROCESSING" }, now).kind, "warning");
   assert.equal(importHealth({ status: "COMPLETED", created_at: "2026-10-15T10:00:00Z" }, now).kind, "success");
   assert.equal(importHealth({ status: "COMPLETED", created_at: "2026-10-12T10:00:00Z" }, now).kind, "warning");
+  assert.equal(importHealth({ status: "COMPLETED", created_at: "invalid" }, now).kind, "warning");
 });
 
 test("overview uses exact scoped counts and preserves query failures as unavailable", async () => {

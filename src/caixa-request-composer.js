@@ -1,3 +1,4 @@
+import { STOCK_FRESHNESS_LIMIT_MS } from "./stock-freshness.js";
 export const DEFAULT_CAIXA_ADJUSTMENT_REASON = "Solicitação de ajuste no atendimento ao cliente.";
 
 export function validateCaixaRequest(request) {
@@ -72,7 +73,7 @@ export function mountCaixaRequestComposer(host, context) {
     node("span", "LOJA: " + format(item.storeAvailable), balances);
     const date = item.updatedAt ? new Date(item.updatedAt) : null;
     node("small", date && !Number.isNaN(date.getTime()) ? "Saldo atualizado em " + date.toLocaleString("pt-BR") : "Data de atualização indisponível.", product);
-    if (date && Date.now() - date.getTime() > 4 * 60 * 60 * 1000) node("small", "Base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque.", product);
+    if (date && Date.now() - date.getTime() > STOCK_FRESHNESS_LIMIT_MS) node("small", "Base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque.", product);
     context.onFound?.(item); status.textContent = ""; update();
   }
   code.addEventListener("input", () => {
