@@ -276,8 +276,11 @@ export function createExpeditionWorkflow(context) {
       }
       if(selected?.id!==entity||warehouse()!==w)return;
       const users=(result.data||[]).filter(u=>context.user().role!=="OPERADOR"||u.id===context.user().id);
-      form.elements.responsible.innerHTML=users.map(u=>`<option value="${e(u.id)}">${e(u.name)} (${e(u.role)})</option>`).join("");
       if(!users.length)throw new Error("Nenhum responsavel ativo encontrado.");
+      // Nunca selecionar implicitamente a primeira pessoa da lista.
+      const suggestedId=String(context.user().role==="OPERADOR"?context.user().id:(selected.expedition_responsible_id||""));
+      form.elements.responsible.innerHTML=`<option value="">Selecione um responsável</option>`+users.map(u=>`<option value="${e(u.id)}">${e(u.name)} (${e(u.role)})</option>`).join("");
+      form.elements.responsible.value=users.some(u=>String(u.id)===suggestedId)?suggestedId:"";
     }
     form.hidden=false;actionKey=null;form.scrollIntoView({block:"nearest"});form.querySelector("label:not([hidden]) :is(input,select,textarea)")?.focus({preventScroll:true});
   }
@@ -285,7 +288,10 @@ export function createExpeditionWorkflow(context) {
     event.preventDefault();if(busy||!selected)return;
     const form=event.target,action=form.dataset.action,data={reason:form.elements.reason.value.trim()};
     if(action==="CANCEL_TRANSFER"&&(!canCancelExpedition(selected,context.user())||data.reason.length<5))return status("Informe uma justificativa com pelo menos 5 caracteres.","error");
-    if(action==="ASSIGN")data.responsible_id=form.elements.responsible.value;
+    if(action==="ASSIGN"){
+      data.responsible_id=form.elements.responsible.value;
+      if(!data.responsible_id)return status("Selecione um responsável antes de confirmar.","error");
+    }
     if(["COLLECT","DELIVER"].includes(action)){
       if(form.elements.boxes.value==="")return status("Informe uma quantidade inteira de caixas.","error");
       data.boxes=Number(form.elements.boxes.value);
@@ -300,10 +306,13 @@ export function createExpeditionWorkflow(context) {
         ? await context.client().rpc("wms_cancel_expedition_transfer",{p_id:row.id,p_expected_revision:row.expedition_revision,p_expected_fiscal_revision:row.fiscal_revision,p_reason:data.reason,p_action_id:actionKey.id})
         : await context.client().rpc("wms_expedition_action",{p_id:row.id,p_expected_revision:row.expedition_revision,p_action:action,p_data:data,p_action_id:actionKey.id});
       if(result.error)throw result.error;
+      if(action==="ASSIGN"&&String(result.data?.expedition_responsible_id||"")!==String(data.responsible_id)){
+        throw new Error("O servidor não confirmou o responsável escolhido. Recarregue a transferência e confira antes de tentar novamente.");
+      }
       context.changed();
       if(w===warehouse()){await open(row);await refresh();}
       status(action==="CANCEL_TRANSFER"?"Transferência cancelada. Justificativa registrada no histórico.":"Etapa registrada.","success");
-    }catch(error){context.diagnostic("expedition-action",error);status(error.message);}
+    }catch(error){context.diagnostic("expedition-action",error);status(error.message,"error");}
     finally{busy=false;root.inert=false;form.querySelector("button").disabled=false;}
   }
   root.addEventListener("click",async event=>{
