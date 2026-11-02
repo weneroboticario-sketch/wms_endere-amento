@@ -5801,7 +5801,7 @@ import "./src/process-navigation.css";
     if (IS_CP_ALAMO && request.requiresInvoice) {
       await showScreen("fiscalWorkflow");
       showToast("Conclua conferencia, caixas e NF no painel Compras / NF.", "warning");
-      return request;
+      return { pendingFiscal: true, request: request };
     }
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     if (Number(request.attendedQty || 0) < Number(request.requestedQty || 0)) throw new Error("Ainda ha quantidade pendente. Use Atender para parcial ou Sem estoque com motivo.");
@@ -10074,6 +10074,7 @@ import "./src/process-navigation.css";
     if (replenishmentState.saving) return;
     var button = $("createReplenishmentButton");
     var originalText = button ? button.textContent : "";
+    var createdAndRefreshed = false;
     try {
       replenishmentState.saving = true;
       if (button) {
@@ -10082,10 +10083,22 @@ import "./src/process-navigation.css";
       }
       handleReplenishmentSkuInput();
       var priority = isAttendant() ? normalizeReplenishmentPriority(selectedRadioValue("replenishmentPriority", "NORMAL")) : "NORMAL";
-      var idempotencyKey = button && button.dataset.idempotencyKey
+      // CP ÁLAMO: preserve a mesma chave em retries quando o servidor pode ter gravado
+      // o pedido antes de uma falha de rede. Edicoes do formulario iniciam nova operacao.
+      var fingerprint = IS_CP_ALAMO ? JSON.stringify([
+        activeWarehouseCode(), authState.currentUser && authState.currentUser.id,
+        normalizeSku($("replenishmentSkuInput").value), $("replenishmentRequestQtyInput").value,
+        $("replenishmentStoreQtyInput").value, priority, $("replenishmentOriginInput").value,
+        $("replenishmentObservationInput").value
+      ]) : "";
+      var idempotencyKey = button && button.dataset.idempotencyKey &&
+          (!IS_CP_ALAMO || button.dataset.idempotencyFingerprint === fingerprint)
         ? button.dataset.idempotencyKey
         : createIdempotencyKey([activeWarehouseCode(), "REPOSICAO", authState.currentUser && authState.currentUser.id, $("replenishmentSkuInput").value, $("replenishmentRequestQtyInput").value, priority].concat(IS_CP_ALAMO ? [$("replenishmentOriginInput").value] : []));
-      if (button) button.dataset.idempotencyKey = idempotencyKey;
+      if (button) {
+        button.dataset.idempotencyKey = idempotencyKey;
+        if (IS_CP_ALAMO) button.dataset.idempotencyFingerprint = fingerprint;
+      }
       var created = await createReplenishmentRequest({
         codigoMaterial: $("replenishmentSkuInput").value,
         requestOrigin: $("replenishmentOriginInput").value,
@@ -10104,6 +10117,7 @@ import "./src/process-navigation.css";
       await refreshReplenishmentData();
       setStatus("replenishmentCreateStatus", "Pedido criado com sucesso.", "success");
       showToast("Pedido de reposicao criado.", "success");
+      createdAndRefreshed = true;
       if ($("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
     } catch (error) {
       var message = formatSupabaseError(error);
@@ -10115,7 +10129,10 @@ import "./src/process-navigation.css";
       if (button) {
         button.disabled = false;
         button.textContent = originalText || "Criar pedido";
-        delete button.dataset.idempotencyKey;
+        if (!IS_CP_ALAMO || createdAndRefreshed) {
+          delete button.dataset.idempotencyKey;
+          delete button.dataset.idempotencyFingerprint;
+        }
       }
     }
   }
@@ -10147,6 +10164,7 @@ import "./src/process-navigation.css";
     if (!id) return;
     var actionKey = "reposicao:" + id + ":" + Object.keys(target.dataset).sort().join("-");
     if (!beginTransferAction(actionKey, target, "Salvando...")) return;
+    var pendingFiscal = false;
     try {
       if (target.dataset.replenishmentClaim) await claimReplenishmentRequest(id);
       if (target.dataset.replenishmentReturn) {
@@ -10168,7 +10186,10 @@ import "./src/process-navigation.css";
         if (reason === null) return;
         await markReplenishmentNoStock(id, reason);
       }
-      if (target.dataset.replenishmentComplete) await completeReplenishmentRequest(id);
+      if (target.dataset.replenishmentComplete) {
+        var result = await completeReplenishmentRequest(id);
+        pendingFiscal = Boolean(result && result.pendingFiscal);
+      }
       if (target.dataset.replenishmentCancel) {
         var cancellationRequest = getReplenishmentById(id);
         var cancelReason = window.prompt("Motivo do cancelamento:", cancellationRequest ? cancellationRequest.cancellationRequestReason || "" : "");
@@ -10180,7 +10201,7 @@ import "./src/process-navigation.css";
         await deleteTestReplenishmentRequest(id);
       }
       await refreshReplenishmentData();
-      showToast("Pedido atualizado.", "success");
+      if (!pendingFiscal) showToast("Pedido atualizado.", "success");
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atualizar pedido: " + formatSupabaseError(error), "error");
     } finally {
