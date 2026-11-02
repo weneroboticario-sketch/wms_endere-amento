@@ -9974,7 +9974,7 @@ import "./src/process-navigation.css";
 
   function replenishmentActionsHtml(item, canManage, canWork) {
     var actions = [];
-    if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Puxar pedido</button>");
+    if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">" + (IS_CP_ALAMO ? "Assumir e iniciar" : "Puxar pedido") + "</button>");
     if (canWork && item.status === "ATRIBUIDO") actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
       actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
@@ -10177,16 +10177,34 @@ import "./src/process-navigation.css";
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
-        var qty = window.prompt("Quantidade atendida agora:", request ? String(request.pendingQty || request.requestedQty || "") : "");
-        if (qty === null) return;
-        var note = "";
-        if (Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
-        await updateReplenishmentQuantity(id, Number(qty || 0), note);
+        if (IS_CP_ALAMO) {
+          // Uma única interação: quantidade + observação, sem prompts nativos.
+          var answered = await requestVisualFields("Atender reposição", [
+            { name: "qty", label: "Quantidade atendida agora", type: "number",
+              value: request ? String(request.pendingQty || request.requestedQty || "") : "" },
+            { name: "note", label: "Observação (opcional)", required: false,
+              value: (request && request.observacao) || "" }
+          ]);
+          if (!answered) return;
+          await updateReplenishmentQuantity(id, Number(answered.qty), answered.note || "");
+        } else {
+          var qty = window.prompt("Quantidade atendida agora:", request ? String(request.pendingQty || request.requestedQty || "") : "");
+          if (qty === null) return;
+          var note = "";
+          if (Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
+          await updateReplenishmentQuantity(id, Number(qty || 0), note);
+        }
       }
       if (target.dataset.replenishmentNostock) {
-        var reason = window.prompt("Motivo do sem estoque:");
-        if (reason === null) return;
-        await markReplenishmentNoStock(id, reason);
+        if (IS_CP_ALAMO) {
+          var missingAnswer = await requestVisualFields("Registrar falta de estoque", [{ name: "reason", label: "Motivo da falta" }]);
+          if (!missingAnswer) return;
+          await markReplenishmentNoStock(id, missingAnswer.reason);
+        } else {
+          var reason = window.prompt("Motivo do sem estoque:");
+          if (reason === null) return;
+          await markReplenishmentNoStock(id, reason);
+        }
       }
       if (target.dataset.replenishmentComplete) {
         var result = await completeReplenishmentRequest(id);
