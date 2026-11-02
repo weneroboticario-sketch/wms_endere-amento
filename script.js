@@ -9974,7 +9974,9 @@ import "./src/process-navigation.css";
 
   function replenishmentActionsHtml(item, canManage, canWork) {
     var actions = [];
-    if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">" + (IS_CP_ALAMO ? "Assumir e iniciar" : "Puxar pedido") + "</button>");
+    if (canClaimReplenishmentRequest(item)) actions.push(IS_CP_ALAMO
+      ? "<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Assumir e iniciar</button>"
+      : "<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Puxar pedido</button>");
     if (canWork && item.status === "ATRIBUIDO") actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
       actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
