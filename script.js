@@ -10111,10 +10111,12 @@ import "./src/process-navigation.css";
         clientActionId: idempotencyKey
       });
       if (!created) return;
+      // Só limpar o formulário após sincronizar a fila com sucesso; em timeout
+      // a chave e os campos permanecem disponíveis para reconciliar o retry.
+      await refreshReplenishmentData();
       if ($("replenishmentForm")) $("replenishmentForm").reset();
       replenishmentState.currentProduct = null;
       renderReplenishmentProductCard(null);
-      await refreshReplenishmentData();
       setStatus("replenishmentCreateStatus", "Pedido criado com sucesso.", "success");
       showToast("Pedido de reposicao criado.", "success");
       createdAndRefreshed = true;
