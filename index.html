@@ -145,6 +145,12 @@
           <input id="sidebarTaskSoundInput" type="checkbox" checked>
           Som de tarefas
         </label>
+        <div class="sidebar-task-volume">
+          <label for="sidebarTaskSoundVolume">Volume</label>
+          <input id="sidebarTaskSoundVolume" type="range" min="0" max="100" step="1" value="90" aria-label="Volume do som de tarefas">
+          <output id="sidebarTaskSoundPercent" for="sidebarTaskSoundVolume">90%</output>
+        </div>
+        <button class="secondary-button sidebar-sound-test" id="sidebarTaskSoundTest" type="button">Testar som</button>
         <button class="secondary-button" id="logoutButton" type="button">Sair</button>
       </div>
 

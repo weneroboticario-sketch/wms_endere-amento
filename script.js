@@ -1,3 +1,4 @@
+import { createTaskSound } from "./src/task-sound.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-loader.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
@@ -92,6 +93,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
+  var taskSound = createTaskSound({ getUser: function () { return authState && authState.currentUser && authState.currentUser.id; }, storage: { getItem: function (key) { return localStorage.getItem(key); }, setItem: function (key, value) { localStorage.setItem(key, value); } }, createContext: function () { var Ctor = window.AudioContext || window.webkitAudioContext; return new Ctor(); }, key: TASK_SOUND_KEY });
   var REPLENISHMENT_SOUND_KEY = "wms_replenishment_sound_enabled_v1";
   var REPLENISHMENT_SOUND_VOLUME_KEY = "wms_replenishment_sound_volume_v1";
   var REPLENISHMENT_NOTIFICATION_PERMISSION_KEY = "wms_replenishment_notification_prompt_v1";
@@ -1578,22 +1580,26 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function fillTaskSoundSetting() {
-    var enabled = localStorage.getItem(TASK_SOUND_KEY) !== "false";
+    var settings = taskSound.current();
+    var enabled = settings.enabled;
     ["taskSoundInput", "sidebarTaskSoundInput"].forEach(function (id) {
       if ($(id)) $(id).checked = enabled;
     });
+    if ($("sidebarTaskSoundVolume")) $("sidebarTaskSoundVolume").value = Math.round(settings.volume * 100);
+    if ($("sidebarTaskSoundPercent")) $("sidebarTaskSoundPercent").textContent = Math.round(settings.volume * 100) + "%";
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").checked = localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").value = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
   }
 
   function isTaskSoundEnabled() {
-    return localStorage.getItem(TASK_SOUND_KEY) !== "false";
+    var settings = taskSound.current();
+    return settings.enabled && settings.volume > 0;
   }
 
-  function saveTaskSoundSetting() {
-    var source = document.activeElement && document.activeElement.type === "checkbox" ? document.activeElement : $("taskSoundInput");
-    var enabled = !source || source.checked;
-    localStorage.setItem(TASK_SOUND_KEY, enabled ? "true" : "false");
+  function saveTaskSoundSetting(event) {
+    var source = event && event.currentTarget || $("taskSoundInput");
+    taskSound.set({ enabled: !!source.checked });
+    if (!source.checked) taskAlertState.pendingSound = false;
     fillTaskSoundSetting();
   }
 
@@ -6070,6 +6076,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function activatePasswordRecovery(session) {
     passwordRecoveryActive = true;
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = session || null;
     setAuthenticatedShellActive(false);
@@ -6520,6 +6528,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function showLogin(message, type) {
     if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = null;
     applyRoleClass();
@@ -6610,6 +6620,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (sessionInactivityTimer) window.clearTimeout(sessionInactivityTimer);
     sessionInactivityTimer = null;
     if (isSupabaseReady()) await signOutAuthSession(supabaseDb).catch(function () {});
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = null;
     state = { bindings: [], history: [], products: {} };
@@ -6732,6 +6744,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function updateLoggedUserUi() {
     var user = authState.currentUser;
+    fillTaskSoundSetting();
     if (!user) return;
     ["topUserName", "sidebarUserName"].forEach(function (id) { $(id).textContent = user.name; });
     ["topUserRole", "sidebarUserRole"].forEach(function (id) { $(id).textContent = user.role; });
@@ -8606,6 +8619,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
     $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
+    $("sidebarTaskSoundVolume").addEventListener("input", function (event) { taskSound.set({ volume: Number(event.currentTarget.value) / 100 }); if (!Number(event.currentTarget.value)) taskAlertState.pendingSound = false; fillTaskSoundSetting(); });
+    $("sidebarTaskSoundTest").addEventListener("click", function () { void playTaskSound(); });
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").addEventListener("change", saveReplenishmentSoundSetting);
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").addEventListener("change", saveReplenishmentSoundSetting);
   }
@@ -10237,26 +10252,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function playTaskSound() {
-    if (!isTaskSoundEnabled()) return;
-    try {
-      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      var context = new AudioContextCtor();
-      var oscillator = context.createOscillator();
-      var gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 660;
-      gain.gain.setValueAtTime(0.001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.2);
-      oscillator.onended = function () { context.close(); };
-    } catch (error) {
-      taskAlertState.pendingSound = true;
-    }
+    return taskSound.play();
   }
 
   function notificationService() {
