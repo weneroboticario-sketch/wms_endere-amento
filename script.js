@@ -89,7 +89,12 @@ import "./src/process-navigation.css";
         root: $("globalDashboard"), client: supabaseDb,
         getUser: function () { return authState.currentUser; },
         getWarehouse: activeWarehouseCode, openWarehouse: switchActiveWarehouse,
-        onSync: function (live) { setSyncStatus(live ? "Visao Geral atualizada" : "Atualizacao periodica", live ? "success" : "warning"); }
+        onSync: function (live) { setSyncStatus(live ? "Visao Geral atualizada" : "Atualizacao periodica", live ? "success" : "warning"); },
+        onSessionExpired: function () {
+          if (IS_CP_ALAMO && authState.currentUser) {
+            showLogin("Sua sessão expirou. Entre novamente para atualizar os dados.", "warning");
+          }
+        }
       });
     }
     return globalDashboardController;
@@ -990,6 +995,7 @@ import "./src/process-navigation.css";
     if (screenId === "globalDashboard") {
       ensureGlobalDashboard().start();
       await ensureGlobalDashboard().refresh();
+      if (!authState.currentUser) return false;
       refreshCpDashboardSummary();
       return true;
     }
@@ -6110,10 +6116,26 @@ import "./src/process-navigation.css";
     passwordRecoveryActive = isPasswordRecoveryReturnUrl();
     if (!supabaseDb || !supabaseDb.auth) return;
     supabaseDb.auth.onAuthStateChange(function (event, session) {
-      if (event !== "PASSWORD_RECOVERY") return;
-      window.setTimeout(function () {
-        activatePasswordRecovery(session);
-      }, 0);
+      if (event === "PASSWORD_RECOVERY") {
+        window.setTimeout(function () {
+          activatePasswordRecovery(session);
+        }, 0);
+        return;
+      }
+      // Apenas CP ÁLAMO: não manter a interface autenticada após o Auth
+      // perder a sessão (por expiração, revogação ou logout em outra aba).
+      if (!IS_CP_ALAMO) return;
+      if ((event === "SIGNED_IN" || event === "TOKEN_REFRESHED") &&
+          authState.currentUser && session?.user?.id === authState.currentUser.authUserId) {
+        authState.currentSession = session;
+      }
+      if (event === "SIGNED_OUT" && authState.currentUser) {
+        // Evita chamar funções do Supabase dentro do callback do Auth.
+        window.setTimeout(function () {
+          if (!authState.currentUser || passwordRecoveryActive) return;
+          showLogin("Sua sessão expirou. Entre novamente para atualizar os dados.", "warning");
+        }, 0);
+      }
     });
   }
 
@@ -6571,6 +6593,10 @@ import "./src/process-navigation.css";
   function showLogin(message, type) {
     authState.currentUser = null;
     authState.currentSession = null;
+    if (IS_CP_ALAMO && sessionInactivityTimer) {
+      window.clearTimeout(sessionInactivityTimer);
+      sessionInactivityTimer = null;
+    }
     applyRoleClass();
     stopTaskPolling();
     stopLeaderLiveSync();
