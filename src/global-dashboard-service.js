@@ -1,3 +1,5 @@
+import { requireCpAlamoSession } from "./cpalamo-session-guard.js";
+
 export const GLOBAL_SCOPE_CODE = "DOURADOS";
 export const GLOBAL_DASHBOARD_CONFIG = Object.freeze({
   cacheSeconds: 30,
@@ -45,8 +47,9 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
     if (!isGlobalAdministrator(getUser())) throw new Error("Visao Geral nao autorizada.");
   }
   const diagnostics = { queries: 0, cacheHits: 0, lastRefresh: "", durationMs: 0, lastError: "", realtime: "Parado", rpcAvailable: false, slowestSource: "", slowestMs: 0 };
-  async function read(section, filters = {}, limit = 30, offset = 0, force = false) {
+  async function read(section, filters = {}, limit = 30, offset = 0, force = false, authVerified = false) {
     authorize();
+    if (!authVerified) await requireCpAlamoSession(client, getUser());
     const userId = getUser().id;
     const key = JSON.stringify([userId, section, filters, limit, offset, config]);
     const entry = cache.get(key);
@@ -71,6 +74,7 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
   }
   async function overview(filters = {}, force = false, onProgress) {
     authorize();
+    await requireCpAlamoSession(client, getUser());
     const start = Date.now();
     const warehouseResponse = await client.from("wms_warehouses").select("code,name,active").eq("active", true).neq("code", GLOBAL_SCOPE_CODE).order("name");
     if (warehouseResponse.error) throw warehouseResponse.error;
@@ -78,7 +82,7 @@ export function createGlobalDashboardService(client, getUser, config = GLOBAL_DA
     const data = { warehouses: operationalWarehouses(warehouseResponse.data || []).filter(w => !filters.warehouse || w.code === filters.warehouse), errors: {} };
     onProgress?.(data);
     await Promise.all(Object.entries(sections).map(async ([key, section]) => {
-      try { data[key] = await read(section, filters, 30, 0, force); }
+      try { data[key] = await read(section, filters, 30, 0, force, true); }
       catch (error) { data.errors[key] = error.message || String(error); }
       onProgress?.(data);
     }));
