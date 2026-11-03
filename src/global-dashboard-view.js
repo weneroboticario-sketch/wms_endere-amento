@@ -1,5 +1,6 @@
 import { escapeHtml as esc } from "./utils.js";
 import { captacaoFreshness, createGlobalDashboardService, GLOBAL_DASHBOARD_CONFIG, isGlobalView, warehouseAttention } from "./global-dashboard-service.js";
+import { isCpAlamoSessionExpiredError } from "./cpalamo-session-guard.js";
 import "./global-dashboard.css";
 import { decorateMetrics } from "./cpalamo-appearance.js";
 import { installCompactControl } from "./compact-control.js";
@@ -19,7 +20,7 @@ const badge = value => `<span class="global-state ${esc(value)}">${esc(states[va
 const alertTitles = {"SLA VENCIDO":"Tarefa com prazo vencido","IMPORTACAO FALHOU":"Importação CAPTAÇÃO falhou","SEM USUARIOS ATIVOS":"Estoque sem usuários ativos","OPERACAO PARADA":"Processo sem movimentação","BASE DESATUALIZADA":"Base sem atualização recente","SEM RESPONSAVEL":"Processo sem responsável","RESPONSAVEL INATIVO":"Responsável inativo","RESPONSAVEL INDISPONIVEL":"Responsável indisponível","ATENDIMENTO PARCIAL":"Atendimento parcial","UNIFICACAO INCONSISTENTE":"Unificação precisa de revisão"};
 const alertSeverity = row => ["SLA VENCIDO","IMPORTACAO FALHOU","SEM USUARIOS ATIVOS","UNIFICACAO INCONSISTENTE"].includes(row.alert_type)||(row.kind==="TRANSFERENCIA"&&row.alert_type==="OPERACAO PARADA")?"CRITICO":"ATENCAO";
 
-export function mountGlobalDashboard({ root, client, getUser, getWarehouse, openWarehouse, onSync }) {
+export function mountGlobalDashboard({ root, client, getUser, getWarehouse, openWarehouse, onSync, onSessionExpired }) {
   const config = { ...GLOBAL_DASHBOARD_CONFIG };
   const service = createGlobalDashboardService(client, getUser, config);
   let snapshot = { warehouses: [], errors: {} };
@@ -365,7 +366,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       $('[data-global-page-label]').textContent="Página "+(offset/30+1);
       $('[data-global-page="previous"]').disabled=offset===0;
       $('[data-global-page="next"]').disabled=!(response.has_more || (response.total>offset+30) || (["team","captacao"].includes(section) && (response.rows||[]).length>offset+30));
-    } catch(error) { service.diagnostics.lastError=error.message;if (requestEpoch===epoch) $('[data-global-detail-rows]').innerHTML=retry(section); }
+    } catch(error) { if(isCpAlamoSessionExpiredError(error)){onSessionExpired?.();return;}service.diagnostics.lastError=error.message;if (requestEpoch===epoch) $('[data-global-detail-rows]').innerHTML=retry(section); }
   }
   async function activity() {
     const version=epoch;
@@ -377,7 +378,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       data.total=rows.length;data.rows=rows.slice(activityOffset,activityOffset+10);
       $('[data-global-activity]').innerHTML='<div class="compact-timeline">'+(data.rows||[]).slice(0,10).map(r=>`<details><summary><time>${esc(date(r.updated_at))}</time><strong>${esc(r.responsible_name||"Não informado")}</strong><span>${esc(human(r.kind))}</span><span>${esc(warehouseLabel(r.warehouse_code))}</span>${badge(r.status)}</summary><p>${esc(r.code||"")} · ${esc(r.title||"")}</p></details>`).join("")+'</div>'+(!(data.rows||[]).length?'<p class="empty-state">Nenhuma atividade neste período.</p>':"")+`<div class="global-pagination"><button type="button" data-activity-page="previous" ${activityOffset===0?'disabled':''}>Anterior</button><span>Página ${activityOffset/10+1}</span><button type="button" data-activity-page="next" ${!(data.has_more||data.total>activityOffset+10||(data.rows||[]).length>=10)?'disabled':''}>Próxima</button></div>`;
       $('[data-activity-page="next"]').disabled=data.total<=activityOffset+10;
-    } catch { $('[data-global-activity]').textContent="Atividade indisponível.";reference.activity([],true); }
+    } catch(error) { if(isCpAlamoSessionExpiredError(error)){onSessionExpired?.();return;}$('[data-global-activity]').textContent="Atividade indisponível.";reference.activity([],true); }
   }
   async function refresh(force = false) {
     if (!allowed()) return;
@@ -389,7 +390,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
         snapshot=data;
         if (!$('[data-filter="warehouse"]').value) allWarehouses=data.warehouses;
         options();renderOverview();renderDomainCharts();await Promise.all([activity(),loadDetails(),loadReferenceDetails()]);onSync?.(true);
-      } catch(error) { service.diagnostics.lastError=error.message;$('[data-global-errors]').innerHTML=retry("overview");onSync?.(false); }
+      } catch(error) { if(isCpAlamoSessionExpiredError(error)){onSessionExpired?.();return;}service.diagnostics.lastError=error.message;$('[data-global-errors]').innerHTML=retry("overview");onSync?.(false); }
       finally { button.disabled=false;refreshPromise=null;if(version!==epoch&&allowed())setTimeout(()=>refresh(true),0); }
     })();
     return refreshPromise;
@@ -420,7 +421,7 @@ export function mountGlobalDashboard({ root, client, getUser, getWarehouse, open
       container.innerHTML=section==="team"?table(["Nome","Perfil","Ativo no cadastro","Disponível","Último login"],data.rows.map(u=>[esc(u.name),esc(u.role),u.active?"Sim":"Não",u.available?"Sim":"Não",esc(date(u.last_login_at))])):
         table(["SKU","Produto","Solicitada","Separada","Lacrada","Divergência","Endereço"],data.rows.map(i=>[esc(i.sku),esc(i.descricao),number(i.quantidade_solicitada),number(i.quantidade_separada),number(i.quantidade_lacrada),i.has_divergence?"Sim":"Não",esc(i.endereco_codigo||"—")]));
       $('[data-modal-page-label]').textContent="Página "+(modalOffset/30+1);$('[data-modal-page="previous"]').disabled=modalOffset===0;$('[data-modal-page="next"]').disabled=data.total<=modalOffset+30;
-    }catch(error){service.diagnostics.lastError=error.message;container.textContent="Não foi possível carregar os detalhes.";}
+    }catch(error){if(isCpAlamoSessionExpiredError(error)){onSessionExpired?.();return;}service.diagnostics.lastError=error.message;container.textContent="Não foi possível carregar os detalhes.";}
   }
   function selectTab(next) {
     root.querySelectorAll('[data-compact-mode]').forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.compactMode===$('[data-filter="mode"]').value)));
