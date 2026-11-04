@@ -6209,3 +6209,5 @@ body.role-atendente .replenishment-layout {
 .sidebar-task-volume { display:grid; grid-template-columns:auto minmax(0,1fr) 32px; align-items:center; gap:6px; color:#d7e5ee; font-size:12px; }
 .sidebar-task-volume input { min-width:0; width:100%; min-height:24px; padding:0; accent-color:#42b9ff; }
 .sidebar .user-card .sidebar-sound-test { min-height:30px; padding:4px 8px; font-size:12px; }
+
+.replenishment-route-heading { margin: 8px 0 0; padding: 6px 10px; font-size: 0.9rem; border-bottom: 1px solid var(--border); }

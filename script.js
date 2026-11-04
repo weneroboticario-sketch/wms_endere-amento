@@ -37,7 +37,7 @@ import {
 } from "./src/addressing-bindings.js";
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
-import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { buildReplenishmentRoute, loadActiveReplenishmentPages, replenishmentRouteAddress, compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
@@ -5057,6 +5057,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var loadedFromCache = replenishmentState.requests.length > 0;
     if (!loadedFromCache) loadedFromCache = await hydrateReplenishmentDataFromCache(requestedWarehouseCode);
     if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
+    var routeChanges = new Map();
+    var routeActor = authState.currentUser;
+    var isCurrent = function () { return activeWarehouseCode() === requestedWarehouseCode && authState.currentUser === routeActor && replenishmentState.routeChanges === routeChanges; };
+    replenishmentState.routeChanges = routeChanges;
     try {
       var response = await supabaseDb
         .from("wms_replenishment_requests")
@@ -5067,7 +5071,25 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         .limit(120);
       if (response.error) throw response.error;
       if (activeWarehouseCode() !== requestedWarehouseCode) return false;
-      replenishmentState.requests = (response.data || []).map(fromDbReplenishmentRequest);
+      var recent = response.data || [];
+      if (usesReplenishmentRoute()) {
+        var active = await loadActiveReplenishmentPages(function (after, size) {
+          var query = supabaseDb.from("wms_replenishment_requests")
+            .select(replenishmentRequestSelectColumns())
+            .eq("warehouse_code", requestedWarehouseCode)
+            .neq("is_deleted", true)
+            .not("status", "in", "(CONCLUIDO,ENTREGUE_NA_LOJA,CANCELADO)")
+            .order("id").limit(size);
+          return after === null ? query : query.gt("id", after);
+        }, isCurrent);
+        if (!active) return false;
+        var merged = new Map(recent.filter(function (row) { return !isReplenishmentVisibleInActiveQueue(row); }).map(function (row) { return [row.id, row]; }));
+        active.forEach(function (row) { merged.set(row.id, row); });
+        routeChanges.forEach(function (row, id) { if (row) merged.set(id, row); else merged.delete(id); });
+        recent = Array.from(merged.values());
+      }
+      if (!isCurrent()) return false;
+      replenishmentState.requests = recent.map(fromDbReplenishmentRequest);
       replenishmentState.tablesAvailable = true;
       await writeModuleCacheForWarehouse("replenishmentData", requestedWarehouseCode, { requests: replenishmentState.requests });
       recordPerformanceMetric("lastReplenishmentLoadMs", loadStartedAt);
@@ -5080,6 +5102,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         : "Nao foi possivel carregar pedidos de reposicao: " + formatSupabaseError(error);
       if (getActiveScreenId() === "reposicao") setStatus("replenishmentQueueStatus", message, "error");
       return loadedFromCache;
+    } finally {
+      if (replenishmentState.routeChanges === routeChanges) replenishmentState.routeChanges = null;
     }
   }
 
@@ -9527,12 +9551,87 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (replenishmentState.activeFilter) {
       visible = visible.filter(function (item) { return matchesReplenishmentQueueFilter(item, replenishmentState.activeFilter); });
     }
-    var limited = visible.slice(0, replenishmentState.renderLimit);
+    var useRoute = usesReplenishmentRoute();
+    var route = useRoute ? buildReplenishmentRoute(visible, activeWarehouseCode(), operationalReplenishmentAddress, vdMaisColumnLabelToNumber) : null;
+    var limited = (route || visible).slice(0, replenishmentState.renderLimit);
+    if (useRoute) loadMissingReplenishmentRouteAddresses(visible);
     $("replenishmentList").innerHTML = limited.length
-      ? limited.map(attendantView ? attendantReplenishmentCardHtml : replenishmentCardHtml).join("")
+      ? useRoute ? replenishmentRouteHtml(limited) : limited.map(function (item) { return attendantView ? attendantReplenishmentCardHtml(item) : replenishmentCardHtml(item); }).join("")
       : "<div class=\"empty-state\">" + (attendantView ? "Nenhum pedido pendente criado por voce neste estoque." : "Nenhum pedido pendente para o estoque " + escapeHtml(activeWarehouseCode()) + ".") + "</div>";
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
     setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
+  }
+
+  function usesReplenishmentRoute() {
+    return !IS_CP_ALAMO && (isAdminOrSupervisor() || authState.currentUser?.role === "OPERADOR");
+  }
+
+  function operationalReplenishmentAddress(item) {
+    var selected = replenishmentRouteAddress(item, normalizeLocation, vdMaisColumnLabelToNumber);
+    if (selected) return selected;
+    var positions = stockState.positionCache[stockCacheKey(item.warehouseCode, "CAPTACAO", item.codigoMaterial)];
+    if (!positions || !positions.length) return null;
+    var addresses = new Map();
+    var located = positions.flatMap(function (position) {
+      var address = replenishmentRouteAddress({
+        localizacaoWms: position.codigoEndereco,
+        captacaoEstacao: position.estacao,
+        captacaoRack: position.rack,
+        captacaoLinha: position.linha,
+        captacaoColuna: position.coluna
+      }, normalizeLocation, vdMaisColumnLabelToNumber);
+      if (!address) return [];
+      addresses.set(address.code, address);
+      return [Object.assign({}, position, { codigoEndereco: address.code })];
+    });
+    if (!located.length) return null;
+    var bestAvailable = Math.max.apply(null, located.map(function (position) { return Number(position.totalDisponivel || 0); }));
+    var bestAddresses = unique(located.filter(function (position) { return Number(position.totalDisponivel || 0) === bestAvailable; }).map(function (position) {
+      var address = addresses.get(position.codigoEndereco);
+      return [address.rua, address.rack, address.linha, address.letra].join(":");
+    }));
+    if (bestAddresses.length > 1) return null;
+    var suggestion = buildStockSuggestion(item.codigoMaterial, item.requestedQty, located, item.warehouseCode);
+    return addresses.get(suggestion.captureLocation) || null;
+  }
+
+  function loadMissingReplenishmentRouteAddresses(items) {
+    if (!isSupabaseReady() || !canUseNetwork()) return;
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    if (replenishmentState.routeLookup && replenishmentState.routeLookup.warehouse === warehouse && replenishmentState.routeLookup.actor === actor) return;
+    var skus = unique(items.filter(function (item) {
+      return !replenishmentRouteAddress(item, normalizeLocation, vdMaisColumnLabelToNumber)
+        && !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", item.codigoMaterial)];
+    }).map(function (item) { return item.codigoMaterial; }).filter(Boolean));
+    if (!skus.length) return;
+    var lookup = { warehouse: warehouse, actor: actor };
+    replenishmentState.routeLookup = lookup;
+    (async function () {
+      for (var offset = 0; offset < skus.length; offset += 100) {
+        if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) return;
+        await getStockPositionsForSkus(skus.slice(offset, offset + 100), warehouse);
+      }
+      if (replenishmentState.routeLookup === lookup) replenishmentState.routeLookup = null;
+      if (activeWarehouseCode() === warehouse && authState.currentUser === actor && getActiveScreenId() === "reposicao") renderReplenishment();
+    })().catch(function (error) {
+      recordPerformanceError("reposicao-localizacao", error);
+    }).finally(function () {
+      if (replenishmentState.routeLookup === lookup) replenishmentState.routeLookup = null;
+    });
+  }
+
+  function replenishmentRouteHtml(route) {
+    var lastGroup = "";
+    return route.map(function (entry) {
+      var group = entry.priority + ":" + (entry.address ? entry.address.rua : "");
+      var heading = "";
+      if (lastGroup !== group) {
+        lastGroup = group;
+        var title = entry.address ? "Rua " + entry.address.rua : "Sem localização definida";
+        heading = '<h3 class="replenishment-route-heading">' + (entry.priority === 0 ? "Cliente urgente · " : "") + escapeHtml(title) + "</h3>";
+      }
+      return heading + replenishmentCardHtml(entry.item, entry.address);
+    }).join("");
   }
 
   function applyReplenishmentRoleView(attendantView) {
@@ -9662,17 +9761,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return type || "-";
   }
 
-  function replenishmentCardHtml(item) {
+  function replenishmentCardHtml(item, routeAddress) {
     var canManage = isAdminOrSupervisor();
     var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
     var queueLabel = item.status === "PENDENTE" && !item.responsavelId ? "Na fila" : displayReplenishmentStatus(item.status);
-    var location = replenishmentCaptureLocationLabel(item);
+    var location = routeAddress === undefined ? replenishmentCaptureLocationLabel(item) : routeAddress ? routeAddress.code : "Sem localização";
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
       "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + (item.prioridade === "CLIENTE" ? " priority-cliente" : "") + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
       "<div class=\"replenishment-card-main\">",
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
-      "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
+      "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + (routeAddress ? escapeHtml("Rack " + routeAddress.rack + " · Linha " + routeAddress.linha + " · Coluna " + routeAddress.letra) : routeAddress === null ? "" : escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-")) + "</small></div>",
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
@@ -10772,6 +10871,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var eventType = payload && payload.eventType ? payload.eventType : "";
     var row = payload && payload.new ? payload.new : {};
     var oldRow = payload && payload.old ? payload.old : {};
+    if (replenishmentState.routeChanges) {
+      var changedId = row.id || oldRow.id;
+      if (changedId) replenishmentState.routeChanges.set(changedId, eventType === "DELETE" || row.is_deleted === true ? null : row);
+    }
     if (eventType === "DELETE" || (row && row.is_deleted === true)) {
       removeById(replenishmentState.requests, (oldRow && oldRow.id) || (row && row.id));
       return;
