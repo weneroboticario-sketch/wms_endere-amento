@@ -8593,10 +8593,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("establishmentsRows").addEventListener("click", handleTransferActionClick);
     $("establishmentSearchButton").addEventListener("click", renderEstablishments);
     $("establishmentSearchInput").addEventListener("input", renderEstablishments);
-    $("backToTransfersButton").addEventListener("click", function () {
-      activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
-      renderTransfers();
-    });
+    $("backToTransfersButton").addEventListener("click", returnFromTransferWork);
+
     $("refreshTransferStockButton").addEventListener("click", function (event) {
       refreshTransferStockSuggestion(transferState.activeTransferId, { persist: true, button: event.currentTarget });
     });
@@ -11038,12 +11036,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
   }
 
-  function renderTransfers() {
+  function renderTransfers(options) {
     if (!$("transferencias")) return;
     invalidateTransferStatsCache();
     renderTransferTabVisibility();
     var activeSection = getActiveTransferSectionId();
-    renderTransferSelects();
+    if (!options || !options.preserveFilters) renderTransferSelects();
     if (activeSection === "transferPanelSection") renderTransferPanel();
     if (activeSection === "myTransfersSection") renderMyTransfers();
     if (activeSection === "taskCenterSection") renderTaskCenter();
@@ -18043,7 +18041,26 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return message.indexOf("duplicate key value") >= 0 || message.indexOf("23505") >= 0 || message.indexOf("unique constraint") >= 0;
   }
 
+  function returnFromTransferWork() {
+    var origin = transferState.workReturnView;
+    var sameScope = origin && origin.actor === authState.currentUser && origin.warehouse === activeWarehouseCode();
+    var fallback = isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection";
+    var allowed = sameScope && origin.section !== "transferWorkSection" && $(origin.section)
+      && (isAdminOrSupervisor() || origin.section === "myTransfersSection");
+    var target = allowed ? origin.section : fallback;
+    transferState.workReturnView = null;
+    activateTransferTab(target);
+    renderTransfers({ preserveFilters: true });
+    window.requestAnimationFrame(function () {
+      if (getActiveScreenId() === "transferencias" && getActiveTransferSectionId() === target
+        && (!origin || origin.actor === authState.currentUser && origin.warehouse === activeWarehouseCode())) {
+        window.scrollTo({ top: allowed ? origin.scroll : 0, behavior: "instant" });
+      }
+    });
+  }
+
   async function openTransferWork(transferId, options) {
+    var origin = { section: getActiveTransferSectionId(), scroll: window.scrollY || 0, warehouse: activeWarehouseCode(), actor: authState.currentUser };
     options = options || {};
     var transfer = getTransferById(transferId);
     if (!transfer) {
@@ -18110,10 +18127,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     } else {
       await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
     }
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode()) return;
+    if (origin.section !== "transferWorkSection") transferState.workReturnView = origin;
     activateTransferTab("transferWorkSection");
     renderTransferWork();
     setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");
     window.setTimeout(function () {
+      if (getActiveScreenId() !== "transferencias" || getActiveTransferSectionId() !== "transferWorkSection" || transferState.activeTransferId !== transferId) return;
       if (transferState.activeWorkMode === "MONTAGEM") $("transferScanInput").focus();
       else if ($("transferCurrentItem")) $("transferCurrentItem").scrollIntoView({ block: "start", behavior: "smooth" });
     }, 80);
