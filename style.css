@@ -6213,3 +6213,6 @@ body.role-atendente .replenishment-layout {
 .replenishment-route-heading { margin: 8px 0 0; padding: 6px 10px; font-size: 0.9rem; border-bottom: 1px solid var(--border); }
 
 .replenishment-available-qty { margin: 10px 0; padding: 10px 12px; border-radius: 7px; background: #e5f2ff; color: #073b70; font-weight: 700; }
+
+#finalizedTransferRows > tr > td { background: #fff; }
+#finalizedTransferRows > tr.transfer-ready > td { background: #e8f6ec; }

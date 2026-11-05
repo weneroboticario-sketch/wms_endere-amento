@@ -12391,7 +12391,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function finalizedTransferRowHtml(transfer) {
     var report = getTransferFinalReport(transfer);
     return [
-      "<tr>",
+      '<tr class="' + (transfer.status === "FINALIZADA" ? "transfer-ready" : "") + '">',
       "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || "-") + "</span></td>",
       "<td>" + escapeHtml(transferRouteDestinationLabel(transfer)) + "</td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
