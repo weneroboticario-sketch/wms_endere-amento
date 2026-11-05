@@ -1599,12 +1599,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function saveTaskSoundSetting(event) {
     var source = event && event.currentTarget || $("taskSoundInput");
     taskSound.set({ enabled: !!source.checked });
-    if (!source.checked) taskAlertState.pendingSound = false;
+    if (!source.checked) {
+      taskAlertState.pendingSound = false;
+      taskAlertState.pendingReplenishmentSound = false;
+    }
     fillTaskSoundSetting();
   }
 
   function isReplenishmentSoundEnabled() {
-    return localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
+    return isTaskSoundEnabled() && localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
   }
 
   function saveReplenishmentSoundSetting() {
@@ -1614,6 +1617,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function bindTaskAudioUnlock() {
+    window.addEventListener("storage", function (event) {
+      var user = authState.currentUser;
+      if (!user || event.key !== TASK_SOUND_KEY + ":" + user.id) return;
+      taskSound.reload();
+      fillTaskSoundSetting();
+      if (!isTaskSoundEnabled()) {
+        taskAlertState.pendingSound = false;
+        taskAlertState.pendingReplenishmentSound = false;
+      }
+    });
     var unlock = function () {
       taskAlertState.audioUnlocked = true;
       if (taskAlertState.pendingSound) {
@@ -8676,7 +8689,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
     $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
-    $("sidebarTaskSoundVolume").addEventListener("input", function (event) { taskSound.set({ volume: Number(event.currentTarget.value) / 100 }); if (!Number(event.currentTarget.value)) taskAlertState.pendingSound = false; fillTaskSoundSetting(); });
+    $("sidebarTaskSoundVolume").addEventListener("input", function (event) { taskSound.set({ volume: Number(event.currentTarget.value) / 100 }); if (!Number(event.currentTarget.value)) { taskAlertState.pendingSound = false; taskAlertState.pendingReplenishmentSound = false; } fillTaskSoundSetting(); });
     $("sidebarTaskSoundTest").addEventListener("click", function () { void playTaskSound(); });
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").addEventListener("change", saveReplenishmentSoundSetting);
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").addEventListener("change", saveReplenishmentSoundSetting);
@@ -10420,6 +10433,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     try {
       new Notification(title, {
         body: body,
+        silent: true,
         tag: "wms-reposicao-" + activeWarehouseCode(),
         icon: "/favicon.svg"
       });
@@ -10469,30 +10483,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function runReplenishmentSoundPulse() {
     if (!isReplenishmentSoundEnabled()) return;
-    try {
-      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      var context = new AudioContextCtor();
-      var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
-      var targetGain = volume === "low" ? 0.08 : volume === "medium" ? 0.16 : 0.26;
-      [760, 1040].forEach(function (frequency, index) {
-        var oscillator = context.createOscillator();
-        var gain = context.createGain();
-        var start = context.currentTime + index * 0.1;
-        oscillator.type = "square";
-        oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(0.001, start);
-        gain.gain.exponentialRampToValueAtTime(targetGain, start + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.095);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(start);
-        oscillator.stop(start + 0.11);
-      });
-      window.setTimeout(function () { context.close(); }, 320);
-    } catch (error) {
-      taskAlertState.pendingReplenishmentSound = true;
-    }
+    var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
+    var targetGain = volume === "low" ? 0.08 : volume === "medium" ? 0.16 : 0.26;
+    return taskSound.play("replenishment", targetGain);
   }
 
   function startTaskPolling() {

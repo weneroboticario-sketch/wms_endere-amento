@@ -27,7 +27,10 @@ export function createTaskSound({ getUser, storage, createContext, key = 'wms_ta
   try { if(actor) storage.setItem(key+':'+actor,JSON.stringify(preferences)); } catch { /* keep working without storage */ }
   return current();
  }
- async function play() {
+ async function play(kind = "task", peak = 0.55) {
+  const tone = kind === "replenishment"
+   ? { frequencies: [760, 1040], type: "square", spacing: 0.1, fade: 0.095, duration: 0.11, peak: Math.min(0.55, clamp(peak)) }
+   : { frequencies: [740, 990], type: "sine", spacing: 0.2, fade: 0.18, duration: 0.19, peak: 0.55 };
   const settings=current();
   if (!settings.enabled || !settings.volume) return false;
   stop(); const version=generation, user=actor;
@@ -38,16 +41,17 @@ export function createTaskSound({ getUser, storage, createContext, key = 'wms_ta
    if(context.state==='suspended') await context.resume();
    const latest=current();
    if(version!==generation || user!==actor || !latest.enabled || !latest.volume) { if(playing===sound)stop(); return false; }
-   // Sequential sine pulses, peak below unity: clearer without clipping.
-   [740,990].forEach((frequency,index)=>{
-    const oscillator=context.createOscillator(),gain=context.createGain(),start=context.currentTime+index*0.2;
-    sound.oscillators.push(oscillator);oscillator.type='sine';oscillator.frequency.value=frequency;
-    gain.gain.setValueAtTime(0.001,start);gain.gain.exponentialRampToValueAtTime(0.55,start+0.015);gain.gain.exponentialRampToValueAtTime(0.001,start+0.18);
-    oscillator.connect(gain);gain.connect(master);oscillator.start(start);oscillator.stop(start+0.19);
+   // Both alerts share the same user volume and immediate mute control.
+   tone.frequencies.forEach((frequency,index)=>{
+    const oscillator=context.createOscillator(),gain=context.createGain(),start=context.currentTime+index*tone.spacing;
+    sound.oscillators.push(oscillator);oscillator.type=tone.type;oscillator.frequency.value=frequency;
+    gain.gain.setValueAtTime(0.001,start);gain.gain.exponentialRampToValueAtTime(tone.peak,start+0.015);gain.gain.exponentialRampToValueAtTime(0.001,start+tone.fade);
+    oscillator.connect(gain);gain.connect(master);oscillator.start(start);oscillator.stop(start+tone.duration);
     if(index===1)oscillator.onended=()=>{if(playing===sound)stop();};
    });
    return true;
   } catch { if(version===generation)stop(); return false; }
  }
- return {current,set,play,stop};
+ function reload() { preferences = null; return current(); }
+ return {current,set,play,stop,reload};
 }

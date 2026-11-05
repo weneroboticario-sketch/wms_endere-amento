@@ -59,7 +59,7 @@ test("replenishment sound is a single loud short pulse", async () => {
 
   assert.match(source, /function playReplenishmentSound\(\)[\s\S]*?runReplenishmentSoundPulse\(\);/);
   assert.match(source, /var targetGain = volume === "low" \? 0\.08 : volume === "medium" \? 0\.16 : 0\.26;/);
-  assert.match(source, /context\.close\(\); \}, 320\);/);
+  assert.match(source, /return taskSound\.play\("replenishment", targetGain\);/);
   assert.doesNotMatch(source, /replenishmentSoundUntil|replenishmentSoundTimer|repeat_open|repeat_30/);
   assert.doesNotMatch(html, /id="replenishmentSoundRepeatInput"/);
 });
