@@ -1,4 +1,5 @@
 import { createTaskSound } from "./src/task-sound.js";
+import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-loader.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
@@ -66,6 +67,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   var globalDashboardController = null;
+  var inboundReceiptsController = null;
+  function renderInboundReceipts(historyMode) {
+    if (IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
+    var root = $("inboundReceiptRoot");
+    $(historyMode ? "inboundHistorySection" : "inboundReceiptsSection").appendChild(root);
+    if (!inboundReceiptsController) inboundReceiptsController = mountInboundReceipts({
+      client: function () { return supabaseDb; },
+      user: function () { return authState.currentUser; },
+      warehouse: activeWarehouseCode,
+      users: function () { return authState.users; },
+      userWarehouse: function (user) { return userCanAccessWarehouse(user, activeWarehouseCode()); }
+    });
+    inboundReceiptsController.render(historyMode).catch(function (error) { showToast("Recebimento: " + formatSupabaseError(error), "error"); });
+  }
   var stockOverviewController = null;
   var operationalCatalogPromise = null;
   var productCatalogSingleFlight = createScopedSingleFlight();
@@ -11042,6 +11057,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (activeSection === "establishmentsSection") renderEstablishments();
     if (activeSection === "newTransferSection") renderTransferPreview();
     if (activeSection === "transferWorkSection") renderTransferWork();
+    if (activeSection === "inboundReceiptsSection" || activeSection === "inboundHistorySection") renderInboundReceipts(activeSection === "inboundHistorySection");
   }
 
   function getActiveTransferSectionId() {
@@ -11056,11 +11072,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var visible = target === "myTransfersSection" || isAdminOrSupervisor();
       if (target === "taskCenterSection") visible = isAdminOrSupervisor();
       if (target === "transferConferenceSection") visible = false;
+      if (target === "inboundReceiptsSection" || target === "inboundHistorySection") visible = !IS_CP_ALAMO && authState.currentUser && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
       if (target === "establishmentsSection") visible = isAdmin();
       button.hidden = !visible;
       if (button.classList.contains("active") && !visible) activateTransferTab("myTransfersSection");
     });
-    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
+    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR" && ["inboundReceiptsSection", "inboundHistorySection"].indexOf(getActiveTransferSectionId()) < 0) activateTransferTab("myTransfersSection");
   }
 
   function activateTransferTab(sectionId) {

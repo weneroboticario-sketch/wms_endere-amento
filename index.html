@@ -670,7 +670,9 @@
         </div>
 
         <div class="transfer-tabs">
-          <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
+          <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Transferências Enviadas</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="inboundReceiptsSection" type="button" hidden>Transferências Recebidas</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="inboundHistorySection" type="button" hidden>Histórico de recebimentos</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="taskCenterSection" type="button">Gerenciamento de Tarefas</button>
@@ -950,6 +952,10 @@
           </section>
         </section>
 
+        <section class="transfer-section panel" id="inboundReceiptsSection" hidden>
+          <div class="inbound-receipts" id="inboundReceiptRoot"></div>
+        </section>
+        <section class="transfer-section panel" id="inboundHistorySection" hidden></section>
         <section class="transfer-section" id="finalizedTransfersSection" hidden>
           <section class="panel">
             <div class="panel-header">
