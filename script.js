@@ -5641,9 +5641,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function lookupReplenishmentProductWithStock(sku) {
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    var currentLookup = function () { return activeWarehouseCode() === warehouse && authState.currentUser === actor && normalizeSku($("replenishmentSkuInput").value) === sku; };
     var product = lookupReplenishmentProduct(sku);
     try {
       var suggestion = await getStockSuggestion(sku, 0);
+      if (!currentLookup()) return null;
       product = enrichReplenishmentProductWithStock(product, suggestion);
       if ($("replenishmentRequestQtyInput") && !normalizeText($("replenishmentRequestQtyInput").value) && Number(suggestion.suggestedReplenishmentQty || 0) > 0) {
         $("replenishmentRequestQtyInput").value = String(suggestion.suggestedReplenishmentQty);
@@ -5654,6 +5657,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     } catch (error) {
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock-lookup", error);
     }
+    if (!currentLookup()) return null;
     replenishmentState.currentProduct = product;
     renderReplenishmentProductCard(product);
     return product;
@@ -8476,7 +8480,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (event.key === "Enter") {
           event.preventDefault();
           handleReplenishmentSkuInput();
-          $("replenishmentStoreQtyInput").focus();
+          $("replenishmentRequestQtyInput").focus();
         }
       });
     }
@@ -9904,6 +9908,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishmentProductCard(product) {
+    var available = $("replenishmentAvailableQty");
+    if (available) {
+      available.hidden = !product || !product.sku;
+      available.textContent = product && product.captureBalance !== null && product.captureBalance !== undefined
+        ? "Disponível para repor: " + formatQty(product.captureBalance) + " un."
+        : "Consultando quantidade disponível…";
+    }
     if (!$("replenishmentProductCard")) return;
     if (!product || !product.sku) {
       $("replenishmentProductCard").className = "replenishment-product-card empty-state";

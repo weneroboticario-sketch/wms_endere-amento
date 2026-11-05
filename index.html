@@ -564,10 +564,9 @@
               <label for="replenishmentSkuInput">Codigo do produto</label>
               <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
+              <p id="replenishmentAvailableQty" class="replenishment-available-qty" role="status" hidden></p>
               <div class="replenishment-qty-grid">
-                <label>Saldo Loja informado
-                  <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" step="1" value="0">
-                </label>
+                <input id="replenishmentStoreQtyInput" type="hidden" value="0">
                 <label>Qtd para repor
                   <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
                 </label>

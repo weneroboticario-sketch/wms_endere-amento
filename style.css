@@ -6211,3 +6211,5 @@ body.role-atendente .replenishment-layout {
 .sidebar .user-card .sidebar-sound-test { min-height:30px; padding:4px 8px; font-size:12px; }
 
 .replenishment-route-heading { margin: 8px 0 0; padding: 6px 10px; font-size: 0.9rem; border-bottom: 1px solid var(--border); }
+
+.replenishment-available-qty { margin: 10px 0; padding: 10px 12px; border-radius: 7px; background: #e5f2ff; color: #073b70; font-weight: 700; }
