@@ -4788,8 +4788,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function getOpenRequestBySku(sku) {
-    var map = await getOpenRequestsBySkus([sku]);
-    return map[normalizeSku(sku)] || null;
+    var map = await getOpenRequestsBySkus(stockSkuQueryValues([sku]));
+    var key = normalizeSkuKey(sku);
+    return Object.values(map).filter(function (request) {
+      return normalizeSkuKey(request.codigo_material) === key;
+    }).sort(function (left, right) {
+      return Date.parse(right.created_at) - Date.parse(left.created_at);
+    })[0] || null;
   }
 
   function groupStockPositionsBySku(positions) {
@@ -5473,13 +5478,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!authState.currentUser) throw new Error("Usuario solicitante obrigatorio.");
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
     var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
-    if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    var openRequest = await getOpenRequestBySku(sku);
+    if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
+    if (openRequest && !data.forceDuplicate) {
+      var warning = "O item " + sku + " já foi solicitado."
+        + "\nSituação: " + displayReplenishmentStatus(openRequest.status) + "."
+        + "\nQuantidade solicitada: " + formatQty(openRequest.quantidade_solicitada) + " un."
+        + (openRequest.responsavel_nome ? "\nResponsável: " + openRequest.responsavel_nome + "." : "")
+        + "\n\nDeseja realmente criar outra reposição para este item?"
+        + "\nOK: criar uma nova solicitação. Cancelar: voltar e conferir."
+        + "\nA solicitação existente continuará como está.";
+      if (!window.confirm(warning)) return null;
+    }
+    if (!openRequest && replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
       var recentDuplicate = findRecentReplenishmentDuplicate(sku, requestedQty, 15000);
       if (recentDuplicate) return recentDuplicate;
       return null;
     }
-    var openRequest = await getOpenRequestBySku(sku);
-    if (openRequest && !data.forceDuplicate && !window.confirm("Ja existe um pedido aberto para este produto. Deseja abrir outro mesmo assim?")) return null;
     var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
     try {
       var stockSuggestion = await getStockSuggestion(sku, requestedQty);
@@ -5534,6 +5550,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       clientActionId: clientActionId,
       createdById: authState.currentUser.id
     };
+    if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
     var response = await insertReplenishmentRequest(request, idempotencyKey, clientActionId);
     if (response.error && isDuplicateKeyError(response.error)) {
       var duplicated = await findReplenishmentByIdempotencyKey(idempotencyKey);
