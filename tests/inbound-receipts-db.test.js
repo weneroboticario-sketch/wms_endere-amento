@@ -23,6 +23,7 @@ async function fixture() {
     create table wms_stock(sku text primary key,quantity numeric); insert into wms_stock values('01314',50);
     create table wms_bindings(sku text,location text); insert into wms_bindings values('01314','R01');`);
   await db.exec(migration);
+  await db.exec(await readFile(new URL("../supabase/migrations/20261105210637_wms_inbound_xml_line_compatibility.sql",import.meta.url),"utf8"));
   return db;
 }
 async function login(db, name) { await db.exec("reset role"); await db.query("select set_config('test.actor',$1,false)", [name]); await db.exec("set role authenticated"); }
@@ -136,5 +137,18 @@ test("unit scans do not accumulate rounding errors and simultaneous stale update
     await act(db,id,"COUNT",{item_id:second.id,quantity:2,unit:"CX",mode:"SET"});
     await act(db,id,"COUNT",{item_id:second.id,quantity:24,unit:"UN",mode:"ADD"});
     assert.equal((await lines(db,id))[1].counted_qty,"3.000000");
+  }finally{await db.close();}
+});
+test("XML imports nItem as element or attribute and reports invalid numbering without raw integer errors",async()=>{
+  const db=await fixture();try{
+    await login(db,"sup");
+    const quantities=[15,15,10,10,10,8,5,5];
+    const products=quantities.map((q,n)=>`<det><nItem>${n+1}</nItem><prod><cProd>0${n+1314}</cProd><xProd>Produto ${n+1}</xProd><qCom>${q}.0000</qCom><uCom>UND</uCom><qTrib>${q}.0000</qTrib><uTrib>UND</uTrib></prod></det>`).join("");
+    const xml=inboundXml({products});const id=await importXml(db,xml);const rows=await lines(db,id);
+    assert.equal(rows.length,8);assert.equal(rows.reduce((sum,i)=>sum+Number(i.expected_qty),0),78);assert.equal(rows[0].supplier_code,"01314");
+    assert.equal(await importXml(db,xml),id);
+    for(const [index,variant] of ['<det><prod/>','<det nItem="abc"><prod/>','<det nItem="1"><nItem>2</nItem><prod/>','<det nItem="999999999999999999999"><prod/>'].entries()){
+      await assert.rejects(importXml(db,inboundXml({invoiceKey:key.slice(0,-2)+String(40+index),products:variant+'</det>'})),/Número de item/);
+    }
   }finally{await db.close();}
 });
