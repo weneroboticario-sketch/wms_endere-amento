@@ -4323,21 +4323,35 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     };
   }
 
+  function stockSkuQueryValues(skus) {
+    var values = [];
+    skus.forEach(function (sku) {
+      var normalized = normalizeSku(sku);
+      values.push(normalized);
+      if (!/^\d+$/.test(normalized)) return;
+      var key = normalizeSkuKey(normalized);
+      values.push(key);
+      for (var width = key.length + 1; width <= 8; width += 1) values.push(key.padStart(width, "0"));
+    });
+    return unique(values.filter(Boolean));
+  }
+
   async function getStockPositionsForSkus(skus, warehouseCode) {
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
-    var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
+    var cleanSkus = unique((skus || []).map(normalizeSkuKey).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
     var missing = cleanSkus.filter(function (sku) {
       return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || !stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
     });
     if (missing.length) {
+      var querySkus = stockSkuQueryValues(missing);
       var response = await supabaseDb
         .from("wms_stock_positions")
         .select(stockPositionSelectColumns())
         .eq("warehouse_code", warehouse)
         .eq("active", true)
         .in("source_type", ["CAPTACAO", "LOJA"])
-        .in("codigo_material", missing)
+        .in("codigo_material", querySkus)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error && isMissingColumnError(response.error)) {
         response = await supabaseDb
@@ -4346,7 +4360,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           .eq("warehouse_code", warehouse)
           .eq("active", true)
           .in("source_type", ["CAPTACAO", "LOJA"])
-          .in("codigo_material", missing)
+          .in("codigo_material", querySkus)
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
@@ -4368,7 +4382,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stockCacheKey(warehouseCode, sourceType, sku) {
-    return normalizeWarehouseCode(warehouseCode || activeWarehouseCode()) + ":" + normalizeText(sourceType || "ALL").toUpperCase() + ":" + normalizeSku(sku);
+    return normalizeWarehouseCode(warehouseCode || activeWarehouseCode()) + ":" + normalizeText(sourceType || "ALL").toUpperCase() + ":" + normalizeSkuKey(sku);
   }
 
   async function getStockSuggestion(sku, requestedQty) {
@@ -4387,7 +4401,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var positions = await getStockPositionsForSkus(skus, warehouse);
     var grouped = {};
     positions.forEach(function (position) {
-      var key = position.codigoMaterial || "";
+      var key = normalizeSkuKey(position.codigoMaterial);
       if (!key) return;
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(position);
@@ -4395,7 +4409,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return items.map(function (item) {
       var sku = normalizeSku(item.codigo_material || item.codigoMaterial || item.sku || "");
       var requested = Number(item.quantidade_solicitada !== undefined ? item.quantidade_solicitada : item.requestedQty || item.quantity || 0);
-      return buildStockSuggestion(sku, requested, grouped[sku] || [], warehouse);
+      return buildStockSuggestion(sku, requested, grouped[normalizeSkuKey(sku)] || [], warehouse);
     });
   }
 
