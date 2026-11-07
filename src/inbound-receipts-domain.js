@@ -1,5 +1,5 @@
 export const inboundRoles = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"];
-export const inboundLabels = { AGUARDANDO: "Aguardando conferência", EM_CONFERENCIA: "Em conferência", CONCLUIDO_CORRETO: "Concluído sem divergência", CONCLUIDO_DIVERGENTE: "Concluído com divergência" };
+export const inboundLabels = { AGUARDANDO: "Aguardando conferência", EM_CONFERENCIA: "Em conferência", CONCLUIDO_CORRETO: "Concluído sem divergência", CONCLUIDO_DIVERGENTE: "Concluído com divergência", CANCELADO: "Cancelado" };
 export function inboundItemStatus(item) {
   if (item.counted_qty == null) return "PENDENTE";
   if (item.is_extra) return "NÃO PREVISTO";

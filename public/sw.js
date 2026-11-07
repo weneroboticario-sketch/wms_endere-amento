@@ -1,4 +1,4 @@
-const STATIC_CACHE = "wms-static-v51";
+const STATIC_CACHE = "wms-static-v52";
 const RUNTIME_CACHE = "wms-runtime-v19";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 

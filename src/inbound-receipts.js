@@ -64,6 +64,8 @@ export function mountInboundReceipts(context) {
       if (button.hasAttribute("data-reload")) refresh().catch(fail);
       if (button.hasAttribute("data-history")) history().catch(fail);
       if (button.hasAttribute("data-xml")) download(receipt.xml_content, `NFe_${receipt.invoice_key}.xml`, "application/xml");
+      if (button.hasAttribute("data-cancel-receipt")) manageReceipt("CANCEL").catch(fail);
+      if (button.hasAttribute("data-delete-receipt")) manageReceipt("DELETE").catch(fail);
     };
   }
   function fail(error) { message(error?.message || "Não foi possível concluir. Atualize e tente novamente."); }
@@ -74,13 +76,13 @@ export function mountInboundReceipts(context) {
     const state = $("[data-status]").value, day = $("[data-date]").value;
     const search = $("[data-search]").value.trim().replace(/[^\p{L}\p{N} -]/gu, " ").replace(/\s+/g, " ").slice(0,100);
     if (search) query = query.or(`invoice_number.ilike.%${search}%,source_name.ilike.%${search}%,assigned_name.ilike.%${search}%`);
-    if (state === "CONCLUIDOS") query = query.in("status", ["CONCLUIDO_CORRETO", "CONCLUIDO_DIVERGENTE"]);
+    if (state === "CONCLUIDOS") query = query.in("status", ["CONCLUIDO_CORRETO", "CONCLUIDO_DIVERGENTE", "CANCELADO"]);
     else if (state) query = query.eq("status", state);
     if (day) { const start = new Date(day + "T00:00:00"), end = new Date(start); end.setDate(end.getDate() + 1); query = query.gte("created_at", start.toISOString()).lt("created_at", end.toISOString()); }
     const rows = checked(await query);
     if (token !== generation || warehouse !== context.warehouse()) return;
     const visible = rows;
-    $("[data-list]").innerHTML = `<small>Até 200 recebimentos recentes, conforme seus filtros e permissões.</small><table><thead><tr><th>NF / Série</th><th>Origem</th><th>Conferente</th><th>Situação</th><th>Importação</th><th></th></tr></thead><tbody>${visible.map(r => `<tr><td>${e(r.invoice_number)} / ${e(r.series)}</td><td>${e(r.source_name)}</td><td>${e(r.assigned_name || "Não atribuído")}</td><td><span class="inbound-badge inbound-badge--${r.status==='CONCLUIDO_CORRETO'?'correct':r.status==='CONCLUIDO_DIVERGENTE'?'excess':'working'}">${e(inboundLabels[r.status])}</span></td><td>${e(date(r.created_at))}</td><td><button type="button" class="secondary-button" data-open="${e(r.id)}">Abrir</button></td></tr>`).join("") || '<tr><td colspan="6">Nenhum recebimento encontrado.</td></tr>'}</tbody></table>`;
+    $("[data-list]").innerHTML = `<small>Até 200 recebimentos recentes, conforme seus filtros e permissões.</small><table><thead><tr><th>NF / Série</th><th>Origem</th><th>Conferente</th><th>Situação</th><th>Importação</th><th></th></tr></thead><tbody>${visible.map(r => `<tr><td>${e(r.invoice_number)} / ${e(r.series)}</td><td>${e(r.source_name)}</td><td>${e(r.assigned_name || "Não atribuído")}</td><td><span class="inbound-badge inbound-badge--${r.status==='CONCLUIDO_CORRETO'?'correct':r.status==='CONCLUIDO_DIVERGENTE'?'excess':r.status==='CANCELADO'?'pending':'working'}">${e(inboundLabels[r.status])}</span></td><td>${e(date(r.created_at))}</td><td><button type="button" class="secondary-button" data-open="${e(r.id)}">Abrir</button></td></tr>`).join("") || '<tr><td colspan="6">Nenhum recebimento encontrado.</td></tr>'}</tbody></table>`;
     const ongoing = checked(await context.client().from("wms_inbound_receipts").select("id,invoice_number,series,source_name,assigned_name,status,created_at").eq("warehouse_code", warehouse).in("status", ["EM_CONFERENCIA", "AGUARDANDO"]).order("created_at", { ascending: false }).limit(100));
     if (token !== generation || warehouse !== context.warehouse()) return;
     activeRows = ongoing; renderCurrent();
@@ -108,7 +110,7 @@ export function mountInboundReceipts(context) {
     const r = receipt, summary = inboundSummary(items);
     $("[data-detail]").hidden = false;
     const users = context.users().filter(u => u.active && !u.archived && u.role === "OPERADOR" && context.userWarehouse(u));
-    $("[data-detail]").innerHTML = inboundDetail({ receipt: r, items, summary, isManager: manager(), editable: editable(), actorId: actor()?.id, users, filter: itemFilter, selectedId: selectedItem?.id });
+    $("[data-detail]").innerHTML = inboundDetail({ receipt: r, items, summary, isManager: manager(), isAdministrator: actor()?.role === "ADMINISTRADOR", editable: editable(), actorId: actor()?.id, users, filter: itemFilter, selectedId: selectedItem?.id });
     decorateInboundIcons($("[data-detail]"));
     renderCurrent();
     if ($("[data-scan]")) $("[data-scan]").onsubmit = event => {
@@ -197,6 +199,33 @@ export function mountInboundReceipts(context) {
     if (!window.confirm(`Finalizar NF ${receipt.invoice_number} com ${summary.divergent} divergência(s)? A contagem ficará encerrada e disponível no histórico.`)) return;
     await act("FINISH", { confirm_divergences: $("[data-confirm]").checked });
   }
+  async function manageReceipt(action) {
+    if (busy || !receipt || !manager() || (action === "DELETE" && actor()?.role !== "ADMINISTRADOR")) return;
+    const snapshot = receipt, ownScope = identity(), warehouse = context.warehouse();
+    const data = {};
+    if (action === "DELETE") {
+      const confirmation = window.prompt(`Excluir definitivamente o recebimento da NF ${snapshot.invoice_number}, série ${snapshot.series}?\nSerão apagados o XML importado, os itens, as contagens e o histórico deste recebimento. Esta ação não pode ser desfeita.\nDigite o número da NF para confirmar:`);
+      if (confirmation === null) return;
+      if (confirmation.trim() !== snapshot.invoice_number) { message("Número da NF não confere. Nada foi excluído."); return; }
+      data.confirmation = confirmation.trim();
+    } else {
+      const reason = window.prompt(`Cancelar o recebimento da NF ${snapshot.invoice_number}?\nA contagem e o histórico serão preservados. Informe o motivo para confirmar:`);
+      if (reason === null) return;
+      if (!reason.trim()) { message("Informe o motivo do cancelamento."); return; }
+      data.reason = reason.trim().slice(0, 500);
+    }
+    if (ownScope !== identity() || receipt?.id !== snapshot.id) return;
+    busy = true; lock(true);
+    try {
+      checked(await context.client().rpc("manage_wms_inbound", { p_id: snapshot.id, p_warehouse: warehouse, p_action: action, p_data: data, p_version: snapshot.version, p_action_id: crypto.randomUUID() }));
+      if (ownScope !== identity()) return;
+      if (action === "DELETE") {
+        ++generation; receipt = null; items = []; selectedItem = null; pending = null;
+        $("[data-detail]").hidden = true; $("[data-detail]").innerHTML = "";
+      } else await open(snapshot.id);
+      await list(); message(action === "DELETE" ? "Recebimento excluído definitivamente." : "Recebimento cancelado. Contagens e histórico preservados.");
+    } finally { if (ownScope === identity()) { busy = false; lock(false); } }
+  }
   async function history() {
     const token = generation, id = receipt.id;
     const events = checked(await context.client().from("wms_inbound_receipt_events").select("action,actor_name,created_at,request_data,result_data").eq("receipt_id", id).order("id", { ascending: false }).limit(100));
@@ -217,7 +246,7 @@ export function mountInboundReceipts(context) {
     if (!allowed()) { ++generation; scope = ""; receipt = null; items = []; root.innerHTML = ""; return; }
     if (scope !== identity()) { ++generation; scope = identity(); receipt = null; items = []; pending = null; busy = false; activeRows = []; itemFilter = "ALL"; setup(); }
     if (historyMode !== lastHistoryMode) {
-      if (!$("[data-status] option[value=CONCLUIDOS]")) { const option = document.createElement("option"); option.value = "CONCLUIDOS"; option.textContent = "Todos os concluídos"; $("[data-status]").appendChild(option); }
+      if (!$("[data-status] option[value=CONCLUIDOS]")) { const option = document.createElement("option"); option.value = "CONCLUIDOS"; option.textContent = "Concluídos e cancelados"; $("[data-status]").appendChild(option); }
       $("[data-status]").value = historyMode ? "CONCLUIDOS" : ""; lastHistoryMode = historyMode;
     }
     root.classList.toggle("inbound-history-mode", historyMode);

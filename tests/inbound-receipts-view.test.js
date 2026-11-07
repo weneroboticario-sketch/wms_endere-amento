@@ -11,10 +11,27 @@ test("visual indicators count each SKU once, keep pending parts, and show diverg
   assert.equal(inboundRowsForFilter(rows,"CHECKED").length,3);
   assert.deepEqual(inboundRowsForFilter(rows,"DIVERGENT").map(i=>i.id),["line-3","extra"]);
 });
-test("compact table preserves leading zeros, unplanned lines, original detail and escapes content",()=>{
+test("packing-style cards preserve leading zeros, unplanned lines, original detail and escape content",()=>{
   const html=inboundItemRows([{...line,description:'<img src=x onerror=alert(1)>'},rows[3]],{editable:true,selectedId:line.id,filter:"ALL"});
   assert.match(html,/01314/);assert.match(html,/inbound-selected/);assert.match(html,/Não previsto/);assert.match(html,/Detalhes do item/);
   assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
+});
+test("receiving workspace reuses packing classes, separates reading from lists and keeps completion below the work grid",()=>{
+  const receipt={id:"r1",status:"EM_CONFERENCIA",invoice_number:"123",series:"1",source_name:"Origem",assigned_to:"op",assigned_name:"Operador"};
+  const html=inboundDetail({receipt,items:rows,summary:inboundSummary(rows),isManager:false,editable:true,actorId:"op",users:[],filter:"ALL",selectedId:line.id});
+  for(const name of ["transfer-execution-panel","transfer-execution-summary","transfer-work-grid","transfer-scan-panel","transfer-live-panel","transfer-product-list","transfer-completion-actions"])assert.match(html,new RegExp(name));
+  assert.ok(html.indexOf('class="transfer-scan-panel"')<html.indexOf('class="transfer-live-panel"'));
+  assert.ok(html.indexOf('class="transfer-live-panel"')<html.indexOf('<footer class="transfer-completion-actions"'));
+  assert.match(html,/Itens pendentes/);assert.match(html,/Itens conferidos/);assert.match(html,/Itens divergentes/);
+  assert.doesNotMatch(html,/id="(?:transferWorkGrid|transferCurrentItem|transferProductList|transferCompletionActions)"/);
+});
+test("receipt cancellation and deletion controls follow management roles and terminal states",()=>{
+  const receipt={id:"r1",status:"EM_CONFERENCIA",invoice_number:"123",series:"1",source_name:"Origem"};
+  const base={receipt,items:rows,summary:inboundSummary(rows),editable:false,users:[],filter:"ALL"};
+  const admin=inboundDetail({...base,isManager:true,isAdministrator:true});assert.match(admin,/data-cancel-receipt/);assert.match(admin,/data-delete-receipt/);
+  const supervisor=inboundDetail({...base,isManager:true});assert.match(supervisor,/data-cancel-receipt/);assert.doesNotMatch(supervisor,/data-delete-receipt/);
+  const operator=inboundDetail({...base,isManager:false});assert.doesNotMatch(operator,/data-cancel-receipt|data-delete-receipt/);
+  const cancelled=inboundDetail({...base,receipt:{...receipt,status:"CANCELADO"},isManager:true,isAdministrator:true});assert.doesNotMatch(cancelled,/data-cancel-receipt|data-finish|data-start/);assert.match(cancelled,/Recebimento cancelado/);assert.match(cancelled,/data-delete-receipt/);
 });
 test("redesign keeps operational actions only for the current permitted actor and preserves reports",()=>{
   const receipt={id:"r1",status:"EM_CONFERENCIA",invoice_number:"123",series:"1",source_name:"Origem",destination_name:"VDCG",assigned_to:"op",assigned_name:"Operador"};

@@ -11,10 +11,12 @@ function query(table) {
   const filters=[];let single=false;const q={};
   for(const name of ["select","order","limit","gte","lt","or"]) q[name]=()=>q;
   q.eq=(key,value)=>{filters.push([key,value]);return q;};q.in=(key,values)=>{if(key==="status")filters.push([key,values]);return q;};q.single=q.maybeSingle=()=>{single=true;return q;};
-  q.then=resolve=>{let rows=table==="wms_inbound_receipts"?[r]:table==="wms_inbound_receipt_items"?items:table==="wms_products"?[{sku:"01314",product_name:"Produto WMS"}]:[]; rows=rows.filter(row=>filters.every(([key,value])=>key==="receipt_id"||(Array.isArray(value)?value.includes(row[key]):row[key]===value)));return Promise.resolve({data:globalThis.structuredClone(single?rows[0]:rows),error:null}).then(resolve);};return q;
+  q.then=resolve=>{let rows=table==="wms_inbound_receipts"?(removed?[]:[r]):table==="wms_inbound_receipt_items"?(removed?[]:items):table==="wms_products"?[{sku:"01314",product_name:"Produto WMS"}]:[]; rows=rows.filter(row=>filters.every(([key,value])=>key==="receipt_id"||(Array.isArray(value)?value.includes(row[key]):row[key]===value)));return Promise.resolve({data:globalThis.structuredClone(single?rows[0]:rows),error:null}).then(resolve);};return q;
 }
+let removed=false;
 const requests=new Set();
 const client={from:query,async rpc(_name,args){if(_name==="import_wms_inbound")return {data:r.id,error:null};if(requests.has(args.p_action_id))return {data:r.version};if(args.p_version!==r.version)return {error:{message:"Outro colaborador alterou a contagem. Atualize."}};requests.add(args.p_action_id);const data=args.p_data;
+  if(_name==="manage_wms_inbound"){if(args.p_action==="CANCEL")r.status="CANCELADO";if(args.p_action==="DELETE")removed=true;r.version++;return {data:true,error:null};}
   if(args.p_action==="COUNT"){const item=items.find(i=>i.id===data.item_id);const quantity=Number(data.quantity)*(data.unit===item.commercial_unit?1:item.expected_qty/item.tributary_qty);item.counted_qty=data.mode==="ADD"?Number(item.counted_qty||0)+quantity:quantity;item.counted_name=user.name;item.counted_at=new Date().toISOString();}
   if(args.p_action==="MAP"){items.find(i=>i.id===data.item_id).internal_sku=data.sku;}
   if(args.p_action==="FINISH"){r.status="CONCLUIDO_DIVERGENTE";r.finished_name=user.name;r.finished_at=new Date().toISOString();}
@@ -23,3 +25,5 @@ const ui=mountInboundReceipts({client:()=>client,user:()=>user,warehouse:()=>"VD
 await ui.render();document.getElementById("roleSwitch").onclick=()=>{user=user.role==="OPERADOR"?{id:"sup",name:"Supervisor",role:"SUPERVISOR",active:true}:{id:"op",name:"Operador de teste",role:"OPERADOR",active:true};document.getElementById("roleSwitch").textContent=user.role==="OPERADOR"?"Usar perfil supervisor":"Usar perfil operador";ui.render();};
 document.getElementById("historySwitch").onclick=()=>ui.render(true);
 document.getElementById("receiptsSwitch").onclick=()=>ui.render(false);
+
+document.getElementById("adminSwitch").onclick=()=>{user={id:"adm",name:"Administrador",role:"ADMINISTRADOR",active:true};ui.render();};

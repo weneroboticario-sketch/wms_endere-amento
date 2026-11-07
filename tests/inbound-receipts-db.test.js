@@ -24,6 +24,7 @@ async function fixture() {
     create table wms_bindings(sku text,location text); insert into wms_bindings values('01314','R01');`);
   await db.exec(migration);
   await db.exec(await readFile(new URL("../supabase/migrations/20261105210637_wms_inbound_xml_line_compatibility.sql",import.meta.url),"utf8"));
+  await db.exec(await readFile(new URL("../supabase/migrations/20261106180540_wms_inbound_cancel_delete.sql",import.meta.url),"utf8"));
   return db;
 }
 async function login(db, name) { await db.exec("reset role"); await db.query("select set_config('test.actor',$1,false)", [name]); await db.exec("set role authenticated"); }
@@ -33,6 +34,10 @@ async function act(db, id, action, data = {}, version = null, actionId = crypto.
   return (await db.query("select act_wms_inbound($1,$2,$3,$4,$5) version", [id, action, data, version, actionId])).rows[0].version;
 }
 const lines = async (db, id) => (await db.query("select * from wms_inbound_receipt_items where receipt_id=$1 order by line_number", [id])).rows;
+async function manage(db,id,action,data={},version=null,actionId=crypto.randomUUID(),warehouse="VDCG") {
+  if(version===null)version=(await db.query("select version from wms_inbound_receipts where id=$1",[id])).rows[0]?.version??0;
+  return (await db.query("select manage_wms_inbound($1,$2,$3,$4,$5,$6) ok",[id,warehouse,action,data,version,actionId])).rows[0].ok;
+}
 async function started(db) {
   await login(db,"sup"); const id = await importXml(db); await act(db,id,"ASSIGN",{user_id:"op"});
   await login(db,"op"); await act(db,id,"START"); return id;
@@ -150,5 +155,58 @@ test("XML imports nItem as element or attribute and reports invalid numbering wi
     for(const [index,variant] of ['<det><prod/>','<det nItem="abc"><prod/>','<det nItem="1"><nItem>2</nItem><prod/>','<det nItem="999999999999999999999"><prod/>'].entries()){
       await assert.rejects(importXml(db,inboundXml({invoiceKey:key.slice(0,-2)+String(40+index),products:variant+'</det>'})),/Número de item/);
     }
+  }finally{await db.close();}
+});
+test("cancelling an assigned receipt preserves counted items and records a single reasoned event",async()=>{
+  const db=await fixture();try{
+    const id=await started(db),[item]=await lines(db,id);
+    await act(db,id,"COUNT",{item_id:item.id,quantity:2,unit:"UN",mode:"SET"});
+    await login(db,"sup");const data={reason:"Importação de simulação"},actionId=crypto.randomUUID();
+    const version=(await db.query("select version from wms_inbound_receipts where id=$1",[id])).rows[0].version;
+    await assert.rejects(manage(db,id,"CANCEL",{},version),/motivo/);
+    await assert.rejects(manage(db,id,"CANCEL",data,version-1),/outro colaborador/);
+    assert.equal(await manage(db,id,"CANCEL",data,version,actionId),true);
+    assert.equal(await manage(db,id,"CANCEL",data,version,actionId),true);
+    assert.equal((await db.query("select status from wms_inbound_receipts where id=$1",[id])).rows[0].status,"CANCELADO");
+    assert.equal((await lines(db,id))[0].counted_qty,"2.000000");
+    assert.equal((await db.query("select count(*)::int n from wms_inbound_receipt_events where receipt_id=$1 and action='CANCEL'",[id])).rows[0].n,1);
+    await login(db,"op");await assert.rejects(act(db,id,"COUNT",{item_id:item.id,quantity:3,unit:"UN",mode:"SET"}),/Inicie a conferência/);
+    assert.equal((await lines(db,id)).length,2);
+  }finally{await db.close();}
+});
+test("receipt management enforces role, warehouse, explicit invoice confirmation and unchanged direct-table protection",async()=>{
+  const db=await fixture();try{
+    await login(db,"adm");const id=await importXml(db);
+    for(const who of ["op","op2","cash","att","foreign","inactive","unknown",""]){await login(db,who);await assert.rejects(manage(db,id,"CANCEL",{reason:"Teste"}),/não autorizado/);await assert.rejects(manage(db,id,"DELETE",{confirmation:"123"}),/não autorizado/);}
+    await login(db,"sup");await assert.rejects(manage(db,id,"DELETE",{confirmation:"123"}),/somente ao administrador/);
+    await login(db,"adm");await assert.rejects(manage(db,id,"DELETE",{confirmation:"999"}),/número da NF/);
+    await assert.rejects(manage(db,id,"DELETE",{confirmation:"123"},0,crypto.randomUUID(),"VDAR"),/não autorizado/);
+    await assert.rejects(db.exec("delete from wms_inbound_receipt_items"),/permission denied/);
+    await db.exec("reset role");
+    const foreign=(await db.query("insert into wms_inbound_receipts(warehouse_code,invoice_key,invoice_number,series,issued_at,source_cnpj,source_name,destination_cnpj,destination_name,xml_content,created_by) select 'VDAR',invoice_key,invoice_number,series,issued_at,source_cnpj,source_name,'18325344000489','VDAR',xml_content,created_by from wms_inbound_receipts where id=$1 returning id",[id])).rows[0].id;
+    await login(db,"adm");await assert.rejects(manage(db,foreign,"DELETE",{confirmation:"123"}),/neste estoque/);
+    assert.equal((await lines(db,id)).length,2);
+    await db.exec("reset role; set role anon");await assert.rejects(manage(db,id,"DELETE",{confirmation:"123"},0),/permission denied/);
+  }finally{await db.close();}
+});
+test("permanent deletion is atomic, removes only the selected receipt, and never touches outbound, stock or addressing",async()=>{
+  const db=await fixture();try{
+    await login(db,"adm");const id=await importXml(db),other=await importXml(db,inboundXml({invoiceKey:key.slice(0,-2)+"80"}));
+    await db.exec("reset role; create function fail_inbound_delete() returns trigger language plpgsql as $$ begin raise exception 'rollback test'; end $$; create trigger fail_inbound_delete before delete on wms_inbound_receipt_items for each row execute function fail_inbound_delete();");
+    await login(db,"adm");await assert.rejects(manage(db,id,"DELETE",{confirmation:"123"}),/rollback test/);
+    assert.equal((await lines(db,id)).length,2);assert.equal((await db.query("select count(*)::int n from wms_inbound_receipt_events where receipt_id=$1",[id])).rows[0].n,1);
+    await db.exec("reset role; drop trigger fail_inbound_delete on wms_inbound_receipt_items;");
+    await login(db,"adm");assert.equal(await manage(db,id,"DELETE",{confirmation:"123"}),true);
+    assert.equal(await manage(db,id,"DELETE",{confirmation:"123"},0),false);
+    assert.equal((await lines(db,id)).length,0);assert.equal((await db.query("select * from wms_inbound_receipt_events where receipt_id=$1",[id])).rows.length,0);assert.equal((await lines(db,other)).length,2);
+    await db.exec("reset role");assert.deepEqual((await db.query("select * from wms_stock")).rows,[{sku:"01314",quantity:"50"}]);assert.equal((await db.query("select status from wms_transfers where id='outbound'")).rows[0].status,"FINALIZADA");assert.equal((await db.query("select location from wms_bindings")).rows[0].location,"R01");
+  }finally{await db.close();}
+});
+test("completed receipts cannot be cancelled and management migration remains additive and rerunnable",async()=>{
+  const db=await fixture();try{
+    const id=await started(db);for(const item of await lines(db,id))await act(db,id,"COUNT",{item_id:item.id,quantity:item.expected_qty,unit:item.commercial_unit,mode:"SET"});await act(db,id,"FINISH");
+    await login(db,"sup");await assert.rejects(manage(db,id,"CANCEL",{reason:"Teste"}),/em aberto/);
+    await db.exec("reset role");await db.exec(await readFile(new URL("../supabase/migrations/20261106180540_wms_inbound_cancel_delete.sql",import.meta.url),"utf8"));
+    await login(db,"adm");assert.equal(await manage(db,id,"DELETE",{confirmation:"123"}),true);
   }finally{await db.close();}
 });
