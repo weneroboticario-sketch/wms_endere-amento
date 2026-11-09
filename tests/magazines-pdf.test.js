@@ -1,0 +1,4 @@
+import test from 'node:test';import assert from 'node:assert/strict';import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';import {textMagazinePdf} from './magazines-fixtures.js';import {pdfTextSpans} from '../src/magazines-pdf.js';import {extractMagazineCodes} from '../src/magazines-domain.js';
+test('PDF.js parses real PDF bytes and coordinates before contextual code extraction',async()=>{
+ const pdf=await pdfjs.getDocument({data:textMagazinePdf(),isEvalSupported:false,useSystemFonts:true}).promise;try{assert.equal(pdf.numPages,1);const page=await pdf.getPage(1),content=await page.getTextContent();const rows=extractMagazineCodes(pdfTextSpans(content,page.getViewport({scale:1}),pdfjs));assert.deepEqual(rows.map(r=>r.sku),['01314','48061']);assert.equal(rows[1].kind,'REFIL');}finally{await pdf.loadingTask.destroy();}
+});

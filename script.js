@@ -1,4 +1,6 @@
 import { mountPhotoCodes } from "./src/photo-codes.js";
+import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
+import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
 import { createTaskSound } from "./src/task-sound.js";
@@ -126,6 +128,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
+    centralRevistas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     leituraFoto: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -1000,6 +1003,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function ensureScreenDataLoaded(screenId) {
+    if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
+      var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
+      await mountMagazineCenterLazy($("centralRevistas"), {
+        client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
+        isCurrent: function () { return authState.currentUser && authState.currentUser.id === magazineActor && activeWarehouseCode() === magazineWarehouse; },
+        createRequest: createReplenishmentRequest, findRequestByKey: findReplenishmentByIdempotencyKey,
+        loadStock: createMagazineStockReader({ client: function () { return supabaseDb; }, warehouse: activeWarehouseCode, user: function () { return authState.currentUser; }, positionColumns: stockPositionSelectColumns, mapPosition: fromDbStockPosition, aliases: stockSkuQueryValues, splitSku: splitSkuValues, buildSuggestion: buildStockSuggestion, openStatuses: OPEN_REPLENISHMENT_STATUSES })
+      });
+      return true;
+    }
     if (authState.currentUser && screenId === "leituraFoto" && !IS_CP_ALAMO) {
       if (!photoCodesController) photoCodesController = mountPhotoCodes({root: $("leituraFoto"), client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode});
       photoCodesController.render();
@@ -6914,6 +6927,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "leituraFoto") return !IS_CP_ALAMO && !isGlobalDashboardScope();
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
@@ -8339,6 +8353,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function updateModuleSubtitleLabel(screenId) {
     if (screenId === "leituraFoto") return "Leitura por Foto";
+    if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
