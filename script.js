@@ -1,4 +1,3 @@
-import { mountPhotoCodes } from "./src/photo-codes.js";
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
@@ -73,7 +72,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   var globalDashboardController = null;
   var inboundReceiptsController = null;
-  var photoCodesController = null;
   function renderInboundReceipts(historyMode) {
     if (IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
     var root = $("inboundReceiptRoot");
@@ -129,7 +127,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
     centralRevistas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    leituraFoto: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
@@ -1011,11 +1008,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         createRequest: createReplenishmentRequest, findRequestByKey: findReplenishmentByIdempotencyKey,
         loadStock: createMagazineStockReader({ client: function () { return supabaseDb; }, warehouse: activeWarehouseCode, user: function () { return authState.currentUser; }, positionColumns: stockPositionSelectColumns, mapPosition: fromDbStockPosition, aliases: stockSkuQueryValues, splitSku: splitSkuValues, buildSuggestion: buildStockSuggestion, openStatuses: OPEN_REPLENISHMENT_STATUSES })
       });
-      return true;
-    }
-    if (authState.currentUser && screenId === "leituraFoto" && !IS_CP_ALAMO) {
-      if (!photoCodesController) photoCodesController = mountPhotoCodes({root: $("leituraFoto"), client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode});
-      photoCodesController.render();
       return true;
     }
     if (!authState.currentUser) return false;
@@ -6639,7 +6631,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
-    if (photoCodesController) photoCodesController.reset();
     if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     taskSound.stop();
     taskAlertState.pendingSound = false;
@@ -6928,7 +6919,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
-    if (screenId === "leituraFoto") return !IS_CP_ALAMO && !isGlobalDashboardScope();
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema";
@@ -8352,7 +8342,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
-    if (screenId === "leituraFoto") return "Leitura por Foto";
     if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";

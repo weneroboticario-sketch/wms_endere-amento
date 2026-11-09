@@ -1,4 +1,0 @@
-import {mountPhotoCodes} from '../src/photo-codes.js';
-import {installHtmlSecurity} from '../src/utils.js';
-installHtmlSecurity();
-mountPhotoCodes({root:document.querySelector('#photoTest'),client:()=>({auth:{getSession:async()=>({data:{session:{access_token:'synthetic-test'}}})},from:()=>({select(){return this;},eq(){return this;},maybeSingle:async()=>({data:null})})}),user:()=>({id:'synthetic',role:'OPERADOR'}),warehouse:()=>'VDCG',request:async()=>({ok:true,json:async()=>({configured:false})})}).render();
