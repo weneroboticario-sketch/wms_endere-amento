@@ -12,6 +12,8 @@ function fixture(section = "finalizedTransfersSection", admin = true) {
   const transfer = { id: "one", responsibleId: "worker", status: "FINALIZADA" };
   const state = {};
   const context = vm.createContext({
+    IS_CP_ALAMO: false, isXmlConferenceTransfer: () => false,
+    packingController: () => ({ history: async () => {} }),
     transferState: state, authState: { currentUser: user },
     getActiveTransferSectionId: () => active, activeWarehouseCode: () => warehouse,
     getActiveScreenId: () => "transferencias", isAdminOrSupervisor: () => admin,

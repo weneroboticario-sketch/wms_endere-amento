@@ -1,4 +1,6 @@
 import { mountPhotoCodes } from "./src/photo-codes.js";
+import { createPackingController } from "./src/transfer-packing-view.js";
+import { packingAuditReport } from "./src/transfer-packing-audit.js";
 import { createTaskSound } from "./src/task-sound.js";
 import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
@@ -2520,7 +2522,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         });
         transferState.items = transferState.items.filter(function (item) { return item.transferId !== transferId; }).concat(loadedItems);
         transferState.loadedItemTransferIds[transferId] = true;
-        transferState.events = [];
+        if (IS_CP_ALAMO) transferState.events = [];
         performanceState.lastTransferLoadedItems = loadedItems.length;
         recordPerformanceMetric("lastTransferDetailMs", startedAt);
         invalidateTransferStatsCache();
@@ -2655,6 +2657,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var deletedAt = row.deleted_at || "";
     return {
       id: row.id,
+      packingAuditVersion: Number(row.packing_audit_version || 0),
       code: row.codigo_transferencia || "",
       name: row.nome_transferencia || "",
       establishmentId: row.estabelecimento_id || "",
@@ -2817,6 +2820,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       separatedQty: Number(row.quantidade_separada || 0),
       packedQty: Number(row.quantidade_lacrada || 0),
       packedUnits: Number(row.quantidade_lacrada_unidades || 0),
+      packingRevision: Number(row.packing_revision || 0),
       packagingObservation: row.embalagem_observacao || row.observation || "",
       extraQty: Number(row.quantidade_extra || 0),
       missingQty: Number(row.quantidade_faltante || 0),
@@ -14200,7 +14204,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
     var activeItem = getTransferActiveItem(items, mode);
     var selectedCandidate = items.find(function (item) { return item.id === transferState.selectedItemId; });
-    if (!selectedCandidate || !isTransferItemActionable(selectedCandidate, mode)) {
+    var keepAuditedPackingSelection = !IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer) && Boolean(selectedCandidate);
+    if (!selectedCandidate || (!keepAuditedPackingSelection && !isTransferItemActionable(selectedCandidate, mode))) {
       transferState.selectedItemId = activeItem ? activeItem.id : "";
     }
     var selectedForQty = items.find(function (item) { return item.id === transferState.selectedItemId; });
@@ -14254,6 +14259,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("transferWorkRows").textContent = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
     renderTransferProductList(items);
     renderCurrentTransferItem();
+    if (!IS_CP_ALAMO) packingController().render(transfer, transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; }));
     renderAdminTransferProgress(transfer, mode);
     renderTransferFinalReport(transfer);
   }
@@ -14791,6 +14797,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function saveTransferItemOperationalQty(item, transfer, mode, qty, button) {
+    if (!IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var auditReason = window.prompt("Motivo obrigatório do ajuste:", "");
+      if (!auditReason || !auditReason.trim()) return;
+      var auditFactor = item.unitsPerBox || 0;
+      var legacyBoxCorrection = isBoxQuantityItem(item) && !auditFactor && item.packedQty > 0 && !item.packedUnits;
+      if (legacyBoxCorrection) {
+        auditFactor = Number(window.prompt("Informe UN/CX para a revisão explícita das caixas já registradas. A origem anterior continuará sem rastreio:", ""));
+        if (!Number.isInteger(auditFactor) || auditFactor <= 0) return;
+      }
+      await packingController().perform(transfer, item, { operation: legacyBoxCorrection ? "CORRECAO" : qty === 0 ? "REMOCAO_DA_CAIXA" : ["CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(transfer.status) >= 0 ? "REVALIDACAO" : "AJUSTE_QUANTIDADE", quantity: qty, units_per_box: auditFactor, code_method: "NAO_IDENTIFICADO", reason: auditReason });
+      return;
+    }
     var actionKey = "edit-transfer-item:" + item.id + ":" + mode;
     if (!beginTransferAction(actionKey, button, "Salvando...")) return;
     item = Object.assign({}, item);
@@ -15011,6 +15029,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var visible = isAdminOrSupervisor() && isFinalTransferStatus(transfer.status);
     $("transferFinalReportPanel").hidden = !visible;
     if (!visible) return;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      packingController().report(transfer);
+      return;
+    }
     var report = getTransferFinalReport(transfer);
     var isConference = isXmlConferenceTransfer(transfer);
     var expectedTotal = report.items.reduce(function (sum, item) { return sum + (isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item)); }, 0);
@@ -15478,7 +15500,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       transfer: transfer,
       items: originalItems,
       extraItems: extraItems,
-      events: [],
+      events: transferState.events.filter(function (event) { return event.transfer_id === transfer.id; }),
       divergences: divergences,
       stats: stats,
       startedAt: start,
@@ -15487,8 +15509,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       separationDurationSeconds: separationDurationSeconds,
       packingDurationSeconds: packingDurationSeconds,
       finalBoxCount: getTransferFinalBoxCount(transfer),
-      scannedEvents: 0,
-      manualEvents: 0
+      scannedEvents: transferState.events.filter(function (event) { return event.transfer_id === transfer.id && event.event_type === "LEITURA_UNITARIA"; }).length,
+      manualEvents: transferState.events.filter(function (event) { return event.transfer_id === transfer.id && event.quantity_method === "MANUAL"; }).length
     };
   }
 
@@ -18102,10 +18124,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     setStatus("transferWorkStatus", "Carregando itens da transferencia...", "warning");
     var loadedItems = await loadTransferItemsForTransfer(transferId, { force: options.forceItems === true });
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode()) return;
     if (!loadedItems.length) {
       showToast("Transferencia sem itens carregados. Atualize e tente novamente.", "warning");
     }
     transferState.activeTransferId = transferId;
+    transferState.events = [];
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) await packingController().history(transfer);
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode() || transferState.activeTransferId !== transferId) return;
     transferState.selectedItemId = "";
     transferState.manualSeparationQty = false;
     if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
@@ -18254,9 +18280,33 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function detectTransferInputType() {
-    var value = $("transferScanInput").value || "";
-    var elapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
-    return value.length >= 5 && elapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
+    if (IS_CP_ALAMO) {
+      var legacyValue = $("transferScanInput").value || "";
+      var legacyElapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
+      return legacyValue.length >= 5 && legacyElapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
+    }
+    return $("packingCodeMode") && $("packingCodeMode").value === "MODO_SCANNER" ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
+  }
+
+  var outboundPackingController;
+  function packingController() {
+    if (!outboundPackingController) outboundPackingController = createPackingController({
+      client: function () { return supabaseDb; },
+      scope: function () { return [(authState.currentUser || {}).id || "", activeWarehouseCode(), transferState.activeTransferId || ""].join(":"); },
+      warehouse: activeWarehouseCode,
+      items: getTransferItems,
+      events: function () { return transferState.events; },
+      setEvents: function (rows) { transferState.events = rows; },
+      accept: function (result) {
+        if (result.item) applyLocalTransferItemUpdate(fromDbTransferItem(result.item));
+        if (result.transfer) applyLocalTransferUpdate(fromDbTransfer(result.transfer));
+        if (result.event && !transferState.events.some(function (event) { return event.id === result.event.id; })) transferState.events.push(result.event);
+        invalidateTransferStatsCache();
+      },
+      refresh: renderTransferWork,
+      status: function (message, type) { setStatus("transferWorkStatus", message, type); }
+    });
+    return outboundPackingController;
   }
 
   function clearTransferInputs() {
@@ -18340,6 +18390,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     transferState.selectedItemId = item.id;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer) && (transferState.activeWorkMode || getTransferWorkMode(transfer)) === "MONTAGEM") {
+      var capturedCode = $("transferScanInput").value.trim();
+      $("transferScanInput").value = "";
+      var capturedOk = await packingController().locate(transfer, item, capturedCode);
+      if (capturedOk && $("packingQuantityMode").value !== "UNITARIA") {
+        $("transferScanInput").value = item.sku;
+        $("transferQuantityInput").focus();
+      } else $("transferScanInput").focus();
+      return;
+    }
     $("transferScanInput").value = item.sku;
     $("transferQuantityInput").value = "";
     renderCurrentTransferItem();
@@ -18377,6 +18437,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function addExtraTransferItem(transfer, sku, qty, observation, inputType) {
+    if (!IS_CP_ALAMO && transferState.activeWorkMode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: sku, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(), code_read: true });
+      if (extraSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
+      return;
+    }
     var now = new Date().toISOString();
     var mode = transferState.activeWorkMode;
     var item = {
@@ -18530,6 +18595,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     if (!transfer || !item) {
       setStatus("transferWorkStatus", mode === "MONTAGEM" ? "Bipe um SKU valido antes de confirmar." : "Selecione um item para separar.", "error");
+      return;
+    }
+    if (!IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var auditQty = Number($("transferQuantityInput").value);
+      if ($("transferQuantityInput").value.trim() === "" || !Number.isInteger(auditQty) || auditQty < 0) {
+        setStatus("transferWorkStatus", "Informe uma quantidade inteira não negativa.", "error"); return;
+      }
+      var auditBox = isBoxQuantityItem(item) ? readTransferBoxPackingInput(item, auditQty) : null;
+      if (auditBox && !auditBox.valid) { setStatus("transferWorkStatus", auditBox.message || "Confira a conversão UN/CX.", "error"); return; }
+      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, $("transferScanInput").value.trim()), raw_code: $("transferScanInput").value.trim(), code_method: packingController().method(), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
+      if (auditSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
     if (mode === "MONTAGEM") renderTransferBoxFields();
@@ -18810,6 +18886,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer || isFinalTransferStatus(transfer.status)) return;
     var finalBoxCount = readFinalBoxCountInput();
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      if (finalBoxCount === null) { setStatus("transferWorkStatus", "Informe a quantidade final de caixas.", "error"); return; }
+      var auditReport = packingAuditReport(getTransferItems(transfer.id), transferState.events);
+      var auditDivergence = !auditReport.traceable || auditReport.rows.some(function (row) { return row.difference !== 0 || row.item.isExtra; });
+      var finalReason = auditDivergence ? window.prompt("Há divergência ou origem não rastreada. Motivo para finalizar com divergência:", "") : "";
+      if (auditDivergence && (!finalReason || !finalReason.trim())) return;
+      if (!window.confirm("Finalizar conferência" + (auditDivergence ? " com divergência" : "") + "?")) return;
+      await packingController().perform(transfer, null, { operation: "FINALIZACAO", final_boxes: finalBoxCount, expected_updated_at: transfer.updatedAt, allow_divergence: auditDivergence, reason: finalReason });
+      return;
+    }
     var hasPackedItems = getTransferItems(transfer.id).some(function (item) { return Number(item.packedQty || 0) > 0; });
     if (finalBoxCount === null || (hasPackedItems && finalBoxCount === 0) || (!hasPackedItems && finalBoxCount > 0)) {
       setStatus("transferWorkStatus", hasPackedItems ? "Informe a quantidade final de caixas, maior que zero." : "Nenhum item na caixa. Informe zero caixas para finalizar sem envio.", "error");
@@ -18922,6 +19008,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var input = document.querySelector("[data-transfer-adjust-input=\"" + itemId + "\"]");
     if (!item || !transfer || !input) return;
     var qty = parseQuantity(input.value);
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      await saveTransferItemOperationalQty(item, transfer, "MONTAGEM", qty, null);
+      return;
+    }
     if (qty < 0) {
       setStatus("xmlConferenceStatus", "Informe uma quantidade válida.", "error");
       input.focus();
@@ -18972,6 +19062,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var item = transferState.items.find(function (entry) { return entry.id === itemId; });
     var transfer = item ? getTransferById(item.transferId) : null;
     if (!item || !transfer || !item.isExtra) return;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      await saveTransferItemOperationalQty(item, transfer, "MONTAGEM", 0, null);
+      return;
+    }
     if (!window.confirm("Remover o item extra " + item.sku + " desta conferência?")) return;
     var response = await supabaseDb.from("wms_transfer_items").delete().eq("id", item.id);
     if (response.error) throw response.error;
@@ -19030,6 +19124,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
+    if (transfer.packingAuditVersion > 0 && !IS_CP_ALAMO) {
+      showToast("Transferência com auditoria preservada. Registre correções em vez de excluir o histórico.", "warning");
+      return false;
+    }
     if (!transferBelongsToActiveWarehouse(transfer)) {
       showToast("Esta transferencia pertence a outro estoque.", "error");
       return false;
