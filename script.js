@@ -16847,6 +16847,19 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return card;
   }
 
+  async function refreshAddressExportBindings() {
+    if (!isSupabaseReady() || !canUseNetwork()) throw new Error("Conecte para consultar os enderecos atuais antes de exportar.");
+    var warehouseCode = activeWarehouseCode();
+    var actorId = authState.currentUser && authState.currentUser.id;
+    var remoteRows = await fetchWarehouseRows("wms_bindings", "updated_at", false);
+    if (warehouseCode !== activeWarehouseCode() || !authState.currentUser || actorId !== authState.currentUser.id) {
+      throw new Error("Usuario ou estoque mudou durante a leitura. Repita a exportacao.");
+    }
+    var bindings = expandDbBindingRows(remoteRows).filter(bindingMatchesActiveWarehouse);
+    state.bindings = bindings;
+    return warehouseCode;
+  }
+
   async function exportExcel() {
     if (!ensureActiveWarehouse()) return;
     if (!window.XLSX) {
@@ -16857,6 +16870,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var actionButton = $("exportExcelButton");
     if (!beginTransferAction("export-addresses", actionButton, "Exportando...")) return;
     try {
+    setStatus("exportStatus", "Consultando os enderecos atuais do estoque...", "warning");
+    var exportWarehouseCode = await refreshAddressExportBindings();
     var validation = validateAddressExportState();
     if (!validation.valid) {
       if (validation.type === "sku-conflict" && isAdmin()) {
@@ -16918,17 +16933,23 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "LinhaSeparacao");
     window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
-    var exportWarehouseCode = activeWarehouseCode();
     var fileName = "LinhaSeparacao_" + exportWarehouseCode + "_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
-    addHistory(
+    var exportCacheSnapshot = { bindings: state.bindings.slice(), products: Object.assign({}, state.products) };
+    await recordAuthHistory(
       "Excel exportado",
       "",
       "",
       exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao." +
         (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
     );
-    var savedBeforeCacheRefresh = await saveData();
+    var savedBeforeCacheRefresh = false;
+    try {
+      await writeModuleCacheForWarehouse("coreData", exportWarehouseCode, exportCacheSnapshot);
+      savedBeforeCacheRefresh = true;
+    } catch (cacheError) {
+      recordPerformanceError("export-address-cache", cacheError);
+    }
     var cacheRefreshPublished = false;
     if (savedBeforeCacheRefresh) {
       cacheRefreshPublished = await publishAddressCacheInvalidation(exportWarehouseCode, fileName, exportRows.length, "EXPORTACAO_ENDERECAMENTO");
@@ -16939,6 +16960,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var exportStatusType = savedBeforeCacheRefresh && cacheRefreshPublished ? "success" : "warning";
     if ($("exportStatus")) setStatus("exportStatus", exportMessage, exportStatusType);
     showToast(exportMessage, exportStatusType);
+    } catch (error) {
+      var message = "Nao foi possivel exportar os enderecos atuais: " + formatSupabaseError(error);
+      setStatus("exportStatus", message, "error");
+      showToast(message, "error");
     } finally {
       endTransferAction(actionButton);
     }
