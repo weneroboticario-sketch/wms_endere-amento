@@ -2295,7 +2295,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
   }
 
-  async function saveData() {
+  async function saveData(bindingWrites) {
     if (!isSupabaseReady()) {
       updateSupabaseStatus("Supabase nao conectado. " + describeSupabaseConfigProblem(), "warning");
       return false;
@@ -2306,13 +2306,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return false;
     }
     try {
-      if (state.bindings.length) {
+      // History, queries and labels must never replay the session's address cache.
+      // Allocation/import already use their own scoped persistence routines.
+      if (Array.isArray(bindingWrites) && bindingWrites.length) {
         try {
-          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "warehouse_code,sku,location_code");
+          await upsertInChunks("wms_bindings", dedupeBindingsForSave(bindingWrites).map(toDbBinding), "warehouse_code,sku,location_code");
         } catch (bindingError) {
           if (!isMissingWarehouseColumnError(bindingError)) throw bindingError;
           assertWarehouseFallbackAllowed("wms_bindings", bindingError);
-          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding).map(stripWarehouseColumns), "id");
+          await upsertInChunks("wms_bindings", dedupeBindingsForSave(bindingWrites).map(toDbBinding).map(stripWarehouseColumns), "id");
         }
       }
       if (state.history.length && historySchemaAvailable) {
@@ -5983,10 +5985,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
   }
 
-  function dedupeBindingsForSave() {
+  function dedupeBindingsForSave(bindings) {
     var bySkuLocation = {};
     var deduped = [];
-    state.bindings.forEach(function (binding) {
+    (bindings || []).map(function (binding) { return Object.assign({}, binding); }).forEach(function (binding) {
       binding.sku = firstSkuValue(binding.sku);
       var key = normalizeSkuKey(binding.sku) + "\u0001" + locationKeyFromBinding(binding);
       var existing = bySkuLocation[key];
@@ -6000,10 +6002,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       existing.areaName = binding.areaName || existing.areaName;
       existing.updatedAt = maxIsoDate(existing.updatedAt, binding.updatedAt);
     });
-    if (deduped.length !== state.bindings.length) {
-      state.bindings = deduped;
-    }
-    return state.bindings;
+    return deduped;
   }
 
   function maxIsoDate(first, second) {
@@ -8241,7 +8240,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
     });
     addHistory("Dados de exemplo criados", "", "", "Carga inicial automatica");
-    await saveData();
+    await saveData(state.bindings.slice());
   }
 
   async function applyDataMigrations() {
@@ -8954,7 +8953,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         parsed.code,
         target
           ? "SKU movido de " + (previousLocations.join(", ") || "localizacao anterior") + " para " + parsed.code + "."
-          : "SKU incluido na localizacao sem remover outros produtos."
+          : locationDecision === "replace"
+            ? "SKU incluido na localizacao removendo os outros produtos, conforme escolha do operador."
+            : "SKU incluido na localizacao sem remover outros produtos."
       )
     ];
     if (locationDecision === "replace") {
