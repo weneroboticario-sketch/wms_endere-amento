@@ -1703,6 +1703,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var response = await runSupabaseRequestWithRetry("fetch-all-" + tableName, function () {
         var query = supabaseDb.from(tableName).select(selectColumns);
         if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        if (tableName === "wms_bindings" && orderColumn !== "id") query = query.order("id", { ascending: true });
         return query.range(from, from + pageSize - 1);
       });
       if (response.error) throw response.error;
@@ -1729,6 +1730,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           .select("*")
           .or(warehouseFilter);
         if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        // Equal import timestamps must not shuffle records across 500-row pages.
+        if (tableName === "wms_bindings" && orderColumn !== "id") query = query.order("id", { ascending: true });
         return query.range(from, from + pageSize - 1);
       });
       if (response.error) throw response.error;
