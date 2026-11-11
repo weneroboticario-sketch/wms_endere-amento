@@ -24,7 +24,7 @@ test('ZXing worker fallback reads a Code 128 internal SKU without camera capture
     postMessage(message){
       posted++;
       assert.equal(message.width,2);
-      queueMicrotask(()=>this.onmessage({data:{results:[{code:'01314',format:'CODE_128'}]}}));
+      Promise.resolve().then(()=>this.onmessage({data:{results:[{code:'01314',format:'CODE_128'}]}}));
     },
     terminate(){terminated=true;}
   })});
