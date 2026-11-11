@@ -1,6 +1,7 @@
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
+import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
@@ -16496,43 +16497,125 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     openReplenishmentSuggestionModal(suggestion);
   }
 
-  function renderShelfSearch() {
+  var shelfSearchRequestSeq = 0;
+  var shelfBarcodeController = null;
+
+  function shelfReadOnlyCardHtml(binding, quantityLabel) {
+    return [
+      '<article class="sku-location-card">',
+      '<div class="sku-card-head"><div><strong>' + escapeHtml(binding.sku) + '</strong>',
+      '<span>' + escapeHtml(binding.productName || findProductName(binding.sku) || "Produto sem descrição") + '</span></div></div>',
+      '<div class="sku-location-code">' + escapeHtml(binding.locationCode || "") + '</div>',
+      '<div class="sku-card-meta"><span>Saldo CAPTAÇÃO neste endereço<strong>' + escapeHtml(quantityLabel) + '</strong></span>',
+      '<span>Área<strong>' + escapeHtml(binding.areaName || "-") + '</strong></span></div>',
+      '<div class="result-actions"><button class="secondary-button" data-shelf-sku="' + escapeHtml(binding.sku) + '" type="button">Consultar SKU</button></div>',
+      '</article>'
+    ].join("");
+  }
+
+  async function renderShelfSearch() {
     var parsed = normalizeLocation($("shelfSearchInput").value);
+    var requestId = ++shelfSearchRequestSeq;
+    var currentActor = authState.currentUser && authState.currentUser.id;
+    var currentWarehouse = activeWarehouseCode();
+    var validScope = function () {
+      return requestId === shelfSearchRequestSeq &&
+        authState.currentUser && authState.currentUser.id === currentActor &&
+        activeWarehouseCode() === currentWarehouse &&
+        getActiveScreenId() === "consultaPrateleira";
+    };
     if (!parsed.valid) {
-      setStatus("shelfSearchStatus", "Codigo de prateleira invalido.", "error");
-      $("shelfResults").innerHTML = "";
-      $("shelfSummary").innerHTML = "";
-      $("shelfResultCards").innerHTML = "";
+      setStatus("shelfSearchStatus", "Código de endereço inválido. Leia uma etiqueta WMS ou digite R01-RK01-L01-A.", "error");
+      $("shelfResults").replaceChildren();
+      $("shelfSummary").replaceChildren();
+      $("shelfResultCards").replaceChildren();
       return;
     }
     $("shelfSearchInput").value = parsed.code;
+    setStatus("shelfSearchStatus", "Consultando produtos da prateleira " + parsed.code + " no estoque " + currentWarehouse + "...", "warning");
     var list = findByLocation(parsed.code);
-    addHistory("Prateleira consultada", "", parsed.code, list.length ? "Consulta encontrou SKUs." : "Nenhum SKU encontrado.");
-    if (!list.length) {
-      setStatus("shelfSearchStatus", "Nenhum SKU encontrado nesta prateleira.", "warning");
-      $("shelfResults").innerHTML = "";
-      $("shelfSummary").innerHTML = "";
-      $("shelfResultCards").innerHTML = "";
-      saveData();
-      return;
+    var quantities = Object.create(null);
+    var dataWarning = "";
+
+    if (isSupabaseReady() && canUseNetwork()) {
+      try {
+        var responses = await Promise.all([
+          runSupabaseRequestWithRetry("shelf-current-products", function () {
+            return supabaseDb.from("wms_bindings").select("*")
+              .eq("warehouse_code", currentWarehouse)
+              .eq("location_code", parsed.code)
+              .order("updated_at", { ascending: false })
+              .limit(250);
+          }),
+          runSupabaseRequestWithRetry("shelf-current-quantity", function () {
+            return supabaseDb.from("wms_stock_positions")
+              .select("codigo_material,total_disponivel")
+              .eq("warehouse_code", currentWarehouse)
+              .eq("codigo_endereco", parsed.code)
+              .eq("source_type", "CAPTACAO")
+              .eq("active", true)
+              .eq("archived", false)
+              .limit(250);
+          })
+        ]);
+        if (!validScope()) return;
+        if (responses[0].error) throw responses[0].error;
+        list = expandDbBindingRows(responses[0].data || []).filter(bindingMatchesActiveWarehouse);
+        if (!responses[1].error) quantities = shelfAvailableBySku(responses[1].data || []);
+        else {
+          dataWarning = " Saldos não disponíveis no momento.";
+          recordPerformanceError("consulta-prateleira-saldos", responses[1].error);
+        }
+      } catch (error) {
+        if (!validScope()) return;
+        dataWarning = " A consulta online falhou; exibindo dados locais que podem estar desatualizados.";
+        recordPerformanceError("consulta-prateleira", error);
+      }
+    } else {
+      dataWarning = " Sem conexão; exibindo dados locais que podem estar desatualizados.";
     }
+    if (!validScope()) return;
+    list = uniqueShelfProducts(list);
     refreshProductNamesForBindings(list);
-    var hasShelfConflict = list.some(function (binding) { return findBySku(binding.sku).length > 1; });
-    setStatus("shelfSearchStatus", hasShelfConflict ? "Prateleira encontrada com SKU em conflito de localizacao." : list.length + " SKU(s) encontrado(s) nesta prateleira.", hasShelfConflict ? "warning" : "success");
+    addHistory("Prateleira consultada", "", parsed.code, list.length ? "Consulta encontrou SKUs." : "Nenhum SKU vinculado.");
+
     $("shelfSummary").innerHTML = [
       summaryChip("Prateleira", parsed.code),
       summaryChip("Rua", pad2(parsed.rua)),
       summaryChip("Rack", parsed.rack),
       summaryChip("Linha", parsed.linha),
-      summaryChip("Total de SKUs", list.length)
+      summaryChip("SKUs vinculados", list.length)
     ].join("");
-    $("shelfResults").innerHTML = list.map(shelfTableRowHtml).join("");
-    bindActionButtons($("shelfResults"));
-    $("shelfResultCards").innerHTML = list.map(function (binding) {
-      return skuLocationCardHtml(binding, false);
+    if (!list.length) {
+      setStatus("shelfSearchStatus",
+        "Nenhum produto vinculado ao endereço " + parsed.code + " nesta unidade." + dataWarning,
+        dataWarning ? "warning" : "warning");
+      $("shelfResults").replaceChildren();
+      $("shelfResultCards").replaceChildren();
+      void saveData();
+      return;
+    }
+    setStatus("shelfSearchStatus",
+      list.length + " produto(s) vinculado(s) à prateleira " + parsed.code + "." + dataWarning,
+      dataWarning ? "warning" : "success");
+    $("shelfResults").innerHTML = list.map(function (binding) {
+      return [
+        "<tr><td>" + escapeHtml(binding.sku) + "</td>",
+        "<td>" + escapeHtml(binding.productName || findProductName(binding.sku) || "-") + "</td>",
+        "<td>" + escapeHtml(binding.locationCode || "") + "</td>",
+        "<td>" + pad2(binding.rua) + "</td>",
+        "<td>" + Number(binding.rack) + "</td>",
+        "<td>" + Number(binding.linha) + "</td>",
+        "<td>" + escapeHtml(binding.letra || "") + "</td>",
+        "<td>" + escapeHtml(binding.areaName || "-") + "</td>",
+        "<td>" + escapeHtml(formatShelfQuantity(quantities, binding.sku)) + "</td>",
+        '<td><button class="secondary-button" data-shelf-sku="' + escapeHtml(binding.sku) + '" type="button">Consultar SKU</button></td></tr>'
+      ].join("");
     }).join("");
-    bindActionButtons($("shelfResultCards"));
-    saveData();
+    $("shelfResultCards").innerHTML = list.map(function (binding) {
+      return shelfReadOnlyCardHtml(binding, formatShelfQuantity(quantities, binding.sku));
+    }).join("");
+    void saveData();
   }
 
   function skuLocationCardHtml(binding, latest) {
