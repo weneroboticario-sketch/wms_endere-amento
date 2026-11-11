@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 
 const oldSql=await readFile(new URL('../supabase/migrations/20261111123430_wms_sku_photo_lookup.sql',import.meta.url),'utf8');
 const newSql=await readFile(new URL('../supabase/migrations/20261111154000_wms_persistent_barcode_registry.sql',import.meta.url),'utf8');
+const sharedRolesSql=await readFile(new URL('../supabase/migrations/20261111162000_wms_ean_registration_for_sku_roles.sql',import.meta.url),'utf8');
 
 async function setup(){
   const db=new PGlite();
@@ -18,6 +19,7 @@ async function setup(){
       ('super','SUPERVISOR','VDCG',true),
       ('op','OPERADOR','VDCG',true),
       ('cash','CAIXA','VDCG',true),
+      ('att','ATENDENTE','VDCG',true),
       ('other','ADMINISTRADOR','VDAR',true),
       ('disabled','ADMINISTRADOR','VDCG',false);
     create function private.current_wms_profile_id() returns text language sql security definer set search_path='' as
@@ -37,6 +39,7 @@ async function setup(){
   `);
   await db.exec(oldSql);
   await db.exec(newSql);
+  await db.exec(sharedRolesSql);
   await db.exec('set role authenticated');
   return db;
 }
@@ -65,15 +68,24 @@ test('registered GTIN resolves to existing SKU while preserving zeros, without c
   }finally{await db.close();}
 });
 
-test('operator can consult but cannot create, and warehouse boundaries are enforced',async()=>{
+test('all SKU roles can manually link EAN while bulk import, disabled accounts and foreign warehouses remain blocked',async()=>{
   const db=await setup();
   try{
     await actor(db,'admin');
     await register(db,'4006381333931');
     await actor(db,'op');
     assert.equal((await lookup(db,'4006381333931'))[0].sku,'01314');
-    await assert.rejects(register(db,'5901234123457'),/não autorizado/);
+    assert.equal((await register(db,'5901234123457')).sku,'01314');
+    await assert.rejects(register(db,'036000291452','01314','VDCG','CSV'),/restrita/);
     await assert.rejects(lookup(db,'4006381333931','VDAR'),/autorizada/);
+    await assert.rejects(register(db,'036000291452','01314','VDAR'),/não autorizado/);
+    for(const role of ['cash','att','super']){
+      await actor(db,role);
+      assert.equal((await register(db,'5901234123457')).sku,'01314');
+      assert.equal((await lookup(db,'5901234123457'))[0].sku,'01314');
+    }
+    await actor(db,'super');
+    assert.equal((await register(db,'036000291452','01314','VDCG','CSV')).sku,'01314');
     await actor(db,'other');
     assert.deepEqual(await lookup(db,'4006381333931','VDAR'),[]);
     await register(db,'4006381333931','48060','VDAR');
