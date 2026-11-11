@@ -78,5 +78,5 @@ test('WMS shelf scanner is one tap, read-only, scoped to selected warehouse and 
   assert.match(reader,/dialog\.showModal\(\);[\s\S]*void startCamera\(\);\s*return \{close\};/);
   assert.match(reader,/getUserMedia\(/);
   assert.match(reader,/track\.stop\(\)/);
-  assert.doesNotMatch(reader,/photo|upload|toBlob\(/i);
+  assert.doesNotMatch(reader,/type=.file.|createObjectURL|toBlob\(/i);
 });
