@@ -14,6 +14,7 @@ export function createSkuLiveBarcodeScanner({
   timeoutMs=2500
 }={}){
   let closed=false,configured=false,detector=null,worker=null,workerUnavailable=false,pending=null,busy=false,rejectScan=null;
+  let nativeEmptyFrames=0,workerFrames=0;
 
   async function configure(){
     if(configured)return;
@@ -57,7 +58,8 @@ export function createSkuLiveBarcodeScanner({
       };
       try{
         const pixels=canvas.getContext('2d',{willReadFrequently:true}).getImageData(0,0,canvas.width,canvas.height).data;
-        worker.postMessage({pixels:pixels.buffer,width:canvas.width,height:canvas.height},[pixels.buffer]);
+        workerFrames++;
+        worker.postMessage({pixels:pixels.buffer,width:canvas.width,height:canvas.height,deepScan:workerFrames%3===0},[pixels.buffer]);
       }catch(error){finish(error);}
     });
   }
@@ -72,13 +74,20 @@ export function createSkuLiveBarcodeScanner({
         let timer;
         const matches=await Promise.race([
           detector.detect(canvas),
-          new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('Leitura nativa excedeu o prazo.')),timeoutMs);})
+          new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('Leitura nativa excedeu o prazo.')),Math.min(timeoutMs,800));})
         ]).finally(()=>clearTimeout(timer));
         if(closed)throw stoppedError();
         decoded=matches.map(row=>({code:row.rawValue,format:row.format}));
       }catch(error){
         if(closed)throw stoppedError();
+        // On a stalled detector do not spend another full timeout on every frame.
+        if(error?.message==='Leitura nativa excedeu o prazo.')detector=null;
       }
+      if(detector&&!decoded.length){
+        nativeEmptyFrames++;
+        // Avoid running both engines for every empty frame. Retry the worker on every second miss.
+        if(nativeEmptyFrames%2===1)return uniquePhotoCandidates([]);
+      }else if(decoded.length)nativeEmptyFrames=0;
     }
     if(!decoded.length){
       try{decoded=await readWorker(canvas);}
