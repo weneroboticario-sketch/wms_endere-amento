@@ -25,6 +25,8 @@ test('SKU scanning remains live; only admin registration and CSV file controls a
   ]);
   assert.match(ui,/getUserMedia/);
   assert.match(ui,/register_wms_sku_barcode/);
+  assert.match(ui,/const canLink=.*ADMINISTRADOR.*SUPERVISOR.*OPERADOR.*ATENDENTE.*CAIXA/);
+  assert.match(ui,/const canBulkImport=.*ADMINISTRADOR.*SUPERVISOR/);
   assert.match(ui,/data-link-ean/);
   assert.doesNotMatch(ui,/data-gallery|data-capture|Fotografar etiqueta/);
   assert.match(importer,/parseBarcodeLinksCsv/);
