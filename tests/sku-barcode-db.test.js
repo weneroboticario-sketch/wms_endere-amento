@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 const oldSql=await readFile(new URL('../supabase/migrations/20261111123430_wms_sku_photo_lookup.sql',import.meta.url),'utf8');
 const newSql=await readFile(new URL('../supabase/migrations/20261111154000_wms_persistent_barcode_registry.sql',import.meta.url),'utf8');
 const sharedRolesSql=await readFile(new URL('../supabase/migrations/20261111162000_wms_ean_registration_for_sku_roles.sql',import.meta.url),'utf8');
+const skuFromGtinSql=await readFile(new URL('../supabase/migrations/20261111171000_wms_gtin_five_digit_sku_fallback.sql',import.meta.url),'utf8');
 
 async function setup(){
   const db=new PGlite();
@@ -29,7 +30,7 @@ async function setup(){
     create function private.can_access_warehouse(code text) returns boolean language sql security definer set search_path='' as
       $$select coalesce((select warehouse=$1 from public.wms_users where id=private.current_wms_profile_id()),false)$$;
     create table wms_products(sku text primary key,product_name text);
-    insert into wms_products values('01314','Produto com SKU inicial zero'),('48060','Outro produto');
+    insert into wms_products values('01314','Produto com SKU inicial zero'),('48060','Outro produto'),('89678','SHAMPOO SIÀGE ULTRA BOND RESET, 250 ml');
     create table wms_inbound_receipts(id integer primary key,warehouse_code text,status text);
     create table wms_inbound_receipt_items(receipt_id int,internal_sku text,ean text,tributary_ean text,is_extra boolean);
     insert into wms_inbound_receipts values(1,'VDCG','CONCLUIDO_CORRETO');
@@ -40,6 +41,7 @@ async function setup(){
   await db.exec(oldSql);
   await db.exec(newSql);
   await db.exec(sharedRolesSql);
+  await db.exec(skuFromGtinSql);
   await db.exec('set role authenticated');
   return db;
 }
@@ -95,5 +97,33 @@ test('all SKU roles can manually link EAN while bulk import, disabled accounts a
     await db.exec('reset role');
     await db.exec('set role anon');
     await assert.rejects(register(db,'5901234123457'),/permission denied/);
+  }finally{await db.close();}
+});
+
+test('valid 7891033 EAN-13 extracts exactly five SKU digits when mapping does not exist',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'op');
+    assert.deepEqual((await lookup(db,'7891033896783')).map(row=>row.sku),['89678']);
+    assert.deepEqual((await lookup(db,'7891033480609')).map(row=>row.sku),['48060']);
+    assert.deepEqual((await lookup(db,'7891033013142')).map(row=>row.sku),['01314']);
+    assert.deepEqual(await lookup(db,'7891033480600'),[]); // invalid checksum
+    assert.deepEqual(await lookup(db,'7891034480608'),[]); // different prefix
+    assert.deepEqual(await lookup(db,'7891033999996'),[]); // nonexistent SKU
+    assert.deepEqual(await lookup(db,'4006381333931'),[]); // unrelated GTIN
+    await assert.rejects(lookup(db,'7891033896783','VDAR'),/autorizada/);
+    await db.exec('reset role');
+    const rows=(await db.query('select count(*)::integer as count from public.wms_sku_barcodes')).rows;
+    assert.equal(rows[0].count,0); // fallback does not persist guessed links
+    assert.equal((await db.query('select qty from public.stock_balance')).rows[0].qty,20);
+  }finally{await db.close();}
+});
+
+test('a registered GTIN mapping takes priority over embedded five-digit fallback',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'admin');
+    await register(db,'7891033480609','01314');
+    assert.deepEqual((await lookup(db,'7891033480609')).map(row=>row.sku),['01314']);
   }finally{await db.close();}
 });
