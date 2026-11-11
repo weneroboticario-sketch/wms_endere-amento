@@ -216,6 +216,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var productsTableAvailable = true;
   var historySchemaAvailable = true;
   var skuSearchTimer = null;
+  var skuPhotoController = null;
   var HISTORY_RENDER_LIMIT = 200;
   var TRANSFER_PANEL_PAGE_SIZE = 40;
   var TRANSFER_PANEL_RENDER_LIMIT = TRANSFER_PANEL_PAGE_SIZE;
@@ -6633,6 +6634,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    if (skuPhotoController) skuPhotoController.close();
     if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     taskSound.stop();
     taskAlertState.pendingSound = false;
@@ -8355,6 +8357,27 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function bindEvents() {
+    if ($("skuPhotoButton")) {
+      $("skuPhotoButton").hidden = IS_CP_ALAMO;
+      $("skuPhotoButton").addEventListener("click", async function () {
+        if (IS_CP_ALAMO || !canAccessScreen("consultaSku")) return;
+        var actor = authState.currentUser.id, warehouse = activeWarehouseCode();
+        var trigger = $("skuPhotoButton"); trigger.disabled = true;
+        try {
+          var photo = await import("./src/sku-photo-lookup.js");
+          if (!authState.currentUser || actor !== authState.currentUser.id || warehouse !== activeWarehouseCode() || getActiveScreenId() !== "consultaSku") return;
+          if (skuPhotoController) skuPhotoController.close();
+          skuPhotoController = photo.openSkuPhotoLookup({
+            client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
+            canUse: function () { return !IS_CP_ALAMO && canAccessScreen("consultaSku") && getActiveScreenId() === "consultaSku"; },
+            closed: function () { skuPhotoController = null; },
+            error: function (error) { setStatus("skuSearchStatus", formatSupabaseError(error), "error"); },
+            onSku: async function (sku) { window.clearTimeout(skuSearchTimer); $("skuSearchInput").value = sku; await renderSkuSearch(); }
+          });
+        } catch (error) { setStatus("skuSearchStatus", "Nao foi possivel abrir a leitura: " + formatSupabaseError(error), "error"); }
+        finally { trigger.disabled = false; }
+      });
+    }
     if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").addEventListener("click", function () { switchActiveWarehouse("DOURADOS"); });
     $("loginForm").addEventListener("submit", function (event) {
       event.preventDefault();
