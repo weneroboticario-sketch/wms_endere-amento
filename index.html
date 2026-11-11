@@ -110,7 +110,7 @@
           <p class="menu-label">Operacao</p>
           <button class="menu-item" data-icon="SKU" data-screen="centralRevistas" type="button">Central de Revistas</button>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
-          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button" hidden>Prateleira</button>
+          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button">Ler Prateleira</button>
           <button class="menu-item" data-icon="END" data-screen="bipagem" type="button">Endereçamento</button>
           <button class="menu-item task-menu-item" data-icon="TAR" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         </div>
@@ -390,13 +390,14 @@
         <div class="page-title">
           <div>
             <p class="eyebrow">Pesquisa</p>
-            <h2>Consulta por Prateleira</h2>
+            <h2>Leitura de Prateleira</h2>
           </div>
         </div>
         <section class="panel">
           <div class="input-action">
-            <input id="shelfSearchInput" inputmode="text" type="text" placeholder="Ex.: R01-RK01-L01-A">
-            <button class="primary-button" id="shelfSearchButton" type="button">Consultar</button>
+            <input id="shelfSearchInput" inputmode="text" type="text" placeholder="Ex.: R01-RK01-L01-A" aria-label="Código da prateleira" autocomplete="off" autocapitalize="characters">
+            <button class="primary-button" id="shelfCameraButton" type="button" aria-label="Ler código de barras da prateleira com a câmera">Ler código</button>
+            <button class="secondary-button" id="shelfSearchButton" type="button">Consultar</button>
           </div>
           <div id="shelfSearchStatus" class="inline-status"></div>
           <div id="shelfSummary" class="shelf-summary"></div>
@@ -413,7 +414,8 @@
                   <th>Linha</th>
                   <th>Letra</th>
                   <th>Area</th>
-                  <th>Acoes</th>
+                  <th>Saldo CAPTAÇÃO no endereço</th>
+                  <th>Consulta</th>
                 </tr>
               </thead>
               <tbody id="shelfResults"></tbody>
