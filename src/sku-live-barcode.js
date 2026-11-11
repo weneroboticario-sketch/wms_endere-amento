@@ -9,7 +9,7 @@ const stoppedError=()=>new Error('Leitor de câmera encerrado.');
  */
 export function createSkuLiveBarcodeScanner({
   NativeDetector=globalThis.BarcodeDetector,
-  makeWorker=()=>new Worker(new URL('./sku-photo-barcode.worker.js',import.meta.url),{type:'module'}),
+  makeWorker=()=>new window.Worker(new URL('./sku-photo-barcode.worker.js',import.meta.url),{type:'module'}),
   timeoutMs=2500
 }={}){
   let closed=false,configured=false,detector=null,worker=null,workerUnavailable=false,pending=null;
