@@ -25,7 +25,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   dialog.innerHTML=[
     '<header><h3>Leitor de código de barras</h3><button type="button" class="secondary-button" data-close>Fechar</button></header>',
     '<p>Aponte a câmera do celular diretamente para o código de barras da etiqueta. A leitura é ao vivo, sem tirar ou salvar fotos.</p>',
-    '<p role="status" aria-live="polite" data-status>Toque em Iniciar leitura para ativar a câmera.</p>',
+    '<p role="status" aria-live="polite" data-status>Abrindo câmera para leitura automática…</p>',
     '<div class="button-row sku-scanner-buttons">',
     '<button type="button" class="primary-button" data-start>Iniciar leitura</button>',
     '<button type="button" class="secondary-button" data-switch hidden>Alternar câmera</button>',
@@ -286,5 +286,8 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   });
   timer=window.setInterval(()=>{if(!current())close();},350);
   dialog.showModal();
+  // Called within the Ler código click handler so the mobile browser receives a direct camera request.
+  // Keep Iniciar leitura as retry if permission is denied or hardware is unavailable.
+  void startCamera();
   return {close};
 }
