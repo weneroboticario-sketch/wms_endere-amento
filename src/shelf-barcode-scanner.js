@@ -50,7 +50,7 @@ export function openShelfBarcodeScanner(context,{scannerFactory=createSkuLiveBar
     if(closed)return;
     closed=true;
     stopCamera();
-    if(watchdog!==null)clearInterval(watchdog);
+    if(watchdog!==null)window.clearInterval(watchdog);
     if(dialog.open)dialog.close();
     dialog.remove();
     context.closed?.();
@@ -146,7 +146,7 @@ export function openShelfBarcodeScanner(context,{scannerFactory=createSkuLiveBar
   });
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   dialog.addEventListener('close',close);
-  watchdog=setInterval(()=>{if(!current())close();},400);
+  watchdog=window.setInterval(()=>{if(!current())close();},400);
   dialog.showModal();
   // The camera request starts within the initial tap, not after an extra button.
   void startCamera();
