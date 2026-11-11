@@ -8502,6 +8502,36 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("shelfSearchInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") renderShelfSearch();
     });
+    $("shelfCameraButton").addEventListener("click", function () {
+      if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen("consultaPrateleira")) return;
+      var actorId = authState.currentUser.id, warehouseCode = activeWarehouseCode();
+      if (shelfBarcodeController) shelfBarcodeController.close();
+      shelfBarcodeController = openShelfBarcodeScanner({
+        user: function () { return authState.currentUser; },
+        warehouse: activeWarehouseCode,
+        canUse: function () { return !IS_CP_ALAMO && canAccessScreen("consultaPrateleira") && getActiveScreenId() === "consultaPrateleira"; },
+        normalizeLocation: normalizeLocation,
+        onRead: async function (code) {
+          if (!authState.currentUser || authState.currentUser.id !== actorId || activeWarehouseCode() !== warehouseCode || getActiveScreenId() !== "consultaPrateleira") return;
+          $("shelfSearchInput").value = code;
+          await renderShelfSearch();
+        },
+        error: function (error) { setStatus("shelfSearchStatus", "Falha na leitura: " + formatSupabaseError(error), "error"); },
+        closed: function () { shelfBarcodeController = null; }
+      });
+    });
+    function openShelfSkuFromResult(event) {
+      var button = event.target.closest("[data-shelf-sku]");
+      if (!button || !canAccessScreen("consultaSku")) return;
+      var sku = normalizeSku(button.dataset.shelfSku);
+      if (!sku) return;
+      $("skuSearchInput").value = sku;
+      void showScreen("consultaSku").then(function () {
+        if (getActiveScreenId() === "consultaSku") void renderSkuSearch();
+      });
+    }
+    $("shelfResultCards").addEventListener("click", openShelfSkuFromResult);
+    $("shelfResults").addEventListener("click", openShelfSkuFromResult);
 
     $("previewLabelsButton").addEventListener("click", function () {
       generateLabels(false);
