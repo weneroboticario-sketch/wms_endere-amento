@@ -30,9 +30,9 @@ export function createSkuLiveBarcodeScanner({
   }
 
   async function readWorker(canvas){
-    if(workerUnavailable)return [];
+    if(workerUnavailable)throw Error('Leitor de código de barras não suportado neste navegador.');
     try{if(!worker)worker=makeWorker();}
-    catch{workerUnavailable=true;return [];}
+    catch{workerUnavailable=true;throw Error('O navegador não conseguiu iniciar o leitor de código de barras.');}
     return new Promise((resolve,reject)=>{
       let settled=false;
       const finish=(error,rows=[])=>{
