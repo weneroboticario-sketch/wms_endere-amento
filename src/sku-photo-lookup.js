@@ -5,7 +5,7 @@ import {mountBarcodeCsvImport} from './sku-barcode-import-ui.js';
 import './sku-photo-lookup.css';
 
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const CAMERA_FRAME_MAX_WIDTH=960;
+const CAMERA_FRAME_MAX_WIDTH=800;
 
 /**
  * Live barcode lookup within Consulta de SKU.
@@ -147,7 +147,10 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
         const key=candidates.map(item=>item.kind+':'+item.code).sort().join('|');
         if(key&&key===lastKey)confirmations++;
         else{lastKey=key;confirmations=key?1:0;}
-        if(confirmations>=2&&!(key===ignoredKey&&Date.now()<ignoredUntil)){
+        // Valid GTIN has a verified check digit; one unambiguous frame is enough.
+        // For SKU codes lacking that checksum, retain the two-frame safeguard.
+        const requiredReads=candidates.length===1&&candidates[0].kind==='GTIN'?1:2;
+        if(confirmations>=requiredReads&&!(key===ignoredKey&&Date.now()<ignoredUntil)){
           paused=true;
           notice('Código detectado. Validando no cadastro do WMS…');
           const result=await resolvePhotoCandidates(candidates,lookup,()=>current()&&id===token,{truncated:output.truncated});
@@ -181,7 +184,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
         }
         notice('Ajuste a posição da câmera. Tentando ler novamente…');
       }
-      await wait(350);
+      await wait(100);
     }
   }
 
@@ -206,6 +209,13 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
         return;
       }
       stream=next;
+      // Request continuous autofocus when the device exposes it, without delaying capture.
+      try{
+        const track=stream.getVideoTracks()[0],capabilities=track?.getCapabilities?.();
+        if(capabilities?.focusMode?.includes('continuous')){
+          void track.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+        }
+      }catch{/* Autofocus controls are optional across browsers. */}
       video.srcObject=stream;
       $('[data-view]').hidden=false;
       await video.play();
