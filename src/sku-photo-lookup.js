@@ -17,7 +17,8 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   let scanTask=Promise.resolve();
   const runLoop=id=>{scanTask=scanTask.then(()=>scanLoop(id)).catch(error=>{if(current())notice(error.message);});};
   const current=()=>!closed&&actor===context.user()?.id&&warehouse===context.warehouse()&&context.canUse();
-  const canLink=()=>current()&&['ADMINISTRADOR','SUPERVISOR'].includes(context.user()?.role);
+  const canLink=()=>current()&&['ADMINISTRADOR','SUPERVISOR','OPERADOR','ATENDENTE','CAIXA'].includes(context.user()?.role);
+  const canBulkImport=()=>canLink()&&['ADMINISTRADOR','SUPERVISOR'].includes(context.user()?.role);
   const dialog=document.createElement('dialog');
   dialog.className='sku-photo-dialog';
   dialog.setAttribute('aria-label','Ler código de barras na Consulta de SKU');
@@ -47,7 +48,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   const video=$('[data-video]'),frame=document.createElement('canvas');
   const frameCtx=frame.getContext('2d',{willReadFrequently:true});
   const notice=message=>{$('[data-status]').textContent=message;};
-  if(canLink())mountBarcodeCsvImport($('[data-csv-panel]'),{client:context.client,warehouse,canEdit:canLink});
+  if(canBulkImport())mountBarcodeCsvImport($('[data-csv-panel]'),{client:context.client,warehouse,canEdit:canBulkImport});
 
   function stopCamera(){
     token++;
