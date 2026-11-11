@@ -8,7 +8,7 @@ const newSql=await readFile(new URL('../supabase/migrations/20261111154000_wms_p
 
 async function setup(){
   const db=new PGlite();
-  await db.exec(\`create role anon;create role authenticated;
+  await db.exec(`create role anon;create role authenticated;
     create schema auth;create schema private;
     grant usage on schema auth,private to authenticated;
     create function auth.uid() returns text language sql as $$select nullif(current_setting('test.actor',true),'')$$;
@@ -34,7 +34,7 @@ async function setup(){
     insert into wms_inbound_receipt_items values(1,'01314','036000291452',null,false);
     create table stock_balance(sku text primary key,qty int);
     insert into stock_balance values('01314',20);
-  \`);
+  `);
   await db.exec(oldSql);
   await db.exec(newSql);
   await db.exec('set role authenticated');
@@ -80,6 +80,7 @@ test('operator can consult but cannot create, and warehouse boundaries are enfor
     assert.equal((await lookup(db,'4006381333931','VDAR'))[0].sku,'48060');
     await actor(db,'disabled');
     await assert.rejects(register(db,'5901234123457'),/não autorizado/);
+    await db.exec('reset role');
     await db.exec('set role anon');
     await assert.rejects(register(db,'5901234123457'),/permission denied/);
   }finally{await db.close();}
