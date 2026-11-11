@@ -1,4 +1,5 @@
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
+import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
@@ -8364,10 +8365,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         var actor = authState.currentUser.id, warehouse = activeWarehouseCode();
         var trigger = $("skuPhotoButton"); trigger.disabled = true;
         try {
-          var photo = await import("./src/sku-photo-lookup.js");
+          // Start within the original tap: mobile camera permission requires direct user activation.
           if (!authState.currentUser || actor !== authState.currentUser.id || warehouse !== activeWarehouseCode() || getActiveScreenId() !== "consultaSku") return;
           if (skuPhotoController) skuPhotoController.close();
-          skuPhotoController = photo.openSkuPhotoLookup({
+          skuPhotoController = openSkuPhotoLookup({
             client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
             canUse: function () { return !IS_CP_ALAMO && canAccessScreen("consultaSku") && getActiveScreenId() === "consultaSku"; },
             closed: function () { skuPhotoController = null; },
