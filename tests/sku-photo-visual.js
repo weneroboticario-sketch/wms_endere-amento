@@ -5,6 +5,7 @@ import {openSkuPhotoLookup} from '../src/sku-photo-lookup.js';
 installHtmlSecurity();
 let unit='VDCG',controller,fixture='sku';
 const catalog=[{sku:'01314',product_name:'Produto sintético 01314'},{sku:'48060',product_name:'Produto sintético 48060'}];
+const deniedButton=document.createElement('button');deniedButton.dataset.fixture='denied';deniedButton.textContent='Simular permissão negada';document.querySelector('.button-row').append(deniedButton);
 const controls=[...document.querySelectorAll('[data-fixture],#changeUnit')],toolbar=document.querySelector('.button-row');
 const videoCanvas=document.createElement('canvas');videoCanvas.width=960;videoCanvas.height=540;
 const videoCtx=videoCanvas.getContext('2d');
@@ -31,7 +32,7 @@ function draw(){
 }
 paintFixture();
 draw();
-const mediaDevices={getUserMedia:async()=>videoCanvas.captureStream(15)};
+const mediaDevices={getUserMedia:async()=>{if(fixture==='denied'){const error=new Error('Permissão recusada no teste');error.name='NotAllowedError';throw error;}return videoCanvas.captureStream(15);}};
 document.querySelector('#openPhoto').onclick=()=>{
   controller?.close();
   controller=openSkuPhotoLookup({

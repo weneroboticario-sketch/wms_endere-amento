@@ -64,3 +64,43 @@ test('Consulta de SKU has live barcode reader without gallery, image upload or s
   assert.match(html,/id="skuPhotoButton"/);
   assert.doesNotMatch(html,/id="leituraFoto"/);
 });
+
+test('only one native frame runs at a time and closing cancels a stalled native scan',async()=>{
+  let detected,started;
+  const ready=new Promise(resolve=>{started=resolve;});
+  class Detector{
+    static async getSupportedFormats(){return ['code_128'];}
+    detect(){started();return new Promise(resolve=>{detected=resolve;});}
+  }
+  const scanner=createSkuLiveBarcodeScanner({NativeDetector:Detector});
+  const pending=scanner.scan(canvas);
+  await ready;
+  await assert.rejects(scanner.scan(canvas),/em andamento/);
+  scanner.close();
+  await assert.rejects(pending,/encerrado/);
+  detected([]);
+});
+
+test('a stalled native detector times out and uses the free fallback',async()=>{
+  class Detector{
+    static async getSupportedFormats(){return ['code_128'];}
+    detect(){return new Promise(()=>{});}
+  }
+  const scanner=createSkuLiveBarcodeScanner({NativeDetector:Detector,timeoutMs:10,makeWorker:()=>({
+    postMessage(){this.onmessage({data:{results:[{code:'01314',format:'CODE_128'}]}});},
+    terminate(){}
+  })});
+  assert.equal((await scanner.scan(canvas)).candidates[0].code,'01314');
+  scanner.close();
+});
+
+test('an unreadable frame yields no candidate and a later frame can still be scanned',async()=>{
+  let frames=0;
+  const scanner=createSkuLiveBarcodeScanner({NativeDetector:null,makeWorker:()=>({
+    postMessage(){this.onmessage({data:{results:++frames===1?[]:[{code:'48060',format:'CODE_39'}]}});},
+    terminate(){}
+  })});
+  assert.deepEqual((await scanner.scan(canvas)).candidates,[]);
+  assert.equal((await scanner.scan(canvas)).candidates[0].code,'48060');
+  scanner.close();
+});

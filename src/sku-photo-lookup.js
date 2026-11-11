@@ -12,7 +12,9 @@ const CAMERA_FRAME_MAX_WIDTH=960;
  */
 export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeScanner}={}){
   const actor=context.user()?.id,warehouse=context.warehouse();
-  let closed=false,stream=null,scanner=null,token=0,paused=false,face='environment',timer=null;
+  let closed=false,stream=null,scanner=null,token=0,paused=false,face='environment',timer=null,manualBusy=false;
+  let scanTask=Promise.resolve();
+  const runLoop=id=>{scanTask=scanTask.then(()=>scanLoop(id)).catch(error=>{if(current())notice(error.message);});};
   const current=()=>!closed&&actor===context.user()?.id&&warehouse===context.warehouse()&&context.canUse();
   const dialog=document.createElement('dialog');
   dialog.className='sku-photo-dialog';
@@ -106,7 +108,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
         $('[data-results]').replaceChildren();
         paused=false;
         notice('Procurando código de barras…');
-        void scanLoop(token);
+        runLoop(token);
       };
       $('[data-results]').append(retry);
     }
@@ -120,7 +122,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
           await wait(280);
           continue;
         }
-        const scale=Math.min(1,CAMERA_FRAME_MAX_WIDTH/video.videoWidth);
+        const scale=Math.min(1,CAMERA_FRAME_MAX_WIDTH/Math.max(video.videoWidth,video.videoHeight));
         frame.width=Math.max(1,Math.round(video.videoWidth*scale));
         frame.height=Math.max(1,Math.round(video.videoHeight*scale));
         frameCtx.drawImage(video,0,0,frame.width,frame.height);
@@ -134,7 +136,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
         if(confirmations>=2&&!(key===ignoredKey&&Date.now()<ignoredUntil)){
           paused=true;
           notice('Código detectado. Validando no cadastro do WMS…');
-          const result=await resolvePhotoCandidates(candidates,lookup,current,{truncated:output.truncated});
+          const result=await resolvePhotoCandidates(candidates,lookup,()=>current()&&id===token,{truncated:output.truncated});
           if(!current()||id!==token)return;
           if(result.auto){
             notice('SKU '+result.auto.sku+' identificado. Abrindo consulta…');
@@ -194,8 +196,8 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
       $('[data-start]').hidden=true;
       $('[data-stop]').hidden=false;
       $('[data-switch]').hidden=false;
-      notice('Leitor ativo. Aponte a câmera traseira para o código de barras.');
-      void scanLoop(id);
+      notice('Leitor ativo. Aponte para o código de barras.');
+      runLoop(id);
     }catch(error){
       if(!current()||id!==token)return;
       stopCamera();
@@ -218,17 +220,22 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   dialog.addEventListener('close',close);
   $('[data-manual-query]').addEventListener('click',async()=>{
     try{
-      if(!current())return;
+      if(!current()||manualBusy)return;
       const code=$('[data-manual]').value.trim();
       if(!/^\d{4,8}$/.test(code))throw Error('Informe um SKU de 4 a 8 dígitos, preservando zeros à esquerda.');
+      stopCamera();
+      const id=token;
+      manualBusy=true;
+      $('[data-manual-query]').disabled=true;
       notice('Validando SKU no estoque atual…');
       const rows=await lookup({code,kind:'SKU'});
-      if(!current())return;
+      if(!current()||id!==token)return;
       if(rows.length===1){await choose(rows[0]);return;}
       paused=true;
       showResults({products:rows,unknown:rows.length?[]:[{code,kind:'SKU'}],errors:[]});
       notice(rows.length?'Selecione o SKU desejado.':'SKU não encontrado no catálogo desta unidade.');
     }catch(error){if(current())notice(error.message);}
+    finally{manualBusy=false;if(!closed)$('[data-manual-query]').disabled=false;}
   });
   $('[data-manual]').addEventListener('keydown',event=>{
     if(event.key==='Enter'){event.preventDefault();$('[data-manual-query]').click();}

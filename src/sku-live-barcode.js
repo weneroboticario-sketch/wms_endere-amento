@@ -1,3 +1,4 @@
+/* global Worker */
 import {barcodeCandidate,uniquePhotoCandidates} from './sku-photo-domain.js';
 
 const FORMATS=['ean_13','ean_8','upc_a','code_128','code_39','itf'];
@@ -9,10 +10,10 @@ const stoppedError=()=>new Error('Leitor de câmera encerrado.');
  */
 export function createSkuLiveBarcodeScanner({
   NativeDetector=globalThis.BarcodeDetector,
-  makeWorker=()=>new window.Worker(new URL('./sku-photo-barcode.worker.js',import.meta.url),{type:'module'}),
+  makeWorker=()=>new Worker(new URL('./sku-photo-barcode.worker.js',import.meta.url),{type:'module'}),
   timeoutMs=2500
 }={}){
-  let closed=false,configured=false,detector=null,worker=null,workerUnavailable=false,pending=null;
+  let closed=false,configured=false,detector=null,worker=null,workerUnavailable=false,pending=null,busy=false,rejectScan=null;
 
   async function configure(){
     if(configured)return;
@@ -61,14 +62,18 @@ export function createSkuLiveBarcodeScanner({
     });
   }
 
-  async function scan(canvas){
+  async function decode(canvas){
     if(closed)throw stoppedError();
     await configure();
     if(closed)throw stoppedError();
     let decoded=[];
     if(detector){
       try{
-        const matches=await detector.detect(canvas);
+        let timer;
+        const matches=await Promise.race([
+          detector.detect(canvas),
+          new Promise((resolve,reject)=>{timer=setTimeout(()=>reject(Error('Leitura nativa excedeu o prazo.')),timeoutMs);})
+        ]).finally(()=>clearTimeout(timer));
         if(closed)throw stoppedError();
         decoded=matches.map(row=>({code:row.rawValue,format:row.format}));
       }catch(error){
@@ -83,9 +88,22 @@ export function createSkuLiveBarcodeScanner({
     return uniquePhotoCandidates(decoded.map(row=>barcodeCandidate(row.code,row.format)));
   }
 
+  async function scan(canvas){
+    if(closed)throw stoppedError();
+    if(busy)throw Error('Uma leitura já está em andamento.');
+    busy=true;
+    try{
+      return await new Promise((resolve,reject)=>{
+        rejectScan=reject;
+        decode(canvas).then(resolve,reject);
+      });
+    }finally{busy=false;rejectScan=null;}
+  }
+
   function close(){
     if(closed)return;
     closed=true;
+    rejectScan?.(stoppedError());
     pending?.cancel();
     worker?.terminate();
     worker=null;detector=null;
