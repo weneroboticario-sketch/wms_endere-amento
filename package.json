@@ -8,7 +8,7 @@
   },
   "scripts": {
     "predev": "node scripts/prepare-magazine-assets.mjs",
-    "prebuild": "node scripts/prepare-magazine-assets.mjs",
+    "prebuild": "npm run lint && node --experimental-strip-types --test tests/sku-camera-auto-open.test.js tests/sku-live-barcode.test.js tests/sku-barcode-db.test.js tests/sku-barcode-links.test.js && node scripts/prepare-magazine-assets.mjs",
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
     "build": "vite build",
