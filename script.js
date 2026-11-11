@@ -6,6 +6,7 @@ import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
 import { createTaskSound } from "./src/task-sound.js";
+import { createCommunicationRuntime } from "./src/communication-runtime.js";
 import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-loader.js";
@@ -75,6 +76,56 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   var globalDashboardController = null;
   var inboundReceiptsController = null;
+  var communicationRuntime = null, communicationScope = "", communicationStarting = null, communicationLinkConsumed = false;
+  async function ensureCommunication() {
+    if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen("comunicacao")) return null;
+    var key = authState.currentUser.id + ":" + activeWarehouseCode();
+    if (communicationRuntime && communicationScope === key) return communicationRuntime;
+    if (communicationStarting && communicationScope === key) return communicationStarting;
+    var previous = communicationRuntime; communicationRuntime = null; communicationScope = key;
+    communicationStarting = (async function () {
+      if (previous) await previous.dispose();
+      if (!authState.currentUser || key !== authState.currentUser.id + ":" + activeWarehouseCode() || communicationScope !== key) return null;
+      communicationRuntime = createCommunicationRuntime({
+        client: supabaseDb, getUser: function () { return authState.currentUser; }, getWarehouse: activeWarehouseCode,
+        root: $("comunicacao"), isOpen: function () { return getActiveScreenId() === "comunicacao"; },
+        onBadge: function (count) { document.querySelectorAll("[data-comm-count]").forEach(function (node) { node.textContent = String(count); node.hidden = count === 0; }); },
+        onToast: function (text, conversationId) {
+          $("communicationAlert").hidden = false;
+          $("communicationAlert").querySelector("[data-open-communication-alert]").textContent = text;
+          $("communicationAlert").querySelector("[data-open-communication-alert]").onclick = function () { $("communicationAlert").hidden = true; openCommunication({ conversation_id: conversationId }).catch(function (error) { showToast(error.message, "error"); }); };
+        },
+        onOpenProcess: openCommunicationProcess
+      });
+      return communicationRuntime;
+    })();
+    return communicationStarting;
+  }
+  async function openCommunication(options) {
+    if (!canAccessScreen("comunicacao")) throw new Error("Comunicação não autorizada.");
+    await showScreen("comunicacao");
+    var runtime = await ensureCommunication(); if (runtime) await runtime.show(options || {});
+  }
+  function communicationShareButton(type, id, label) {
+    if (IS_CP_ALAMO || !canAccessScreen("comunicacao") || !id) return "";
+    return '<button type="button" class="secondary-button comm-share" data-communication-share="' + escapeHtml(type) + '" data-share-id="' + escapeHtml(id) + '">' + escapeHtml(label || "Compartilhar na Comunicação") + '</button>';
+  }
+  async function openCommunicationProcess(process) {
+    if (!process || process.warehouse !== activeWarehouseCode()) throw new Error("Processo fora da unidade atual.");
+    if (process.type === "SKU" || process.type === "LOCATION") {
+      await showScreen("consultaSku"); $("skuSearchInput").value = process.sku || process.id; await renderSkuSearch(); return;
+    }
+    if (process.type === "REPLENISHMENT") {
+      await showScreen("reposicao"); await refreshReplenishmentData(); replenishmentState.activeFilter = ""; replenishmentState.renderLimit = Math.max(replenishmentState.requests.length, replenishmentState.renderLimit); renderReplenishment();
+      var row = Array.from($("replenishmentList").querySelectorAll("[data-replenishment-id]")).find(function (node) { return node.dataset.replenishmentId === process.id; });
+      if (row) row.scrollIntoView({ block: "center", behavior: "smooth" }); else showToast("Pedido não está na fila ativa. Consulte o histórico do módulo.", "warning");
+      return;
+    }
+    await showScreen("transferencias");
+    if (process.type === "TRANSFER" || process.type === "DIVERGENCE") { await openTransferWork(process.transfer_id || process.id, { viewOnly: true, forceItems: true }); return; }
+    if (process.type === "TASK") { await loadTaskCenterData({ force: true }); activateTransferTab("taskCenterSection"); showTaskHistory(process.id); return; }
+    if (process.type === "RECEIPT") { renderInboundReceipts(false); await inboundReceiptsController.render(false); await inboundReceiptsController.open(process.id); }
+  }
   function renderInboundReceipts(historyMode) {
     if (IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
     var root = $("inboundReceiptRoot");
@@ -84,7 +135,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       user: function () { return authState.currentUser; },
       warehouse: activeWarehouseCode,
       users: function () { return authState.users; },
-      userWarehouse: function (user) { return userCanAccessWarehouse(user, activeWarehouseCode()); }
+      userWarehouse: function (user) { return userCanAccessWarehouse(user, activeWarehouseCode()); },
+      share: function (process) { return openCommunication({ share: process }); }
     });
     inboundReceiptsController.render(historyMode).catch(function (error) { showToast("Recebimento: " + formatSupabaseError(error), "error"); });
   }
@@ -129,6 +181,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
+    comunicacao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     centralRevistas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
@@ -1004,6 +1057,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function ensureScreenDataLoaded(screenId) {
+    if (screenId === "comunicacao" && !IS_CP_ALAMO) { var runtime = await ensureCommunication(); if (runtime) await runtime.show(); return true; }
     if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
       var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
       await mountMagazineCenterLazy($("centralRevistas"), {
@@ -6637,6 +6691,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    if (communicationRuntime) { void communicationRuntime.dispose(); communicationRuntime = null; }
+    communicationScope = ""; communicationStarting = null;
+    if ($("communicationAlert")) $("communicationAlert").hidden = true;
     if (skuPhotoController) skuPhotoController.close();
     if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     taskSound.stop();
@@ -6725,6 +6782,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function logout() {
+    if (communicationRuntime) { await communicationRuntime.dispose({ unsubscribe: true }); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopTaskPolling();
     stopLeaderLiveSync();
     await pauseLocalCacheForContextChange("logout");
@@ -6767,6 +6825,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     if (code === activeWarehouseCode()) return;
+    if (communicationRuntime) { await communicationRuntime.dispose(); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopLeaderLiveSync();
     stopTaskPolling();
     await pauseLocalCacheForContextChange("warehouse-switch");
@@ -6879,6 +6938,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function applyRolePermissions() {
     var visibleScreens = 0;
+    document.querySelectorAll('[data-communication-share]').forEach(function (element) {
+      element.hidden = !canAccessScreen('comunicacao');
+    });
     document.querySelectorAll(".admin-only").forEach(function (element) {
       element.hidden = !isAdmin();
     });
@@ -6925,6 +6987,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "comunicacao") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
@@ -8313,6 +8376,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (!IS_CP_ALAMO && canAccessScreen("comunicacao")) {
+      ensureCommunication().then(function (runtime) { if (runtime) runtime.setActive(getActiveScreenId() === "comunicacao"); }).catch(function () {});
+      if (!communicationLinkConsumed && new window.URLSearchParams(window.location.search).has("comm")) {
+        communicationLinkConsumed = true;
+        var params = new window.URLSearchParams(window.location.search), targetWarehouse = params.get("warehouse"), targetConversation = params.get("comm");
+        if (targetWarehouse && userCanAccessWarehouse(authState.currentUser, targetWarehouse) && /^[a-f0-9-]{36}$/i.test(targetConversation || "")) {
+          Promise.resolve().then(async function () { if (targetWarehouse !== activeWarehouseCode()) await switchActiveWarehouse(targetWarehouse); await openCommunication({ conversation_id: targetConversation }); }).catch(function (error) { showToast(error.message, "error"); });
+        } else showToast("Notificação fora do acesso da conta atual.", "warning");
+      }
+    }
     if (addressingPresenceController) addressingPresenceController.update();
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
@@ -8350,6 +8423,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "comunicacao") return "Comunicação";
     if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
@@ -8362,6 +8436,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function bindEvents() {
+    if ($("communicationAlert")) $("communicationAlert").querySelector("[data-dismiss-communication-alert]").onclick = function () { $("communicationAlert").hidden = true; };
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-communication-share]");
+      if (!button || !canAccessScreen("comunicacao")) return;
+      var type = button.dataset.communicationShare, id = button.dataset.shareId || (type === "SKU" ? $("skuSearchInput").value.trim() : "");
+      if (!id) { showToast("Informe um SKU para compartilhar.", "warning"); return; }
+      openCommunication(type === "TRANSFER_DIVERGENCE" ? { divergencesTransfer: id } : { share: { type: type, id: id } }).catch(function (error) { showToast(error.message, "error"); });
+    });
     if ($("skuPhotoButton")) {
       $("skuPhotoButton").hidden = IS_CP_ALAMO;
       $("skuPhotoButton").addEventListener("click", async function () {
@@ -9911,6 +9993,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
       "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + (item.prioridade === "CLIENTE" ? " priority-cliente" : "") + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
+      communicationShareButton("REPLENISHMENT", item.id),
       "<div class=\"replenishment-card-main\">",
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
       "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + (routeAddress ? escapeHtml("Rack " + routeAddress.rack + " · Linha " + routeAddress.linha + " · Coluna " + routeAddress.letra) : routeAddress === null ? "" : escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-")) + "</small></div>",
@@ -11334,6 +11417,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       mergeSelect,
       reassignControl,
       "<button class=\"edit-small\" data-transfer-view=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
+      communicationShareButton("TRANSFER", transfer.id),
+      communicationShareButton("TRANSFER_DIVERGENCE", transfer.id, "Compartilhar divergência"),
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "",
       "</div>",
@@ -12395,6 +12480,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       (!archivedView && isFinalStatus ? ('<button class="secondary-button" data-task-archive="' + task.id + '" type="button">Arquivar</button>') : ''),
       (archivedView && isAdminOrSupervisor() ? ('<button class="secondary-button" data-task-unarchive="' + task.id + '" type="button">Desarquivar</button>') : ''),
       '<button class="secondary-button" data-task-history="' + task.id + '" type="button">Histórico</button>',
+      communicationShareButton("TASK", task.id),
       '</div>',
       '</article>'
     ].join("");
@@ -16666,6 +16752,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("") : "";
     return [
       "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
+      communicationShareButton("LOCATION", binding.id, "Compartilhar localização"),
       "<div class=\"sku-card-head\">",
       "<div><strong>" + escapeHtml(binding.sku) + "</strong><span>" + escapeHtml(productName) + "</span></div>",
       latest ? "<span class=\"latest-pill\">Mais recente</span>" : "",
