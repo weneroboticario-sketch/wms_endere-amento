@@ -104,3 +104,54 @@ test('an unreadable frame yields no candidate and a later frame can still be sca
   assert.equal((await scanner.scan(canvas)).candidates[0].code,'48060');
   scanner.close();
 });
+
+test('native misses avoid expensive fallback on every video frame',async()=>{
+  let nativeCalls=0,workerCalls=0;
+  class Detector{
+    static async getSupportedFormats(){return ['ean_13'];}
+    async detect(){nativeCalls++;return [];}
+  }
+  const scanner=createSkuLiveBarcodeScanner({NativeDetector:Detector,makeWorker:()=>({
+    postMessage(){workerCalls++;this.onmessage({data:{results:[{code:'7891033896783',format:'EAN_13'}]}});},
+    terminate(){}
+  })});
+  const first=await scanner.scan(canvas);
+  assert.equal(first.candidates.length,0);
+  assert.equal(workerCalls,0);
+  const second=await scanner.scan(canvas);
+  assert.equal(second.candidates[0].code,'7891033896783');
+  assert.equal(nativeCalls,2);
+  assert.equal(workerCalls,1);
+  scanner.close();
+});
+
+test('local fallback deep search runs periodically, not on every frame',async()=>{
+  const modes=[];
+  const scanner=createSkuLiveBarcodeScanner({NativeDetector:null,makeWorker:()=>({
+    postMessage(message){
+      modes.push(message.deepScan);
+      this.onmessage({data:{results:[]}});
+    },
+    terminate(){}
+  })});
+  await scanner.scan(canvas);
+  await scanner.scan(canvas);
+  await scanner.scan(canvas);
+  await scanner.scan(canvas);
+  assert.deepEqual(modes,[false,false,true,false]);
+  scanner.close();
+});
+
+test('camera tuning keeps GTIN checksum single-read and SKU two-read safeguard',async()=>{
+  const [ui,worker]=await Promise.all([
+    readFile(new URL('../src/sku-photo-lookup.js',import.meta.url),'utf8'),
+    readFile(new URL('../src/sku-photo-barcode.worker.js',import.meta.url),'utf8')
+  ]);
+  assert.match(ui,/const CAMERA_FRAME_MAX_WIDTH=800/);
+  assert.match(ui,/await wait\(100\)/);
+  assert.match(ui,/candidates\.length===1&&candidates\[0\]\.kind==='GTIN'\?1:2/);
+  assert.match(ui,/focusMode\?\.includes\('continuous'\)/);
+  assert.match(worker,/if\(deepScan\)/);
+  assert.match(worker,/if\(center\)\{globalThis\.postMessage\(\{results:\[center\]\}\);return;/);
+  assert.doesNotMatch(ui,/data-gallery|data-capture/);
+});
