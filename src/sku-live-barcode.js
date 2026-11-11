@@ -94,7 +94,10 @@ export function createSkuLiveBarcodeScanner({
       catch(error){if(closed)throw stoppedError();throw error;}
     }
     if(closed)throw stoppedError();
-    return uniquePhotoCandidates(decoded.map(row=>barcodeCandidate(row.code,row.format)));
+    const candidates=uniquePhotoCandidates(decoded.map(row=>barcodeCandidate(row.code,row.format)));
+    // Preserve validated scanner output for CODE128 alphanumeric shelf labels.
+    // The SKU scanner continues to consume only numeric candidates.
+    return {...candidates,barcodes:decoded.map(row=>String(row.code||'').trim()).filter(Boolean)};
   }
 
   async function scan(canvas){
