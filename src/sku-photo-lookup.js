@@ -61,7 +61,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
     if(closed)return;
     closed=true;
     stopCamera();
-    if(timer!==null)clearInterval(timer);
+    if(timer!==null)window.clearInterval(timer);
     if(dialog.open)dialog.close();
     dialog.remove();
     context.closed?.();
@@ -233,7 +233,7 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   $('[data-manual]').addEventListener('keydown',event=>{
     if(event.key==='Enter'){event.preventDefault();$('[data-manual-query]').click();}
   });
-  timer=setInterval(()=>{if(!current())close();},350);
+  timer=window.setInterval(()=>{if(!current())close();},350);
   dialog.showModal();
   return {close};
 }
