@@ -1,5 +1,6 @@
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
+import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
@@ -6924,6 +6925,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
     if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
+    if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema";
@@ -8348,13 +8350,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function updateModuleSubtitleLabel(screenId) {
     if (screenId === "centralRevistas") return "Central de Revistas";
+    if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }
 
   function isRemovedScreen(screenId) {
-    return ["assistente", "conferencias", "historico", "consultaPrateleira"].indexOf(screenId) >= 0;
+    return ["assistente", "conferencias", "historico"].indexOf(screenId) >= 0;
   }
 
   function bindEvents() {
