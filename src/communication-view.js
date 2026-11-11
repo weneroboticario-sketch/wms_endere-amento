@@ -19,7 +19,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
  '<div data-conversations></div>'+button('Conversas anteriores','data-more-conversations')+'</aside>'+
  '<section class="comm-thread" data-thread><p>Escolha uma conversa ou inicie um atendimento.</p></section></div>';
  const $=selector=>root.querySelector(selector),notice=text=>{if(!dead)$('[data-status]').textContent=text;};
- const state=id=>{if(!states.has(id))states.set(id,{messages:[],draft:'',reply:null,images:[],metadata:{},share:null,pending:null,hasEarlier:false});return states.get(id);};
+ const state=id=>{if(!states.has(id))states.set(id,{messages:[],draft:'',urgent:false,reply:null,images:[],metadata:{},share:null,pending:null,hasEarlier:false});return states.get(id);};
  const live=()=>!dead&&current();
  const fail=error=>{if(live())notice(/could not find.*wms_chat_api|schema cache/i.test(error.message||'')?'Comunicação ainda não habilitada neste ambiente. Aplique as migrations e configure o serviço.':error.message||String(error));};
  function modal(title,body,submit,label='Confirmar'){
@@ -53,7 +53,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
   $('[data-conversations]').querySelectorAll('[data-open]').forEach(node=>node.onclick=()=>void openConversation(node.dataset.open).catch(fail));
   root.querySelectorAll('[data-filter]').forEach(node=>node.classList.toggle('active',node.dataset.filter===filter));
  }
- function rememberDraft(){if(selected&&$('[data-body]'))state(selected).draft=$('[data-body]').value;}
+ function rememberDraft(){if(selected&&$('[data-body]')){state(selected).draft=$('[data-body]').value;state(selected).urgent=$('[data-urgent]').checked;}}
  async function presence(value){
   if(!selected||!live())return;
   await api.rpc('PRESENCE',{conversation_id:selected,active:value}).catch(()=>{});
@@ -73,6 +73,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
    '<label class="secondary-button">Fotografar evidência<input data-camera-image type="file" accept="image/jpeg,image/png,image/webp" capture="environment"></label>'+
    '<label><input data-urgent type="checkbox"> Urgente · pedir ciência</label><button type="button" class="primary-button" data-send>Enviar</button></div></div>';
   $('[data-body]').value=s.draft;$('[data-body]').oninput=()=>{s.draft=$('[data-body]').value;};
+  $('[data-urgent]').checked=s.urgent;
   $('[data-send]').onclick=()=>void send().catch(fail);
   $('[data-back]').onclick=()=>{rememberDraft();root.classList.remove('comm-chat-open');void presence(false);};
   $('[data-mute]').onclick=()=>mute();
@@ -105,7 +106,9 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
  function receiptLabel(message){
   const receipts=message.receipts||[],deliveredCount=receipts.filter(r=>r.delivered_at).length,readCount=receipts.filter(r=>r.read_at).length;
   const ackCount=receipts.filter(r=>r.acknowledged_at).length;
-  return 'Enviada'+(deliveredCount?' · Sincronizada: '+deliveredCount+'/'+receipts.length:'')+(readCount?' · Visualizada: '+readCount+'/'+receipts.length:'')+(message.requires_ack?' · Ciência: '+ackCount+'/'+receipts.length:'');
+  const firstAck=receipts.filter(r=>r.acknowledged_at).map(r=>new Date(r.acknowledged_at).getTime()).sort((a,b)=>a-b)[0];
+  const delay=firstAck?Math.max(0,Math.round((firstAck-new Date(message.created_at).getTime())/1000)):null;
+  return 'Enviada'+(deliveredCount?' · Sincronizada: '+deliveredCount+'/'+receipts.length:'')+(readCount?' · Visualizada: '+readCount+'/'+receipts.length:'')+(message.requires_ack?' · Ciência: '+ackCount+'/'+receipts.length:'')+(delay!=null?' · Primeira ciência: '+delay+' s':'');
  }
  function drawMessages(bottom=false,prepend=false){
   if(!selected||!$('[data-messages]'))return;
@@ -140,7 +143,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
   if(marking||!active||!selected||document.visibilityState!=='visible'||!document.hasFocus()||!$('[data-messages]'))return;
   const id=selected,box=$('[data-messages]').getBoundingClientRect();
   const ids=[...$('[data-messages]').querySelectorAll('[data-message-id]')].filter(node=>{
-   const b=node.getBoundingClientRect();return b.bottom>box.top&&b.top<box.bottom&&!read.has(node.dataset.messageId)&&state(id).messages.find(m=>String(m.id)===node.dataset.messageId)?.sender_profile_id!==actor;
+   const b=node.getBoundingClientRect();return b.bottom>Math.max(0,box.top)&&b.top<Math.min(window.innerHeight,box.bottom)&&b.right>0&&b.left<window.innerWidth&&!read.has(node.dataset.messageId)&&state(id).messages.find(m=>String(m.id)===node.dataset.messageId)?.sender_profile_id!==actor;
   }).map(node=>node.dataset.messageId);
   if(!ids.length)return;marking=true;
   try{await api.rpc('RECEIPT',{conversation_id:id,ids,state:'READ'});if(live())ids.forEach(value=>read.add(value));}catch{/* Keep unread on failure. */}finally{marking=false;}
@@ -164,7 +167,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
    for(let i=0;i<s.images.length;i++){const pending=s.pending;s.pending.assets[i]??={};const asset=await api.upload(s.images[i],id,pending.assets[i]);pending.data.attachments??=[];pending.data.attachments[i]=asset;}
    await api.send(s.pending.data);if(!live())return;
    for(const image of s.images)URL.revokeObjectURL(image.preview);
-   s.pending=null;s.draft='';s.images=[];s.reply=null;s.metadata={};s.share=null;
+   s.pending=null;s.draft='';s.urgent=false;s.images=[];s.reply=null;s.metadata={};s.share=null;
    if(id===selected){$('[data-body]').value='';$('[data-urgent]').checked=false;}
    await refresh();if(id===selected){drawComposer();drawMessages(true);}
   }catch(error){if(s.pending)s.pending.sending=false;if(live()&&id===selected){drawComposer();drawMessages();}throw error;}
@@ -211,7 +214,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
     if(announcement){
      const s=state(cid);s.draft=announcement.body;s.metadata={title:announcement.title,message_type:'ANNOUNCEMENT',requires_ack:true};
      if(announcement.due)s.metadata.due_at=new Date(announcement.due).toISOString();
-     $('[data-body]').value=s.draft;$('[data-urgent]').checked=announcement.urgent;drawComposer();
+     s.urgent=announcement.urgent;$('[data-body]').value=s.draft;$('[data-urgent]').checked=s.urgent;drawComposer();
     }
    },type==='ANNOUNCEMENT'?'Preparar comunicado':'Abrir');
   const picked=new Set();let request=0;
