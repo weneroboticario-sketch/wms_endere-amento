@@ -27,7 +27,7 @@ function draw(){
     videoCtx.drawImage(currentBarcode,(videoCanvas.width-currentBarcode.width)/2,(videoCanvas.height-currentBarcode.height)/2);
     videoCtx.restore();
   }
-  requestAnimationFrame(draw);
+  window.requestAnimationFrame(draw);
 }
 paintFixture();
 draw();
