@@ -16,3 +16,12 @@
 .sku-photo-dialog .sku-scanner-retry{margin-top:10px}
 .sku-photo-trigger svg{width:22px;height:22px;vertical-align:middle;margin-right:5px}
 @media(max-width:760px){.sku-photo-dialog{padding:14px;width:96vw}.sku-scanner-buttons>*{flex:1 1 120px}.sku-photo-dialog [data-results] article button{width:100%}.sku-photo-trigger{min-width:46px}.sku-photo-trigger .sku-photo-label{display:none}}
+
+.sku-barcode-link-panel{margin-top:12px;padding:13px;border:1px solid var(--border);border-radius:9px;background:var(--panel-muted,#edf5ff)}
+.sku-barcode-link-panel p{margin:0 0 10px}
+.sku-barcode-link-panel strong{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.sku-barcode-csv{margin-top:14px;border:1px solid var(--border);border-radius:8px;padding:12px}
+.sku-barcode-csv summary{cursor:pointer;font-weight:600}
+.sku-barcode-csv [data-csv-file-mount]{margin:12px 0}
+.sku-barcode-csv input[type=file]{max-width:100%;font-size:13px}
+.sku-barcode-csv [data-csv-message]{font-size:13px;overflow-wrap:anywhere}

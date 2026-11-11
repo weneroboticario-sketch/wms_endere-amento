@@ -1,6 +1,7 @@
 import {escapeHtml as e} from './utils.js';
 import {createSkuLiveBarcodeScanner} from './sku-live-barcode.js';
 import {resolvePhotoCandidates} from './sku-photo-domain.js';
+import {mountBarcodeCsvImport} from './sku-barcode-import-ui.js';
 import './sku-photo-lookup.css';
 
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -12,10 +13,11 @@ const CAMERA_FRAME_MAX_WIDTH=960;
  */
 export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeScanner}={}){
   const actor=context.user()?.id,warehouse=context.warehouse();
-  let closed=false,stream=null,scanner=null,token=0,paused=false,face='environment',timer=null,manualBusy=false;
+  let closed=false,stream=null,scanner=null,token=0,paused=false,face='environment',timer=null,manualBusy=false,linkBusy=false,pendingEan=null;
   let scanTask=Promise.resolve();
   const runLoop=id=>{scanTask=scanTask.then(()=>scanLoop(id)).catch(error=>{if(current())notice(error.message);});};
   const current=()=>!closed&&actor===context.user()?.id&&warehouse===context.warehouse()&&context.canUse();
+  const canLink=()=>current()&&['ADMINISTRADOR','SUPERVISOR'].includes(context.user()?.role);
   const dialog=document.createElement('dialog');
   dialog.className='sku-photo-dialog';
   dialog.setAttribute('aria-label','Ler código de barras na Consulta de SKU');
@@ -31,16 +33,21 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
     '<div class="sku-scanner-view" data-view hidden><video data-video autoplay playsinline muted aria-label="Visualização da câmera para ler código de barras"></video>',
     '<span class="sku-scanner-guide" aria-hidden="true"></span><span class="sku-scanner-hint">Centralize o código de barras e mantenha o celular firme</span></div>',
     '<div data-results aria-live="polite"></div>',
+    '<section class="sku-barcode-link-panel" data-link-panel hidden><p>EAN detectado: <strong data-link-ean></strong></p>',
+    '<p>Informe abaixo o SKU impresso correto e confirme o vínculo permanente para esta unidade.</p>',
+    '<button type="button" class="primary-button" data-link>Vincular EAN ao SKU</button></section>',
     '<fieldset><legend>Consulta manual (alternativa)</legend>',
     '<label>SKU impresso<input data-manual inputmode="numeric" maxlength="8" autocomplete="off"></label>',
     '<button type="button" class="secondary-button" data-manual-query>Validar e consultar SKU</button>',
-    '</fieldset>'
+    '</fieldset>',
+    '<div data-csv-panel></div>'
   ].join('');
   document.body.append(dialog);
   const $=selector=>dialog.querySelector(selector);
   const video=$('[data-video]'),frame=document.createElement('canvas');
   const frameCtx=frame.getContext('2d',{willReadFrequently:true});
   const notice=message=>{$('[data-status]').textContent=message;};
+  if(canLink())mountBarcodeCsvImport($('[data-csv-panel]'),{client:context.client,warehouse,canEdit:canLink});
 
   function stopCamera(){
     token++;
@@ -93,7 +100,11 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
       '<button class="primary-button" type="button" data-product="'+index+'">Consultar SKU</button></article>'
     ).join('');
     const errors=result.errors?.length?'<p>Não foi possível validar todos os códigos. Faça uma nova leitura ou consulte manualmente.</p>':'';
-    const unknown=result.unknown?.length?'<p>Código lido sem vínculo confirmado com o SKU deste estoque. Confira a etiqueta ou consulte pelo SKU impresso.</p>':'';
+    const unknownGtin=result.unknown?.find(candidate=>candidate.kind==='GTIN');
+    pendingEan=unknownGtin?.code||null;
+    $('[data-link-panel]').hidden=!(pendingEan&&canLink());
+    if(pendingEan)$('[data-link-ean]').textContent=pendingEan;
+    const unknown=result.unknown?.length?'<p>'+result.unknown.map(candidate=>e(candidate.code)+' ('+(candidate.kind==='GTIN'?'EAN/GTIN sem vínculo nesta unidade':'código não encontrado')+')').join('; ')+'</p>':'';
     $('[data-results]').innerHTML=(products.length?'<h4>Produto identificado</h4>'+rows:'')+errors+unknown;
     $('[data-results]').querySelectorAll('[data-product]').forEach(button=>{
       button.addEventListener('click',()=>choose(products[Number(button.dataset.product)]).catch(error=>context.error?.(error)));
@@ -106,6 +117,8 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
       retry.onclick=()=>{
         if(!current())return;
         $('[data-results]').replaceChildren();
+        pendingEan=null;
+        $('[data-link-panel]').hidden=true;
         paused=false;
         notice('Procurando código de barras…');
         runLoop(token);
@@ -143,9 +156,11 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
             await choose(result.auto);
             return;
           }
-          if(result.products.length||result.errors.length){
+          if(result.products.length||result.errors.length||result.unknown.some(candidate=>candidate.kind==='GTIN')){
             showResults(result);
-            notice(result.products.length?'Selecione o produto encontrado ou escaneie novamente.':'Falha na validação. Tente novamente.');
+            notice(result.products.length?'Selecione o produto encontrado ou escaneie novamente.':
+              result.errors.length?'Falha na validação. Tente novamente.':
+              'EAN identificado, mas ainda não vinculado a um SKU desta unidade.');
             return;
           }
           ignoredKey=key;
@@ -175,6 +190,8 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
     const id=token;
     $('[data-start]').disabled=true;
     $('[data-results]').replaceChildren();
+    pendingEan=null;
+    $('[data-link-panel]').hidden=true;
     notice('Solicitando permissão para usar a câmera…');
     try{
       const media=context.mediaDevices??navigator.mediaDevices;
@@ -218,6 +235,32 @@ export function openSkuPhotoLookup(context,{scannerFactory=createSkuLiveBarcodeS
   $('[data-close]').addEventListener('click',close);
   dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
   dialog.addEventListener('close',close);
+  $('[data-link]').addEventListener('click',async()=>{
+    if(!canLink()||!pendingEan||linkBusy)return;
+    const code=$('[data-manual]').value.trim(),ean=pendingEan;
+    const button=$('[data-link]');
+    if(!/^\d{4,8}$/.test(code)){notice('Informe primeiro um SKU de 4 a 8 dígitos no campo manual.');return;}
+    linkBusy=true;button.disabled=true;
+    try{
+      const products=await lookup({code,kind:'SKU'});
+      if(!current())return;
+      if(products.length!==1)throw Error('Selecione um SKU único e existente no catálogo antes de vincular.');
+      const sku=products[0].sku;
+      if(!window.confirm('Vincular o EAN '+ean+' ao SKU '+sku+' ('+products[0].product_name+') nesta unidade?'))return;
+      const response=await context.client().rpc('register_wms_sku_barcode',{
+        p_warehouse:warehouse,p_ean:ean,p_sku:sku,p_source:'MANUAL'
+      });
+      if(!current())return;
+      if(response.error)throw response.error;
+      notice('Vínculo salvo. Conferindo o EAN cadastrado…');
+      const linked=await lookup({code:ean,kind:'GTIN'});
+      if(!current())return;
+      if(linked.length===1){await choose(linked[0]);return;}
+      showResults({products:linked,unknown:[],errors:[]});
+      notice('Vínculo gravado, mas há mais de um produto possível. Selecione o correto.');
+    }catch(error){if(current())notice('Não foi possível vincular: '+error.message);}
+    finally{linkBusy=false;if(!closed)button.disabled=false;}
+  });
   $('[data-manual-query]').addEventListener('click',async()=>{
     try{
       if(!current()||manualBusy)return;
