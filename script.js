@@ -1,6 +1,7 @@
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
+import { openOperationalBarcodeCamera } from "./src/wms-operational-camera.js";
 import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
@@ -8359,6 +8360,55 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function isRemovedScreen(screenId) {
     return ["assistente", "conferencias", "historico"].indexOf(screenId) >= 0;
+  }
+
+  var operationalCameraController = null;
+
+  function startOperationalFieldCamera(options) {
+    if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen(options.screenId)) return;
+    var input = $(options.inputId), actorId = authState.currentUser.id;
+    var warehouseCode = activeWarehouseCode();
+    var valid = function () {
+      return !IS_CP_ALAMO && authState.currentUser &&
+        authState.currentUser.id === actorId && warehouseCode === activeWarehouseCode() &&
+        canAccessScreen(options.screenId) && getActiveScreenId() === options.screenId &&
+        input && input.isConnected && !input.disabled &&
+        (!options.allow || options.allow());
+    };
+    if (!valid()) return;
+    if (operationalCameraController) operationalCameraController.close();
+    var controller = openOperationalBarcodeCamera({
+      client: function () { return supabaseDb; },
+      user: function () { return authState.currentUser; },
+      warehouse: activeWarehouseCode,
+      canUse: valid,
+      normalizeLocation: normalizeLocation,
+      mode: options.mode || "sku",
+      onRead: async function (code, detected) {
+        if (!valid()) return;
+        await options.onScan(code, detected);
+      },
+      error: function (error) {
+        if (!valid()) return;
+        if (options.statusId) setStatus(options.statusId, "Falha na leitura por câmera: " + formatSupabaseError(error), "error");
+        else showToast("Falha na câmera: " + formatSupabaseError(error), "error");
+      },
+      closed: function () { if (operationalCameraController === controller) operationalCameraController = null; }
+    });
+    operationalCameraController = controller;
+  }
+
+  function bindOperationalCameraButton(buttonId, options) {
+    var button = $(buttonId);
+    if (!button) return;
+    button.hidden = IS_CP_ALAMO;
+    button.addEventListener("click", function () {
+      if (button.disabled) return;
+      try { startOperationalFieldCamera(options); }
+      catch (error) {
+        if (options.statusId) setStatus(options.statusId, "Não foi possível iniciar a câmera: " + formatSupabaseError(error), "error");
+      }
+    });
   }
 
   function bindEvents() {
