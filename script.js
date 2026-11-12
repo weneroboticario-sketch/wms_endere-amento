@@ -8799,6 +8799,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
     $("transferScanInput").addEventListener("input", markTransferScanInput);
+    if ($("transferLocateSkuButton")) $("transferLocateSkuButton").addEventListener("click", locateTransferItem);
     $("transferScanInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -14336,6 +14337,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
       if ($("transferSkuCameraButton")) $("transferSkuCameraButton").hidden = true;
+      if ($("transferLocateSkuButton")) $("transferLocateSkuButton").hidden = true;
       $("transferWorkRows").innerHTML = "";
       $("transferPackedExports").hidden = true;
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
@@ -14381,12 +14383,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
     renderTransferStepSummary(transfer, stats, mode, items);
     renderTransferFinalSummary(transfer, stats, items, mode);
-    var requiresScan = mode === "MONTAGEM";
+    var requiresScan = mode === "MONTAGEM" || mode === "SEPARACAO";
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
     var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
     var showFinalBoxes = !finalized && mode === "MONTAGEM";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
+    if ($("transferLocateSkuButton")) {
+      $("transferLocateSkuButton").hidden = finalized || !requiresScan;
+      $("transferLocateSkuButton").disabled = finalized || !requiresScan;
+    }
     if ($("transferSkuCameraButton")) {
       $("transferSkuCameraButton").hidden = IS_CP_ALAMO || finalized || !requiresScan;
       $("transferSkuCameraButton").disabled = finalized || !requiresScan;
@@ -18674,8 +18680,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("transferScanInput").value = item.sku;
     $("transferQuantityInput").value = "";
     renderCurrentTransferItem();
-    setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
-    $("transferQuantityInput").focus();
+    if (transferState.activeWorkMode === "SEPARACAO" && !transferState.manualSeparationQty) {
+      setStatus("transferWorkStatus", item.description + " localizado. Confirme a coleta no controle da transferência.", "success");
+      $("confirmCurrentCollectButton").focus();
+    } else {
+      setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
+      $("transferQuantityInput").focus();
+    }
   }
 
   async function handleUnknownTransferSku(transfer, sku) {
