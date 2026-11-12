@@ -1,4 +1,4 @@
-import { createElement, Box, Home, ClipboardList, Search, Menu, ArrowLeftRight, Bell, Plus, ChevronRight, SlidersHorizontal, X } from "lucide";
+import { createElement, Box, Home, ClipboardList, Search, Menu, ArrowLeftRight, Bell, Plus, ChevronRight, SlidersHorizontal, X, MessageCircle } from "lucide";
 import "./wms-mobile.css";
 import "./wms-desktop.css";
 
@@ -46,12 +46,12 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
       const item=document.createElement("button");item.type="button";item.textContent=source.textContent.trim();item.addEventListener("click",()=>{menu.close();source.click();});menuList.append(item);
     });menu.showModal();
   }
-  const entries=[["home","Início",Home],["capture","Captação",Box],["replenishment","Reposição",ClipboardList],["search","Pesquisa",Search],["more","Mais",Menu]];
+  const entries=[["home","Início",Home],["capture","Captação",Box],["replenishment","Reposição",ClipboardList],["search","Pesquisa",Search],["communication","Chat",MessageCircle],["more","Mais",Menu]];
   for(const [key,label,shape] of entries){const item=button(label,shape);item.dataset.mobileNav=key;const caption=document.createElement("span");caption.textContent=label;item.append(caption);item.addEventListener("click",()=>{
     if(key==="more"){showMenu();return;}
-    const screen=key==="home"?(canAccess("globalDashboard")?"globalDashboard":"dashboard"):key==="capture"?"bipagem":key==="replenishment"?"reposicao":"consultaSku";
+    const screen=key==="home"?(canAccess("globalDashboard")?"globalDashboard":"dashboard"):key==="capture"?"bipagem":key==="replenishment"?"reposicao":key==="communication"?"comunicacao":"consultaSku";
     if(canAccess(screen))navigate(screen);
-  });nav.append(item);}document.body.append(nav);
+  });if(key==="communication"){const count=document.createElement("small");count.dataset.commCount="";count.hidden=true;item.append(count);}nav.append(item);}document.body.append(nav);
   function wrapPanel(panel,label,shape,className){
     if(!panel)return null;const children=[...panel.childNodes],details=document.createElement("details");details.className=className;
     const summary=document.createElement("summary");summary.append(icon(shape),document.createTextNode(label));const body=document.createElement("div");body.className="mobile-disclosure-body";body.append(...children);details.append(summary,body);panel.append(details);
@@ -146,7 +146,8 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
     const authenticated=isAuthenticated();nav.hidden=!authenticated;taskButton.hidden=!authenticated||!canAccess("transferencias");
     const count=$("topTaskCount")?.textContent.trim()||"0";badge.textContent=count;badge.hidden=count==="0";
     const active=document.querySelector(".screen.active")?.id;
-    nav.querySelectorAll("[data-mobile-nav]").forEach(item=>{const key=item.dataset.mobileNav;const target=key==="home"?(canAccess("globalDashboard")?"globalDashboard":"dashboard"):key==="capture"?"bipagem":key==="replenishment"?"reposicao":key==="search"?"consultaSku":null;item.hidden=!!target&&!canAccess(target);const selected=key==="more"?active==="transferencias":key==="home"?["dashboard","globalDashboard"].includes(active):active===target;item.setAttribute("aria-current",selected?"page":"false");});
+    nav.querySelectorAll("[data-mobile-nav]").forEach(item=>{const key=item.dataset.mobileNav;const target=key==="home"?(canAccess("globalDashboard")?"globalDashboard":"dashboard"):key==="capture"?"bipagem":key==="replenishment"?"reposicao":key==="search"?"consultaSku":key==="communication"?"comunicacao":null;item.hidden=!!target&&!canAccess(target);const selected=key==="more"?active==="transferencias":key==="home"?["dashboard","globalDashboard"].includes(active):active===target;item.setAttribute("aria-current",selected?"page":"false");});
+    nav.style.gridTemplateColumns="repeat("+[...nav.children].filter(item=>!item.hidden).length+",minmax(0,1fr))";
     nav.querySelector('[data-mobile-nav="more"] span').textContent=active==="transferencias"?"Transferências":"Mais";
     if(mobile){
       for(const [node] of records)if(!node.isConnected)records.delete(node);

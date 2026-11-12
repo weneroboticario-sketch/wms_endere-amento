@@ -112,6 +112,7 @@ export function mountInboundReceipts(context) {
     const users = context.users().filter(u => u.active && !u.archived && u.role === "OPERADOR" && context.userWarehouse(u));
     $("[data-detail]").innerHTML = inboundDetail({ receipt: r, items, summary, isManager: manager(), isAdministrator: actor()?.role === "ADMINISTRADOR", editable: editable(), actorId: actor()?.id, users, filter: itemFilter, selectedId: selectedItem?.id });
     decorateInboundIcons($("[data-detail]"));
+      if(context.share){const share=document.createElement("button");share.type="button";share.className="secondary-button comm-share";share.textContent="Compartilhar conferência na Comunicação";share.onclick=()=>context.share({type:"RECEIPT",id:r.id}).catch(fail);$("[data-detail]").prepend(share);}
     renderCurrent();
     if ($("[data-scan]")) $("[data-scan]").onsubmit = event => {
       event.preventDefault(); const matches = findInboundItems(items, $("[data-code]").value);
@@ -262,5 +263,5 @@ export function mountInboundReceipts(context) {
       if (token === generation && (!row || row.version !== receipt.version)) message("Este recebimento mudou. Clique em Atualizar recebimento antes de continuar.");
     } catch { /* Explicit refresh surfaces network failures without losing entered values. */ }
   }, 15000);
-  return { render };
+  return { render, open };
 }
