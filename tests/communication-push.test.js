@@ -1,6 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';
+import {createHmac} from 'node:crypto';
 import {dispatchPush,quietNow,trustedPushSubscription,inspectEvidence} from '../supabase/functions/wms-communication/push-domain.ts';
 import {createCommunicationHandler} from '../supabase/functions/wms-communication/handler.ts';
+import {verifyWorkerRequest} from '../supabase/functions/wms-communication/worker-auth.ts';
 const subscription={endpoint:'https://fcm.googleapis.com/fcm/send/synthetic',keys:{p256dh:'a'.repeat(87),auth:'b'.repeat(22)}};
 test('push blocks arbitrary endpoints and evidence validates actual signatures, type and size',()=>{
  assert.equal(trustedPushSubscription(subscription).endpoint,subscription.endpoint);
@@ -38,6 +40,19 @@ test('Edge handler rejects missing auth, wrong origin and unconfigured worker; u
  assert.equal((await handler(request({action:'config'},{Origin:'https://evil.test'}))).status,403);
  const configured=await handler(request({action:'config',warehouse:'VDCG'},{Authorization:'Bearer synthetic'}));assert.deepEqual(await configured.json(),{configured:false,publicKey:null});
  assert.equal((await handler(request({action:'drain'},{'x-wms-worker-secret':'wrong'}))).status,401);
- assert.equal((await handler(request({action:'drain'},{'x-wms-worker-secret':envValues.WMS_CHAT_WORKER_SECRET}))).status,503);
+ const stamp=String(Math.floor(Date.now()/1000)),nonce='10000000-0000-4000-8000-000000000001';
+ const signature=createHmac('sha256',envValues.WMS_CHAT_WORKER_SECRET).update('wms-chat-drain:'+stamp+':'+nonce).digest('hex');
+ assert.equal((await handler(request({action:'drain'},{'x-wms-worker-time':stamp,'x-wms-worker-nonce':nonce,'x-wms-worker-signature':signature}))).status,503);
  assert.ok(calls.some(c=>c.args.p_action==='UNREAD'));
+});
+
+test('worker uses expiring HMAC, rejects tampering/expiry and denies permanent credentials by default',async()=>{
+ const secret='a'.repeat(64),stamp='1794490000',nonce='10000000-0000-4000-8000-000000000001',signature=createHmac('sha256',secret).update('wms-chat-drain:'+stamp+':'+nonce).digest('hex');
+ const request=headers=>new globalThis.Request('https://edge.test',{headers});
+ const headers={'x-wms-worker-time':stamp,'x-wms-worker-nonce':nonce,'x-wms-worker-signature':signature};
+ assert.equal(await verifyWorkerRequest(request(headers),secret,{now:Number(stamp)*1000}),true);
+ assert.equal(await verifyWorkerRequest(request(headers),secret,{now:(Number(stamp)+91)*1000}),false);
+ assert.equal(await verifyWorkerRequest(request({...headers,'x-wms-worker-nonce':'20000000-0000-4000-8000-000000000001'}),secret,{now:Number(stamp)*1000}),false);
+ assert.equal(await verifyWorkerRequest(request({'x-wms-worker-secret':secret}),secret),false);
+ assert.equal(await verifyWorkerRequest(request(headers),'b'.repeat(64),{now:Number(stamp)*1000}),false);
 });

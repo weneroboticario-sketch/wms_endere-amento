@@ -1,10 +1,11 @@
 import {dispatchPush,inspectEvidence,trustedPushSubscription} from './push-domain.ts';
+import {verifyWorkerRequest} from './worker-auth.ts';
 export function createCommunicationHandler({createClient,env,sendPush}:{createClient:any;env:(key:string)=>string|undefined;sendPush:any}){
  return async (request:Request)=>{
   const allowed=(env('WMS_CHAT_ALLOWED_ORIGINS')||'https://wms-endere-amento.vercel.app').split(',').map(x=>x.trim());
   const origin=request.headers.get('origin')||'';
   const headers={'Content-Type':'application/json','Access-Control-Allow-Origin':allowed.includes(origin)?origin:allowed[0],
-   'Vary':'Origin','Access-Control-Allow-Headers':'authorization, apikey, content-type, x-client-info, x-wms-worker-secret','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
+   'Vary':'Origin','Access-Control-Allow-Headers':'authorization, apikey, content-type, x-client-info, x-wms-worker-time, x-wms-worker-nonce, x-wms-worker-signature','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store'};
   const respond=(body:any,status=200)=>new Response(JSON.stringify(body),{status,headers});
   if(origin&&!allowed.includes(origin))return respond({error:'Origem não autorizada.'},403);
   if(request.method==='OPTIONS')return new Response('ok',{headers});
@@ -21,10 +22,7 @@ export function createCommunicationHandler({createClient,env,sendPush}:{createCl
   const ready=!!(env('WMS_CHAT_VAPID_PUBLIC_KEY')&&env('WMS_CHAT_VAPID_PRIVATE_KEY')&&env('WMS_CHAT_VAPID_SUBJECT'));
   try{
    if(body.action==='drain'){
-    const expected=env('WMS_CHAT_WORKER_SECRET')||'',received=request.headers.get('x-wms-worker-secret')||'';
-    let difference=expected.length^received.length;
-    for(let i=0;i<expected.length;i++)difference|=expected.charCodeAt(i)^(received.charCodeAt(i)||0);
-    if(expected.length<32||difference!==0)return respond({error:'Acesso negado.'},401);
+    if(!await verifyWorkerRequest(request,env('WMS_CHAT_WORKER_SECRET')||''))return respond({error:'Acesso negado.'},401);
     if(!ready)return respond({configured:false},503);
     return respond(await dispatchPush({server,send:sendPush}));
    }
