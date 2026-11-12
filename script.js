@@ -8412,6 +8412,48 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function bindEvents() {
+    bindOperationalCameraButton("addressingSkuCameraButton", {
+      screenId: "bipagem", inputId: "skuInput", mode: "sku",
+      onScan: function (sku) {
+        $("skuInput").value = sku;
+        handleSkuRead(); // Existing SKU check; never allocates an address.
+      }
+    });
+    bindOperationalCameraButton("addressingLocationCameraButton", {
+      screenId: "bipagem", inputId: "locationInput", mode: "address",
+      onScan: function (location) {
+        $("locationInput").value = location;
+        setScanMessage("Prateleira " + location + " lida pela câmera. Confira e confirme o endereçamento.", "success");
+        $("locationReadButton").focus(); // Explicit action retains all existing occupancy checks.
+      }
+    });
+    bindOperationalCameraButton("dashboardSkuCameraButton", {
+      screenId: "dashboard", inputId: "dashboardSkuQuickInput", mode: "sku",
+      onScan: function (sku) {
+        $("dashboardSkuQuickInput").value = sku;
+        return renderDashboardSkuQuickSearch();
+      }
+    });
+    bindOperationalCameraButton("replenishmentSkuCameraButton", {
+      screenId: "reposicao", inputId: "replenishmentSkuInput", mode: "sku",
+      onScan: function (sku) {
+        $("replenishmentSkuInput").value = sku;
+        $("replenishmentSkuInput").dispatchEvent(new Event("input", { bubbles: true }));
+        $("replenishmentRequestQtyInput").focus(); // No replenishment request created automatically.
+      }
+    });
+    bindOperationalCameraButton("transferSkuCameraButton", {
+      screenId: "transferencias", inputId: "transferScanInput", mode: "sku",
+      statusId: "transferWorkStatus",
+      allow: function () {
+        return getActiveTransferSectionId() === "transferWorkSection" && !!transferState.activeTransferId;
+      },
+      onScan: function (sku) {
+        $("transferScanInput").value = sku;
+        setStatus("transferWorkStatus", "SKU " + sku + " lido pela câmera. Confirme a leitura no fluxo da transferência.", "success");
+        $("transferScanInput").focus(); // Never increments separated or packed quantities automatically.
+      }
+    });
     if ($("skuPhotoButton")) {
       $("skuPhotoButton").hidden = IS_CP_ALAMO;
       $("skuPhotoButton").addEventListener("click", async function () {
@@ -9499,6 +9541,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var button = $("locationReadButton");
     if (input) input.disabled = !enabled;
     if (button) button.disabled = !enabled;
+    if ($("addressingLocationCameraButton")) $("addressingLocationCameraButton").disabled = !enabled;
     document.querySelectorAll(".scan-flow-step").forEach(function (step, index) {
       step.classList.toggle("active", enabled ? index === 1 : index === 0);
       step.classList.toggle("complete", enabled && index === 0);
@@ -14292,6 +14335,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!$("transferWorkRows")) return;
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
+      if ($("transferSkuCameraButton")) $("transferSkuCameraButton").hidden = true;
       $("transferWorkRows").innerHTML = "";
       $("transferPackedExports").hidden = true;
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
@@ -14343,6 +14387,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var showFinalBoxes = !finalized && mode === "MONTAGEM";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
+    if ($("transferSkuCameraButton")) {
+      $("transferSkuCameraButton").hidden = IS_CP_ALAMO || finalized || !requiresScan;
+      $("transferSkuCameraButton").disabled = finalized || !requiresScan;
+    }
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
     $("transferQuantityInput").placeholder = mode === "MONTAGEM" && isBoxQuantityItem(selectedForQty) ? "Quantidade de caixas" : "Quantidade";
     $("startPackingButton").hidden = true;
