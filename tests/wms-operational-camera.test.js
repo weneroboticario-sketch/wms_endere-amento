@@ -57,7 +57,7 @@ test('all operational scan fields have camera triggers without automatic stock w
   }
   for(const action of ['mode: "sku"','mode: "address"'])assert.match(script,new RegExp(action));
   assert.match(script,/if \(\$\("addressingLocationCameraButton"\)\) \$\("addressingLocationCameraButton"\).disabled = !enabled/);
-  assert.match(script,/Confirme o endereçamento/);
+  assert.match(script,/confirme o endereçamento/);
   assert.match(script,/Confirme a leitura no fluxo da transferência/);
   assert.match(inboundView,/data-camera="scan"/);
   assert.match(inboundView,/data-camera="map"/);
@@ -69,7 +69,6 @@ test('all operational scan fields have camera triggers without automatic stock w
   assert.doesNotMatch(scanner,/submit_wms_caixa_request|allocateSkuToLocation|act_wms_inbound|LEITURA_UNITARIA|createReplenishmentRequest/);
   assert.match(scanner,/dialog.showModal\(\)/);
   assert.match(scanner,/getUserMedia/);
-  assert.match(scanner,/getActiveScreenId|/);
 });
 
 test('scanner base preserves original single-click SKU and shelf recognition',async()=>{
