@@ -96,7 +96,7 @@ export function mountCaixaRequestComposer(host, context) {
       onRead: async sku => {
         if (!canUse()) return;
         code.value = sku;
-        code.dispatchEvent(new Event("input", { bubbles: true }));
+        code.dispatchEvent(new window.Event("input", { bubbles: true }));
         await lookupNow(); // Does not send a Caixa request.
       },
       error: error => { if (canUse()) status.textContent = error.message; },
