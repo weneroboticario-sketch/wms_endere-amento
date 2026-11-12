@@ -41,7 +41,7 @@ export async function communicationFixture(){
  await db.exec('alter table operacao_tarefas add column arquivada boolean default false,add column arquivada_por text,add column data_arquivamento timestamptz');
  await db.exec(await read('./fixtures/task-security-baseline.sql'));
  await db.exec('create trigger test_chat_task_history after insert or update on operacao_tarefas for each row execute function registrar_historico_tarefa()');
- await db.exec(await read('../supabase/migrations/20261111193959_wms_communication_core.sql'));
+ await db.exec(await read('../supabase/migrations/20261112134100_wms_communication_core.sql'));
  return db;
 }
 const actorIds={admin:'1',sup:'2',op:'3',cash:'4',other:'5',att:'6',outsider:'7'};

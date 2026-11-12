@@ -9,7 +9,7 @@ await db.exec(`create schema storage;grant usage on schema storage to authentica
 create table storage.buckets(id text primary key,name text,public boolean,file_size_limit int,allowed_mime_types text[]);
 create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text unique);
 alter table storage.objects enable row level security;grant select,insert on storage.objects to authenticated;`);
-await db.exec(await readFile(new URL('../supabase/migrations/20261111194809_wms_communication_storage_push.sql',import.meta.url),'utf8'));
+await db.exec(await readFile(new URL('../supabase/migrations/20261112134113_wms_communication_storage_push.sql',import.meta.url),'utf8'));
 await asActor(db,'admin');const group=await chat(db,'CREATE',{type:'GROUP',title:'Estoque Geral — teste isolado',members:['sup','op','cash','att']});
 await chat(db,'SEND',{conversation_id:group.id,body:'Mensagem sintética do teste local. Nenhum colaborador real é notificado.',client_action_id:randomUUID()});
 let queue=Promise.resolve();

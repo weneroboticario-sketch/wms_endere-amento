@@ -7,7 +7,7 @@ test('private evidence and durable push queue enforce ownership, validation, ded
    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit int,allowed_mime_types text[]);
    create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text unique);
    alter table storage.objects enable row level security;grant select,insert on storage.objects to authenticated;`);
-  await db.exec(await readFile(new URL('../supabase/migrations/20261111194809_wms_communication_storage_push.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/20261112134113_wms_communication_storage_push.sql',import.meta.url),'utf8'));
   await asActor(db,'op');const cid=(await chat(db,'CREATE',{peer:'cash'})).id;
   const asset=await chat(db,'RESERVE_ATTACHMENT',{conversation_id:cid,mime_type:'image/png',size_bytes:100});
   await db.query('insert into storage.objects(bucket_id,name) values($1,$2)',['wms-communication',asset.storage_path]);

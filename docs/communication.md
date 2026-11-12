@@ -3,6 +3,18 @@
 Base inicial: produção WMS `0edc8a43c149e059b052fbef7369253397faa77b`. Atualizada antes da prévia para a produção `d3099c7b4d02c5b3c124b21771a38c220955b2ea`, preservando a câmera de prateleira.
 Branch: `feat/wms-communication-20261111`. Não publicar no CP Álamo.
 
+## Publicação em 12/11/2026
+
+Autorização explícita do responsável: aplicar as duas migrations no WMS de produção, publicar a Comunicação e configurar push usando validação local, sem homologação externa.
+
+- Frontend publicado no WMS em `0fe2eddde38ff0ad34bb2e40dcc117d36119c1e9`, deployment `dpl_EdsCNMYSQuXVwED5tuyfu8hgD6aQ`, estado READY. Produção anterior `d3099c7` preservada como base. Nenhum deploy de produção do CP Álamo.
+- As duas migrations foram aplicadas no projeto `bzqulgdtfpcmkyaldssy`. Os nomes locais foram alinhados às versões efetivamente registradas pelo Supabase, sem alterar o SQL, para evitar reaplicação futura.
+- Edge Function `wms-communication` ACTIVE, versão 1. Chamada sem sessão retorna 401 e CORS da origem WMS.
+- Treze tabelas com RLS, bucket privado de 5 MB e três tabelas na publicação Realtime confirmados no banco real. As quatro tabelas de política/outbox/inscrições/entregas negam acesso direto do cliente por desenho; não recebem políticas permissivas para eliminar avisos informativos do advisor.
+- Consultas às RPCs validadas com o papel authenticated e contexto dos cinco perfis existentes: ADMINISTRADOR, SUPERVISOR, OPERADOR, ATENDENTE e CAIXA.
+- Envio, repetição idempotente, não lidas e leitura validados dentro de transação revertida. Após o rollback: zero conversas, mensagens e outbox de teste; nenhuma notificação externa foi enviada. Esse ensaio não substitui teste JWT/Realtime pelo aparelho.
+- Push com app fechado ainda pendente: CLI sem autenticação e painel Supabase solicitou login. Nenhum segredo VAPID/worker foi inventado ou exposto. É necessário concluir acesso administrativo, cadastrar os segredos, provisionar Vault/worker e testar em aparelhos reais antes de declarar push funcionando.
+
 ## Implementação
 
 - Conversas individuais únicas por par/unidade, grupos configuráveis e comunicados.
@@ -16,10 +28,10 @@ Branch: `feat/wms-communication-20261111`. Não publicar no CP Álamo.
 
 ## Banco e segurança
 
-Migrations novas, ainda não aplicadas em produção:
+Migrations aplicadas em produção:
 
-1. `20261111193959_wms_communication_core.sql`: conversas, participantes, mensagens, recibos, referências, tarefas vinculadas, eventos, preferências, inscrições, outbox e política por unidade; RPC autenticada e Realtime.
-2. `20261111194809_wms_communication_storage_push.sql`: bucket privado, políticas Storage, recibos de push por dispositivo e RPC exclusiva de serviço.
+1. `20261112134100_wms_communication_core.sql`: conversas, participantes, mensagens, recibos, referências, tarefas vinculadas, eventos, preferências, inscrições, outbox e política por unidade; RPC autenticada e Realtime.
+2. `20261112134113_wms_communication_storage_push.sql`: bucket privado, políticas Storage, recibos de push por dispositivo e RPC exclusiva de serviço.
 
 As tabelas novas usam RLS; operações de usuário passam pela RPC com escopo de unidade, perfil ativo e participação. Administrador não membro não lê conversa privada. Gestores de grupo precisam também ser ADM/SUP. CAIXA/ATENDENTE mantêm acesso somente às próprias reposições. Tipos de identificador existentes são preservados: auth UUID e perfil texto.
 
