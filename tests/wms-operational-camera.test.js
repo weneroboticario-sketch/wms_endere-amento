@@ -59,6 +59,9 @@ test('all operational scan fields have camera triggers without automatic stock w
   assert.match(script,/if \(\$\("addressingLocationCameraButton"\)\) \$\("addressingLocationCameraButton"\).disabled = !enabled/);
   assert.match(script,/confirme o endereçamento/);
   assert.match(script,/Confirme a leitura no fluxo da transferência/);
+  assert.match(script,/var requiresScan = mode === "MONTAGEM" \|\| mode === "SEPARACAO"/);
+  assert.match(html,/id="transferLocateSkuButton"/);
+  assert.match(script,/\$\("transferLocateSkuButton"\)\.addEventListener\("click", locateTransferItem\)/);
   assert.match(inboundView,/data-camera="scan"/);
   assert.match(inboundView,/data-camera="map"/);
   assert.match(inbound,/data-camera="extra"/);
