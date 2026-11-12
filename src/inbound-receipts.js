@@ -1,4 +1,5 @@
 import { escapeHtml as e } from "./utils.js";
+import { openOperationalBarcodeCamera } from "./wms-operational-camera.js";
 import { inboundRoles, inboundLabels, inboundItemStatus, inboundSummary, findInboundItems, inboundScanUnit, previewInboundXml, inboundReportRows } from "./inbound-receipts-domain.js";
 import { inboundShell, inboundActiveCard, inboundDetail, inboundItemEditor, inboundItemRows, decorateInboundIcons } from "./inbound-receipts-view.js";
 import "./inbound-receipts.css";
@@ -16,6 +17,45 @@ export function mountInboundReceipts(context) {
   const date = value => value ? new Date(value).toLocaleString("pt-BR") : "—";
   const message = text => { $("[data-message]").textContent = text; };
   const checked = result => { if (result.error) throw result.error; return result.data; };
+  let cameraController = null;
+
+  function readInboundWithCamera(target){
+    if (!editable() || busy || scope !== identity()) return;
+    const token = generation, receiptId = receipt?.id, chosenLine = selectedItem?.id;
+    const fieldSelector = target === "map" ? "[data-map-sku]" : target === "extra" ? "[data-extra-form] [name=code]" : "[data-code]";
+    const initial = $(fieldSelector);
+    if (!initial || initial.disabled) return;
+    if (cameraController) cameraController.close();
+    let controller = null;
+    const valid = () => scope === identity() && token === generation &&
+      receipt?.id === receiptId && editable() && !busy &&
+      root.isConnected && root.closest(".transfer-section") &&
+      !root.closest(".transfer-section").hidden &&
+      (target !== "map" || selectedItem?.id === chosenLine) &&
+      $(fieldSelector) === initial && !initial.disabled;
+    controller = openOperationalBarcodeCamera({
+      user: actor,
+      warehouse: context.warehouse,
+      client: context.client,
+      canUse: valid,
+      mode: target === "map" ? "sku" : "raw",
+      onRead: code => {
+        if (!valid()) return;
+        initial.value = code;
+        message(target === "map"
+          ? "SKU lido. Confirme o vínculo do produto antes de salvar."
+          : target === "extra"
+            ? "Código lido. Preencha os demais campos e registre a divergência."
+            : scanMode === "ADD"
+              ? "Código lido. Use Registrar +1 para confirmar uma unidade física."
+              : "Código lido. Use Localizar para selecionar o item.");
+        initial.focus();
+      },
+      error: fail,
+      closed: () => { if (cameraController === controller) cameraController = null; }
+    });
+    cameraController = controller;
+  }
   function setup() {
     root.innerHTML = inboundShell(manager());
     decorateInboundIcons(root);
@@ -48,6 +88,7 @@ export function mountInboundReceipts(context) {
     root.onchange = event => { if (event.target.hasAttribute("data-current-select")) renderCurrent(event.target.value); };
     root.onclick = event => {
       const button = event.target.closest("button"); if (!button || busy) return;
+      if (button.dataset.camera) { readInboundWithCamera(button.dataset.camera); return; }
       if (button.dataset.open) open(button.dataset.open).catch(fail);
       if (button.dataset.itemFilter) { itemFilter = button.dataset.itemFilter; renderItemRows(); }
       if (button.dataset.step && $("[data-quantity]")) {
@@ -171,7 +212,7 @@ export function mountInboundReceipts(context) {
   function extra() {
     if (!editable()) return;
     const editor = $("[data-editor]"); editor.hidden = false;
-    editor.innerHTML = '<h4>Produto não previsto na NF-e</h4><form data-extra-form class="inbound-toolbar"><label>Código<input name="code" required maxlength="100"></label><label>Descrição<input name="description" required maxlength="300"></label><label>Quantidade<input name="quantity" type="number" min="0.000001" step="0.000001" required></label><label>Unidade<input name="unit" required maxlength="20" placeholder="Ex.: UN"></label><label>Observação<input name="observation" maxlength="500"></label><button type="submit" class="primary-button">Registrar divergência</button></form>';
+    editor.innerHTML = '<h4>Produto não previsto na NF-e</h4><form data-extra-form class="inbound-toolbar"><label>Código<input name="code" required maxlength="100"></label><button type="button" class="secondary-button" data-camera="extra">Ler código</button><label>Descrição<input name="description" required maxlength="300"></label><label>Quantidade<input name="quantity" type="number" min="0.000001" step="0.000001" required></label><label>Unidade<input name="unit" required maxlength="20" placeholder="Ex.: UN"></label><label>Observação<input name="observation" maxlength="500"></label><button type="submit" class="primary-button">Registrar divergência</button></form>';
     $("[data-extra-form]").onsubmit = event => { event.preventDefault(); const form = event.currentTarget; const data = {}; ["code", "description", "quantity", "unit", "observation"].forEach(key => { data[key] = form.elements.namedItem(key).value; }); act("EXTRA", data).catch(fail); };
   }
   async function act(action, data) {
