@@ -1,4 +1,5 @@
 import { STOCK_FRESHNESS_LIMIT_MS } from "./stock-freshness.js";
+import { openOperationalBarcodeCamera } from "./wms-operational-camera.js";
 export const DEFAULT_CAIXA_ADJUSTMENT_REASON = "Solicitação de ajuste no atendimento ao cliente.";
 
 export function validateCaixaRequest(request) {
@@ -21,6 +22,8 @@ export function mountCaixaRequestComposer(host, context) {
   const buttons = [];
   const codeLabel = node("label", "Código SKU/EAN", form);
   const code = node("input", undefined, codeLabel); code.type = "text"; code.inputMode = "numeric"; code.maxLength = 14; code.autocomplete = "off"; code.placeholder = "Bipe ou digite o código do produto";
+  const cameraButton = node("button", "Ler código", form); cameraButton.type = "button"; cameraButton.className = "secondary-button"; cameraButton.setAttribute("aria-label", "Ler SKU para solicitação do Caixa com a câmera");
+  let cameraController = null;
   const product = node("div", undefined, form); product.className = "ca-product-preview"; product.setAttribute("role", "status");
   const quantityGroup = node("div", undefined, form); quantityGroup.className = "ca-quantity";
   const quantityLabel = node("label", "Quantidade", quantityGroup);
@@ -37,7 +40,7 @@ export function mountCaixaRequestComposer(host, context) {
   const submit = node("button", "Pedir produto", form); submit.type = "button"; submit.className = "primary-button ca-request-submit"; submit.dataset.requestSubmit = "true";
   function update() {
     const frozen = sending || !!pending;
-    for (const input of [code, quantity, notes, minus, plus, ...buttons]) input.disabled = frozen;
+    for (const input of [code, cameraButton, quantity, notes, minus, plus, ...buttons]) input.disabled = frozen;
     submit.disabled = sending || (!pending && !item);
     submit.textContent = pending && !sending ? "Verificar envio / reenviar" : kind === "ADJUSTMENT" ? "Solicitar ajuste" : "Pedir produto";
     reason.textContent = kind === "ADJUSTMENT" ? "Motivo padrão: " + DEFAULT_CAIXA_ADJUSTMENT_REASON : "";
@@ -76,6 +79,31 @@ export function mountCaixaRequestComposer(host, context) {
     if (date && Date.now() - date.getTime() > STOCK_FRESHNESS_LIMIT_MS) node("small", "Base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque.", product);
     context.onFound?.(item); status.textContent = ""; update();
   }
+  cameraButton.addEventListener("click", () => {
+    if (!context.isCurrent() || sending || pending || code.disabled) return;
+    if (cameraController) cameraController.close();
+    let controller = null;
+    const scope = context.actor + ":" + context.warehouse;
+    const canUse = () => context.isCurrent() && !sending && !pending &&
+      !code.disabled && code.isConnected &&
+      scope === context.actor + ":" + context.warehouse;
+    controller = openOperationalBarcodeCamera({
+      user: () => ({ id: context.actor }),
+      warehouse: () => context.warehouse,
+      client: () => context.client,
+      canUse,
+      mode: "sku",
+      onRead: async sku => {
+        if (!canUse()) return;
+        code.value = sku;
+        code.dispatchEvent(new Event("input", { bubbles: true }));
+        await lookupNow(); // Does not send a Caixa request.
+      },
+      error: error => { if (canUse()) status.textContent = error.message; },
+      closed: () => { if (cameraController === controller) cameraController = null; }
+    });
+    cameraController = controller;
+  });
   code.addEventListener("input", () => {
     sequence++; globalThis.clearTimeout(timer); quantity.value = "1"; clearProduct(code.value ? "Aguardando leitura do código…" : undefined);
     if (code.value.trim()) timer = globalThis.setTimeout(lookupNow, 350);
