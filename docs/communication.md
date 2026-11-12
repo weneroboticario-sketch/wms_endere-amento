@@ -18,6 +18,8 @@ Autorização explícita do responsável: aplicar as duas migrations no WMS de p
 
 ## Implementação
 
+Correção mobile de envio: o botão Enviar fica ao lado do campo de texto. A conversa ocupa a área visível entre o cabeçalho e a navegação inferior, acompanha resize/scroll do visualViewport e libera os listeners ao sair. Mensagens podem encolher/rolar sem empurrar o envio para fora da tela; anexos e urgência ficam em opções expansíveis no celular e abertas por padrão no desktop. Erros de envio aparecem junto ao campo. Validação local com persistência sintética: 390×844, 390×430 e 320×568, botão acima da navegação, sem overflow horizontal e envio confirmado; retorno ao desktop sem posição fixa e sem erros de console. Altura reduzida simula restrição de espaço, não um teste de teclado físico Android/iOS. A correção não altera banco, permissões ou serviço de push.
+
 - Conversas individuais únicas por par/unidade, grupos configuráveis e comunicados.
 - Histórico paginado, respostas, urgência limitada, ciência explícita, entrega e leitura separadas.
 - Um canal Realtime por conta/unidade; reconexão sincroniza dados persistidos. Texto e tentativas pendentes ficam somente na memória da sessão; recarregar/fechar a página descarta rascunhos.

@@ -18,9 +18,23 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
  '<div class="comm-tabs">'+[['ALL','Todas'],['DIRECT','Individuais'],['GROUP','Grupos'],['PENDING','Pendentes']].map(([key,text])=>button(text,'data-filter="'+key+'"')).join('')+'</div>'+
  '<div data-conversations></div>'+button('Conversas anteriores','data-more-conversations')+'</aside>'+
  '<section class="comm-thread" data-thread><p>Escolha uma conversa ou inicie um atendimento.</p></section></div>';
- const $=selector=>root.querySelector(selector),notice=text=>{if(!dead)$('[data-status]').textContent=text;};
+ const $=selector=>root.querySelector(selector),notice=text=>{if(!dead){const inline=root.classList.contains('comm-chat-open')?$('[data-send-status]'):null;$('[data-status]').textContent=inline?'':text;if(inline)inline.textContent=text;}};
  const state=id=>{if(!states.has(id))states.set(id,{messages:[],draft:'',urgent:false,reply:null,images:[],metadata:{},share:null,pending:null,hasEarlier:false});return states.get(id);};
  const live=()=>!dead&&current();
+ const viewport=window.visualViewport;
+ function fitMobileChat(){
+  if(dead)return;
+  const mobile=window.innerWidth<=760,options=$('[data-compose-options]');
+  if(options&&options.dataset.layoutMode!==String(mobile)){options.open=!mobile;options.dataset.layoutMode=String(mobile);}
+  if(!mobile||!root.classList.contains('comm-chat-open')){
+   root.style.removeProperty('--comm-view-top');root.style.removeProperty('--comm-view-height');return;
+  }
+  const top=viewport?.offsetTop||0,bottom=top+(viewport?.height||window.innerHeight);
+  const header=document.querySelector('.mobile-topbar')?.getBoundingClientRect(),nav=document.querySelector('.mobile-bottom-nav:not([hidden])')?.getBoundingClientRect();
+  const start=Math.max(top,header&&header.height>0&&header.bottom>top&&header.top<bottom?header.bottom:top)+4;
+  const end=nav&&nav.height>0&&nav.top>start&&nav.top<bottom?nav.top:bottom;
+  root.style.setProperty('--comm-view-top',start+'px');root.style.setProperty('--comm-view-height',Math.max(0,end-start-6)+'px');
+ }
  const fail=error=>{if(live())notice(/could not find.*wms_chat_api|schema cache/i.test(error.message||'')?'Comunicação ainda não habilitada neste ambiente. Aplique as migrations e configure o serviço.':error.message||String(error));};
  function modal(title,body,submit,label='Confirmar'){
   const dialog=document.createElement('dialog');dialog.className='comm-modal';
@@ -67,15 +81,15 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
   $('[data-thread]').innerHTML='<header class="comm-thread-header">'+button('Voltar','data-back')+'<div><h3>'+e(conversations.find(c=>c.id===id)?.display_name||info.title)+'</h3><small>'+e(info.description)+'</small></div>'+
    button('Silenciar','data-mute')+(leader(getUser())&&info.type!=='DIRECT'&&info.members.some(p=>p.id===actor&&!p.left_at&&p.role==='MANAGER')?button('Gerenciar grupo','data-manage'):'')+'</header>'+
    button('Mensagens anteriores','data-earlier')+'<div class="comm-messages" data-messages aria-label="Mensagens"></div>'+
-   '<div class="comm-composer"><div data-context></div><div data-image-preview class="comm-image-preview"></div>'+
-   '<label class="comm-body-label">Mensagem<textarea data-body maxlength="4000" placeholder="Escreva uma mensagem…"></textarea></label>'+
-   '<div class="button-row"><label class="secondary-button">Anexar imagem<input data-images type="file" multiple accept="image/jpeg,image/png,image/webp"></label>'+
+   '<div class="comm-composer"><p data-send-status role="status" aria-live="polite"></p><div data-context></div><div data-image-preview class="comm-image-preview"></div>'+
+   '<div class="comm-compose-input"><label class="comm-body-label">Mensagem<textarea data-body maxlength="4000" placeholder="Escreva uma mensagem…"></textarea></label><button type="button" class="primary-button" data-send>Enviar</button></div>'+
+   '<details class="comm-compose-options" data-compose-options open><summary>Anexar imagem ou marcar urgente</summary><div class="button-row"><label class="secondary-button">Anexar imagem<input data-images type="file" multiple accept="image/jpeg,image/png,image/webp"></label>'+
    '<label class="secondary-button">Fotografar evidência<input data-camera-image type="file" accept="image/jpeg,image/png,image/webp" capture="environment"></label>'+
-   '<label><input data-urgent type="checkbox"> Urgente · pedir ciência</label><button type="button" class="primary-button" data-send>Enviar</button></div></div>';
+   '<label><input data-urgent type="checkbox"> Urgente · pedir ciência</label></div></details></div>';
   $('[data-body]').value=s.draft;$('[data-body]').oninput=()=>{s.draft=$('[data-body]').value;};
   $('[data-urgent]').checked=s.urgent;
   $('[data-send]').onclick=()=>void send().catch(fail);
-  $('[data-back]').onclick=()=>{rememberDraft();root.classList.remove('comm-chat-open');void presence(false);};
+  $('[data-back]').onclick=()=>{rememberDraft();root.classList.remove('comm-chat-open');fitMobileChat();void presence(false);};
   $('[data-mute]').onclick=()=>mute();
   if($('[data-manage]'))$('[data-manage]').onclick=()=>manageGroup();
   $('[data-earlier]').onclick=()=>void earlier().catch(fail);
@@ -96,6 +110,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
   $('[data-image-preview]').querySelectorAll('[data-remove-image]').forEach(node=>node.onclick=()=>{const [image]=s.images.splice(Number(node.dataset.removeImage),1);URL.revokeObjectURL(image.preview);drawComposer();});
   if(s.pending){$('[data-send]').textContent=s.pending.sending?'Enviando…':'Tentar novamente';$('[data-send]').disabled=s.pending.sending;$('[data-body]').disabled=true;}
   else{$('[data-send]').textContent='Enviar';$('[data-send]').disabled=!!detail?.archived_at;$('[data-body]').disabled=!!detail?.archived_at;}
+  fitMobileChat();
  }
  async function addImages(files){
   const id=selected;if(!id)return;
@@ -166,6 +181,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
   try{
    for(let i=0;i<s.images.length;i++){const pending=s.pending;s.pending.assets[i]??={};const asset=await api.upload(s.images[i],id,pending.assets[i]);pending.data.attachments??=[];pending.data.attachments[i]=asset;}
    await api.send(s.pending.data);if(!live())return;
+   if(id===selected)notice('');
    for(const image of s.images)URL.revokeObjectURL(image.preview);
    s.pending=null;s.draft='';s.urgent=false;s.images=[];s.reply=null;s.metadata={};s.share=null;
    if(id===selected){$('[data-body]').value='';$('[data-urgent]').checked=false;}
@@ -326,6 +342,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
  $('[data-requests]').onclick=()=>{requestsOpen=!requestsOpen;void loadRequests().catch(fail);};
  $('[data-preferences]').onclick=()=>void preferences().catch(fail);
  const focus=()=>void markVisible();window.addEventListener('focus',focus);
+ window.addEventListener('resize',fitMobileChat);viewport?.addEventListener('resize',fitMobileChat);viewport?.addEventListener('scroll',fitMobileChat);
  return {
   async open(options={}){
    active=true;await refresh();if(options.conversation_id)await openConversation(options.conversation_id);if(options.share)await shareProcess(options.share);
@@ -338,7 +355,7 @@ export function mountCommunication({root,api,actor,warehouse,getUser,current,onO
    }
   },
   refresh,connection(text){if(live())$('[data-connection]').textContent=text;},
-  async setActive(value){active=value;await presence(value);if(value)void markVisible();},
-  dispose(){dead=true;seq++;clearTimeout(typing);window.removeEventListener('focus',focus);for(const dialog of dialogs){dialog.close();dialog.remove();}dialogs.clear();for(const s of states.values())for(const image of s.images)URL.revokeObjectURL(image.preview);states.clear();selected=null;}
+  async setActive(value){active=value;fitMobileChat();await presence(value);if(value)void markVisible();},
+  dispose(){dead=true;seq++;clearTimeout(typing);window.removeEventListener('focus',focus);window.removeEventListener('resize',fitMobileChat);viewport?.removeEventListener('resize',fitMobileChat);viewport?.removeEventListener('scroll',fitMobileChat);root.style.removeProperty('--comm-view-top');root.style.removeProperty('--comm-view-height');for(const dialog of dialogs){dialog.close();dialog.remove();}dialogs.clear();for(const s of states.values())for(const image of s.images)URL.revokeObjectURL(image.preview);states.clear();selected=null;}
  };
 }
