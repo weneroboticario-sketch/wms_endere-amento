@@ -8438,7 +8438,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       screenId: "reposicao", inputId: "replenishmentSkuInput", mode: "sku",
       onScan: function (sku) {
         $("replenishmentSkuInput").value = sku;
-        $("replenishmentSkuInput").dispatchEvent(new Event("input", { bubbles: true }));
+        $("replenishmentSkuInput").dispatchEvent(new window.Event("input", { bubbles: true }));
         $("replenishmentRequestQtyInput").focus(); // No replenishment request created automatically.
       }
     });
