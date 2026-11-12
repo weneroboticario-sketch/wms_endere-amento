@@ -11,7 +11,7 @@ Data: 12/11/2026. Referência inicial: deploy de produção d3099c7b4d02c5b3c124
 | Endereçamento | `locationInput` | CODE128 de endereço | Preenche a prateleira | Requer confirmar; não aloca no ato da foto/leitura |
 | Dashboard | `dashboardSkuQuickInput` | SKU ou EAN | Abre consulta rápida | Apenas consulta |
 | Pedidos de Reposição | `replenishmentSkuInput` | SKU ou EAN | Consulta produto e foca quantidade | Requer envio explícito |
-| Transferência — montagem | `transferScanInput` | SKU ou EAN | Preenche SKU | Requer ação de localizar/confirmar; nunca soma unidades automaticamente |
+| Transferência — separação e montagem | `transferScanInput` | SKU ou EAN | Preenche SKU | Requer ação explícita de localizar e, separadamente, confirmar coleta/quantidade |
 | Recebimento XML | `[data-code]` | Código original de item do XML/EAN | Preenche código exatamente como lido | Usuário escolhe Localizar ou Registrar +1 |
 | Recebimento XML | `[data-map-sku]` | SKU ou EAN | Valida e preenche SKU interno | Requer confirmação do vínculo |
 | Recebimento XML | `[data-extra-form] [name=code]` | Código de item extra | Preenche código | Requer descrição, quantidade e confirmação |
@@ -31,7 +31,7 @@ Data: 12/11/2026. Referência inicial: deploy de produção d3099c7b4d02c5b3c124
 - Quantidades, unidades por caixa, totais, notas, motivos e observações: requerem informação/validação humana.
 - Upload de XML, importações Excel, ciclos/revistas PDF: continuam entradas de arquivos, não código de barras de produto.
 - Filtros de texto, status, pesquisa de colaboradores, buscas de transferência e matrículas: não representam etiquetas físicas a bipar.
-- Tela de separação de transferências em modo **SEPARAÇÃO**: atualmente não exibe campo de SKU para bipagem, usa seleção dos itens na lista. Sem inventar novo fluxo de soma física; se solicitado, o módulo precisará ter uma etapa explícita de validação do item lido.
+- A separação passa a permitir selecionar o item por câmera, mas mantém a confirmação de coleta no fluxo original. A câmera não acumula unidades automaticamente.
 - Leitura de chave de acesso da NF-e/SEFAZ: fora do escopo; o recebimento segue XML importado localmente.
 - Comunicação interna: mensagens e solicitações não exigem câmera de código de barras por padrão; futuros compartilhamentos de SKU devem usar a Consulta de SKU já existente.
 - CP ÁLAMO: sem mudança. As câmeras novas são restritas ao WMS ENDEREÇAMENTO.
