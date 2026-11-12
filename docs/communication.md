@@ -53,7 +53,7 @@ Sem chaves VAPID/serviço, a interface informa que push está indisponível e ma
 - Testes de push usam transporte substituto: suporte ausente, permissão negada, silêncio, mute, conta/unidade, endpoints, repetição e revogação. Nenhuma notificação externa ou push físico foi enviado.
 - Ainda pendentes: Supabase de homologação, Auth/Realtime/Storage hospedados, configuração VAPID/worker e validação física Android/iOS. Não afirmar entrega push real ou tempo de entrega em produção.
 
-Resultado local em 11/11/2026: 396 testes aprovados (18 do conjunto específico de Comunicação), lint e build aprovados. A Edge Function passou em `deno check` com Deno 2.6.7. O build mantém o aviso pré-existente de chunk principal acima de 500 kB. Os tempos medidos são do ensaio local; não representam latência de entrega de produção.
+Resultado local em 12/11/2026: 398 testes aprovados (20 do conjunto específico de Comunicação), lint e build aprovados. A Edge Function passou em `deno check` com Deno 2.6.7. A revisão adicional protege a inicialização concorrente, descarta respostas atrasadas da conta anterior e limpa a interface imediatamente ao sair, mesmo se a presença estiver sem resposta. O cancelamento de push ao sair usa o mesmo escopo de conta/unidade e espera no máximo dois segundos pela rede. O build mantém o aviso pré-existente de chunk principal acima de 500 kB. Os tempos medidos são do ensaio local; não representam latência de entrega de produção.
 
 Reprodução local: `npm run lint`, `npm test`, `npm run build`. Para o ensaio visual: `node --experimental-strip-types tests/communication-server.mjs` e Vite em `127.0.0.1:4192`, abrir `/tests/communication-visual.html`. O servidor sintético é exclusivo de desenvolvimento e não entra no build Vercel.
 
