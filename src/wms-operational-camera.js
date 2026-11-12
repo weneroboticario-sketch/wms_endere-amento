@@ -1,5 +1,4 @@
 import { createSkuLiveBarcodeScanner } from './sku-live-barcode.js';
-import './sku-photo-lookup.css';
 
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const MAX_FRAME=800;
