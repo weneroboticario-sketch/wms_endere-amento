@@ -1,6 +1,21 @@
 -- WMS ENDEREÇAMENTO: transferência interna de saldo na conclusão de reposição.
 -- Não recalcula nem movimenta solicitações históricas já concluídas.
 -- Imports futuros continuam sendo snapshots oficiais das posições do estoque.
+-- Outro ambiente possui um gatilho de crédito próprio. Não instalar dois gatilhos
+-- que creditem a mesma reposição: a migração dele exige adaptação separada.
+do $guard$
+begin
+  if exists (
+    select 1 from pg_trigger
+    where tgrelid = 'public.wms_replenishment_requests'::regclass
+      and tgname = 'trg_wms_replenishment_store_credit'
+      and not tgisinternal
+  ) then
+    raise exception 'Ambiente com crédito de reposição preexistente. Não aplique dois gatilhos de saldo simultaneamente.';
+  end if;
+end;
+$guard$;
+
 alter table public.wms_replenishment_requests
   add column if not exists loja_credito_processado boolean not null default false,
   add column if not exists loja_credito_quantidade numeric not null default 0,
