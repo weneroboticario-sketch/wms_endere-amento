@@ -1,4 +1,17 @@
+import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
+import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
+import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
+import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
+import { createMagazineStockReader } from "./src/magazines-stock.js";
+import { createPackingController } from "./src/transfer-packing-view.js";
+import { packingAuditReport } from "./src/transfer-packing-audit.js";
+import { createTaskSound } from "./src/task-sound.js";
+import { createCommunicationRuntime } from "./src/communication-runtime.js";
+import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
+import { mountCaixaRequests } from "./src/caixa-loader.js";
+import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
+import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
 import JsBarcode from "jsbarcode";
 import {
@@ -23,6 +36,8 @@ import {
 } from "./src/linha-separacao.js";
 import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
+import { operationalDiagnostics } from "./src/operational-diagnostics.js";
+import { createScopedSingleFlight } from "./src/request-coalescing.js";
 import {
   buildAddressingOccupantSnapshot,
   planBindingRemoval,
@@ -31,7 +46,7 @@ import {
 } from "./src/addressing-bindings.js";
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
-import { compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { buildReplenishmentRoute, loadActiveReplenishmentPages, replenishmentRouteAddress, compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
@@ -60,8 +75,74 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   var globalDashboardController = null;
+  var inboundReceiptsController = null;
+  var communicationRuntime = null, communicationScope = "", communicationStarting = null, communicationLinkConsumed = false;
+  async function ensureCommunication() {
+    if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen("comunicacao")) return null;
+    var key = authState.currentUser.id + ":" + activeWarehouseCode();
+    if (communicationRuntime && communicationScope === key) return communicationRuntime;
+    if (communicationStarting && communicationScope === key) return communicationStarting;
+    var previous = communicationRuntime; communicationRuntime = null; communicationScope = key;
+    communicationStarting = (async function () {
+      if (previous) await previous.dispose();
+      if (!authState.currentUser || key !== authState.currentUser.id + ":" + activeWarehouseCode() || communicationScope !== key) return null;
+      communicationRuntime = createCommunicationRuntime({
+        client: supabaseDb, getUser: function () { return authState.currentUser; }, getWarehouse: activeWarehouseCode,
+        root: $("comunicacao"), isOpen: function () { return getActiveScreenId() === "comunicacao"; },
+        onBadge: function (count) { document.querySelectorAll("[data-comm-count]").forEach(function (node) { node.textContent = String(count); node.hidden = count === 0; }); },
+        onToast: function (text, conversationId) {
+          $("communicationAlert").hidden = false;
+          $("communicationAlert").querySelector("[data-open-communication-alert]").textContent = text;
+          $("communicationAlert").querySelector("[data-open-communication-alert]").onclick = function () { $("communicationAlert").hidden = true; openCommunication({ conversation_id: conversationId }).catch(function (error) { showToast(error.message, "error"); }); };
+        },
+        onOpenProcess: openCommunicationProcess
+      });
+      return communicationRuntime;
+    })();
+    return communicationStarting;
+  }
+  async function openCommunication(options) {
+    if (!canAccessScreen("comunicacao")) throw new Error("Comunicação não autorizada.");
+    await showScreen("comunicacao");
+    var runtime = await ensureCommunication(); if (runtime) await runtime.show(options || {});
+  }
+  function communicationShareButton(type, id, label) {
+    if (IS_CP_ALAMO || !canAccessScreen("comunicacao") || !id) return "";
+    return '<button type="button" class="secondary-button comm-share" data-communication-share="' + escapeHtml(type) + '" data-share-id="' + escapeHtml(id) + '">' + escapeHtml(label || "Compartilhar na Comunicação") + '</button>';
+  }
+  async function openCommunicationProcess(process) {
+    if (!process || process.warehouse !== activeWarehouseCode()) throw new Error("Processo fora da unidade atual.");
+    if (process.type === "SKU" || process.type === "LOCATION") {
+      await showScreen("consultaSku"); $("skuSearchInput").value = process.sku || process.id; await renderSkuSearch(); return;
+    }
+    if (process.type === "REPLENISHMENT") {
+      await showScreen("reposicao"); await refreshReplenishmentData(); replenishmentState.activeFilter = ""; replenishmentState.renderLimit = Math.max(replenishmentState.requests.length, replenishmentState.renderLimit); renderReplenishment();
+      var row = Array.from($("replenishmentList").querySelectorAll("[data-replenishment-id]")).find(function (node) { return node.dataset.replenishmentId === process.id; });
+      if (row) row.scrollIntoView({ block: "center", behavior: "smooth" }); else showToast("Pedido não está na fila ativa. Consulte o histórico do módulo.", "warning");
+      return;
+    }
+    await showScreen("transferencias");
+    if (process.type === "TRANSFER" || process.type === "DIVERGENCE") { await openTransferWork(process.transfer_id || process.id, { viewOnly: true, forceItems: true }); return; }
+    if (process.type === "TASK") { await loadTaskCenterData({ force: true }); activateTransferTab("taskCenterSection"); showTaskHistory(process.id); return; }
+    if (process.type === "RECEIPT") { renderInboundReceipts(false); await inboundReceiptsController.render(false); await inboundReceiptsController.open(process.id); }
+  }
+  function renderInboundReceipts(historyMode) {
+    if (IS_CP_ALAMO || !authState.currentUser || ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) < 0) return;
+    var root = $("inboundReceiptRoot");
+    $(historyMode ? "inboundHistorySection" : "inboundReceiptsSection").appendChild(root);
+    if (!inboundReceiptsController) inboundReceiptsController = mountInboundReceipts({
+      client: function () { return supabaseDb; },
+      user: function () { return authState.currentUser; },
+      warehouse: activeWarehouseCode,
+      users: function () { return authState.users; },
+      userWarehouse: function (user) { return userCanAccessWarehouse(user, activeWarehouseCode()); },
+      share: function (process) { return openCommunication({ share: process }); }
+    });
+    inboundReceiptsController.render(historyMode).catch(function (error) { showToast("Recebimento: " + formatSupabaseError(error), "error"); });
+  }
   var stockOverviewController = null;
   var operationalCatalogPromise = null;
+  var productCatalogSingleFlight = createScopedSingleFlight();
 
   async function ensureOperationalCatalog() {
     if (!operationalCatalogPromise) operationalCatalogPromise = loadBuiltinProducts().then(function (products) { BUILTIN_PRODUCTS = products; });
@@ -86,6 +167,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   var SUPABASE_CONFIG_KEY = "wms_supabase_config_v1";
   var TASK_SOUND_KEY = "wms_task_sound_enabled_v1";
+  var taskSound = createTaskSound({ getUser: function () { return authState && authState.currentUser && authState.currentUser.id; }, storage: { getItem: function (key) { return localStorage.getItem(key); }, setItem: function (key, value) { localStorage.setItem(key, value); } }, createContext: function () { var Ctor = window.AudioContext || window.webkitAudioContext; return new Ctor(); }, key: TASK_SOUND_KEY });
   var REPLENISHMENT_SOUND_KEY = "wms_replenishment_sound_enabled_v1";
   var REPLENISHMENT_SOUND_VOLUME_KEY = "wms_replenishment_sound_volume_v1";
   var REPLENISHMENT_NOTIFICATION_PERMISSION_KEY = "wms_replenishment_notification_prompt_v1";
@@ -97,16 +179,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var WAREHOUSE_CACHE_MODULES = ["coreData", "transferData", "stockData", "replenishmentData"];
   var SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
   var EXPECTED_SCHEMA_VERSION = "2026.10.10.001";
-  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"];
+  var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
+    comunicacao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
+    centralRevistas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
+    consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     consultaPrateleira: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     etiquetas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     exportar: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     transferencias: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
-    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE"],
+    reposicao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
     usuarios: ["ADMINISTRADOR", "SUPERVISOR"],
     saudeSistema: ["ADMINISTRADOR"],
     manutencao: ["ADMINISTRADOR"],
@@ -188,6 +272,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var productsTableAvailable = true;
   var historySchemaAvailable = true;
   var skuSearchTimer = null;
+  var skuPhotoController = null;
   var HISTORY_RENDER_LIMIT = 200;
   var TRANSFER_PANEL_PAGE_SIZE = 40;
   var TRANSFER_PANEL_RENDER_LIMIT = TRANSFER_PANEL_PAGE_SIZE;
@@ -972,7 +1057,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function ensureScreenDataLoaded(screenId) {
+    if (screenId === "comunicacao" && !IS_CP_ALAMO) { var runtime = await ensureCommunication(); if (runtime) await runtime.show(); return true; }
+    if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
+      var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
+      await mountMagazineCenterLazy($("centralRevistas"), {
+        client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
+        isCurrent: function () { return authState.currentUser && authState.currentUser.id === magazineActor && activeWarehouseCode() === magazineWarehouse; },
+        createRequest: createReplenishmentRequest, findRequestByKey: findReplenishmentByIdempotencyKey,
+        loadStock: createMagazineStockReader({ client: function () { return supabaseDb; }, warehouse: activeWarehouseCode, user: function () { return authState.currentUser; }, positionColumns: stockPositionSelectColumns, mapPosition: fromDbStockPosition, aliases: stockSkuQueryValues, splitSku: splitSkuValues, buildSuggestion: buildStockSuggestion, openStatuses: OPEN_REPLENISHMENT_STATUSES })
+      });
+      return true;
+    }
     if (!authState.currentUser) return false;
+    if (screenId === "consultaSku" && authState.currentUser.role === "CAIXA") return true;
+    if (screenId === "reposicao" && authState.currentUser.role === "CAIXA") return true;
     if (screenId === "stockOverview") {
       if (!stockOverviewController) stockOverviewController = mountStockOverview({
         root: $("stockOverview"), client: supabaseDb,
@@ -1570,27 +1668,34 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function fillTaskSoundSetting() {
-    var enabled = localStorage.getItem(TASK_SOUND_KEY) !== "false";
+    var settings = taskSound.current();
+    var enabled = settings.enabled;
     ["taskSoundInput", "sidebarTaskSoundInput"].forEach(function (id) {
       if ($(id)) $(id).checked = enabled;
     });
+    if ($("sidebarTaskSoundVolume")) $("sidebarTaskSoundVolume").value = Math.round(settings.volume * 100);
+    if ($("sidebarTaskSoundPercent")) $("sidebarTaskSoundPercent").textContent = Math.round(settings.volume * 100) + "%";
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").checked = localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").value = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
   }
 
   function isTaskSoundEnabled() {
-    return localStorage.getItem(TASK_SOUND_KEY) !== "false";
+    var settings = taskSound.current();
+    return settings.enabled && settings.volume > 0;
   }
 
-  function saveTaskSoundSetting() {
-    var source = document.activeElement && document.activeElement.type === "checkbox" ? document.activeElement : $("taskSoundInput");
-    var enabled = !source || source.checked;
-    localStorage.setItem(TASK_SOUND_KEY, enabled ? "true" : "false");
+  function saveTaskSoundSetting(event) {
+    var source = event && event.currentTarget || $("taskSoundInput");
+    taskSound.set({ enabled: !!source.checked });
+    if (!source.checked) {
+      taskAlertState.pendingSound = false;
+      taskAlertState.pendingReplenishmentSound = false;
+    }
     fillTaskSoundSetting();
   }
 
   function isReplenishmentSoundEnabled() {
-    return localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
+    return isTaskSoundEnabled() && localStorage.getItem(REPLENISHMENT_SOUND_KEY) !== "false";
   }
 
   function saveReplenishmentSoundSetting() {
@@ -1600,6 +1705,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function bindTaskAudioUnlock() {
+    window.addEventListener("storage", function (event) {
+      var user = authState.currentUser;
+      if (!user || event.key !== TASK_SOUND_KEY + ":" + user.id) return;
+      taskSound.reload();
+      fillTaskSoundSetting();
+      if (!isTaskSoundEnabled()) {
+        taskAlertState.pendingSound = false;
+        taskAlertState.pendingReplenishmentSound = false;
+      }
+    });
     var unlock = function () {
       taskAlertState.audioUnlocked = true;
       if (taskAlertState.pendingSound) {
@@ -1646,6 +1761,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var response = await runSupabaseRequestWithRetry("fetch-all-" + tableName, function () {
         var query = supabaseDb.from(tableName).select(selectColumns);
         if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        if (tableName === "wms_bindings" && orderColumn !== "id") query = query.order("id", { ascending: true });
         return query.range(from, from + pageSize - 1);
       });
       if (response.error) throw response.error;
@@ -1672,6 +1788,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           .select("*")
           .or(warehouseFilter);
         if (orderColumn) query = query.order(orderColumn, { ascending: ascending !== false });
+        // Equal import timestamps must not shuffle records across 500-row pages.
+        if (tableName === "wms_bindings" && orderColumn !== "id") query = query.order("id", { ascending: true });
         return query.range(from, from + pageSize - 1);
       });
       if (response.error) throw response.error;
@@ -2185,6 +2303,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function fetchProductCatalogWithAuthRecovery() {
+    var catalogScope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":");
+    return productCatalogSingleFlight(catalogScope, async function () {
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      var catalogRows = await performProductCatalogWithAuthRecovery();
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      return catalogRows;
+    });
+  }
+
+  async function performProductCatalogWithAuthRecovery() {
     var readCatalog = function () {
       return fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 });
     };
@@ -2228,7 +2356,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
   }
 
-  async function saveData() {
+  async function saveData(bindingWrites) {
     if (!isSupabaseReady()) {
       updateSupabaseStatus("Supabase nao conectado. " + describeSupabaseConfigProblem(), "warning");
       return false;
@@ -2239,13 +2367,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return false;
     }
     try {
-      if (state.bindings.length) {
+      // History, queries and labels must never replay the session's address cache.
+      // Allocation/import already use their own scoped persistence routines.
+      if (Array.isArray(bindingWrites) && bindingWrites.length) {
         try {
-          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding), "warehouse_code,sku,location_code");
+          await upsertInChunks("wms_bindings", dedupeBindingsForSave(bindingWrites).map(toDbBinding), "warehouse_code,sku,location_code");
         } catch (bindingError) {
           if (!isMissingWarehouseColumnError(bindingError)) throw bindingError;
           assertWarehouseFallbackAllowed("wms_bindings", bindingError);
-          await upsertInChunks("wms_bindings", dedupeBindingsForSave().map(toDbBinding).map(stripWarehouseColumns), "id");
+          await upsertInChunks("wms_bindings", dedupeBindingsForSave(bindingWrites).map(toDbBinding).map(stripWarehouseColumns), "id");
         }
       }
       if (state.history.length && historySchemaAvailable) {
@@ -2460,7 +2590,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         });
         transferState.items = transferState.items.filter(function (item) { return item.transferId !== transferId; }).concat(loadedItems);
         transferState.loadedItemTransferIds[transferId] = true;
-        transferState.events = [];
+        if (IS_CP_ALAMO) transferState.events = [];
         performanceState.lastTransferLoadedItems = loadedItems.length;
         recordPerformanceMetric("lastTransferDetailMs", startedAt);
         invalidateTransferStatsCache();
@@ -2595,6 +2725,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var deletedAt = row.deleted_at || "";
     return {
       id: row.id,
+      packingAuditVersion: Number(row.packing_audit_version || 0),
       code: row.codigo_transferencia || "",
       name: row.nome_transferencia || "",
       establishmentId: row.estabelecimento_id || "",
@@ -2757,6 +2888,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       separatedQty: Number(row.quantidade_separada || 0),
       packedQty: Number(row.quantidade_lacrada || 0),
       packedUnits: Number(row.quantidade_lacrada_unidades || 0),
+      packingRevision: Number(row.packing_revision || 0),
       packagingObservation: row.embalagem_observacao || row.observation || "",
       extraQty: Number(row.quantidade_extra || 0),
       missingQty: Number(row.quantidade_faltante || 0),
@@ -4299,21 +4431,35 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     };
   }
 
+  function stockSkuQueryValues(skus) {
+    var values = [];
+    skus.forEach(function (sku) {
+      var normalized = normalizeSku(sku);
+      values.push(normalized);
+      if (!/^\d+$/.test(normalized)) return;
+      var key = normalizeSkuKey(normalized);
+      values.push(key);
+      for (var width = key.length + 1; width <= 8; width += 1) values.push(key.padStart(width, "0"));
+    });
+    return unique(values.filter(Boolean));
+  }
+
   async function getStockPositionsForSkus(skus, warehouseCode) {
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
-    var cleanSkus = unique((skus || []).map(normalizeSku).filter(Boolean));
+    var cleanSkus = unique((skus || []).map(normalizeSkuKey).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
     var missing = cleanSkus.filter(function (sku) {
       return !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] || !stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
     });
     if (missing.length) {
+      var querySkus = stockSkuQueryValues(missing);
       var response = await supabaseDb
         .from("wms_stock_positions")
         .select(stockPositionSelectColumns())
         .eq("warehouse_code", warehouse)
         .eq("active", true)
         .in("source_type", ["CAPTACAO", "LOJA"])
-        .in("codigo_material", missing)
+        .in("codigo_material", querySkus)
         .limit(Math.max(1000, missing.length * 4));
       if (response.error && isMissingColumnError(response.error)) {
         response = await supabaseDb
@@ -4322,7 +4468,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           .eq("warehouse_code", warehouse)
           .eq("active", true)
           .in("source_type", ["CAPTACAO", "LOJA"])
-          .in("codigo_material", missing)
+          .in("codigo_material", querySkus)
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
@@ -4344,7 +4490,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stockCacheKey(warehouseCode, sourceType, sku) {
-    return normalizeWarehouseCode(warehouseCode || activeWarehouseCode()) + ":" + normalizeText(sourceType || "ALL").toUpperCase() + ":" + normalizeSku(sku);
+    return normalizeWarehouseCode(warehouseCode || activeWarehouseCode()) + ":" + normalizeText(sourceType || "ALL").toUpperCase() + ":" + normalizeSkuKey(sku);
   }
 
   async function getStockSuggestion(sku, requestedQty) {
@@ -4363,7 +4509,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var positions = await getStockPositionsForSkus(skus, warehouse);
     var grouped = {};
     positions.forEach(function (position) {
-      var key = position.codigoMaterial || "";
+      var key = normalizeSkuKey(position.codigoMaterial);
       if (!key) return;
       if (!grouped[key]) grouped[key] = [];
       grouped[key].push(position);
@@ -4371,7 +4517,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return items.map(function (item) {
       var sku = normalizeSku(item.codigo_material || item.codigoMaterial || item.sku || "");
       var requested = Number(item.quantidade_solicitada !== undefined ? item.quantidade_solicitada : item.requestedQty || item.quantity || 0);
-      return buildStockSuggestion(sku, requested, grouped[sku] || [], warehouse);
+      return buildStockSuggestion(sku, requested, grouped[normalizeSkuKey(sku)] || [], warehouse);
     });
   }
 
@@ -4750,8 +4896,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function getOpenRequestBySku(sku) {
-    var map = await getOpenRequestsBySkus([sku]);
-    return map[normalizeSku(sku)] || null;
+    var map = await getOpenRequestsBySkus(stockSkuQueryValues([sku]));
+    var key = normalizeSkuKey(sku);
+    return Object.values(map).filter(function (request) {
+      return normalizeSkuKey(request.codigo_material) === key;
+    }).sort(function (left, right) {
+      return Date.parse(right.created_at) - Date.parse(left.created_at);
+    })[0] || null;
   }
 
   function groupStockPositionsBySku(positions) {
@@ -5033,6 +5184,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var loadedFromCache = replenishmentState.requests.length > 0;
     if (!loadedFromCache) loadedFromCache = await hydrateReplenishmentDataFromCache(requestedWarehouseCode);
     if (!isSupabaseReady() || !canUseNetwork()) return loadedFromCache;
+    var routeChanges = new Map();
+    var routeActor = authState.currentUser;
+    var isCurrent = function () { return activeWarehouseCode() === requestedWarehouseCode && authState.currentUser === routeActor && replenishmentState.routeChanges === routeChanges; };
+    replenishmentState.routeChanges = routeChanges;
     try {
       var response = await supabaseDb
         .from("wms_replenishment_requests")
@@ -5043,7 +5198,25 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         .limit(120);
       if (response.error) throw response.error;
       if (activeWarehouseCode() !== requestedWarehouseCode) return false;
-      replenishmentState.requests = (response.data || []).map(fromDbReplenishmentRequest);
+      var recent = response.data || [];
+      if (usesReplenishmentRoute()) {
+        var active = await loadActiveReplenishmentPages(function (after, size) {
+          var query = supabaseDb.from("wms_replenishment_requests")
+            .select(replenishmentRequestSelectColumns())
+            .eq("warehouse_code", requestedWarehouseCode)
+            .neq("is_deleted", true)
+            .not("status", "in", "(CONCLUIDO,ENTREGUE_NA_LOJA,CANCELADO)")
+            .order("id").limit(size);
+          return after === null ? query : query.gt("id", after);
+        }, isCurrent);
+        if (!active) return false;
+        var merged = new Map(recent.filter(function (row) { return !isReplenishmentVisibleInActiveQueue(row); }).map(function (row) { return [row.id, row]; }));
+        active.forEach(function (row) { merged.set(row.id, row); });
+        routeChanges.forEach(function (row, id) { if (row) merged.set(id, row); else merged.delete(id); });
+        recent = Array.from(merged.values());
+      }
+      if (!isCurrent()) return false;
+      replenishmentState.requests = recent.map(fromDbReplenishmentRequest);
       replenishmentState.tablesAvailable = true;
       await writeModuleCacheForWarehouse("replenishmentData", requestedWarehouseCode, { requests: replenishmentState.requests });
       recordPerformanceMetric("lastReplenishmentLoadMs", loadStartedAt);
@@ -5056,6 +5229,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         : "Nao foi possivel carregar pedidos de reposicao: " + formatSupabaseError(error);
       if (getActiveScreenId() === "reposicao") setStatus("replenishmentQueueStatus", message, "error");
       return loadedFromCache;
+    } finally {
+      if (replenishmentState.routeChanges === routeChanges) replenishmentState.routeChanges = null;
     }
   }
 
@@ -5411,13 +5586,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!authState.currentUser) throw new Error("Usuario solicitante obrigatorio.");
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
     var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
-    if (replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    var openRequest = await getOpenRequestBySku(sku);
+    if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
+    if (openRequest && !data.forceDuplicate) {
+      var warning = "O item " + sku + " já foi solicitado."
+        + "\nSituação: " + displayReplenishmentStatus(openRequest.status) + "."
+        + "\nQuantidade solicitada: " + formatQty(openRequest.quantidade_solicitada) + " un."
+        + (openRequest.responsavel_nome ? "\nResponsável: " + openRequest.responsavel_nome + "." : "")
+        + "\n\nDeseja realmente criar outra reposição para este item?"
+        + "\nOK: criar uma nova solicitação. Cancelar: voltar e conferir."
+        + "\nA solicitação existente continuará como está.";
+      if (!window.confirm(warning)) return null;
+    }
+    if (!openRequest && replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
       var recentDuplicate = findRecentReplenishmentDuplicate(sku, requestedQty, 15000);
       if (recentDuplicate) return recentDuplicate;
       return null;
     }
-    var openRequest = await getOpenRequestBySku(sku);
-    if (openRequest && !data.forceDuplicate && !window.confirm("Ja existe um pedido aberto para este produto. Deseja abrir outro mesmo assim?")) return null;
     var productInfo = data.productInfo || lookupReplenishmentProduct(sku);
     try {
       var stockSuggestion = await getStockSuggestion(sku, requestedQty);
@@ -5472,6 +5658,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       clientActionId: clientActionId,
       createdById: authState.currentUser.id
     };
+    if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
     var response = await insertReplenishmentRequest(request, idempotencyKey, clientActionId);
     if (response.error && isDuplicateKeyError(response.error)) {
       var duplicated = await findReplenishmentByIdempotencyKey(idempotencyKey);
@@ -5579,9 +5766,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function lookupReplenishmentProductWithStock(sku) {
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    var currentLookup = function () { return activeWarehouseCode() === warehouse && authState.currentUser === actor && normalizeSku($("replenishmentSkuInput").value) === sku; };
     var product = lookupReplenishmentProduct(sku);
     try {
       var suggestion = await getStockSuggestion(sku, 0);
+      if (!currentLookup()) return null;
       product = enrichReplenishmentProductWithStock(product, suggestion);
       if ($("replenishmentRequestQtyInput") && !normalizeText($("replenishmentRequestQtyInput").value) && Number(suggestion.suggestedReplenishmentQty || 0) > 0) {
         $("replenishmentRequestQtyInput").value = String(suggestion.suggestedReplenishmentQty);
@@ -5592,6 +5782,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     } catch (error) {
       if (!isMissingStockTableError(error) && !isMissingColumnError(error)) recordPerformanceError("reposicao-stock-lookup", error);
     }
+    if (!currentLookup()) return null;
     replenishmentState.currentProduct = product;
     renderReplenishmentProductCard(product);
     return product;
@@ -5715,10 +5906,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function updateReplenishmentQuantity(id, qty, observation) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
-    qty = Number(qty || 0);
-    if (qty < 0) throw new Error("Quantidade atendida invalida.");
+    qty = Number(qty ?? 0);
+    if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
     var requested = Number(request.requestedQty || 0);
-    var attended = Math.min(requested, Number(request.attendedQty || 0) + qty);
+    var attended = Number(request.attendedQty || 0) + qty;
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
     if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
@@ -5741,24 +5932,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
-    var saved = await updateReplenishmentRow(id, {
+    return updateReplenishmentRow(id, {
       status: "CONCLUIDO",
       pendingQty: 0,
       finishedAt: now,
       durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
     });
-    // O gatilho transacional do banco debita CAPTACAO e credita LOJA.
-    // Esvaziar os caches impede que a proxima consulta use saldos anteriores.
-    var warehouse = saved.warehouseCode || request.warehouseCode;
-    var sku = saved.codigoMaterial || request.codigoMaterial;
-    if (warehouse && sku) {
-      delete stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)];
-      delete stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
-    }
-    replenishmentState.suggestionsLoaded = false;
-    replenishmentState.suggestions = [];
-    replenishmentState.suggestionOffset = 0;
-    return saved;
   }
 
   async function cancelReplenishmentRequest(id, reason) {
@@ -5867,10 +6046,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
   }
 
-  function dedupeBindingsForSave() {
+  function dedupeBindingsForSave(bindings) {
     var bySkuLocation = {};
     var deduped = [];
-    state.bindings.forEach(function (binding) {
+    (bindings || []).map(function (binding) { return Object.assign({}, binding); }).forEach(function (binding) {
       binding.sku = firstSkuValue(binding.sku);
       var key = normalizeSkuKey(binding.sku) + "\u0001" + locationKeyFromBinding(binding);
       var existing = bySkuLocation[key];
@@ -5884,10 +6063,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       existing.areaName = binding.areaName || existing.areaName;
       existing.updatedAt = maxIsoDate(existing.updatedAt, binding.updatedAt);
     });
-    if (deduped.length !== state.bindings.length) {
-      state.bindings = deduped;
-    }
-    return state.bindings;
+    return deduped;
   }
 
   function maxIsoDate(first, second) {
@@ -6064,6 +6240,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function activatePasswordRecovery(session) {
     passwordRecoveryActive = true;
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = session || null;
     setAuthenticatedShellActive(false);
@@ -6485,6 +6663,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (showWelcome) showToast("Bem-vindo, " + authState.currentUser.name + ".", "success");
       return;
     }
+    if (authState.currentUser.role === "CAIXA") {
+      await ensureWarehousesLoaded();
+      resetSessionInactivityTimeout();
+      await showScreen("reposicao");
+      return;
+    }
     await ensureOperationalCatalog();
     await Promise.all([
       hydrateCoreDataFromCache(),
@@ -6507,6 +6691,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    if (communicationRuntime) { void communicationRuntime.dispose(); communicationRuntime = null; }
+    communicationScope = ""; communicationStarting = null;
+    if ($("communicationAlert")) $("communicationAlert").hidden = true;
+    if (skuPhotoController) skuPhotoController.close();
+    if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = null;
     applyRoleClass();
@@ -6591,12 +6782,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function logout() {
+    if (communicationRuntime) { await communicationRuntime.dispose({ unsubscribe: true }); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopTaskPolling();
     stopLeaderLiveSync();
     await pauseLocalCacheForContextChange("logout");
     if (sessionInactivityTimer) window.clearTimeout(sessionInactivityTimer);
     sessionInactivityTimer = null;
     if (isSupabaseReady()) await signOutAuthSession(supabaseDb).catch(function () {});
+    taskSound.stop();
+    taskAlertState.pendingSound = false;
     authState.currentUser = null;
     authState.currentSession = null;
     state = { bindings: [], history: [], products: {} };
@@ -6631,6 +6825,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     if (code === activeWarehouseCode()) return;
+    if (communicationRuntime) { await communicationRuntime.dispose(); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopLeaderLiveSync();
     stopTaskPolling();
     await pauseLocalCacheForContextChange("warehouse-switch");
@@ -6639,6 +6834,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     applyRolePermissions();
     if (isGlobalDashboardScope()) {
       await showScreen("globalDashboard");
+      return;
+    }
+    if (authState.currentUser.role === "CAIXA") {
+      await showScreen("reposicao");
       return;
     }
     await ensureOperationalCatalog();
@@ -6715,6 +6914,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function updateLoggedUserUi() {
     var user = authState.currentUser;
+    fillTaskSoundSetting();
     if (!user) return;
     ["topUserName", "sidebarUserName"].forEach(function (id) { $(id).textContent = user.name; });
     ["topUserRole", "sidebarUserRole"].forEach(function (id) { $(id).textContent = user.role; });
@@ -6723,13 +6923,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function applyRoleClass() {
-    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente");
+    document.body.classList.remove("role-administrador", "role-supervisor", "role-operador", "role-atendente", "role-caixa");
     if (!authState.currentUser) return;
     document.body.classList.add("role-" + authState.currentUser.role.toLowerCase());
   }
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
+    if (authState.currentUser.role === "CAIXA") return "reposicao";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6737,6 +6938,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function applyRolePermissions() {
     var visibleScreens = 0;
+    document.querySelectorAll('[data-communication-share]').forEach(function (element) {
+      element.hidden = !canAccessScreen('comunicacao');
+    });
     document.querySelectorAll(".admin-only").forEach(function (element) {
       element.hidden = !isAdmin();
     });
@@ -6783,6 +6987,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "comunicacao") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].indexOf(authState.currentUser.role) >= 0;
+    if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
+    if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
     if (isGlobalDashboardScope()) return screenId === "saudeSistema";
@@ -6973,7 +7180,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       supervisor = null;
       supervisorId = "";
     }
-    if (role === "ATENDENTE") availableForTasks = false;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) availableForTasks = false;
     if (supervisor && (supervisor.role !== "SUPERVISOR" || !userBelongsToWarehouse(supervisor, defaultWarehouseCode))) {
       setStatus("userFormStatus", "Supervisor responsavel precisa pertencer ao mesmo estoque.", "error");
       return;
@@ -7116,7 +7323,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function renderUserRoleOptions(selectedRole) {
     var select = $("userRoleInput");
     if (!select) return;
-    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE"] : ROLES;
+    var roles = isSupervisor() ? ["OPERADOR", "ATENDENTE", "CAIXA"] : ROLES;
     select.innerHTML = roles.map(function (role) {
       var label = role === "ATENDENTE" ? "ATENDENTE" : role;
       return "<option value=\"" + escapeHtml(role) + "\">" + escapeHtml(label) + "</option>";
@@ -7129,8 +7336,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function syncUserAvailabilityForRole(role) {
     var input = $("userAvailableInput");
     if (!input) return;
-    input.disabled = role === "ATENDENTE";
-    if (role === "ATENDENTE") input.checked = false;
+    input.disabled = ["ATENDENTE", "CAIXA"].indexOf(role) >= 0;
+    if (["ATENDENTE", "CAIXA"].indexOf(role) >= 0) input.checked = false;
   }
 
   function renderUserWarehouseInputs(user) {
@@ -7280,7 +7487,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { value: "ADMINISTRADOR", label: "Administrador" },
       { value: "SUPERVISOR", label: "Supervisor" },
       { value: "OPERADOR", label: "Operador" },
-      { value: "ATENDENTE", label: "Atendente" }
+      { value: "ATENDENTE", label: "Atendente" },
+      { value: "CAIXA", label: "Caixa" }
     ], userFilterValue("userRoleFilter"));
     fillUserSelect("userSupervisorFilter", userSupervisorFilterOptions(), userFilterValue("userSupervisorFilter"));
   }
@@ -8021,7 +8229,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       auth_email: request.email,
       role: approvedRole,
       active: true,
-      available_for_tasks: approvedRole !== "ATENDENTE",
+      available_for_tasks: ["ATENDENTE", "CAIXA"].indexOf(approvedRole) < 0,
       default_warehouse_id: activeWarehouseId(),
       default_warehouse_code: activeWarehouseCode(),
       warehouse_id: activeWarehouseId(),
@@ -8104,7 +8312,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
     });
     addHistory("Dados de exemplo criados", "", "", "Carga inicial automatica");
-    await saveData();
+    await saveData(state.bindings.slice());
   }
 
   async function applyDataMigrations() {
@@ -8168,6 +8376,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (!IS_CP_ALAMO && canAccessScreen("comunicacao")) {
+      ensureCommunication().then(function (runtime) { if (runtime) runtime.setActive(getActiveScreenId() === "comunicacao"); }).catch(function () {});
+      if (!communicationLinkConsumed && new window.URLSearchParams(window.location.search).has("comm")) {
+        communicationLinkConsumed = true;
+        var params = new window.URLSearchParams(window.location.search), targetWarehouse = params.get("warehouse"), targetConversation = params.get("comm");
+        if (targetWarehouse && userCanAccessWarehouse(authState.currentUser, targetWarehouse) && /^[a-f0-9-]{36}$/i.test(targetConversation || "")) {
+          Promise.resolve().then(async function () { if (targetWarehouse !== activeWarehouseCode()) await switchActiveWarehouse(targetWarehouse); await openCommunication({ conversation_id: targetConversation }); }).catch(function (error) { showToast(error.message, "error"); });
+        } else showToast("Notificação fora do acesso da conta atual.", "warning");
+      }
+    }
     if (addressingPresenceController) addressingPresenceController.update();
     if (screenId === "baseEstoque" && !moduleLoadState.stock) {
       setStatus("stockImportStatus", "Carregando Base de Estoque...", "warning");
@@ -8188,14 +8406,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (screenId === "bipagem") focusSkuInput();
     if (screenId === "consultaSku") $("skuSearchInput").focus();
     if (screenId === "consultaPrateleira") $("shelfSearchInput").focus();
-    if (screenId === "reposicao" && $("replenishmentSkuInput")) {
+    if (screenId === "reposicao" && authState.currentUser.role !== "CAIXA" && $("replenishmentSkuInput")) {
       $("replenishmentSkuInput").focus();
       if (!isAttendant() && !replenishmentState.suggestionsLoaded) refreshReplenishmentSuggestions(true);
     }
     if (screenId === "transferencias" && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
     if (screenId === "transferencias") loadTaskCenterData({ force: false });
     if (screenId === "transferencias" && !realtimeState.active) startLeaderLiveSync();
-    if (screenId === "reposicao" && !realtimeState.active) startLeaderLiveSync();
+    if (screenId === "reposicao" && authState.currentUser.role !== "CAIXA" && !realtimeState.active) startLeaderLiveSync();
   }
 
   function updateModuleSubtitle(screenId) {
@@ -8205,16 +8423,48 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "comunicacao") return "Comunicação";
+    if (screenId === "centralRevistas") return "Central de Revistas";
+    if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
     return screenId === "transferencias" ? "Transferências" : screenId === "reposicao" ? "Reposição" : screenId === "bipagem" ? "Endereçamento" : screenId === "baseEstoque" ? "Base CAPTACAO" : screenId === "etiquetas" ? "Etiquetas" : screenId === "exportar" ? "Exportar Excel" : screenId === "saudeSistema" ? "Saúde do Sistema" : ["usuarios", "manutencao", "configuracoes"].indexOf(screenId) >= 0 ? "Administração" : "Base CAPTACAO";
   }
 
   function isRemovedScreen(screenId) {
-    return ["assistente", "conferencias", "historico", "consultaPrateleira"].indexOf(screenId) >= 0;
+    return ["assistente", "conferencias", "historico"].indexOf(screenId) >= 0;
   }
 
   function bindEvents() {
+    if ($("communicationAlert")) $("communicationAlert").querySelector("[data-dismiss-communication-alert]").onclick = function () { $("communicationAlert").hidden = true; };
+    document.addEventListener("click", function (event) {
+      var button = event.target.closest("[data-communication-share]");
+      if (!button || !canAccessScreen("comunicacao")) return;
+      var type = button.dataset.communicationShare, id = button.dataset.shareId || (type === "SKU" ? $("skuSearchInput").value.trim() : "");
+      if (!id) { showToast("Informe um SKU para compartilhar.", "warning"); return; }
+      openCommunication(type === "TRANSFER_DIVERGENCE" ? { divergencesTransfer: id } : { share: { type: type, id: id } }).catch(function (error) { showToast(error.message, "error"); });
+    });
+    if ($("skuPhotoButton")) {
+      $("skuPhotoButton").hidden = IS_CP_ALAMO;
+      $("skuPhotoButton").addEventListener("click", async function () {
+        if (IS_CP_ALAMO || !canAccessScreen("consultaSku")) return;
+        var actor = authState.currentUser.id, warehouse = activeWarehouseCode();
+        var trigger = $("skuPhotoButton"); trigger.disabled = true;
+        try {
+          // Start within the original tap: mobile camera permission requires direct user activation.
+          if (!authState.currentUser || actor !== authState.currentUser.id || warehouse !== activeWarehouseCode() || getActiveScreenId() !== "consultaSku") return;
+          if (skuPhotoController) skuPhotoController.close();
+          skuPhotoController = openSkuPhotoLookup({
+            client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
+            canUse: function () { return !IS_CP_ALAMO && canAccessScreen("consultaSku") && getActiveScreenId() === "consultaSku"; },
+            closed: function () { skuPhotoController = null; },
+            error: function (error) { setStatus("skuSearchStatus", formatSupabaseError(error), "error"); },
+            onSku: async function (sku) { window.clearTimeout(skuSearchTimer); $("skuSearchInput").value = sku; await renderSkuSearch(); }
+          });
+        } catch (error) { setStatus("skuSearchStatus", "Nao foi possivel abrir a leitura: " + formatSupabaseError(error), "error"); }
+        finally { trigger.disabled = false; }
+      });
+    }
     if ($("returnGlobalDashboardButton")) $("returnGlobalDashboardButton").addEventListener("click", function () { switchActiveWarehouse("DOURADOS"); });
     $("loginForm").addEventListener("submit", function (event) {
       event.preventDefault();
@@ -8334,6 +8584,36 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("shelfSearchInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") renderShelfSearch();
     });
+    $("shelfCameraButton").addEventListener("click", function () {
+      if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen("consultaPrateleira")) return;
+      var actorId = authState.currentUser.id, warehouseCode = activeWarehouseCode();
+      if (shelfBarcodeController) shelfBarcodeController.close();
+      shelfBarcodeController = openShelfBarcodeScanner({
+        user: function () { return authState.currentUser; },
+        warehouse: activeWarehouseCode,
+        canUse: function () { return !IS_CP_ALAMO && canAccessScreen("consultaPrateleira") && getActiveScreenId() === "consultaPrateleira"; },
+        normalizeLocation: normalizeLocation,
+        onRead: async function (code) {
+          if (!authState.currentUser || authState.currentUser.id !== actorId || activeWarehouseCode() !== warehouseCode || getActiveScreenId() !== "consultaPrateleira") return;
+          $("shelfSearchInput").value = code;
+          await renderShelfSearch();
+        },
+        error: function (error) { setStatus("shelfSearchStatus", "Falha na leitura: " + formatSupabaseError(error), "error"); },
+        closed: function () { shelfBarcodeController = null; }
+      });
+    });
+    function openShelfSkuFromResult(event) {
+      var button = event.target.closest("[data-shelf-sku]");
+      if (!button || !canAccessScreen("consultaSku")) return;
+      var sku = normalizeSku(button.dataset.shelfSku);
+      if (!sku) return;
+      $("skuSearchInput").value = sku;
+      void showScreen("consultaSku").then(function () {
+        if (getActiveScreenId() === "consultaSku") void renderSkuSearch();
+      });
+    }
+    $("shelfResultCards").addEventListener("click", openShelfSkuFromResult);
+    $("shelfResults").addEventListener("click", openShelfSkuFromResult);
 
     $("previewLabelsButton").addEventListener("click", function () {
       generateLabels(false);
@@ -8406,7 +8686,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (event.key === "Enter") {
           event.preventDefault();
           handleReplenishmentSkuInput();
-          $("replenishmentStoreQtyInput").focus();
+          $("replenishmentRequestQtyInput").focus();
         }
       });
     }
@@ -8502,10 +8782,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("establishmentsRows").addEventListener("click", handleTransferActionClick);
     $("establishmentSearchButton").addEventListener("click", renderEstablishments);
     $("establishmentSearchInput").addEventListener("input", renderEstablishments);
-    $("backToTransfersButton").addEventListener("click", function () {
-      activateTransferTab(isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection");
-      renderTransfers();
-    });
+    $("backToTransfersButton").addEventListener("click", returnFromTransferWork);
+
     $("refreshTransferStockButton").addEventListener("click", function (event) {
       refreshTransferStockSuggestion(transferState.activeTransferId, { persist: true, button: event.currentTarget });
     });
@@ -8587,6 +8865,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("testSupabaseButton").addEventListener("click", testSupabaseConnection);
     $("taskSoundInput").addEventListener("change", saveTaskSoundSetting);
     $("sidebarTaskSoundInput").addEventListener("change", saveTaskSoundSetting);
+    $("sidebarTaskSoundVolume").addEventListener("input", function (event) { taskSound.set({ volume: Number(event.currentTarget.value) / 100 }); if (!Number(event.currentTarget.value)) { taskAlertState.pendingSound = false; taskAlertState.pendingReplenishmentSound = false; } fillTaskSoundSetting(); });
+    $("sidebarTaskSoundTest").addEventListener("click", function () { void playTaskSound(); });
     if ($("replenishmentSoundInput")) $("replenishmentSoundInput").addEventListener("change", saveReplenishmentSoundSetting);
     if ($("replenishmentSoundVolumeInput")) $("replenishmentSoundVolumeInput").addEventListener("change", saveReplenishmentSoundSetting);
   }
@@ -8816,7 +9096,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         parsed.code,
         target
           ? "SKU movido de " + (previousLocations.join(", ") || "localizacao anterior") + " para " + parsed.code + "."
-          : "SKU incluido na localizacao sem remover outros produtos."
+          : locationDecision === "replace"
+            ? "SKU incluido na localizacao removendo os outros produtos, conforme escolha do operador."
+            : "SKU incluido na localizacao sem remover outros produtos."
       )
     ];
     if (locationDecision === "replace") {
@@ -9288,7 +9570,76 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function renderCaixaRequestsScreen() {
+    if (!$("caixaRequestsRoot") || IS_CP_ALAMO) return;
+    var caixaOnly = authState.currentUser.role === "CAIXA";
+    Array.from($("reposicao").children).forEach(function (child) { if (child.id !== "caixaRequestsRoot") child.hidden = caixaOnly; });
+    $("caixaRequestsRoot").hidden = authState.currentUser.role === "ATENDENTE";
+    if ($("caixaRequestsRoot").hidden) return;
+    var actor = authState.currentUser.id;
+    var role = authState.currentUser.role;
+    var warehouse = activeWarehouseCode();
+    mountCaixaRequests($("caixaRequestsRoot"), {
+      client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      allowOperationalRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
+      canDeletePermanently: isGlobalAdminUser(authState.currentUser),
+      onDeleted: async function (request) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) return;
+        if (request.replenishment_id) {
+          replenishmentState.requests = replenishmentState.requests.filter(function (item) { return item.id !== request.replenishment_id; });
+          await refreshReplenishmentData();
+          if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse) renderReplenishment();
+        }
+      },
+      openRequestsScreen: function () { return showScreen("reposicao"); },
+      onUnreadMessages: function (info) {
+        var scope = actor + ":" + warehouse + ":" + role;
+        var banner = $("caixaUnreadAlert");
+        var sameSession = authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse;
+        if (!sameSession || !info.count) {
+          if (banner && banner.dataset.scope === scope) banner.remove();
+          return;
+        }
+        if (!banner || banner.dataset.scope !== scope) {
+          if (banner) banner.remove();
+          banner = document.createElement("aside"); banner.id = "caixaUnreadAlert"; banner.dataset.scope = scope;
+          banner.setAttribute("role", "status"); banner.setAttribute("aria-live", "polite");
+          var text = document.createElement("strong"); banner.appendChild(text);
+          var button = document.createElement("button"); button.type = "button"; button.textContent = "Ver mensagem";
+          button.addEventListener("click", function () { if (banner.caixaOpen) banner.caixaOpen(); }); banner.appendChild(button);
+          document.body.appendChild(banner);
+        }
+        banner.caixaOpen = info.open;
+        var signature = info.count + ":" + info.requestId;
+        if (banner.dataset.signature !== signature) {
+          banner.firstElementChild.textContent = info.count + (info.count === 1 ? " mensagem não lida no atendimento" : " mensagens não lidas no atendimento");
+          banner.dataset.signature = signature;
+        }
+      },
+      claimProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        await refreshReplenishmentData();
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        return claimReplenishmentRequest(id);
+      },
+      openProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        replenishmentState.activeFilter = "";
+        replenishmentState.renderLimit = Math.max(replenishmentState.renderLimit, replenishmentState.requests.length);
+        renderReplenishment();
+        var row = Array.from($("replenishmentList").querySelectorAll("[data-replenishment-id]")).find(function (element) { return element.dataset.replenishmentId === id; });
+        if (row) row.scrollIntoView({ block: "center", behavior: "smooth" });
+        else showToast("Atualize a fila de reposição para localizar este pedido.", "warning");
+      },
+      isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; }
+    });
+  }
+
   function renderAll() {
+    if (getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
+      renderCaixaRequestsScreen();
+      return;
+    }
     renderStockFreshnessAlert();
     var activeScreen = getActiveScreenId();
     if (activeScreen === "globalDashboard") {
@@ -9408,6 +9759,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishment() {
+    renderCaixaRequestsScreen();
     if (!$("replenishmentList")) return;
     var attendantView = isAttendant();
     applyReplenishmentRoleView(attendantView);
@@ -9423,12 +9775,87 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (replenishmentState.activeFilter) {
       visible = visible.filter(function (item) { return matchesReplenishmentQueueFilter(item, replenishmentState.activeFilter); });
     }
-    var limited = visible.slice(0, replenishmentState.renderLimit);
+    var useRoute = usesReplenishmentRoute();
+    var route = useRoute ? buildReplenishmentRoute(visible, activeWarehouseCode(), operationalReplenishmentAddress, vdMaisColumnLabelToNumber) : null;
+    var limited = (route || visible).slice(0, replenishmentState.renderLimit);
+    if (useRoute) loadMissingReplenishmentRouteAddresses(visible);
     $("replenishmentList").innerHTML = limited.length
-      ? limited.map(attendantView ? attendantReplenishmentCardHtml : replenishmentCardHtml).join("")
+      ? useRoute ? replenishmentRouteHtml(limited) : limited.map(function (item) { return attendantView ? attendantReplenishmentCardHtml(item) : replenishmentCardHtml(item); }).join("")
       : "<div class=\"empty-state\">" + (attendantView ? "Nenhum pedido pendente criado por voce neste estoque." : "Nenhum pedido pendente para o estoque " + escapeHtml(activeWarehouseCode()) + ".") + "</div>";
     if ($("loadMoreReplenishmentButton")) $("loadMoreReplenishmentButton").hidden = visible.length <= limited.length;
     setStatus("replenishmentQueueStatus", visible.length ? visible.length + " pedido(s) no filtro atual." : "", visible.length ? "success" : "");
+  }
+
+  function usesReplenishmentRoute() {
+    return !IS_CP_ALAMO && (isAdminOrSupervisor() || authState.currentUser?.role === "OPERADOR");
+  }
+
+  function operationalReplenishmentAddress(item) {
+    var selected = replenishmentRouteAddress(item, normalizeLocation, vdMaisColumnLabelToNumber);
+    if (selected) return selected;
+    var positions = stockState.positionCache[stockCacheKey(item.warehouseCode, "CAPTACAO", item.codigoMaterial)];
+    if (!positions || !positions.length) return null;
+    var addresses = new Map();
+    var located = positions.flatMap(function (position) {
+      var address = replenishmentRouteAddress({
+        localizacaoWms: position.codigoEndereco,
+        captacaoEstacao: position.estacao,
+        captacaoRack: position.rack,
+        captacaoLinha: position.linha,
+        captacaoColuna: position.coluna
+      }, normalizeLocation, vdMaisColumnLabelToNumber);
+      if (!address) return [];
+      addresses.set(address.code, address);
+      return [Object.assign({}, position, { codigoEndereco: address.code })];
+    });
+    if (!located.length) return null;
+    var bestAvailable = Math.max.apply(null, located.map(function (position) { return Number(position.totalDisponivel || 0); }));
+    var bestAddresses = unique(located.filter(function (position) { return Number(position.totalDisponivel || 0) === bestAvailable; }).map(function (position) {
+      var address = addresses.get(position.codigoEndereco);
+      return [address.rua, address.rack, address.linha, address.letra].join(":");
+    }));
+    if (bestAddresses.length > 1) return null;
+    var suggestion = buildStockSuggestion(item.codigoMaterial, item.requestedQty, located, item.warehouseCode);
+    return addresses.get(suggestion.captureLocation) || null;
+  }
+
+  function loadMissingReplenishmentRouteAddresses(items) {
+    if (!isSupabaseReady() || !canUseNetwork()) return;
+    var warehouse = activeWarehouseCode(), actor = authState.currentUser;
+    if (replenishmentState.routeLookup && replenishmentState.routeLookup.warehouse === warehouse && replenishmentState.routeLookup.actor === actor) return;
+    var skus = unique(items.filter(function (item) {
+      return !replenishmentRouteAddress(item, normalizeLocation, vdMaisColumnLabelToNumber)
+        && !stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", item.codigoMaterial)];
+    }).map(function (item) { return item.codigoMaterial; }).filter(Boolean));
+    if (!skus.length) return;
+    var lookup = { warehouse: warehouse, actor: actor };
+    replenishmentState.routeLookup = lookup;
+    (async function () {
+      for (var offset = 0; offset < skus.length; offset += 100) {
+        if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) return;
+        await getStockPositionsForSkus(skus.slice(offset, offset + 100), warehouse);
+      }
+      if (replenishmentState.routeLookup === lookup) replenishmentState.routeLookup = null;
+      if (activeWarehouseCode() === warehouse && authState.currentUser === actor && getActiveScreenId() === "reposicao") renderReplenishment();
+    })().catch(function (error) {
+      recordPerformanceError("reposicao-localizacao", error);
+    }).finally(function () {
+      if (replenishmentState.routeLookup === lookup) replenishmentState.routeLookup = null;
+    });
+  }
+
+  function replenishmentRouteHtml(route) {
+    var lastGroup = "";
+    return route.map(function (entry) {
+      var group = entry.priority + ":" + (entry.address ? entry.address.rua : "");
+      var heading = "";
+      if (lastGroup !== group) {
+        lastGroup = group;
+        var title = entry.address ? "Rua " + entry.address.rua : "Sem localização definida";
+        heading = '<h3 class="replenishment-route-heading">' + (entry.priority === 0 ? "Cliente urgente · " : "") + escapeHtml(title) + "</h3>";
+      }
+      return heading + replenishmentCardHtml(entry.item, entry.address);
+    }).join("");
   }
 
   function applyReplenishmentRoleView(attendantView) {
@@ -9558,17 +9985,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return type || "-";
   }
 
-  function replenishmentCardHtml(item) {
+  function replenishmentCardHtml(item, routeAddress) {
     var canManage = isAdminOrSupervisor();
     var canWork = authState.currentUser && (item.responsavelId === authState.currentUser.id || canManage);
     var queueLabel = item.status === "PENDENTE" && !item.responsavelId ? "Na fila" : displayReplenishmentStatus(item.status);
-    var location = replenishmentCaptureLocationLabel(item);
+    var location = routeAddress === undefined ? replenishmentCaptureLocationLabel(item) : routeAddress ? routeAddress.code : "Sem localização";
     var elapsed = humanizeDuration(Math.max(0, Math.round((Date.now() - new Date(item.createdAt).getTime()) / 1000)));
     return [
       "<article class=\"replenishment-card status-" + escapeHtml(item.status.toLowerCase()) + (item.prioridade === "CLIENTE" ? " priority-cliente" : "") + "\" data-replenishment-id=\"" + escapeHtml(item.id) + "\">",
+      communicationShareButton("REPLENISHMENT", item.id),
       "<div class=\"replenishment-card-main\">",
       "<div><span>Produto</span><strong>SKU " + escapeHtml(item.codigoMaterial) + "</strong><p>" + escapeHtml(item.nomeMaterial || "-") + "</p></div>",
-      "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-") + "</small></div>",
+      "<div class=\"replenishment-location\"><span>Localizacao CAPTACAO</span><strong>" + escapeHtml(location) + "</strong><small>" + (routeAddress ? escapeHtml("Rack " + routeAddress.rack + " · Linha " + routeAddress.linha + " · Coluna " + routeAddress.letra) : routeAddress === null ? "" : escapeHtml(item.captacaoEstacao || item.localizacaoEstacao || "-") + " | " + escapeHtml(item.captacaoRack || item.localizacaoRack || "-") + " | " + escapeHtml(item.captacaoLinha || item.localizacaoLinha || "-") + " | " + escapeHtml(item.captacaoColuna || item.localizacaoColuna || "-")) + "</small></div>",
       "</div>",
       "<div class=\"replenishment-card-metrics\">",
       replenishmentMetricHtml("Saldo Loja", formatQty(item.storeQty)),
@@ -9612,7 +10040,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function replenishmentPriorityBadgeHtml(priority) {
     return normalizeReplenishmentPriority(priority) === "CLIENTE"
-      ? "<span class=\"replenishment-priority-badge\">CLIENTE</span>"
+      ? "<span class=\"replenishment-priority-badge\">URGENTE — CLIENTE</span>"
       : "";
   }
 
@@ -9687,6 +10115,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishmentProductCard(product) {
+    var available = $("replenishmentAvailableQty");
+    if (available) {
+      available.hidden = !product || !product.sku;
+      available.textContent = product && product.captureBalance !== null && product.captureBalance !== undefined
+        ? "Disponível para repor: " + formatQty(product.captureBalance) + " un."
+        : "Consultando quantidade disponível…";
+    }
     if (!$("replenishmentProductCard")) return;
     if (!product || !product.sku) {
       $("replenishmentProductCard").className = "replenishment-product-card empty-state";
@@ -9829,10 +10264,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
-        var qty = window.prompt("Quantidade atendida agora:", request ? String(request.pendingQty || request.requestedQty || "") : "");
+        var qty = window.prompt("Quantidade adicional atendida agora (já atendida: " + (request ? formatQty(request.attendedQty || 0) : "0") + "). Pode superar a solicitada:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
         if (qty === null) return;
         var note = "";
-        if (Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
+        if (Number((request && request.attendedQty) || 0) + Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
         await updateReplenishmentQuantity(id, Number(qty || 0), note);
       }
       if (target.dataset.replenishmentNostock) {
@@ -9840,8 +10275,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (reason === null) return;
         await markReplenishmentNoStock(id, reason);
       }
-      var completedReplenishment = null;
-      if (target.dataset.replenishmentComplete) completedReplenishment = await completeReplenishmentRequest(id);
+      if (target.dataset.replenishmentComplete) await completeReplenishmentRequest(id);
       if (target.dataset.replenishmentCancel) {
         var cancellationRequest = getReplenishmentById(id);
         var cancelReason = window.prompt("Motivo do cancelamento:", cancellationRequest ? cancellationRequest.cancellationRequestReason || "" : "");
@@ -9853,12 +10287,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         await deleteTestReplenishmentRequest(id);
       }
       await refreshReplenishmentData();
-      if (completedReplenishment) {
-        await refreshReplenishmentSuggestions(true);
-        showToast("Reposicao concluida: " + formatQty(completedReplenishment.attendedQty) + " un. transferidas da CAPTACAO para a LOJA.", "success");
-      } else {
-        showToast("Pedido atualizado.", "success");
-      }
+      showToast("Pedido atualizado.", "success");
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atualizar pedido: " + formatSupabaseError(error), "error");
     } finally {
@@ -10154,26 +10583,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function playTaskSound() {
-    if (!isTaskSoundEnabled()) return;
-    try {
-      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      var context = new AudioContextCtor();
-      var oscillator = context.createOscillator();
-      var gain = context.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.value = 660;
-      gain.gain.setValueAtTime(0.001, context.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + 0.18);
-      oscillator.connect(gain);
-      gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.2);
-      oscillator.onended = function () { context.close(); };
-    } catch (error) {
-      taskAlertState.pendingSound = true;
-    }
+    return taskSound.play();
   }
 
   function notificationService() {
@@ -10202,6 +10612,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     try {
       new Notification(title, {
         body: body,
+        silent: true,
         tag: "wms-reposicao-" + activeWarehouseCode(),
         icon: "/favicon.svg"
       });
@@ -10251,30 +10662,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function runReplenishmentSoundPulse() {
     if (!isReplenishmentSoundEnabled()) return;
-    try {
-      var AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextCtor) return;
-      var context = new AudioContextCtor();
-      var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
-      var targetGain = volume === "low" ? 0.08 : volume === "medium" ? 0.16 : 0.26;
-      [760, 1040].forEach(function (frequency, index) {
-        var oscillator = context.createOscillator();
-        var gain = context.createGain();
-        var start = context.currentTime + index * 0.1;
-        oscillator.type = "square";
-        oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(0.001, start);
-        gain.gain.exponentialRampToValueAtTime(targetGain, start + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.095);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(start);
-        oscillator.stop(start + 0.11);
-      });
-      window.setTimeout(function () { context.close(); }, 320);
-    } catch (error) {
-      taskAlertState.pendingReplenishmentSound = true;
-    }
+    var volume = localStorage.getItem(REPLENISHMENT_SOUND_VOLUME_KEY) || "high";
+    var targetGain = volume === "low" ? 0.08 : volume === "medium" ? 0.16 : 0.26;
+    return taskSound.play("replenishment", targetGain);
   }
 
   function startTaskPolling() {
@@ -10511,6 +10901,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stopLeaderLiveSync() {
+    realtimeState.syncGeneration = (realtimeState.syncGeneration || 0) + 1;
     if (addressingPresenceController) addressingPresenceController.stop();
     addressingPresenceController = null;
     stockFreshnessState.generation += 1;
@@ -10692,6 +11083,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var eventType = payload && payload.eventType ? payload.eventType : "";
     var row = payload && payload.new ? payload.new : {};
     var oldRow = payload && payload.old ? payload.old : {};
+    if (replenishmentState.routeChanges) {
+      var changedId = row.id || oldRow.id;
+      if (changedId) replenishmentState.routeChanges.set(changedId, eventType === "DELETE" || row.is_deleted === true ? null : row);
+    }
     if (eventType === "DELETE" || (row && row.is_deleted === true)) {
       removeById(replenishmentState.requests, (oldRow && oldRow.id) || (row && row.id));
       return;
@@ -10741,10 +11136,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     realtimeState.refreshRunning = true;
     realtimeState.refreshPending = false;
+    var scopeGeneration = realtimeState.syncGeneration || 0;
+    var scopeWarehouse = activeWarehouseCode();
+    var scopeActor = authState.currentUser && authState.currentUser.id;
+    var currentScope = function () { return realtimeState.active && (realtimeState.syncGeneration || 0) === scopeGeneration && activeWarehouseCode() === scopeWarehouse && authState.currentUser && authState.currentUser.id === scopeActor; };
     var retryDelay = 0;
     try {
       var startedAt = performance.now();
       await checkLatestAddressCacheInvalidation();
+      if (!currentScope()) return;
       var since = realtimeState.lastLiveUpdateAt || "";
       var activeScreen = getActiveScreenId();
       var shouldLoadFullTransfers = moduleLoadState.transfers || activeScreen === "transferencias";
@@ -10757,8 +11157,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       } else {
         var shouldFetchTransferRows = moduleLoadState.transfers || realtimeState.transferTasksLoaded;
         var transferRows = shouldFetchTransferRows ? await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since) : [];
+        if (!currentScope()) return;
         var shouldFetchItemRows = moduleLoadState.transfers && (transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0);
         var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
+        if (!currentScope()) return;
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
@@ -10766,17 +11168,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         realtimeState.lastLiveUpdateAt = newest || nowIso();
         writeTransferCacheSoon();
       }
+      if (!currentScope()) return;
       recordPerformanceMetric("lastTransferQueryMs", startedAt);
       renderTransferRealtimeViews();
       realtimeState.failureCount = 0;
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
+      if (!currentScope()) return;
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("live-transfer", error);
       // A sincronização incremental é recuperável: um schema antigo ou uma resposta
       // interrompida não deve bloquear a operação nem deixar o status em erro permanente.
       try {
         moduleLoadState.transfers = false;
         var recovered = await loadTransferData();
+        if (!currentScope()) return;
         if (recovered) {
           renderTransferRealtimeViews();
           realtimeState.failureCount = 0;
@@ -10787,6 +11192,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           setSyncStatus("Conexão instável • nova tentativa", "warning");
         }
       } catch (recoveryError) {
+        if (!currentScope()) return;
         recordPerformanceError("live-transfer-recovery", recoveryError);
         realtimeState.failureCount += 1;
         retryDelay = nextRealtimeRetryDelay(realtimeState.failureCount);
@@ -10794,18 +11200,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
       realtimeState.refreshPending = false;
     } finally {
-      realtimeState.refreshRunning = false;
-      if (retryDelay) scheduleTransferRealtimeRefresh("retry", retryDelay);
-      else if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
+      if (currentScope()) {
+        realtimeState.refreshRunning = false;
+        if (retryDelay) scheduleTransferRealtimeRefresh("retry", retryDelay);
+        else if (realtimeState.refreshPending) scheduleTransferRealtimeRefresh("pending", 500);
+      }
     }
   }
 
-  function renderTransfers() {
+  function renderTransfers(options) {
     if (!$("transferencias")) return;
     invalidateTransferStatsCache();
     renderTransferTabVisibility();
     var activeSection = getActiveTransferSectionId();
-    renderTransferSelects();
+    if (!options || !options.preserveFilters) renderTransferSelects();
     if (activeSection === "transferPanelSection") renderTransferPanel();
     if (activeSection === "myTransfersSection") renderMyTransfers();
     if (activeSection === "taskCenterSection") renderTaskCenter();
@@ -10813,6 +11221,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (activeSection === "establishmentsSection") renderEstablishments();
     if (activeSection === "newTransferSection") renderTransferPreview();
     if (activeSection === "transferWorkSection") renderTransferWork();
+    if (activeSection === "inboundReceiptsSection" || activeSection === "inboundHistorySection") renderInboundReceipts(activeSection === "inboundHistorySection");
   }
 
   function getActiveTransferSectionId() {
@@ -10827,11 +11236,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var visible = target === "myTransfersSection" || isAdminOrSupervisor();
       if (target === "taskCenterSection") visible = isAdminOrSupervisor();
       if (target === "transferConferenceSection") visible = false;
+      if (target === "inboundReceiptsSection" || target === "inboundHistorySection") visible = !IS_CP_ALAMO && authState.currentUser && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
       if (target === "establishmentsSection") visible = isAdmin();
       button.hidden = !visible;
       if (button.classList.contains("active") && !visible) activateTransferTab("myTransfersSection");
     });
-    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR") activateTransferTab("myTransfersSection");
+    if (!workVisible && authState.currentUser && authState.currentUser.role === "OPERADOR" && ["inboundReceiptsSection", "inboundHistorySection"].indexOf(getActiveTransferSectionId()) < 0) activateTransferTab("myTransfersSection");
   }
 
   function activateTransferTab(sectionId) {
@@ -11007,6 +11417,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       mergeSelect,
       reassignControl,
       "<button class=\"edit-small\" data-transfer-view=\"" + transfer.id + "\" type=\"button\">Visualizar</button>",
+      communicationShareButton("TRANSFER", transfer.id),
+      communicationShareButton("TRANSFER_DIVERGENCE", transfer.id, "Compartilhar divergência"),
       canCancelTransfer(transfer) ? "<button class=\"remove-small\" data-transfer-cancel=\"" + transfer.id + "\" type=\"button\">Cancelar</button>" : "",
       isAdminOrSupervisor() ? "<button class=\"remove-small\" data-transfer-delete-permanent=\"" + transfer.id + "\" type=\"button\">Excluir</button>" : "",
       "</div>",
@@ -11887,6 +12299,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderMyTransfers() {
+    if ($("myTransfersSection") && whatsappAssistedEnabled) {
+      renderWhatsAppAssistedReview($("myTransfersSection"), whatsappAssistedContext());
+    }
     if (!$("myTransfersList")) return;
     var visible = getVisibleTransfers().filter(function (transfer) {
       return transfer.status !== "CANCELADA";
@@ -11995,7 +12410,28 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function whatsappAssistedContext() {
+    var actor = authState.currentUser && authState.currentUser.id;
+    var actorRole = authState.currentUser && authState.currentUser.role;
+    var warehouse = activeWarehouseCode();
+    var supervisor = !!isAdminOrSupervisor();
+    var live = whatsappAssistedEnabled;
+    return {
+      live: live,
+      intake: whatsappAssistedIntakeEnabled,
+      client: supabaseDb,
+      supervisor: supervisor,
+      allowed: !IS_CP_ALAMO && !!actor && (supervisor || (live && authState.currentUser.role === "OPERADOR")),
+      actor: actor,
+      warehouse: warehouse,
+      users: getTaskAssignableUsers(),
+      isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === actorRole && activeWarehouseCode() === warehouse && !!isAdminOrSupervisor() === supervisor; },
+      onChanged: function () { loadTaskCenterData({ force: true }).then(function () { renderTransfers(); renderOperatorTasksAlert(); }).catch(function (error) { recordPerformanceError("whatsapp-task-refresh", error); }); }
+    };
+  }
+
   function renderTaskCenter() {
+    if ($("taskCenterSection")) renderWhatsAppAssistedReview($("taskCenterSection"), whatsappAssistedContext());
     if (!$("taskCenterRows")) return;
     if (!isAdminOrSupervisor()) {
       $("taskCenterRows").innerHTML = '<div class="empty-state">Acesso restrito.</div>';
@@ -12044,6 +12480,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       (!archivedView && isFinalStatus ? ('<button class="secondary-button" data-task-archive="' + task.id + '" type="button">Arquivar</button>') : ''),
       (archivedView && isAdminOrSupervisor() ? ('<button class="secondary-button" data-task-unarchive="' + task.id + '" type="button">Desarquivar</button>') : ''),
       '<button class="secondary-button" data-task-history="' + task.id + '" type="button">Histórico</button>',
+      communicationShareButton("TASK", task.id),
       '</div>',
       '</article>'
     ].join("");
@@ -12131,7 +12568,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function finalizedTransferRowHtml(transfer) {
     var report = getTransferFinalReport(transfer);
     return [
-      "<tr>",
+      '<tr class="' + (transfer.status === "FINALIZADA" ? "transfer-ready" : "") + '">',
       "<td><strong>" + escapeHtml(transferDisplayName(transfer)) + "</strong><br><span class=\"muted\">" + escapeHtml(transfer.code || "-") + "</span></td>",
       "<td>" + escapeHtml(transferRouteDestinationLabel(transfer)) + "</td>",
       "<td>" + escapeHtml(transfer.responsibleName || "-") + "</td>",
@@ -12366,6 +12803,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
+      "<p><strong>Comunicação Caixa/Estoque:</strong> " + escapeHtml(JSON.stringify(operationalDiagnostics().filter(function (entry) { return entry.warehouse === warehouse; }).slice(-8))) + ".</p>",
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
       "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
       "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",
@@ -13918,7 +14356,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var items = sortTransferItemsForWork(getTransferItems(transfer.id));
     var activeItem = getTransferActiveItem(items, mode);
     var selectedCandidate = items.find(function (item) { return item.id === transferState.selectedItemId; });
-    if (!selectedCandidate || !isTransferItemActionable(selectedCandidate, mode)) {
+    var keepAuditedPackingSelection = !IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer) && Boolean(selectedCandidate);
+    if (!selectedCandidate || (!keepAuditedPackingSelection && !isTransferItemActionable(selectedCandidate, mode))) {
       transferState.selectedItemId = activeItem ? activeItem.id : "";
     }
     var selectedForQty = items.find(function (item) { return item.id === transferState.selectedItemId; });
@@ -13972,6 +14411,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("transferWorkRows").textContent = items.length ? items.map(function (item) { return item.sku; }).join(",") : "";
     renderTransferProductList(items);
     renderCurrentTransferItem();
+    if (!IS_CP_ALAMO) packingController().render(transfer, transferState.items.find(function (entry) { return entry.id === transferState.selectedItemId; }));
     renderAdminTransferProgress(transfer, mode);
     renderTransferFinalReport(transfer);
   }
@@ -14509,6 +14949,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function saveTransferItemOperationalQty(item, transfer, mode, qty, button) {
+    if (!IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var auditReason = window.prompt("Motivo obrigatório do ajuste:", "");
+      if (!auditReason || !auditReason.trim()) return;
+      var auditFactor = item.unitsPerBox || 0;
+      var legacyBoxCorrection = isBoxQuantityItem(item) && !auditFactor && item.packedQty > 0 && !item.packedUnits;
+      if (legacyBoxCorrection) {
+        auditFactor = Number(window.prompt("Informe UN/CX para a revisão explícita das caixas já registradas. A origem anterior continuará sem rastreio:", ""));
+        if (!Number.isInteger(auditFactor) || auditFactor <= 0) return;
+      }
+      await packingController().perform(transfer, item, { operation: legacyBoxCorrection ? "CORRECAO" : qty === 0 ? "REMOCAO_DA_CAIXA" : ["CORRECAO_SOLICITADA", "EM_CORRECAO"].indexOf(transfer.status) >= 0 ? "REVALIDACAO" : "AJUSTE_QUANTIDADE", quantity: qty, units_per_box: auditFactor, code_method: "NAO_IDENTIFICADO", reason: auditReason });
+      return;
+    }
     var actionKey = "edit-transfer-item:" + item.id + ":" + mode;
     if (!beginTransferAction(actionKey, button, "Salvando...")) return;
     item = Object.assign({}, item);
@@ -14729,6 +15181,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var visible = isAdminOrSupervisor() && isFinalTransferStatus(transfer.status);
     $("transferFinalReportPanel").hidden = !visible;
     if (!visible) return;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      packingController().report(transfer);
+      return;
+    }
     var report = getTransferFinalReport(transfer);
     var isConference = isXmlConferenceTransfer(transfer);
     var expectedTotal = report.items.reduce(function (sum, item) { return sum + (isConference ? Number(item.requestedQty || 0) : getTransferExpectedUnits(item)); }, 0);
@@ -15196,7 +15652,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       transfer: transfer,
       items: originalItems,
       extraItems: extraItems,
-      events: [],
+      events: transferState.events.filter(function (event) { return event.transfer_id === transfer.id; }),
       divergences: divergences,
       stats: stats,
       startedAt: start,
@@ -15205,8 +15661,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       separationDurationSeconds: separationDurationSeconds,
       packingDurationSeconds: packingDurationSeconds,
       finalBoxCount: getTransferFinalBoxCount(transfer),
-      scannedEvents: 0,
-      manualEvents: 0
+      scannedEvents: transferState.events.filter(function (event) { return event.transfer_id === transfer.id && event.event_type === "LEITURA_UNITARIA"; }).length,
+      manualEvents: transferState.events.filter(function (event) { return event.transfer_id === transfer.id && event.quantity_method === "MANUAL"; }).length
     };
   }
 
@@ -15890,6 +16346,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function renderSkuSearch() {
+    if (authState.currentUser && authState.currentUser.role === "CAIXA") return renderCaixaItemLookup();
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
@@ -15955,6 +16412,43 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("allocateSkuSearchButton").hidden = isAttendant();
     clearSkuSearchInput();
     recordPerformanceMetric("lastSkuQueryMs", queryStartedAt);
+  }
+
+  async function renderCaixaItemLookup() {
+    var sku = firstSkuValue($("skuSearchInput").value);
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser.id;
+    var sequence = ++skuSearchRequestSeq;
+    var hub = $("skuOperationalHub");
+    $("skuResults").replaceChildren();
+    $("skuResultCards").replaceChildren();
+    $("skuResultActions").hidden = true;
+    $("allocateSkuSearchButton").hidden = true;
+    hub.replaceChildren(); hub.hidden = true;
+    if (!/^\d{4,8}$/.test(sku)) { setStatus("skuSearchStatus", "Informe ou bipe um SKU com 4 a 8 dígitos.", "error"); return; }
+    setStatus("skuSearchStatus", "Consultando item...", "warning");
+    try {
+      var response = await supabaseDb.rpc("lookup_wms_caixa_item", { code: warehouse, product_code: sku });
+      if (!authState.currentUser || authState.currentUser.id !== actor || authState.currentUser.role !== "CAIXA" || activeWarehouseCode() !== warehouse || sequence !== skuSearchRequestSeq) return;
+      if (response.error) throw response.error;
+      var item = response.data;
+      if (!item || !item.found) { setStatus("skuSearchStatus", "Item não encontrado.", "warning"); return; }
+      var card = skuHubTextElement("section", "", "sku-hub-card");
+      card.appendChild(skuHubTextElement("h3", sku + " — " + (item.name || "Produto sem nome")));
+      var grid = skuHubTextElement("div", "", "sku-hub-grid");
+      grid.appendChild(skuHubTile("Saldo Loja", item.storeAvailable === null ? "Não importado" : formatQty(item.storeAvailable)));
+      grid.appendChild(skuHubTile("Quantidade disponível CAPTAÇÃO", item.captureAvailable === null ? "Não importado" : formatQty(item.captureAvailable)));
+      card.appendChild(grid);
+      var updated = item.updatedAt ? new Date(item.updatedAt) : null;
+      card.appendChild(skuHubTextElement("p", updated ? "Base atualizada em " + updated.toLocaleString("pt-BR") : "Sem data de atualização disponível."));
+      if (updated && Date.now() - updated.getTime() > 4 * 60 * 60 * 1000) card.appendChild(skuHubTextElement("p", "Atenção: base sem atualização há mais de 4 horas. Confirme a disponibilidade com o estoque."));
+      var requestButton = skuHubTextElement("button", "Solicitar produto ou ajuste urgente", "primary-button");
+      requestButton.type = "button"; requestButton.addEventListener("click", function () { showScreen("reposicao"); });
+      card.appendChild(requestButton); hub.replaceChildren(card); hub.hidden = false;
+      setStatus("skuSearchStatus", "Item consultado no estoque " + warehouse + ".", "success");
+    } catch (error) {
+      if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse && sequence === skuSearchRequestSeq) setStatus("skuSearchStatus", "Não foi possível consultar o item. Tente novamente.", "error");
+    }
   }
 
   function clearSkuSearchInput() {
@@ -16119,43 +16613,125 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     openReplenishmentSuggestionModal(suggestion);
   }
 
-  function renderShelfSearch() {
+  var shelfSearchRequestSeq = 0;
+  var shelfBarcodeController = null;
+
+  function shelfReadOnlyCardHtml(binding, quantityLabel) {
+    return [
+      '<article class="sku-location-card">',
+      '<div class="sku-card-head"><div><strong>' + escapeHtml(binding.sku) + '</strong>',
+      '<span>' + escapeHtml(binding.productName || findProductName(binding.sku) || "Produto sem descrição") + '</span></div></div>',
+      '<div class="sku-location-code">' + escapeHtml(binding.locationCode || "") + '</div>',
+      '<div class="sku-card-meta"><span>Saldo CAPTAÇÃO neste endereço<strong>' + escapeHtml(quantityLabel) + '</strong></span>',
+      '<span>Área<strong>' + escapeHtml(binding.areaName || "-") + '</strong></span></div>',
+      '<div class="result-actions"><button class="secondary-button" data-shelf-sku="' + escapeHtml(binding.sku) + '" type="button">Consultar SKU</button></div>',
+      '</article>'
+    ].join("");
+  }
+
+  async function renderShelfSearch() {
     var parsed = normalizeLocation($("shelfSearchInput").value);
+    var requestId = ++shelfSearchRequestSeq;
+    var currentActor = authState.currentUser && authState.currentUser.id;
+    var currentWarehouse = activeWarehouseCode();
+    var validScope = function () {
+      return requestId === shelfSearchRequestSeq &&
+        authState.currentUser && authState.currentUser.id === currentActor &&
+        activeWarehouseCode() === currentWarehouse &&
+        getActiveScreenId() === "consultaPrateleira";
+    };
     if (!parsed.valid) {
-      setStatus("shelfSearchStatus", "Codigo de prateleira invalido.", "error");
-      $("shelfResults").innerHTML = "";
-      $("shelfSummary").innerHTML = "";
-      $("shelfResultCards").innerHTML = "";
+      setStatus("shelfSearchStatus", "Código de endereço inválido. Leia uma etiqueta WMS ou digite R01-RK01-L01-A.", "error");
+      $("shelfResults").replaceChildren();
+      $("shelfSummary").replaceChildren();
+      $("shelfResultCards").replaceChildren();
       return;
     }
     $("shelfSearchInput").value = parsed.code;
+    setStatus("shelfSearchStatus", "Consultando produtos da prateleira " + parsed.code + " no estoque " + currentWarehouse + "...", "warning");
     var list = findByLocation(parsed.code);
-    addHistory("Prateleira consultada", "", parsed.code, list.length ? "Consulta encontrou SKUs." : "Nenhum SKU encontrado.");
-    if (!list.length) {
-      setStatus("shelfSearchStatus", "Nenhum SKU encontrado nesta prateleira.", "warning");
-      $("shelfResults").innerHTML = "";
-      $("shelfSummary").innerHTML = "";
-      $("shelfResultCards").innerHTML = "";
-      saveData();
-      return;
+    var quantities = Object.create(null);
+    var dataWarning = "";
+
+    if (isSupabaseReady() && canUseNetwork()) {
+      try {
+        var responses = await Promise.all([
+          runSupabaseRequestWithRetry("shelf-current-products", function () {
+            return supabaseDb.from("wms_bindings").select("*")
+              .eq("warehouse_code", currentWarehouse)
+              .eq("location_code", parsed.code)
+              .order("updated_at", { ascending: false })
+              .limit(250);
+          }),
+          runSupabaseRequestWithRetry("shelf-current-quantity", function () {
+            return supabaseDb.from("wms_stock_positions")
+              .select("codigo_material,total_disponivel")
+              .eq("warehouse_code", currentWarehouse)
+              .eq("codigo_endereco", parsed.code)
+              .eq("source_type", "CAPTACAO")
+              .eq("active", true)
+              .eq("archived", false)
+              .limit(250);
+          })
+        ]);
+        if (!validScope()) return;
+        if (responses[0].error) throw responses[0].error;
+        list = expandDbBindingRows(responses[0].data || []).filter(bindingMatchesActiveWarehouse);
+        if (!responses[1].error) quantities = shelfAvailableBySku(responses[1].data || []);
+        else {
+          dataWarning = " Saldos não disponíveis no momento.";
+          recordPerformanceError("consulta-prateleira-saldos", responses[1].error);
+        }
+      } catch (error) {
+        if (!validScope()) return;
+        dataWarning = " A consulta online falhou; exibindo dados locais que podem estar desatualizados.";
+        recordPerformanceError("consulta-prateleira", error);
+      }
+    } else {
+      dataWarning = " Sem conexão; exibindo dados locais que podem estar desatualizados.";
     }
+    if (!validScope()) return;
+    list = uniqueShelfProducts(list);
     refreshProductNamesForBindings(list);
-    var hasShelfConflict = list.some(function (binding) { return findBySku(binding.sku).length > 1; });
-    setStatus("shelfSearchStatus", hasShelfConflict ? "Prateleira encontrada com SKU em conflito de localizacao." : list.length + " SKU(s) encontrado(s) nesta prateleira.", hasShelfConflict ? "warning" : "success");
+    addHistory("Prateleira consultada", "", parsed.code, list.length ? "Consulta encontrou SKUs." : "Nenhum SKU vinculado.");
+
     $("shelfSummary").innerHTML = [
       summaryChip("Prateleira", parsed.code),
       summaryChip("Rua", pad2(parsed.rua)),
       summaryChip("Rack", parsed.rack),
       summaryChip("Linha", parsed.linha),
-      summaryChip("Total de SKUs", list.length)
+      summaryChip("SKUs vinculados", list.length)
     ].join("");
-    $("shelfResults").innerHTML = list.map(shelfTableRowHtml).join("");
-    bindActionButtons($("shelfResults"));
-    $("shelfResultCards").innerHTML = list.map(function (binding) {
-      return skuLocationCardHtml(binding, false);
+    if (!list.length) {
+      setStatus("shelfSearchStatus",
+        "Nenhum produto vinculado ao endereço " + parsed.code + " nesta unidade." + dataWarning,
+        dataWarning ? "warning" : "warning");
+      $("shelfResults").replaceChildren();
+      $("shelfResultCards").replaceChildren();
+      void saveData();
+      return;
+    }
+    setStatus("shelfSearchStatus",
+      list.length + " produto(s) vinculado(s) à prateleira " + parsed.code + "." + dataWarning,
+      dataWarning ? "warning" : "success");
+    $("shelfResults").innerHTML = list.map(function (binding) {
+      return [
+        "<tr><td>" + escapeHtml(binding.sku) + "</td>",
+        "<td>" + escapeHtml(binding.productName || findProductName(binding.sku) || "-") + "</td>",
+        "<td>" + escapeHtml(binding.locationCode || "") + "</td>",
+        "<td>" + pad2(binding.rua) + "</td>",
+        "<td>" + Number(binding.rack) + "</td>",
+        "<td>" + Number(binding.linha) + "</td>",
+        "<td>" + escapeHtml(binding.letra || "") + "</td>",
+        "<td>" + escapeHtml(binding.areaName || "-") + "</td>",
+        "<td>" + escapeHtml(formatShelfQuantity(quantities, binding.sku)) + "</td>",
+        '<td><button class="secondary-button" data-shelf-sku="' + escapeHtml(binding.sku) + '" type="button">Consultar SKU</button></td></tr>'
+      ].join("");
     }).join("");
-    bindActionButtons($("shelfResultCards"));
-    saveData();
+    $("shelfResultCards").innerHTML = list.map(function (binding) {
+      return shelfReadOnlyCardHtml(binding, formatShelfQuantity(quantities, binding.sku));
+    }).join("");
+    void saveData();
   }
 
   function skuLocationCardHtml(binding, latest) {
@@ -16176,6 +16752,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("") : "";
     return [
       "<article class=\"sku-location-card" + (latest ? " latest" : "") + "\">",
+      communicationShareButton("LOCATION", binding.id, "Compartilhar localização"),
       "<div class=\"sku-card-head\">",
       "<div><strong>" + escapeHtml(binding.sku) + "</strong><span>" + escapeHtml(productName) + "</span></div>",
       latest ? "<span class=\"latest-pill\">Mais recente</span>" : "",
@@ -16501,6 +17078,19 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return card;
   }
 
+  async function refreshAddressExportBindings() {
+    if (!isSupabaseReady() || !canUseNetwork()) throw new Error("Conecte para consultar os enderecos atuais antes de exportar.");
+    var warehouseCode = activeWarehouseCode();
+    var actorId = authState.currentUser && authState.currentUser.id;
+    var remoteRows = await fetchWarehouseRows("wms_bindings", "updated_at", false);
+    if (warehouseCode !== activeWarehouseCode() || !authState.currentUser || actorId !== authState.currentUser.id) {
+      throw new Error("Usuario ou estoque mudou durante a leitura. Repita a exportacao.");
+    }
+    var bindings = expandDbBindingRows(remoteRows).filter(bindingMatchesActiveWarehouse);
+    state.bindings = bindings;
+    return warehouseCode;
+  }
+
   async function exportExcel() {
     if (!ensureActiveWarehouse()) return;
     if (!window.XLSX) {
@@ -16511,6 +17101,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var actionButton = $("exportExcelButton");
     if (!beginTransferAction("export-addresses", actionButton, "Exportando...")) return;
     try {
+    setStatus("exportStatus", "Consultando os enderecos atuais do estoque...", "warning");
+    var exportWarehouseCode = await refreshAddressExportBindings();
     var validation = validateAddressExportState();
     if (!validation.valid) {
       if (validation.type === "sku-conflict" && isAdmin()) {
@@ -16572,17 +17164,23 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var workbook = window.XLSX.utils.book_new();
     window.XLSX.utils.book_append_sheet(workbook, worksheet, "LinhaSeparacao");
     window.XLSX.utils.book_append_sheet(workbook, legendSheet, "Legenda");
-    var exportWarehouseCode = activeWarehouseCode();
     var fileName = "LinhaSeparacao_" + exportWarehouseCode + "_Enderecamento_" + dateForFileName(new Date()) + ".xlsx";
     window.XLSX.writeFile(workbook, fileName);
-    addHistory(
+    var exportCacheSnapshot = { bindings: state.bindings.slice(), products: Object.assign({}, state.products) };
+    await recordAuthHistory(
       "Excel exportado",
       "",
       "",
       exportRows.length + " linha(s) exportada(s) no modelo LinhaSeparacao." +
         (resolvedLocationChanges ? " " + resolvedLocationChanges + " SKU(s) com localização antiga foram mantidos apenas no endereço mais recente." : "")
     );
-    var savedBeforeCacheRefresh = await saveData();
+    var savedBeforeCacheRefresh = false;
+    try {
+      await writeModuleCacheForWarehouse("coreData", exportWarehouseCode, exportCacheSnapshot);
+      savedBeforeCacheRefresh = true;
+    } catch (cacheError) {
+      recordPerformanceError("export-address-cache", cacheError);
+    }
     var cacheRefreshPublished = false;
     if (savedBeforeCacheRefresh) {
       cacheRefreshPublished = await publishAddressCacheInvalidation(exportWarehouseCode, fileName, exportRows.length, "EXPORTACAO_ENDERECAMENTO");
@@ -16593,6 +17191,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var exportStatusType = savedBeforeCacheRefresh && cacheRefreshPublished ? "success" : "warning";
     if ($("exportStatus")) setStatus("exportStatus", exportMessage, exportStatusType);
     showToast(exportMessage, exportStatusType);
+    } catch (error) {
+      var message = "Nao foi possivel exportar os enderecos atuais: " + formatSupabaseError(error);
+      setStatus("exportStatus", message, "error");
+      showToast(message, "error");
     } finally {
       endTransferAction(actionButton);
     }
@@ -17742,7 +18344,26 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return message.indexOf("duplicate key value") >= 0 || message.indexOf("23505") >= 0 || message.indexOf("unique constraint") >= 0;
   }
 
+  function returnFromTransferWork() {
+    var origin = transferState.workReturnView;
+    var sameScope = origin && origin.actor === authState.currentUser && origin.warehouse === activeWarehouseCode();
+    var fallback = isAdminOrSupervisor() ? "transferPanelSection" : "myTransfersSection";
+    var allowed = sameScope && origin.section !== "transferWorkSection" && $(origin.section)
+      && (isAdminOrSupervisor() || origin.section === "myTransfersSection");
+    var target = allowed ? origin.section : fallback;
+    transferState.workReturnView = null;
+    activateTransferTab(target);
+    renderTransfers({ preserveFilters: true });
+    window.requestAnimationFrame(function () {
+      if (getActiveScreenId() === "transferencias" && getActiveTransferSectionId() === target
+        && (!origin || origin.actor === authState.currentUser && origin.warehouse === activeWarehouseCode())) {
+        window.scrollTo({ top: allowed ? origin.scroll : 0, behavior: "instant" });
+      }
+    });
+  }
+
   async function openTransferWork(transferId, options) {
+    var origin = { section: getActiveTransferSectionId(), scroll: window.scrollY || 0, warehouse: activeWarehouseCode(), actor: authState.currentUser };
     options = options || {};
     var transfer = getTransferById(transferId);
     if (!transfer) {
@@ -17763,10 +18384,14 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     setStatus("transferWorkStatus", "Carregando itens da transferencia...", "warning");
     var loadedItems = await loadTransferItemsForTransfer(transferId, { force: options.forceItems === true });
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode()) return;
     if (!loadedItems.length) {
       showToast("Transferencia sem itens carregados. Atualize e tente novamente.", "warning");
     }
     transferState.activeTransferId = transferId;
+    transferState.events = [];
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) await packingController().history(transfer);
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode() || transferState.activeTransferId !== transferId) return;
     transferState.selectedItemId = "";
     transferState.manualSeparationQty = false;
     if ($("transferFinalBoxesInput")) $("transferFinalBoxesInput").value = "";
@@ -17809,10 +18434,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     } else {
       await refreshTransferStockSuggestion(transferId, { persist: false, render: false });
     }
+    if (origin.actor !== authState.currentUser || origin.warehouse !== activeWarehouseCode()) return;
+    if (origin.section !== "transferWorkSection") transferState.workReturnView = origin;
     activateTransferTab("transferWorkSection");
     renderTransferWork();
     setStatus("transferWorkStatus", options.viewOnly ? "Visualizacao aberta. A transferencia nao foi iniciada." : "Tarefa aberta. Siga a etapa atual.", options.viewOnly ? "success" : "warning");
     window.setTimeout(function () {
+      if (getActiveScreenId() !== "transferencias" || getActiveTransferSectionId() !== "transferWorkSection" || transferState.activeTransferId !== transferId) return;
       if (transferState.activeWorkMode === "MONTAGEM") $("transferScanInput").focus();
       else if ($("transferCurrentItem")) $("transferCurrentItem").scrollIntoView({ block: "start", behavior: "smooth" });
     }, 80);
@@ -17912,9 +18540,33 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function detectTransferInputType() {
-    var value = $("transferScanInput").value || "";
-    var elapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
-    return value.length >= 5 && elapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
+    if (IS_CP_ALAMO) {
+      var legacyValue = $("transferScanInput").value || "";
+      var legacyElapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
+      return legacyValue.length >= 5 && legacyElapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
+    }
+    return $("packingCodeMode") && $("packingCodeMode").value === "MODO_SCANNER" ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
+  }
+
+  var outboundPackingController;
+  function packingController() {
+    if (!outboundPackingController) outboundPackingController = createPackingController({
+      client: function () { return supabaseDb; },
+      scope: function () { return [(authState.currentUser || {}).id || "", activeWarehouseCode(), transferState.activeTransferId || ""].join(":"); },
+      warehouse: activeWarehouseCode,
+      items: getTransferItems,
+      events: function () { return transferState.events; },
+      setEvents: function (rows) { transferState.events = rows; },
+      accept: function (result) {
+        if (result.item) applyLocalTransferItemUpdate(fromDbTransferItem(result.item));
+        if (result.transfer) applyLocalTransferUpdate(fromDbTransfer(result.transfer));
+        if (result.event && !transferState.events.some(function (event) { return event.id === result.event.id; })) transferState.events.push(result.event);
+        invalidateTransferStatsCache();
+      },
+      refresh: renderTransferWork,
+      status: function (message, type) { setStatus("transferWorkStatus", message, type); }
+    });
+    return outboundPackingController;
   }
 
   function clearTransferInputs() {
@@ -17998,6 +18650,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     transferState.selectedItemId = item.id;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer) && (transferState.activeWorkMode || getTransferWorkMode(transfer)) === "MONTAGEM") {
+      var capturedCode = $("transferScanInput").value.trim();
+      $("transferScanInput").value = "";
+      var capturedOk = await packingController().locate(transfer, item, capturedCode);
+      if (capturedOk && $("packingQuantityMode").value !== "UNITARIA") {
+        $("transferScanInput").value = item.sku;
+        $("transferQuantityInput").focus();
+      } else $("transferScanInput").focus();
+      return;
+    }
     $("transferScanInput").value = item.sku;
     $("transferQuantityInput").value = "";
     renderCurrentTransferItem();
@@ -18035,6 +18697,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function addExtraTransferItem(transfer, sku, qty, observation, inputType) {
+    if (!IS_CP_ALAMO && transferState.activeWorkMode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: sku, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(), code_read: true });
+      if (extraSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
+      return;
+    }
     var now = new Date().toISOString();
     var mode = transferState.activeWorkMode;
     var item = {
@@ -18188,6 +18855,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     if (!transfer || !item) {
       setStatus("transferWorkStatus", mode === "MONTAGEM" ? "Bipe um SKU valido antes de confirmar." : "Selecione um item para separar.", "error");
+      return;
+    }
+    if (!IS_CP_ALAMO && mode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
+      var auditQty = Number($("transferQuantityInput").value);
+      if ($("transferQuantityInput").value.trim() === "" || !Number.isInteger(auditQty) || auditQty < 0) {
+        setStatus("transferWorkStatus", "Informe uma quantidade inteira não negativa.", "error"); return;
+      }
+      var auditBox = isBoxQuantityItem(item) ? readTransferBoxPackingInput(item, auditQty) : null;
+      if (auditBox && !auditBox.valid) { setStatus("transferWorkStatus", auditBox.message || "Confira a conversão UN/CX.", "error"); return; }
+      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, $("transferScanInput").value.trim()), raw_code: $("transferScanInput").value.trim(), code_method: packingController().method(), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
+      if (auditSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
     if (mode === "MONTAGEM") renderTransferBoxFields();
@@ -18468,6 +19146,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer || isFinalTransferStatus(transfer.status)) return;
     var finalBoxCount = readFinalBoxCountInput();
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      if (finalBoxCount === null) { setStatus("transferWorkStatus", "Informe a quantidade final de caixas.", "error"); return; }
+      var auditReport = packingAuditReport(getTransferItems(transfer.id), transferState.events);
+      var auditDivergence = !auditReport.traceable || auditReport.rows.some(function (row) { return row.difference !== 0 || row.item.isExtra; });
+      var finalReason = auditDivergence ? window.prompt("Há divergência ou origem não rastreada. Motivo para finalizar com divergência:", "") : "";
+      if (auditDivergence && (!finalReason || !finalReason.trim())) return;
+      if (!window.confirm("Finalizar conferência" + (auditDivergence ? " com divergência" : "") + "?")) return;
+      await packingController().perform(transfer, null, { operation: "FINALIZACAO", final_boxes: finalBoxCount, expected_updated_at: transfer.updatedAt, allow_divergence: auditDivergence, reason: finalReason });
+      return;
+    }
     var hasPackedItems = getTransferItems(transfer.id).some(function (item) { return Number(item.packedQty || 0) > 0; });
     if (finalBoxCount === null || (hasPackedItems && finalBoxCount === 0) || (!hasPackedItems && finalBoxCount > 0)) {
       setStatus("transferWorkStatus", hasPackedItems ? "Informe a quantidade final de caixas, maior que zero." : "Nenhum item na caixa. Informe zero caixas para finalizar sem envio.", "error");
@@ -18580,6 +19268,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var input = document.querySelector("[data-transfer-adjust-input=\"" + itemId + "\"]");
     if (!item || !transfer || !input) return;
     var qty = parseQuantity(input.value);
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      await saveTransferItemOperationalQty(item, transfer, "MONTAGEM", qty, null);
+      return;
+    }
     if (qty < 0) {
       setStatus("xmlConferenceStatus", "Informe uma quantidade válida.", "error");
       input.focus();
@@ -18630,6 +19322,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var item = transferState.items.find(function (entry) { return entry.id === itemId; });
     var transfer = item ? getTransferById(item.transferId) : null;
     if (!item || !transfer || !item.isExtra) return;
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
+      await saveTransferItemOperationalQty(item, transfer, "MONTAGEM", 0, null);
+      return;
+    }
     if (!window.confirm("Remover o item extra " + item.sku + " desta conferência?")) return;
     var response = await supabaseDb.from("wms_transfer_items").delete().eq("id", item.id);
     if (response.error) throw response.error;
@@ -18688,6 +19384,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
+    if (transfer.packingAuditVersion > 0 && !IS_CP_ALAMO) {
+      showToast("Transferência com auditoria preservada. Registre correções em vez de excluir o histórico.", "warning");
+      return false;
+    }
     if (!transferBelongsToActiveWarehouse(transfer)) {
       showToast("Esta transferencia pertence a outro estoque.", "error");
       return false;
