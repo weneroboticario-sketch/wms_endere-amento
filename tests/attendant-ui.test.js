@@ -17,7 +17,7 @@ test("ATENDENTE can navigate only to SKU consultation and replenishment", () => 
 
 test("attendant replenishment view contains only requests created by the current user", () => {
   assert.match(script, /function getReplenishmentRequestsForCurrentView\(\)[\s\S]*?request\.solicitadoPorId === authState\.currentUser\.id/);
-  assert.match(script, /limited\.map\(attendantView \? attendantReplenishmentCardHtml : replenishmentCardHtml\)/);
+  assert.match(script, /attendantView \? attendantReplenishmentCardHtml\(item\) : replenishmentCardHtml\(item\)/);
   assert.match(script, /if \(isAttendant\(\)\) \{[\s\S]*?replenishmentRequestCancellation/);
   assert.match(script, /Atendentes podem criar, acompanhar e solicitar o cancelamento dos proprios pedidos/);
 });

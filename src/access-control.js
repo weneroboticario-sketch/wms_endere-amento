@@ -1,5 +1,5 @@
-export const ACCESS_REQUEST_ROLES = Object.freeze(["OPERADOR", "ATENDENTE"]);
-export const STORE_STAFF_ROLES = Object.freeze(["OPERADOR", "ATENDENTE"]);
+export const ACCESS_REQUEST_ROLES = Object.freeze(["OPERADOR", "ATENDENTE", "CAIXA"]);
+export const STORE_STAFF_ROLES = Object.freeze(["OPERADOR", "ATENDENTE", "CAIXA"]);
 
 export function normalizeAccessRequestRole(value) {
   const role = String(value || "").trim().toUpperCase();

@@ -18,6 +18,7 @@ test("freshness and attention thresholds are configurable and missing data is no
   assert.equal(captacaoFreshness(batch,{freshHours:2,staleHours:3},now),"DESATUALIZADO");
   assert.equal(captacaoFreshness({...batch,status:"FAILED"},undefined,now),"ERRO");
   assert.equal(captacaoFreshness(null),"DESATUALIZADO");
+  assert.equal(captacaoFreshness({...batch,finished_at:'invalid'}),"DESATUALIZADO");
   assert.equal(warehouseAttention({active:1,available:2,pending:1,freshness:"ATUALIZADO"}),"NORMAL");
   assert.equal(warehouseAttention({active:0}),"CRITICO");
 });

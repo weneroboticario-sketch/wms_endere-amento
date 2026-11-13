@@ -1,0 +1,120 @@
+#caixaRequestsRoot { color:#112544; padding:14px 18px; }
+#caixaRequestsRoot [hidden] { display:none !important; }
+#caixaRequestsRoot .ca-header h2 { font-size:23px; letter-spacing:-.35px; margin:0 0 4px; }
+#caixaRequestsRoot .ca-header p { font-size:12px; color:#64748b; margin:0; }
+#caixaRequestsRoot .ca-cashier-layout { display:grid; grid-template-columns:minmax(0,1.85fr) minmax(280px,1fr); gap:16px; margin-top:16px; align-items:start; }
+#caixaRequestsRoot .ca-composer-panel, #caixaRequestsRoot .ca-pending-panel { min-width:0; border:1px solid #dce6f1; background:#fff; border-radius:10px; padding:16px; }
+#caixaRequestsRoot .ca-quick-form { border:0; margin:0; padding:0; }
+#caixaRequestsRoot .ca-quick-form legend { font-size:16px; font-weight:700; padding:0 0 12px; }
+#caixaRequestsRoot .ca-quick-form label { font-size:12px; font-weight:600; display:block; margin:10px 0; }
+#caixaRequestsRoot .ca-quick-form input:not([type=checkbox]) { width:100%; max-width:none; min-height:40px; margin:6px 0 0; box-sizing:border-box; }
+#caixaRequestsRoot .ca-operation { display:flex; gap:6px; margin-bottom:12px; }
+#caixaRequestsRoot .ca-operation button { flex:1; margin:0; padding:9px 10px; font-size:12px; min-height:38px; }
+#caixaRequestsRoot .ca-operation button[aria-pressed=true] { background:#0864e9; color:white; border-color:#0864e9; }
+#caixaRequestsRoot .ca-product-preview { background:#f3f7fc; border:1px solid #e0e8f2; padding:12px; border-radius:8px; margin:12px 0; }
+#caixaRequestsRoot .ca-product-preview strong { font-size:18px; }
+#caixaRequestsRoot .ca-product-preview p { font-size:13px; margin:5px 0; }
+#caixaRequestsRoot .ca-product-preview small { font-size:11px; color:#64748b; display:block; margin-top:7px; line-height:1.4; }
+#caixaRequestsRoot .ca-product-balances { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+#caixaRequestsRoot .ca-product-balances span { background:#fff; border-radius:6px; padding:6px 9px; font-size:12px; font-weight:600; }
+#caixaRequestsRoot .ca-stepper { display:flex; align-items:center; max-width:210px; gap:0; margin-top:7px; }
+#caixaRequestsRoot .ca-stepper button { margin:0; width:42px; min-height:40px; padding:0; border:1px solid #d0ddeb; background:#f4f8fc; font-size:20px; color:#195293; }
+#caixaRequestsRoot .ca-stepper input { margin:0 !important; width:85px !important; border-radius:0; text-align:center; font-weight:700; }
+#caixaRequestsRoot .ca-default-reason, #caixaRequestsRoot .ca-balance-warning { font-size:11px; line-height:1.5; color:#667b95; margin:8px 0; }
+#caixaRequestsRoot .ca-balance-warning { color:#916000; }
+#caixaRequestsRoot .ca-balance-warning:empty { display:none; }
+#caixaRequestsRoot .ca-optional-notes { margin:12px 0; font-size:12px; color:#42628a; }
+#caixaRequestsRoot .ca-optional-notes summary { cursor:pointer; }
+#caixaRequestsRoot .ca-optional-notes textarea { width:100%; max-width:none; min-height:55px; margin-top:7px; }
+#caixaRequestsRoot .ca-request-submit { width:100%; min-height:40px; margin:8px 0 0; background:#0864e9; border-color:#0864e9; color:white; font-size:13px; }
+#caixaRequestsRoot .ca-pending-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px; }
+#caixaRequestsRoot .ca-pending-heading h3 { margin:0; font-size:15px; }
+#caixaRequestsRoot .ca-pending-heading > strong { background:#eef4ff; color:#075dde; border-radius:20px; padding:4px 9px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-row { border-top:1px solid #e4ebf4; padding:11px 0; }
+#caixaRequestsRoot .ca-pending-row > div { display:flex; justify-content:space-between; font-size:13px; }
+#caixaRequestsRoot .ca-pending-row p { margin:5px 0; font-size:12px; }
+#caixaRequestsRoot .ca-pending-row :is(small,time) { display:block; color:#62758c; font-size:11px; line-height:1.5; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-pending-row button { font-size:11px; margin:7px 0 0; padding:5px 9px; min-height:30px; }
+#caixaRequestsRoot .ca-pending-row .ca-pending-actions { display:flex; justify-content:flex-start; flex-wrap:wrap; gap:5px; }
+#caixaRequestsRoot .ca-pending-actions button { width:auto; flex:0 1 auto; margin:5px 0 0; min-height:34px; max-width:100%; }
+#caixaRequestsRoot .ca-pending-actions .primary-button { background:#0864e9; color:white; border-color:#0864e9; }
+#caixaRequestsRoot .ca-new-adjustment { width:100%; margin:0 0 8px; min-height:36px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-status { font-weight:700; color:#165ba7; }
+#caixaRequestsRoot .ca-pending-failure textarea { box-sizing:border-box; width:100%; min-width:0; max-width:100%; margin:8px 0 0; min-height:60px; font-size:12px; }
+#caixaRequestsRoot .ca-side-feedback { font-size:12px; color:#165ba7; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-side-feedback:empty { display:none; }
+#caixaRequestsRoot .ca-pending-history { border-top:1px solid #e4ebf4; margin-top:12px; padding-top:12px; font-size:12px; }
+#caixaRequestsRoot .ca-pending-history summary { cursor:pointer; font-weight:600; }
+#caixaRequestsRoot .ca-history-row { padding:9px 0; border-bottom:1px solid #edf2f8; }
+#caixaRequestsRoot .ca-history-row small { display:block; font-size:11px; margin-top:4px; color:#62758c; }
+#caixaRequestsRoot .ca-pending-limit { display:block; font-size:10px; color:#7a8ca1; margin-top:10px; }
+#caixaRequestsRoot .ca-pending-empty { font-size:12px; padding:12px 0; color:#62758c; }
+#caixaRequestsRoot .ca-cashier-tracking { border:1px solid #dce6f1; border-radius:10px; padding:13px 16px; margin-top:14px; }
+#caixaRequestsRoot .ca-cashier-tracking > summary { font-size:13px; font-weight:600; cursor:pointer; color:#185ead; }
+@media(max-width:1050px) { #caixaRequestsRoot .ca-cashier-layout { grid-template-columns:minmax(0,1fr); } }
+#caixaRequestsRoot .ca-toolbar { margin:16px 0 8px; }
+#caixaRequestsRoot .ca-tabs { display:flex; flex-wrap:wrap; gap:7px; }
+#caixaRequestsRoot .ca-tabs button { font-size:13px; border:1px solid #d9e3f0; border-radius:9px; padding:8px 12px; min-height:37px; }
+#caixaRequestsRoot .ca-tabs button[aria-pressed=true] { background:#075dde; color:#fff; border-color:#075dde; }
+#caixaRequestsRoot .ca-utilities { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:8px 0; }
+#caixaRequestsRoot .ca-utilities input { max-width:285px; min-height:36px; margin:0; font-size:13px; }
+#caixaRequestsRoot .ca-utilities small { color:#64748b; }
+#caixaRequestsRoot .ca-utilities button, #caixaRequestsRoot .ca-secondary button { font-size:12px; min-height:33px; }
+#caixaRequestsRoot .ca-secondary { display:flex; gap:8px; margin:5px 0 12px; }
+#caixaRequestsRoot .ca-notice:empty { display:none; }
+#caixaRequestsRoot .ca-notice { font-size:12px; color:#0956a7; background:#edf5ff; padding:8px 12px; border-radius:8px; }
+#caixaRequestsRoot .ca-chat-context { font-size:11px; line-height:1.5; color:#526581; margin:7px 0; }
+#caixaRequestsRoot .ca-list { display:grid; gap:10px; }
+#caixaRequestsRoot .ca-card { padding:13px 15px; border:1px solid #dae5f0; border-left:4px solid #e42e4d; background:#fff; border-radius:10px; box-shadow:0 2px 7px #1a35600a; }
+#caixaRequestsRoot .ca-card-head { display:flex; justify-content:space-between; gap:10px; align-items:start; }
+#caixaRequestsRoot .ca-card-head strong { display:block; font-size:17px; }
+#caixaRequestsRoot .ca-card-head small { display:block; font-size:12px; color:#536781; margin-top:4px; }
+#caixaRequestsRoot .ca-status { border-radius:22px; background:#fff0d7; color:#956000; font-size:11px; padding:5px 8px; max-width:155px; text-align:center; }
+#caixaRequestsRoot .ca-card-summary { display:flex; flex-wrap:wrap; gap:12px 28px; margin:12px 0 8px; }
+#caixaRequestsRoot .ca-card-summary > div { display:flex; flex-direction:column; gap:2px; min-width:90px; }
+#caixaRequestsRoot .ca-card-summary small { color:#6a7e94; font-size:11px; }
+#caixaRequestsRoot .ca-card-summary strong { font-size:13px; }
+#caixaRequestsRoot .ca-owner { font-weight:700; color:#0c5bba; font-size:12px; margin:8px 0; }
+#caixaRequestsRoot .ca-card-actions { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+#caixaRequestsRoot .ca-card-actions button { min-height:36px; font-size:12px; }
+#caixaRequestsRoot .ca-card-actions .primary-button { background:#0864e9; color:white; }
+#caixaRequestsRoot .ca-card-details { padding-top:5px; border-top:1px solid #edf1f7; }
+#caixaRequestsRoot .ca-card-details summary { font-size:12px; color:#476786; cursor:pointer; }
+#caixaRequestsRoot .ca-card-details p { font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-resolution { display:flex; flex-direction:column; max-width:500px; gap:7px; padding:8px 0; }
+#caixaRequestsRoot .ca-resolution textarea { min-height:65px; font-size:13px; }
+#caixaRequestsRoot .ca-delete-form { border:1px solid #f2b9bf; background:#fff4f5; padding:12px; border-radius:8px; margin:10px 0; }
+#caixaRequestsRoot .ca-delete-form p { font-size:12px; overflow-wrap:anywhere; }
+#caixaRequestsRoot .ca-delete-form label { display:block; font-size:12px; }
+#caixaRequestsRoot .ca-delete-form input { box-sizing:border-box; max-width:100%; width:220px; margin:6px 0 10px; }
+#caixaRequestsRoot .ca-delete-form button { font-size:12px; min-height:36px; margin:4px; }
+#caixaRequestsRoot .ca-empty { padding:25px; border:1px dashed #ced9e6; color:#62728c; border-radius:10px; text-align:center; }
+#caixaRequestsRoot .ca-chat { position:fixed; z-index:50; right:16px; bottom:16px; width:min(410px,calc(100vw - 32px)); height:min(570px,calc(100vh - 40px)); background:#fff; border:1px solid #c9d8eb; border-radius:14px; box-shadow:0 12px 42px #1025454a; padding:12px; display:flex; flex-direction:column; box-sizing:border-box; }
+#caixaRequestsRoot .ca-chat header { display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid #e6edf5; padding-bottom:10px; }
+#caixaRequestsRoot .ca-chat header strong { font-size:14px; }
+#caixaRequestsRoot .ca-chat header button { width:auto; flex:0 0 auto; min-height:32px; padding:6px 10px; margin:0; font-size:12px; }
+#caixaRequestsRoot .ca-chat .primary-button { background:#0864e9; border-color:#0864e9; color:#fff; }
+#caixaRequestsRoot .ca-chat > [role=status] { min-height:18px; color:#64748b; font-size:11px; margin:6px 0; }
+#caixaRequestsRoot .ca-chat-messages { flex:1; min-height:0; overflow-y:auto; padding:7px 1px; display:flex; flex-direction:column; gap:9px; }
+#caixaRequestsRoot .ca-chat-bubble { align-self:flex-start; max-width:88%; background:#eff4fb; padding:9px 12px; border-radius:10px; }
+#caixaRequestsRoot .ca-chat-mine { align-self:flex-end; background:#e3f1e8; }
+#caixaRequestsRoot .ca-chat-bubble p { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; margin:4px 0; }
+#caixaRequestsRoot .ca-chat-bubble :is(small,time) { color:#60758a; font-size:10px; display:block; }
+#caixaRequestsRoot .ca-chat-form { display:flex; flex-direction:column; gap:8px; padding-top:9px; border-top:1px solid #e6edf5; }
+#caixaRequestsRoot .ca-chat-form textarea { min-height:65px; max-height:130px; font-size:13px; margin:0; }
+#caixaUnreadAlert { position:fixed; z-index:1600; top:18px; right:18px; display:flex; align-items:center; gap:12px; max-width:min(430px,calc(100vw - 36px)); padding:13px 15px; background:#fff7df; color:#102542; border:1px solid #f1c963; border-radius:10px; box-shadow:0 5px 22px #10254230; }
+#caixaUnreadAlert strong { font-size:13px; line-height:1.4; }
+#caixaUnreadAlert button { width:auto; flex:0 0 auto; border:0; border-radius:7px; background:#0864e9; color:white; padding:9px 12px; font-size:12px; cursor:pointer; }
+@media(max-width:650px) {
+  #caixaRequestsRoot { padding:10px; }
+  #caixaRequestsRoot .ca-tabs button { flex:1 1 44%; }
+  #caixaRequestsRoot .ca-utilities input { max-width:none; flex:1 1 100%; }
+  #caixaRequestsRoot .ca-card-summary { gap:8px 18px; }
+  #caixaRequestsRoot .ca-chat { bottom:0; right:0; width:100vw; height:85vh; border-radius:12px 12px 0 0; }
+}
+
+#caixaRequestsRoot .ca-pending-row { position:relative; padding-right:80px; }
+#caixaRequestsRoot .ca-chat-indicator { display:inline-flex; align-items:center; gap:4px; padding:6px; width:auto; min-width:30px; }
+#caixaRequestsRoot .ca-pending-row > .ca-chat-indicator { position:absolute; right:10px; top:10px; }
+#caixaRequestsRoot .ca-chat-unread { color:#b91c1c; }
+#caixaRequestsRoot .ca-chat-count { border-radius:999px; background:#dc2626; color:#fff; font-size:11px; min-width:17px; line-height:17px; text-align:center; }

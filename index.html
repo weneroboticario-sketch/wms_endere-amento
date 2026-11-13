@@ -56,6 +56,7 @@
       <select id="requestRoleInput">
         <option value="OPERADOR">Operador de estoque</option>
         <option value="ATENDENTE">Atendente de loja</option>
+        <option value="CAIXA">Caixa — solicitar produtos e ajustes</option>
       </select>
       <label for="requestJobInput">Função ou cargo</label>
       <input id="requestJobInput" type="text" placeholder="Opcional">
@@ -107,8 +108,10 @@
       <nav class="menu grouped-menu" aria-label="Menu principal">
         <div class="menu-section">
           <p class="menu-label">Operacao</p>
+          <button class="menu-item" data-icon="SKU" data-screen="centralRevistas" type="button">Central de Revistas</button>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
-          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button" hidden>Prateleira</button>
+          <button class="menu-item" data-icon="TAR" data-screen="comunicacao" type="button">Comunicação <span class="menu-badge" data-comm-count hidden>0</span></button>
+          <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button">Ler Prateleira</button>
           <button class="menu-item" data-icon="END" data-screen="bipagem" type="button">Endereçamento</button>
           <button class="menu-item task-menu-item" data-icon="TAR" data-screen="transferencias" type="button">Minhas Tarefas <span class="menu-badge" id="taskMenuBadge" hidden>0</span></button>
         </div>
@@ -144,6 +147,12 @@
           <input id="sidebarTaskSoundInput" type="checkbox" checked>
           Som de tarefas
         </label>
+        <div class="sidebar-task-volume">
+          <label for="sidebarTaskSoundVolume">Volume</label>
+          <input id="sidebarTaskSoundVolume" type="range" min="0" max="100" step="1" value="90" aria-label="Volume do som de tarefas">
+          <output id="sidebarTaskSoundPercent" for="sidebarTaskSoundVolume">90%</output>
+        </div>
+        <button class="secondary-button sidebar-sound-test" id="sidebarTaskSoundTest" type="button">Testar som</button>
         <button class="secondary-button" id="logoutButton" type="button">Sair</button>
       </div>
 
@@ -187,6 +196,7 @@
           <strong id="topSyncLabel">Inicializando</strong>
         </div>
         <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
+        <button class="secondary-button" data-screen-target="comunicacao" type="button">Mensagens <span data-comm-count hidden>0</span></button>
       </div>
 
       <section class="stock-freshness-alert" id="stockFreshnessAlert" role="status" aria-live="polite" hidden></section>
@@ -195,6 +205,9 @@
 
       <section class="screen" id="globalDashboard" hidden></section>
       <section class="screen" id="stockOverview" hidden></section>
+      <section class="screen" id="centralRevistas" hidden></section>
+      <section id="communicationAlert" hidden role="status"><button type="button" class="secondary-button" data-open-communication-alert>Nova mensagem na Comunicação</button><button type="button" class="secondary-button" data-dismiss-communication-alert>Dispensar</button></section>
+      <section class="screen" id="comunicacao" hidden></section>
       <section class="screen active" id="dashboard">
         <div class="page-title">
           <div>
@@ -340,6 +353,8 @@
           <div class="input-action">
             <input id="skuSearchInput" class="big-scan-input" inputmode="text" type="text" placeholder="Digite ou bipe o SKU">
             <button class="primary-button" id="skuSearchButton" type="button">Consultar</button>
+            <button class="secondary-button" data-communication-share="SKU" data-share-id="" type="button">Enviar para Comunicação</button>
+            <button class="secondary-button sku-photo-trigger" id="skuPhotoButton" type="button" aria-label="Ler código de barras com a câmera" hidden><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><path d="M7 11v3M10 10v5M13 10v5M16 11v3"/></svg><span class="sku-photo-label">Ler código</span></button>
           </div>
           <div class="quick-actions operational-actions">
             <button class="secondary-button" data-screen-target="consultaPrateleira" type="button" hidden>Consultar Prateleira</button>
@@ -380,13 +395,14 @@
         <div class="page-title">
           <div>
             <p class="eyebrow">Pesquisa</p>
-            <h2>Consulta por Prateleira</h2>
+            <h2>Leitura de Prateleira</h2>
           </div>
         </div>
         <section class="panel">
           <div class="input-action">
-            <input id="shelfSearchInput" inputmode="text" type="text" placeholder="Ex.: R01-RK01-L01-A">
-            <button class="primary-button" id="shelfSearchButton" type="button">Consultar</button>
+            <input id="shelfSearchInput" inputmode="text" type="text" placeholder="Ex.: R01-RK01-L01-A" aria-label="Código da prateleira" autocomplete="off" autocapitalize="characters">
+            <button class="primary-button" id="shelfCameraButton" type="button" aria-label="Ler código de barras da prateleira com a câmera">Ler código</button>
+            <button class="secondary-button" id="shelfSearchButton" type="button">Consultar</button>
           </div>
           <div id="shelfSearchStatus" class="inline-status"></div>
           <div id="shelfSummary" class="shelf-summary"></div>
@@ -403,7 +419,8 @@
                   <th>Linha</th>
                   <th>Letra</th>
                   <th>Area</th>
-                  <th>Acoes</th>
+                  <th>Saldo CAPTAÇÃO no endereço</th>
+                  <th>Consulta</th>
                 </tr>
               </thead>
               <tbody id="shelfResults"></tbody>
@@ -540,6 +557,7 @@
       </section>
 
       <section class="screen" id="reposicao">
+        <div class="panel" id="caixaRequestsRoot" hidden></div>
         <div class="page-title">
           <div>
             <p class="eyebrow">Operacao CAPTACAO</p>
@@ -556,10 +574,9 @@
               <label for="replenishmentSkuInput">Codigo do produto</label>
               <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
+              <p id="replenishmentAvailableQty" class="replenishment-available-qty" role="status" hidden></p>
               <div class="replenishment-qty-grid">
-                <label>Saldo Loja informado
-                  <input id="replenishmentStoreQtyInput" inputmode="decimal" type="number" step="1" value="0">
-                </label>
+                <input id="replenishmentStoreQtyInput" type="hidden" value="0">
                 <label>Qtd para repor
                   <input id="replenishmentRequestQtyInput" inputmode="decimal" type="number" min="1" step="1" placeholder="0">
                 </label>
@@ -663,7 +680,9 @@
         </div>
 
         <div class="transfer-tabs">
-          <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Painel</button>
+          <button class="secondary-button transfer-tab active" data-transfer-tab="transferPanelSection" type="button">Transferências Enviadas</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="inboundReceiptsSection" type="button" hidden>Transferências Recebidas</button>
+          <button class="secondary-button transfer-tab" data-transfer-tab="inboundHistorySection" type="button" hidden>Histórico de recebimentos</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="newTransferSection" type="button">Nova Transferência</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="myTransfersSection" type="button">Minhas Transferências</button>
           <button class="secondary-button transfer-tab" data-transfer-tab="taskCenterSection" type="button">Gerenciamento de Tarefas</button>
@@ -943,6 +962,10 @@
           </section>
         </section>
 
+        <section class="transfer-section panel" id="inboundReceiptsSection" hidden>
+          <div class="inbound-receipts" id="inboundReceiptRoot"></div>
+        </section>
+        <section class="transfer-section panel" id="inboundHistorySection" hidden></section>
         <section class="transfer-section" id="finalizedTransfersSection" hidden>
           <section class="panel">
             <div class="panel-header">
@@ -1146,6 +1169,7 @@
               <select id="userRoleInput">
                 <option value="OPERADOR">OPERADOR</option>
                 <option value="ATENDENTE">ATENDENTE</option>
+                <option value="CAIXA">CAIXA</option>
                 <option value="SUPERVISOR">SUPERVISOR</option>
                 <option value="ADMINISTRADOR">ADMINISTRADOR</option>
               </select>

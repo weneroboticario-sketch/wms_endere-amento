@@ -52,7 +52,14 @@ export function installHtmlSecurity() {
     window.trustedTypes.createPolicy("default", {
       createHTML: function (value) { return sanitizeHtml(value); },
       createScript: function () { throw new TypeError("Scripts dinamicos nao sao permitidos."); },
-      createScriptURL: function () { throw new TypeError("URLs de script dinamicas nao sao permitidas."); }
+      createScriptURL: function (value) {
+        const url = new URL(String(value), window.location.href);
+        const permitted = url.pathname === "/magazine-ocr-bootstrap.js" || url.pathname === "/node_modules/pdfjs-dist/build/pdf.worker.min.mjs" || /^\/assets\/pdf\.worker\.min-[A-Za-z0-9_-]+\.mjs$/.test(url.pathname);
+        const photoWorker = /^\/assets\/sku-photo-barcode\.worker-[A-Za-z0-9_-]+\.(?:js|mjs)$/.test(url.pathname) && !url.search;
+        const photoDevWorker = url.pathname === "/src/sku-photo-barcode.worker.js" && url.searchParams.get("worker_file") === "" && url.searchParams.get("type") === "module" && Array.from(url.searchParams.keys()).every(key => ["worker_file", "type"].includes(key));
+        if (url.origin === window.location.origin && !url.hash && ((permitted && !url.search) || photoWorker || photoDevWorker)) return url.href;
+        throw new TypeError("URLs de script dinamicas nao sao permitidas.");
+      }
     });
     return true;
   } catch (error) {

@@ -3455,12 +3455,12 @@ tbody tr:hover td {
   margin-top: 4px;
 }
 
-#transferWorkSection .current-item-card {
+:is(#transferWorkSection, .inbound-workspace) .current-item-card {
   gap: 8px;
   padding: 10px;
 }
 
-#transferWorkSection .current-item-kicker {
+:is(#transferWorkSection, .inbound-workspace) .current-item-kicker {
   font-size: var(--text-sm);
 }
 
@@ -3477,92 +3477,92 @@ tbody tr:hover td {
   min-width: 0;
 }
 
-#transferWorkSection .current-item-head {
+:is(#transferWorkSection, .inbound-workspace) .current-item-head {
   align-items: flex-start;
 }
 
-#transferWorkSection .current-item-head strong {
+:is(#transferWorkSection, .inbound-workspace) .current-item-head strong {
   font-size: var(--text-xl);
   line-height: 1.1;
 }
 
-#transferWorkSection .current-item-head span {
+:is(#transferWorkSection, .inbound-workspace) .current-item-head span {
   padding: 3px 7px;
   font-size: var(--text-sm);
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
-#transferWorkSection .current-item-card p {
+:is(#transferWorkSection, .inbound-workspace) .current-item-card p {
   font-size: var(--text-lg);
   line-height: 1.4;
 }
 
-#transferWorkSection .current-qty-highlight {
+:is(#transferWorkSection, .inbound-workspace) .current-qty-highlight {
   align-content: center;
   padding: 10px;
 }
 
-#transferWorkSection .current-qty-highlight strong {
+:is(#transferWorkSection, .inbound-workspace) .current-qty-highlight strong {
   font-size: var(--text-metric);
   line-height: 1.08;
   font-variant-numeric: tabular-nums;
 }
 
-#transferWorkSection .current-location-line {
+:is(#transferWorkSection, .inbound-workspace) .current-location-line {
   padding: 8px;
 }
 
-#transferWorkSection .current-location-line strong {
+:is(#transferWorkSection, .inbound-workspace) .current-location-line strong {
   font-size: var(--text-xl);
   overflow-wrap: anywhere;
 }
 
-#transferWorkSection .current-item-meta {
+:is(#transferWorkSection, .inbound-workspace) .current-item-meta {
   grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 6px;
 }
 
-#transferWorkSection .transfer-qty-row span,
-#transferWorkSection .current-item-meta div {
+:is(#transferWorkSection, .inbound-workspace) .transfer-qty-row span,
+:is(#transferWorkSection, .inbound-workspace) .current-item-meta div {
   min-width: 0;
   padding: 6px 7px;
   font-size: var(--text-sm);
   line-height: 1.12;
 }
 
-#transferWorkSection .transfer-qty-row b {
+:is(#transferWorkSection, .inbound-workspace) .transfer-qty-row b {
   font-size: var(--text-sm);
 }
 
-#transferWorkSection .transfer-list-heading {
+:is(#transferWorkSection, .inbound-workspace) .transfer-list-heading {
   padding: 6px 8px;
 }
 
-#transferWorkSection .transfer-work-list-section {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-list-section {
   gap: 6px;
 }
 
-#transferWorkSection .transfer-work-item {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-item {
   gap: 6px;
   padding: 8px;
 }
 
-#transferWorkSection .transfer-work-item-head strong {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-item-head strong {
   font-size: var(--text-sm);
 }
 
-#transferWorkSection .transfer-work-item-head span {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-item-head span {
   padding: 3px 7px;
   font-size: var(--text-sm);
 }
 
-#transferWorkSection .transfer-work-item p {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-item p {
   font-size: var(--text-sm);
   line-height: 1.18;
 }
 
-#transferWorkSection .transfer-work-item .transfer-qty-row {
+:is(#transferWorkSection, .inbound-workspace) .transfer-work-item .transfer-qty-row {
   grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 5px;
 }
@@ -4023,19 +4023,19 @@ tbody tr:hover td {
     grid-template-columns: 1fr;
   }
 
-  #transferWorkSection .panel-header {
+  :is(#transferWorkSection, .inbound-workspace) .panel-header {
     align-items: center;
     gap: 8px;
     margin-bottom: 0;
   }
 
-  #transferWorkSection .panel-actions {
+  :is(#transferWorkSection, .inbound-workspace) .panel-actions {
     display: grid;
     grid-template-columns: 1fr;
     width: 100%;
   }
 
-  #transferWorkTitle {
+  :is(#transferWorkTitle, .inbound-work-title) {
     font-size: var(--text-md);
     line-height: 1.2;
   }
@@ -4115,7 +4115,7 @@ tbody tr:hover td {
     padding: 12px;
   }
 
-  #transferWorkSection .current-item-card {
+  :is(#transferWorkSection, .inbound-workspace) .current-item-card {
     padding: 8px;
   }
 
@@ -4124,11 +4124,11 @@ tbody tr:hover td {
     gap: 7px;
   }
 
-  #transferWorkSection .current-item-head strong {
+  :is(#transferWorkSection, .inbound-workspace) .current-item-head strong {
     font-size: var(--text-xl);
   }
 
-  #transferWorkSection .current-item-head span {
+  :is(#transferWorkSection, .inbound-workspace) .current-item-head span {
     max-width: none;
     white-space: normal;
   }
@@ -4139,7 +4139,7 @@ tbody tr:hover td {
     line-height: 1.25;
   }
 
-  #transferWorkSection .current-item-card p {
+  :is(#transferWorkSection, .inbound-workspace) .current-item-card p {
     font-size: var(--text-lg);
     font-weight: 700;
   }
@@ -4154,11 +4154,11 @@ tbody tr:hover td {
     line-height: 1.05;
   }
 
-  #transferWorkSection .current-qty-highlight {
+  :is(#transferWorkSection, .inbound-workspace) .current-qty-highlight {
     padding: 8px;
   }
 
-  #transferWorkSection .current-qty-highlight strong {
+  :is(#transferWorkSection, .inbound-workspace) .current-qty-highlight strong {
     font-size: var(--text-metric);
   }
 
@@ -4170,7 +4170,7 @@ tbody tr:hover td {
     font-size: var(--text-lg);
   }
 
-  #transferWorkSection .current-location-line strong {
+  :is(#transferWorkSection, .inbound-workspace) .current-location-line strong {
     font-size: var(--text-xl);
   }
 
@@ -6144,3 +6144,75 @@ body.role-atendente .replenishment-layout {
 .addressing-presence-alert button {
   flex-shrink: 0;
 }
+[data-whatsapp-live] textarea,
+[data-whatsapp-review] textarea {
+  width: 100%;
+  min-height: 160px;
+}
+
+[data-whatsapp-live] fieldset,
+[data-whatsapp-review] fieldset {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #b8cce0;
+  border-radius: 8px;
+}
+
+[data-whatsapp-live] label {
+  display: inline-block;
+  margin: 8px 12px 8px 0;
+  max-width: 100%;
+}
+
+[data-whatsapp-live] button {
+  margin: 8px 8px 8px 0;
+}
+
+[data-whatsapp-live] pre,
+[data-whatsapp-live] legend {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#caixaRequestsRoot fieldset {
+  border: 1px solid #cbdced;
+  border-radius: 10px;
+  padding: 16px;
+  margin: 16px 0;
+  min-width: 0;
+}
+
+#caixaRequestsRoot label {
+  display: block;
+  margin: 12px 0;
+}
+
+#caixaRequestsRoot input:not([type="checkbox"]),
+#caixaRequestsRoot select,
+#caixaRequestsRoot textarea {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  margin-top: 6px;
+}
+
+#caixaRequestsRoot button {
+  margin: 8px 8px 8px 0;
+}
+
+#caixaRequestsRoot p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-task-volume { display:grid; grid-template-columns:auto minmax(0,1fr) 32px; align-items:center; gap:6px; color:#d7e5ee; font-size:12px; }
+.sidebar-task-volume input { min-width:0; width:100%; min-height:24px; padding:0; accent-color:#42b9ff; }
+.sidebar .user-card .sidebar-sound-test { min-height:30px; padding:4px 8px; font-size:12px; }
+
+.replenishment-route-heading { margin: 8px 0 0; padding: 6px 10px; font-size: 0.9rem; border-bottom: 1px solid var(--border); }
+
+.replenishment-available-qty { margin: 10px 0; padding: 10px 12px; border-radius: 7px; background: #e5f2ff; color: #073b70; font-weight: 700; }
+
+#finalizedTransferRows > tr > td { background: #fff; }
+#finalizedTransferRows > tr.transfer-ready > td { background: #e8f6ec; }

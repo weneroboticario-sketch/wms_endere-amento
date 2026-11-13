@@ -1,0 +1,129 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {PGlite} from '@electric-sql/pglite';
+import {readFile} from 'node:fs/promises';
+
+const oldSql=await readFile(new URL('../supabase/migrations/20261111123430_wms_sku_photo_lookup.sql',import.meta.url),'utf8');
+const newSql=await readFile(new URL('../supabase/migrations/20261111154000_wms_persistent_barcode_registry.sql',import.meta.url),'utf8');
+const sharedRolesSql=await readFile(new URL('../supabase/migrations/20261111162000_wms_ean_registration_for_sku_roles.sql',import.meta.url),'utf8');
+const skuFromGtinSql=await readFile(new URL('../supabase/migrations/20261111171000_wms_gtin_five_digit_sku_fallback.sql',import.meta.url),'utf8');
+
+async function setup(){
+  const db=new PGlite();
+  await db.exec(`create role anon;create role authenticated;
+    create schema auth;create schema private;
+    grant usage on schema auth,private to authenticated;
+    create function auth.uid() returns text language sql as $$select nullif(current_setting('test.actor',true),'')$$;
+    create table wms_users(id text,role text,warehouse text,active boolean);
+    insert into wms_users values
+      ('admin','ADMINISTRADOR','VDCG',true),
+      ('super','SUPERVISOR','VDCG',true),
+      ('op','OPERADOR','VDCG',true),
+      ('cash','CAIXA','VDCG',true),
+      ('att','ATENDENTE','VDCG',true),
+      ('other','ADMINISTRADOR','VDAR',true),
+      ('disabled','ADMINISTRADOR','VDCG',false);
+    create function private.current_wms_profile_id() returns text language sql security definer set search_path='' as
+      $$select id from public.wms_users where id=auth.uid() and active$$;
+    create function private.current_wms_role() returns text language sql security definer set search_path='' as
+      $$select role from public.wms_users where id=private.current_wms_profile_id()$$;
+    create function private.can_access_warehouse(code text) returns boolean language sql security definer set search_path='' as
+      $$select coalesce((select warehouse=$1 from public.wms_users where id=private.current_wms_profile_id()),false)$$;
+    create table wms_products(sku text primary key,product_name text);
+    insert into wms_products values('01314','Produto com SKU inicial zero'),('48060','Outro produto'),('89678','SHAMPOO SIÀGE ULTRA BOND RESET, 250 ml');
+    create table wms_inbound_receipts(id integer primary key,warehouse_code text,status text);
+    create table wms_inbound_receipt_items(receipt_id int,internal_sku text,ean text,tributary_ean text,is_extra boolean);
+    insert into wms_inbound_receipts values(1,'VDCG','CONCLUIDO_CORRETO');
+    insert into wms_inbound_receipt_items values(1,'01314','036000291452',null,false);
+    create table stock_balance(sku text primary key,qty int);
+    insert into stock_balance values('01314',20);
+  `);
+  await db.exec(oldSql);
+  await db.exec(newSql);
+  await db.exec(sharedRolesSql);
+  await db.exec(skuFromGtinSql);
+  await db.exec('set role authenticated');
+  return db;
+}
+const actor=(db,id)=>db.query('select set_config($1,$2,false)',['test.actor',id]);
+async function lookup(db,ean,warehouse='VDCG'){
+  return (await db.query('select public.lookup_wms_sku_photo($1,$2,$3) as r',[warehouse,ean,'GTIN'])).rows[0].r;
+}
+async function register(db,ean,sku='01314',warehouse='VDCG',source='MANUAL'){
+  return (await db.query('select public.register_wms_sku_barcode($1,$2,$3,$4) as r',[warehouse,ean,sku,source])).rows[0].r;
+}
+test('registered GTIN resolves to existing SKU while preserving zeros, without changing stock',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'admin');
+    assert.deepEqual(await lookup(db,'4006381333931'),[]);
+    assert.equal((await register(db,'4006381333931')).sku,'01314');
+    assert.equal((await register(db,'4006381333931')).sku,'01314');
+    assert.equal((await lookup(db,'4006381333931'))[0].sku,'01314');
+    assert.equal((await lookup(db,'036000291452'))[0].sku,'01314');
+    await assert.rejects(register(db,'4006381333931','48060'),/Conflito/);
+    await assert.rejects(register(db,'4006381333932'),/inválido/);
+    await assert.rejects(register(db,'5901234123457','99999'),/inexistente/);
+    await db.exec('reset role');
+    assert.equal((await db.query('select count(*)::integer as n from public.wms_sku_barcodes')).rows[0].n,1);
+    assert.equal((await db.query('select qty from public.stock_balance')).rows[0].qty,20);
+  }finally{await db.close();}
+});
+
+test('all SKU roles can manually link EAN while bulk import, disabled accounts and foreign warehouses remain blocked',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'admin');
+    await register(db,'4006381333931');
+    await actor(db,'op');
+    assert.equal((await lookup(db,'4006381333931'))[0].sku,'01314');
+    assert.equal((await register(db,'5901234123457')).sku,'01314');
+    await assert.rejects(register(db,'036000291452','01314','VDCG','CSV'),/restrita/);
+    await assert.rejects(lookup(db,'4006381333931','VDAR'),/autorizada/);
+    await assert.rejects(register(db,'036000291452','01314','VDAR'),/não autorizado/);
+    for(const role of ['cash','att','super']){
+      await actor(db,role);
+      assert.equal((await register(db,'5901234123457')).sku,'01314');
+      assert.equal((await lookup(db,'5901234123457'))[0].sku,'01314');
+    }
+    await actor(db,'super');
+    assert.equal((await register(db,'036000291452','01314','VDCG','CSV')).sku,'01314');
+    await actor(db,'other');
+    assert.deepEqual(await lookup(db,'4006381333931','VDAR'),[]);
+    await register(db,'4006381333931','48060','VDAR');
+    assert.equal((await lookup(db,'4006381333931','VDAR'))[0].sku,'48060');
+    await actor(db,'disabled');
+    await assert.rejects(register(db,'5901234123457'),/não autorizado/);
+    await db.exec('reset role');
+    await db.exec('set role anon');
+    await assert.rejects(register(db,'5901234123457'),/permission denied/);
+  }finally{await db.close();}
+});
+
+test('valid 7891033 EAN-13 extracts exactly five SKU digits when mapping does not exist',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'op');
+    assert.deepEqual((await lookup(db,'7891033896783')).map(row=>row.sku),['89678']);
+    assert.deepEqual((await lookup(db,'7891033480609')).map(row=>row.sku),['48060']);
+    assert.deepEqual((await lookup(db,'7891033013142')).map(row=>row.sku),['01314']);
+    assert.deepEqual(await lookup(db,'7891033480600'),[]); // invalid checksum
+    assert.deepEqual(await lookup(db,'7891034480608'),[]); // different prefix
+    assert.deepEqual(await lookup(db,'7891033999996'),[]); // nonexistent SKU
+    assert.deepEqual(await lookup(db,'4006381333931'),[]); // unrelated GTIN
+    await assert.rejects(lookup(db,'7891033896783','VDAR'),/autorizada/);
+    await db.exec('reset role');
+    const rows=(await db.query('select count(*)::integer as count from public.wms_sku_barcodes')).rows;
+    assert.equal(rows[0].count,0); // fallback does not persist guessed links
+    assert.equal((await db.query('select qty from public.stock_balance')).rows[0].qty,20);
+  }finally{await db.close();}
+});
+
+test('a registered GTIN mapping takes priority over embedded five-digit fallback',async()=>{
+  const db=await setup();
+  try{
+    await actor(db,'admin');
+    await register(db,'7891033480609','01314');
+    assert.deepEqual((await lookup(db,'7891033480609')).map(row=>row.sku),['01314']);
+  }finally{await db.close();}
+});

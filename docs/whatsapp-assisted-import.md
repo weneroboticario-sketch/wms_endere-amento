@@ -1,0 +1,35 @@
+# Importação assistida — etapa local de revisão
+
+> Histórico das primeiras etapas. Para o estado atual implementado e instruções de ativação/rollback, consultar `whatsapp-assisted-release.md`. Trechos abaixo que descrevem funcionalidades pendentes registram o estado da etapa correspondente, não o estado final.
+
+Branch: feature/whatsapp-assisted-import-20261028. Base: main b7603a4; alias de produção confirmado no mesmo deployment da revisão usada como base.
+
+Disponível na Central de Tarefas, para administrador/supervisor no VDCG. O painel não é habilitado no CP Álamo. Não acessa WhatsApp, notificações, serviços pagos, banco, armazenamento local ou área de transferência automaticamente. O usuário cola voluntariamente uma mensagem. Todo conteúdo inserido é exibido via textContent, sem interpretar HTML.
+
+Implementado: linhas de SKUs, quantidades explícitas, prioridade individual, ajustes em revisão, respostas sem tarefa, citações explícitas ignoradas, códigos com zeros preservados e repetidos destacados. O texto original é preservado em memória. Nomes não atribuem responsáveis. Quantidades podem ser editadas apenas como rascunho visual. Limpar remove o conteúdo. Nenhuma criação, aprovação ou conclusão de tarefa está implementada nesta etapa.
+
+Limitações: não resolve catálogo, erros livres de descrição, mensagens exportadas com cabeçalhos, citações sem marcação, mensagens editadas ou múltiplas mensagens coladas. Não deduplica entre colagens; não há histórico persistente. Ordem por horário entre solicitações e execução parcial ainda não foram implementadas. O botão de interpretar invalida o rascunho anterior; não é uma aprovação.
+
+Próxima etapa, sujeita a revisão: tabelas complementares de solicitações, itens e histórico com origem assistida e estoque obrigatório; chave idempotente por confirmação, distinta de similaridade textual. Possíveis duplicatas devem exigir revisão, não descarte automático. Não criar uma tarefa para cada item sem preservar sua solicitação-mãe. Reutilizar criar_tarefa após inspecionar assinatura, enums e autorização no servidor. Aprovação deve validar perfil, estoque e SKUs/quantidades; ajustes não devem movimentar saldos. Parciais por item exigem transação e bloqueio de concorrência, registro de atendido/pendente e autorização do responsável. Texto colado não pode executar SQL, escolher arbitrariamente criador ou contornar permissões.
+
+Nenhuma migration criada ou executada. Proposta SQL para revisão em `supabase/proposals/whatsapp_assisted_approval.sql`, ainda NÃO aplicada. Nenhuma alteração de produção. Proposta de retenção: minimizar nomes e dados de clientes e definir prazo com o responsável antes de persistir mensagens reais. Não armazenar texto bruto em telemetria.
+
+## Segunda etapa: simulação operacional local
+
+Agora há aprovação simulada após revisão explícita, manutenção de uma solicitação-mãe com todas as linhas, fila entre solicitações por prioridade e chegada local, registro parcial em unidades, histórico de eventos em memória, bloqueio de excesso e de ajuste físico, revisão de versão e idempotência por operação no modelo local. Solicitação com quatro de cinco itens atendidos permanece parcial. O horário registrado é o da aprovação local, não o de envio no WhatsApp. Texto semelhante só gera suspeita, nunca prova de duplicidade. Na interface, a suspeita bloqueia a nova aprovação; ainda não há fluxo para liberar duplicidade legítima.
+
+Nada disso é autorização de servidor: ainda não há RPC, persistência, responsáveis, criação de tarefa real, métricas persistentes, integração com notificações ou conclusão/validação na Central de Tarefas. Campos editáveis desta demonstração não devem ser considerados comandos operacionais. Recarregar, limpar ou trocar de contexto remove os dados locais.
+
+Próxima entrega requer proposta SQL revisável e testes isolados de autorização/concorrência no servidor. Esquema previsto: `wms_assisted_requests` (origem, texto, estoque, revisão, chave idempotente e usuário autenticado), `wms_assisted_request_items` (parent_id, SKU, tipo de operação, prioridade, solicitado/atendido/pendente, responsável e vínculo com tarefa) e `wms_assisted_request_events` (evento imutável, ator, instante e chave de operação). RLS deve impedir leitura entre estoques e restringir operadores a itens atribuídos. Aprovação deve reutilizar `criar_tarefa` dentro de transação; ajuste pode mapear para tarefa AVULSA de verificação, nunca para enum AJUSTE inexistente. Uma tarefa por linha só é aceitável se cada linha mantiver referência inequívoca à solicitação-mãe. O vínculo deve permitir atualizar parciais sem alterar saldos e impedir que as ações genéricas concluam indevidamente os itens pendentes.
+
+## Terceira etapa: proposta de aprovação no banco
+
+Implementada para teste local a proposta de três tabelas complementares com RLS e leitura restrita à supervisão do VDCG, sem escrita direta por authenticated/anon. Mensagens brutas não são expostas aos operadores nessa proposta. A autorização privilegiada fica em função privada com verificação explícita de sessão, perfil e estoque; a função pública é SECURITY INVOKER. Não altera as permissões das tabelas existentes. A função reaproveita a assinatura atual de `criar_tarefa`, consultada somente para leitura no WMS.
+
+Aprovação e criação das tarefas são transacionais, uma tarefa por linha, com referência à linha e vínculo da linha à solicitação-mãe. Repetir a mesma chave com o mesmo ator e conteúdo retorna a aprovação original; trocar o conteúdo ou ator com a mesma chave falha. Mensagem igual nas últimas 24 horas exige revisão explícita, sem afirmar que é duplicata comprovada. Um bloqueio transacional serializa aprovações do VDCG para evitar a corrida entre aprovação e busca de duplicidade. Clientes recebem URGENTE, urgência operacional ALTA e ajustes geram AVULSA de verificação, sem movimentação. Nomes não geram atribuição automática.
+
+Quatro testes executam essa proposta em PGlite isolado. A API criar_tarefa é substituída por fixture com a mesma assinatura: isso testa transação e contrato, NÃO prova integração real com todos os gatilhos de produção. Foram verificados rollback de todos os registros quando a segunda tarefa falha, idempotência, payload alterado, perfil sem acesso, sessão ausente, estoque incorreto, falta de permissão de escrita direta e isolamento RLS de leitura.
+
+Bloqueadores de publicação: integrar gateway de aprovação no cliente; atribuição e atendimento parcial reais com autorização e controle concorrente; impedir conclusão genérica que ignore parciais; histórico operacional e retenção; validar catálogo quando necessário; validar integração com notificações existentes em ambiente separado. A proposta isolada NÃO deve ser aplicada em produção antes dessas etapas e aprovação específica. A demonstração continua usando exclusivamente o modelo em memória.
+
+Rollback desta etapa: remover os dois módulos novos, o import e a chamada em renderTaskCenter; não há dados de produção a reverter. Não reativar o leitor Windows bloqueado pela política empresarial.

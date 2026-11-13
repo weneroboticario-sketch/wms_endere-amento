@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+import {reconcilePacking} from '../src/transfer-packing-audit.js';
+import {escapeHtml} from '../src/utils.js';
+const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
+test('real finalized outbound renderer uses the audit report, preserving permission and final status gates',()=>{
+ const code=source.slice(source.indexOf('  function renderTransferFinalReport('),source.indexOf('  function renderCurrentTransferItem('));
+ const panel={},reports=[];let allowed=true,final=true;
+ const context=vm.createContext({IS_CP_ALAMO:false,$:()=>panel,isAdminOrSupervisor:()=>allowed,isFinalTransferStatus:()=>final,isXmlConferenceTransfer:()=>false,packingController:()=>({report:t=>reports.push(t.id)})});
+ vm.runInContext(code,context);context.renderTransferFinalReport({id:'HYPE'});
+ assert.deepEqual(reports,['HYPE']);assert.equal(panel.hidden,false);
+ allowed=false;context.renderTransferFinalReport({id:'denied'});assert.equal(panel.hidden,true);assert.equal(reports.length,1);
+ allowed=true;final=false;context.renderTransferFinalReport({id:'in-progress'});assert.equal(panel.hidden,true);assert.equal(reports.length,1);
+ const admin=source.slice(source.indexOf('  function renderAdminTransferProgress('),source.indexOf('  function renderTransferFinalReport('));
+ assert.ok(!admin.includes('packingController().report'));
+});
+test('real history button displays stored item events and legacy quantities without using browser history',async()=>{
+ const view=(await readFile(new URL('../src/transfer-packing-view.js',import.meta.url),'utf8')).replace(/^import .*;\r?$/gm,'').replace('export function createPackingController','function createPackingController');
+ const elements=new Map(),dialogs=[];
+ const element=()=>({hidden:false,value:'MANUAL',innerHTML:'',querySelector:()=>({}),showModal(){this.shown=true;}});
+ const document={getElementById:id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);},createElement:()=>({...element(),style:{}}),body:{append:dialog=>dialogs.push(dialog)}};
+ const rows=[{id:'legacy',item_id:'i',created_at:'2026-11-09T10:00:00Z',event_type:'LEGACY_OPERATION',quantity:3,audit_version:0},{id:'new',item_id:'i',created_at:'2026-11-09T11:00:00Z',event_type:'QUANTIDADE_MANUAL',quantity:4,quantity_before:0,quantity_after:4,quantity_method:'MANUAL',code_method:'MODO_SCANNER',audit_version:1,payload:{code_reads:1}},{id:'other',item_id:'other',event_type:'MUST_NOT_APPEAR'}];
+ const context=vm.createContext({document,window:{sessionStorage:{}},history:{},createPackingGateway:()=>({pending:()=>null}),reconcilePacking,h:escapeHtml});
+ vm.runInContext(view,context);
+ const c=context.createPackingController({scope:()=> 'op:VDCG:t',client:()=>null,warehouse:()=> 'VDCG',events:()=>rows,items:()=>[],status(){}});
+ c.render({id:'t',status:'EM_LACRE'},{id:'i',sku:'01314',requestedQty:4,packedQty:4,unit:'UN'});
+ elements.get('packingItemHistory').onclick();
+ assert.equal(dialogs[0].shown,true);assert.match(dialogs[0].innerHTML,/LEGACY_OPERATION/);assert.match(dialogs[0].innerHTML,/legado; unidade não validada/);assert.match(dialogs[0].innerHTML,/QUANTIDADE_MANUAL/);assert.ok(!dialogs[0].innerHTML.includes('MUST_NOT_APPEAR'));
+});

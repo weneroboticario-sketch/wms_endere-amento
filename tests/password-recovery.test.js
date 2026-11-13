@@ -10,7 +10,7 @@ import {
 
 const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const script = await readFile(new URL("../script.js", import.meta.url), "utf8");
-const edgeFunction = await readFile(new URL("../supabase/functions/manage-wms-user/index.ts", import.meta.url), "utf8");
+const edgeFunction = await readFile(new URL("../supabase/functions/manage-wms-user/handler.ts", import.meta.url), "utf8");
 const migration = await readFile(new URL("../supabase/migrations/20261007010406_email_password_recovery.sql", import.meta.url), "utf8");
 
 test("recovery email normalization accepts real addresses and rejects synthetic ones", () => {

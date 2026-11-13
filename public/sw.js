@@ -1,5 +1,5 @@
-const STATIC_CACHE = "wms-static-v35";
-const RUNTIME_CACHE = "wms-runtime-v18";
+const STATIC_CACHE = "wms-static-v59";
+const RUNTIME_CACHE = "wms-runtime-v24";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", function (event) {
@@ -82,4 +82,29 @@ self.addEventListener("fetch", function (event) {
       })
     );
   }
+});
+
+// Push is a notification only: delivery/read/ack receipts require authenticated client evidence.
+self.addEventListener("push", function (event) {
+  let payload;
+  try { payload = event.data.json(); } catch { return; }
+  if (!payload || !/^[a-f0-9-]{36}$/i.test(payload.conversation_id || "") || !/^[A-Z0-9_-]{1,30}$/.test(payload.warehouse || "") || !/^\d{1,20}$/.test(payload.message_id || "")) return;
+  const target = new URL("/", self.location.origin);
+  target.searchParams.set("comm", payload.conversation_id);
+  target.searchParams.set("warehouse", payload.warehouse);
+  event.waitUntil(self.registration.showNotification("WMS — Comunicação", {
+    body: "Você recebeu uma nova mensagem.", icon: "/icon.svg", badge: "/icon.svg",
+    tag: "wms-chat-" + payload.message_id, renotify: false, data: { url: target.href }
+  }));
+});
+self.addEventListener("notificationclick", function (event) {
+  event.notification.close();
+  let target;
+  try { target = new URL(event.notification.data.url); } catch { return; }
+  if (target.origin !== self.location.origin) return;
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async function (windows) {
+    const existing = windows.find(client => new URL(client.url).origin === target.origin);
+    if (existing) { await existing.navigate(target.href); return existing.focus(); }
+    return self.clients.openWindow(target.href);
+  }));
 });

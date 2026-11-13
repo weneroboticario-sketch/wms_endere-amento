@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="pt-BR" class="wms-mobile-v1">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:4193 ws://127.0.0.1:4192; img-src 'self' blob: data: http://127.0.0.1:4193; worker-src 'self' blob:; require-trusted-types-for 'script'; trusted-types default dompurify"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/src/wms-mobile.css"><title>Comunicação WMS — teste local isolado</title></head>
+<body>
+<header class="mobile-topbar"><div class="mobile-brand"><strong>WMS · teste local</strong></div></header>
+<main style="padding:16px"><p>TESTE LOCAL ISOLADO — contas e mensagens sintéticas, sem produção ou notificações externas.</p><div class="button-row" id="actors"><button data-actor="admin">Administrador</button><button data-actor="op">Operador</button><button data-actor="cash">Caixa</button><button data-actor="sup">Supervisor</button><button data-actor="other">Outra unidade</button><button id="testImage">Preparar evidência sintética</button></div><p id="identity"></p><p id="badge"></p><p id="status"></p><section id="communication" class="mobile-module"></section><pre id="process"></pre></main>
+<nav class="mobile-bottom-nav" aria-label="Barra inferior de teste"><button disabled>Captação</button><button disabled>Reposição</button><button disabled>Pesquisa</button><button disabled aria-current="page">Chat</button><button disabled>Mais</button></nav>
+<script type="module" src="/tests/communication-visual.js"></script></body></html>

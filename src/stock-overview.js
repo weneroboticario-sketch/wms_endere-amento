@@ -1,4 +1,5 @@
 import { escapeHtml as esc } from "./utils.js";
+import { classifyImportFreshness } from "./stock-freshness.js";
 import "./stock-overview.css";
 
 export function canViewStockOverview(user) {
@@ -12,7 +13,9 @@ export function importHealth(batch, now = Date.now()) {
   if (!batch) return { label: "Sem base", kind: "warning" };
   if (batch.status === "FAILED") return { label: "Falha na importação", kind: "error" };
   if (batch.status !== "COMPLETED") return { label: "Importação em andamento", kind: "warning" };
-  if (now - Date.parse(batch.finished_at || batch.created_at) >= 48 * 3600000) return { label: "Base há mais de 48h", kind: "warning" };
+  const freshness = classifyImportFreshness(batch, { now, warningMs: 48 * 3600000, staleMs: 48 * 3600000, inclusive: true });
+  if (freshness.state === "MISSING") return { label: "Data de atualização indisponível", kind: "warning" };
+  if (freshness.state === "STALE") return { label: "Base há mais de 48h", kind: "warning" };
   return { label: "Atualizada", kind: "success" };
 }
 

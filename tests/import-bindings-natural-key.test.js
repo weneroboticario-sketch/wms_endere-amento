@@ -38,10 +38,11 @@ test("stock import uses the binding RPC and reconciles returned IDs",async()=>{
 
 test("stock screen clears completed loading without hiding import messages",async()=>{
   const script=await readFile(new URL("../script.js",import.meta.url),"utf8");
-  const fn=script.match(/  async function loadStockOperationalData\(\) \{[\s\S]*?\n  }/)[0];
+  const fn=script.match(/  async function loadStockOperationalData\(\) \{[\s\S]*?\n  }/)[0]+"\n"+script.match(/  async function performStockOperationalLoad\([^]*?\n  }/)[0];
   for(const [message,importing,expected] of [["Carregando Base de Estoque...",false,""],["Falha na importacao",false,"Falha na importacao"],["Gravando 200 itens",true,"Gravando 200 itens"]]){
     const status={textContent:message};
     const context={performance,stockState:{importing},isSupabaseReady:()=>true,
+      activeWarehouseCode:()=>"VDCG",authState:{currentUser:{id:"tester"}},moduleLoadPromises:{},
       closeInterruptedStockImportBatches:async()=>{},loadStockImportBatchRows:async()=>({data:[]}),
       countActiveStockPositions:async()=>12,getActiveScreenId:()=>"baseEstoque",$:()=>status,
       setStatus:(_,text)=>{status.textContent=text;},recordPerformanceMetric:()=>{}};

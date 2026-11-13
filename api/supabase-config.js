@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 export default function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -8,6 +9,7 @@ export default function handler(req, res) {
     res.status(204).end();
     return;
   }
+  if (req.method !== "GET") { res.status(405).json({ configured: false, error: "Método não permitido." }); return; }
 
   const urlVars = [
     ["SUPABASE_URL", process.env.SUPABASE_URL],
@@ -45,7 +47,7 @@ export default function handler(req, res) {
       urlSource: urlMatch.name,
       keySource: keyMatch.name,
       urlPreview: previewUrl(url),
-      keyPreview: previewSecret(key),
+      keyPreview: hasValidKey ? "Chave pública configurada" : "",
       checkedUrlVariables: urlVars.map(function (item) { return item[0]; }),
       checkedKeyVariables: keyVars.map(function (item) { return item[0]; }),
       note: "Fallback de configuracao. O app principal le VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY pelo build Vite."
@@ -85,16 +87,13 @@ function isValidSupabaseUrl(value) {
 
 function isLikelySupabaseAnonKey(value) {
   const key = (value || "").trim();
-  return /^eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/.test(key) || /^sb_publishable_[a-zA-Z0-9_-]{20,}$/.test(key);
+  if (/^sb_publishable_[a-zA-Z0-9_-]{20,}$/.test(key)) return true;
+  if (!/^eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$/.test(key)) return false;
+  try { return JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString("utf8")).role === "anon"; }
+  catch { return false; }
 }
 
 function previewUrl(value) {
   if (!value) return "";
   return value.replace(/\/+$/, "");
-}
-
-function previewSecret(value) {
-  if (!value) return "";
-  if (value.length <= 12) return "***";
-  return value.slice(0, 8) + "..." + value.slice(-6);
 }

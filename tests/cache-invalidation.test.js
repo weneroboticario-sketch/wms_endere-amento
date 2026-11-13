@@ -6,7 +6,10 @@ const source = await readFile(new URL("../script.js", import.meta.url), "utf8");
 
 test("address export publishes a warehouse-scoped cache invalidation", () => {
   assert.match(source, /ADDRESS_CACHE_INVALIDATION_EVENT = "ADDRESS_CACHE_INVALIDATED"/);
-  assert.match(source, /await saveData\(\)[\s\S]*?publishAddressCacheInvalidation\(exportWarehouseCode, fileName, exportRows\.length, "EXPORTACAO_ENDERECAMENTO"\)/);
+  const exportSource = source.slice(source.indexOf("  async function exportExcel("), source.indexOf("  function validateAddressExportState("));
+  assert.match(exportSource, /await refreshAddressExportBindings\(\)/);
+  assert.match(exportSource, /publishAddressCacheInvalidation\(exportWarehouseCode, fileName, exportRows\.length, "EXPORTACAO_ENDERECAMENTO"\)/);
+  assert.doesNotMatch(exportSource, /saveData\(/);
   assert.match(source, /warehouse_code: normalizedWarehouseCode/);
 });
 

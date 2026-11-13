@@ -1,0 +1,3 @@
+// Runs in a worker. Only installed, version-pinned OCR scripts may execute here.
+if(self.trustedTypes){self.trustedTypes.createPolicy('default',{createScriptURL(value){const u=new URL(value,self.location.href);if(u.origin!==self.location.origin||!/^\/magazine-assets\/(?:worker\.min\.js|core\/tesseract-core(?:-(?:relaxed)?simd)?-lstm\.wasm\.js)$/.test(u.pathname)||u.search||u.hash)throw new TypeError('Script OCR não autorizado.');return u.href;}});}
+importScripts(self.trustedTypes?self.trustedTypes.defaultPolicy.createScriptURL('/magazine-assets/worker.min.js'):'/magazine-assets/worker.min.js');
