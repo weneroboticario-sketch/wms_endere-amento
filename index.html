@@ -267,6 +267,7 @@
           </div>
           <div class="input-action">
             <input id="dashboardSkuQuickInput" inputmode="text" type="search" placeholder="Digite ou bipe o SKU">
+            <button class="secondary-button" id="dashboardSkuCameraButton" type="button" aria-label="Ler SKU da consulta rápida pela câmera">Ler código</button>
             <button class="primary-button" id="dashboardSkuQuickButton" type="button">Consultar</button>
           </div>
           <div id="dashboardSkuQuickResult" class="dashboard-quick-result"></div>
@@ -313,12 +314,14 @@
               <label for="skuInput">SKU do produto</label>
               <div class="input-action">
                 <input id="skuInput" name="sku" inputmode="text" type="text" placeholder="Bipe ou digite o SKU" autocomplete="off">
+                <button class="secondary-button" id="addressingSkuCameraButton" type="button" aria-label="Ler SKU do endereçamento pela câmera">Ler código</button>
                 <button class="primary-button" id="skuReadButton" type="button">Confirmar produto</button>
               </div>
 
               <label for="locationInput">Código da prateleira</label>
               <div class="input-action">
                 <input id="locationInput" name="location" inputmode="text" type="text" placeholder="Bipe a prateleira após o produto" autocomplete="off" disabled>
+                <button class="secondary-button" id="addressingLocationCameraButton" type="button" aria-label="Ler localização do endereçamento pela câmera" disabled>Ler código</button>
                 <button class="secondary-button" id="locationReadButton" type="button" disabled>Confirmar prateleira</button>
               </div>
 
@@ -572,7 +575,8 @@
             </div>
             <form id="replenishmentForm" autocomplete="off">
               <label for="replenishmentSkuInput">Codigo do produto</label>
-              <input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
+              <div class="input-action"><input id="replenishmentSkuInput" class="big-scan-input" inputmode="text" type="text" placeholder="Bipe ou digite o SKU">
+                <button class="secondary-button" id="replenishmentSkuCameraButton" type="button" aria-label="Ler SKU para pedido de reposição pela câmera">Ler código</button></div>
               <div id="replenishmentProductCard" class="replenishment-product-card empty-state">Bipe um produto para consultar.</div>
               <p id="replenishmentAvailableQty" class="replenishment-available-qty" role="status" hidden></p>
               <div class="replenishment-qty-grid">
@@ -1013,6 +1017,8 @@
                 <div id="transferStepHelp" class="transfer-step-help"></div>
                 <label for="transferScanInput">SKU bipado</label>
                 <input id="transferScanInput" type="text" inputmode="text" placeholder="Digite ou bipe o SKU">
+                <button class="secondary-button" id="transferSkuCameraButton" type="button" aria-label="Ler SKU da transferência pela câmera">Ler código</button>
+                <button class="secondary-button" id="transferLocateSkuButton" type="button">Localizar item</button>
                 <label for="transferQuantityInput">Quantidade</label>
                 <input id="transferQuantityInput" type="number" min="0" step="0.001" placeholder="Quantidade">
                 <div id="transferBoxFields" class="box-quantity-fields" hidden>

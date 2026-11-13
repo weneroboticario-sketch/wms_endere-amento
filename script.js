@@ -1,6 +1,7 @@
 import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
+import { openOperationalBarcodeCamera } from "./src/wms-operational-camera.js";
 import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
 import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
@@ -8435,7 +8436,98 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return ["assistente", "conferencias", "historico"].indexOf(screenId) >= 0;
   }
 
+  var operationalCameraController = null;
+
+  function startOperationalFieldCamera(options) {
+    if (IS_CP_ALAMO || !authState.currentUser || !canAccessScreen(options.screenId)) return;
+    var input = $(options.inputId), actorId = authState.currentUser.id;
+    var warehouseCode = activeWarehouseCode();
+    var valid = function () {
+      return !IS_CP_ALAMO && authState.currentUser &&
+        authState.currentUser.id === actorId && warehouseCode === activeWarehouseCode() &&
+        canAccessScreen(options.screenId) && getActiveScreenId() === options.screenId &&
+        input && input.isConnected && !input.disabled &&
+        (!options.allow || options.allow());
+    };
+    if (!valid()) return;
+    if (operationalCameraController) operationalCameraController.close();
+    var controller = openOperationalBarcodeCamera({
+      client: function () { return supabaseDb; },
+      user: function () { return authState.currentUser; },
+      warehouse: activeWarehouseCode,
+      canUse: valid,
+      normalizeLocation: normalizeLocation,
+      mode: options.mode || "sku",
+      onRead: async function (code, detected) {
+        if (!valid()) return;
+        await options.onScan(code, detected);
+      },
+      error: function (error) {
+        if (!valid()) return;
+        if (options.statusId) setStatus(options.statusId, "Falha na leitura por câmera: " + formatSupabaseError(error), "error");
+        else showToast("Falha na câmera: " + formatSupabaseError(error), "error");
+      },
+      closed: function () { if (operationalCameraController === controller) operationalCameraController = null; }
+    });
+    operationalCameraController = controller;
+  }
+
+  function bindOperationalCameraButton(buttonId, options) {
+    var button = $(buttonId);
+    if (!button) return;
+    button.hidden = IS_CP_ALAMO;
+    button.addEventListener("click", function () {
+      if (button.disabled) return;
+      try { startOperationalFieldCamera(options); }
+      catch (error) {
+        if (options.statusId) setStatus(options.statusId, "Não foi possível iniciar a câmera: " + formatSupabaseError(error), "error");
+      }
+    });
+  }
+
   function bindEvents() {
+    bindOperationalCameraButton("addressingSkuCameraButton", {
+      screenId: "bipagem", inputId: "skuInput", mode: "sku",
+      onScan: function (sku) {
+        $("skuInput").value = sku;
+        handleSkuRead(); // Existing SKU check; never allocates an address.
+      }
+    });
+    bindOperationalCameraButton("addressingLocationCameraButton", {
+      screenId: "bipagem", inputId: "locationInput", mode: "address",
+      onScan: function (location) {
+        $("locationInput").value = location;
+        setScanMessage("Prateleira " + location + " lida pela câmera. Confira e confirme o endereçamento.", "success");
+        $("locationReadButton").focus(); // Explicit action retains all existing occupancy checks.
+      }
+    });
+    bindOperationalCameraButton("dashboardSkuCameraButton", {
+      screenId: "dashboard", inputId: "dashboardSkuQuickInput", mode: "sku",
+      onScan: function (sku) {
+        $("dashboardSkuQuickInput").value = sku;
+        return renderDashboardSkuQuickSearch();
+      }
+    });
+    bindOperationalCameraButton("replenishmentSkuCameraButton", {
+      screenId: "reposicao", inputId: "replenishmentSkuInput", mode: "sku",
+      onScan: function (sku) {
+        $("replenishmentSkuInput").value = sku;
+        $("replenishmentSkuInput").dispatchEvent(new window.Event("input", { bubbles: true }));
+        $("replenishmentRequestQtyInput").focus(); // No replenishment request created automatically.
+      }
+    });
+    bindOperationalCameraButton("transferSkuCameraButton", {
+      screenId: "transferencias", inputId: "transferScanInput", mode: "sku",
+      statusId: "transferWorkStatus",
+      allow: function () {
+        return getActiveTransferSectionId() === "transferWorkSection" && !!transferState.activeTransferId;
+      },
+      onScan: function (sku) {
+        $("transferScanInput").value = sku;
+        setStatus("transferWorkStatus", "SKU " + sku + " lido pela câmera. Confirme a leitura no fluxo da transferência.", "success");
+        $("transferScanInput").focus(); // Never increments separated or packed quantities automatically.
+      }
+    });
     if ($("communicationAlert")) $("communicationAlert").querySelector("[data-dismiss-communication-alert]").onclick = function () { $("communicationAlert").hidden = true; };
     document.addEventListener("click", function (event) {
       var button = event.target.closest("[data-communication-share]");
@@ -8789,6 +8881,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
     $("transferScanInput").addEventListener("input", markTransferScanInput);
+    if ($("transferLocateSkuButton")) $("transferLocateSkuButton").addEventListener("click", locateTransferItem);
     $("transferScanInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -9531,6 +9624,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var button = $("locationReadButton");
     if (input) input.disabled = !enabled;
     if (button) button.disabled = !enabled;
+    if ($("addressingLocationCameraButton")) $("addressingLocationCameraButton").disabled = !enabled;
     document.querySelectorAll(".scan-flow-step").forEach(function (step, index) {
       step.classList.toggle("active", enabled ? index === 1 : index === 0);
       step.classList.toggle("complete", enabled && index === 0);
@@ -14328,6 +14422,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!$("transferWorkRows")) return;
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) {
+      if ($("transferSkuCameraButton")) $("transferSkuCameraButton").hidden = true;
+      if ($("transferLocateSkuButton")) $("transferLocateSkuButton").hidden = true;
       $("transferWorkRows").innerHTML = "";
       $("transferPackedExports").hidden = true;
       if ($("transferCurrentItem")) $("transferCurrentItem").innerHTML = emptyCurrentItemHtml();
@@ -14373,12 +14469,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
     renderTransferStepSummary(transfer, stats, mode, items);
     renderTransferFinalSummary(transfer, stats, items, mode);
-    var requiresScan = mode === "MONTAGEM";
+    var requiresScan = mode === "MONTAGEM" || mode === "SEPARACAO";
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
     var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
     var showFinalBoxes = !finalized && mode === "MONTAGEM";
     $("transferStepHelp").innerHTML = transferStepHelpHtml(mode);
     setTransferFieldHidden("transferScanInput", !requiresScan);
+    if ($("transferLocateSkuButton")) {
+      $("transferLocateSkuButton").hidden = finalized || !requiresScan;
+      $("transferLocateSkuButton").disabled = finalized || !requiresScan;
+    }
+    if ($("transferSkuCameraButton")) {
+      $("transferSkuCameraButton").hidden = IS_CP_ALAMO || finalized || !requiresScan;
+      $("transferSkuCameraButton").disabled = finalized || !requiresScan;
+    }
     setTransferFieldHidden("transferQuantityInput", finalized || (mode === "SEPARACAO" && !transferState.manualSeparationQty));
     $("transferQuantityInput").placeholder = mode === "MONTAGEM" && isBoxQuantityItem(selectedForQty) ? "Quantidade de caixas" : "Quantidade";
     $("startPackingButton").hidden = true;
@@ -18663,8 +18767,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("transferScanInput").value = item.sku;
     $("transferQuantityInput").value = "";
     renderCurrentTransferItem();
-    setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
-    $("transferQuantityInput").focus();
+    if (transferState.activeWorkMode === "SEPARACAO" && !transferState.manualSeparationQty) {
+      setStatus("transferWorkStatus", item.description + " localizado. Confirme a coleta no controle da transferência.", "success");
+      $("confirmCurrentCollectButton").focus();
+    } else {
+      setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
+      $("transferQuantityInput").focus();
+    }
   }
 
   async function handleUnknownTransferSku(transfer, sku) {
