@@ -5741,12 +5741,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
-    return updateReplenishmentRow(id, {
+    var saved = await updateReplenishmentRow(id, {
       status: "CONCLUIDO",
       pendingQty: 0,
       finishedAt: now,
       durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
     });
+    // O gatilho transacional do banco debita CAPTACAO e credita LOJA.
+    // Esvaziar os caches impede que a proxima consulta use saldos anteriores.
+    var warehouse = saved.warehouseCode || request.warehouseCode;
+    var sku = saved.codigoMaterial || request.codigoMaterial;
+    if (warehouse && sku) {
+      delete stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)];
+      delete stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)];
+    }
+    replenishmentState.suggestionsLoaded = false;
+    replenishmentState.suggestions = [];
+    replenishmentState.suggestionOffset = 0;
+    return saved;
   }
 
   async function cancelReplenishmentRequest(id, reason) {
@@ -9828,7 +9840,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (reason === null) return;
         await markReplenishmentNoStock(id, reason);
       }
-      if (target.dataset.replenishmentComplete) await completeReplenishmentRequest(id);
+      var completedReplenishment = null;
+      if (target.dataset.replenishmentComplete) completedReplenishment = await completeReplenishmentRequest(id);
       if (target.dataset.replenishmentCancel) {
         var cancellationRequest = getReplenishmentById(id);
         var cancelReason = window.prompt("Motivo do cancelamento:", cancellationRequest ? cancellationRequest.cancellationRequestReason || "" : "");
@@ -9840,7 +9853,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         await deleteTestReplenishmentRequest(id);
       }
       await refreshReplenishmentData();
-      showToast("Pedido atualizado.", "success");
+      if (completedReplenishment) {
+        await refreshReplenishmentSuggestions(true);
+        showToast("Reposicao concluida: " + formatQty(completedReplenishment.attendedQty) + " un. transferidas da CAPTACAO para a LOJA.", "success");
+      } else {
+        showToast("Pedido atualizado.", "success");
+      }
     } catch (error) {
       setStatus("replenishmentQueueStatus", "Erro ao atualizar pedido: " + formatSupabaseError(error), "error");
     } finally {
