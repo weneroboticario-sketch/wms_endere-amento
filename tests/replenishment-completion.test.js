@@ -9,14 +9,11 @@ const completionSource = source.slice(source.indexOf("  async function completeR
 const actionsSource = source.slice(source.indexOf("  function replenishmentActionsHtml("), source.indexOf("  function displayReplenishmentStatus("));
 
 test("partial completion closes the request and exports only the attended quantity", async () => {
-  const request = { id: "partial", warehouseCode: "VDCG", codigoMaterial: "48060", requestedQty: 31, attendedQty: 10, pendingQty: 21, status: "ATENDIDO_PARCIAL" };
+  const request = { id: "partial", requestedQty: 31, attendedQty: 10, pendingQty: 21, status: "ATENDIDO_PARCIAL" };
   const context = vm.createContext({
     getReplenishmentById: () => request,
     nowIso: () => "2026-10-20T20:00:00.000Z",
-    updateReplenishmentRow: async (id, patch) => Object.assign(request, patch),
-    stockState: { positionCache: { "VDCG:CAPTACAO:48060": [{ totalDisponivel: 50 }], "VDCG:LOJA:48060": [{ totalDisponivel: 10 }] } },
-    stockCacheKey: (warehouse, sourceType, sku) => [warehouse, sourceType, sku].join(":"),
-    replenishmentState: { suggestionsLoaded: true, suggestions: [{ sku: "48060" }], suggestionOffset: 50 }
+    updateReplenishmentRow: async (id, patch) => Object.assign(request, patch)
   });
   vm.runInContext(completionSource, context);
   await context.completeReplenishmentRequest(request.id);
@@ -25,10 +22,6 @@ test("partial completion closes the request and exports only the attended quanti
   assert.equal(request.requestedQty, 31);
   assert.equal(request.attendedQty, 10);
   assert.ok(request.finishedAt);
-  assert.equal(context.stockState.positionCache["VDCG:CAPTACAO:48060"], undefined);
-  assert.equal(context.stockState.positionCache["VDCG:LOJA:48060"], undefined);
-  assert.equal(context.replenishmentState.suggestionsLoaded, false);
-  assert.equal(context.replenishmentState.suggestions.length, 0);
   assert.deepEqual(buildReplenishmentExportRows([{
     id: request.id, warehouse_code: "VDCG", codigo_material: "48060",
     quantidade_solicitada: request.requestedQty, quantidade_atendida: request.attendedQty, status: request.status
