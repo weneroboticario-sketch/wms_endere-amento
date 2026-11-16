@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "perf/wms-otimizacao-segura": false
+    }
+  },
   "redirects": [
     {
       "source": "/:path*",
