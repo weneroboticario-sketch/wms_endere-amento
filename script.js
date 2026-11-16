@@ -10,6 +10,7 @@ import { createCommunicationRuntime } from "./src/communication-runtime.js";
 import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-loader.js";
+import { createCaixaAlerts } from "./src/caixa-alerts.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
@@ -143,6 +144,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var stockOverviewController = null;
   var operationalCatalogPromise = null;
   var productCatalogSingleFlight = createScopedSingleFlight();
+  var caixaAlertsRuntime = null;
+  var caixaAlertsScope = "";
 
   async function ensureOperationalCatalog() {
     if (!operationalCatalogPromise) operationalCatalogPromise = loadBuiltinProducts().then(function (products) { BUILTIN_PRODUCTS = products; });
@@ -1057,6 +1060,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function ensureScreenDataLoaded(screenId) {
+    if (screenId === "atendimentosCaixa") { renderCaixaRequestsScreen(); return true; }
     if (screenId === "comunicacao" && !IS_CP_ALAMO) { var runtime = await ensureCommunication(); if (runtime) await runtime.show(); return true; }
     if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
       var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
@@ -6657,6 +6661,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
+    ensureCaixaAlerts();
     if (isGlobalDashboardScope()) {
       resetSessionInactivityTimeout();
       await showScreen("globalDashboard");
@@ -6666,7 +6671,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (authState.currentUser.role === "CAIXA") {
       await ensureWarehousesLoaded();
       resetSessionInactivityTimeout();
-      await showScreen("reposicao");
+      await showScreen(IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa");
       return;
     }
     await ensureOperationalCatalog();
@@ -6691,11 +6696,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    stopCaixaAlerts();
     if (communicationRuntime) { void communicationRuntime.dispose(); communicationRuntime = null; }
     communicationScope = ""; communicationStarting = null;
     if ($("communicationAlert")) $("communicationAlert").hidden = true;
     if (skuPhotoController) skuPhotoController.close();
-    if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     taskSound.stop();
     taskAlertState.pendingSound = false;
     authState.currentUser = null;
@@ -6782,6 +6787,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function logout() {
+    stopCaixaAlerts();
     if (communicationRuntime) { await communicationRuntime.dispose({ unsubscribe: true }); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopTaskPolling();
     stopLeaderLiveSync();
@@ -6825,6 +6831,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     if (code === activeWarehouseCode()) return;
+    stopCaixaAlerts();
     if (communicationRuntime) { await communicationRuntime.dispose(); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopLeaderLiveSync();
     stopTaskPolling();
@@ -6832,12 +6839,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     setActiveWarehouse(code);
     resetLazyModuleState(true);
     applyRolePermissions();
+    ensureCaixaAlerts();
     if (isGlobalDashboardScope()) {
       await showScreen("globalDashboard");
       return;
     }
     if (authState.currentUser.role === "CAIXA") {
-      await showScreen("reposicao");
+      await showScreen(IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa");
       return;
     }
     await ensureOperationalCatalog();
@@ -6930,7 +6938,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
-    if (authState.currentUser.role === "CAIXA") return "reposicao";
+    if (authState.currentUser.role === "CAIXA") return IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6987,6 +6995,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
     if (!authState.currentUser) return false;
+    if (screenId === "atendimentosCaixa") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "CAIXA"].includes(authState.currentUser.role);
+    if (!IS_CP_ALAMO && screenId === "reposicao" && authState.currentUser.role === "CAIXA") return false;
     if (screenId === "comunicacao") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
@@ -8423,6 +8433,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "atendimentosCaixa") return "Atendimentos do caixa";
     if (screenId === "comunicacao") return "Comunicação";
     if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
@@ -9570,17 +9581,43 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function stopCaixaAlerts() {
+    caixaAlertsRuntime?.close(); caixaAlertsRuntime = null; caixaAlertsScope = "";
+    var root = $("caixaRequestsRoot");
+    if (root) { root.caixaStop?.(); delete root.caixaReveal; delete root.dataset.scope; delete root.dataset.targetRequest; root.replaceChildren(); }
+  }
+
+  function ensureCaixaAlerts() {
+    if (!canAccessScreen("atendimentosCaixa") || !isSupabaseReady()) return null;
+    var actor = authState.currentUser.id, role = authState.currentUser.role, warehouse = activeWarehouseCode();
+    var scope = actor + ":" + role + ":" + warehouse;
+    if (caixaAlertsRuntime && caixaAlertsScope === scope) return caixaAlertsRuntime;
+    stopCaixaAlerts(); caixaAlertsScope = scope;
+    caixaAlertsRuntime = createCaixaAlerts({ client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      allowRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
+      isCurrent: function () { return authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; },
+      onCount: function (count) { var badge = $("caixaPendingCount"); if (badge) { badge.textContent = String(count); badge.hidden = !count; badge.parentElement.setAttribute("aria-label", count + " atendimentos pendentes do caixa"); } },
+      onOpen: async function (id) { var root = $("caixaRequestsRoot"); root.dataset.targetRequest = id; await showScreen("atendimentosCaixa"); root.caixaReveal?.(id); },
+      onSound: function () { return taskSound.play("replenishment", 0.16); },
+      describeSku: findProductName,
+      onError: function (error) { recordPerformanceError("alertas-caixa", error); }
+    });
+    caixaAlertsRuntime.mountSettings($("caixaAlertSettings")); caixaAlertsRuntime.start();
+    return caixaAlertsRuntime;
+  }
+
   function renderCaixaRequestsScreen() {
-    if (!$("caixaRequestsRoot") || IS_CP_ALAMO) return;
-    var caixaOnly = authState.currentUser.role === "CAIXA";
-    Array.from($("reposicao").children).forEach(function (child) { if (child.id !== "caixaRequestsRoot") child.hidden = caixaOnly; });
-    $("caixaRequestsRoot").hidden = authState.currentUser.role === "ATENDENTE";
-    if ($("caixaRequestsRoot").hidden) return;
+    if (!$("caixaRequestsRoot") || !canAccessScreen("atendimentosCaixa")) return;
+    var alerts = ensureCaixaAlerts();
+    $("caixaRequestsRoot").hidden = false;
     var actor = authState.currentUser.id;
     var role = authState.currentUser.role;
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      attendanceFeed: alerts && alerts.feed,
+      focusRequest: function () { return $("caixaRequestsRoot").dataset.targetRequest; },
+      focusedRequest: function () { delete $("caixaRequestsRoot").dataset.targetRequest; },
       allowOperationalRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
       canDeletePermanently: isGlobalAdminUser(authState.currentUser),
       onDeleted: async function (request) {
@@ -9591,31 +9628,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse) renderReplenishment();
         }
       },
-      openRequestsScreen: function () { return showScreen("reposicao"); },
-      onUnreadMessages: function (info) {
-        var scope = actor + ":" + warehouse + ":" + role;
-        var banner = $("caixaUnreadAlert");
-        var sameSession = authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse;
-        if (!sameSession || !info.count) {
-          if (banner && banner.dataset.scope === scope) banner.remove();
-          return;
-        }
-        if (!banner || banner.dataset.scope !== scope) {
-          if (banner) banner.remove();
-          banner = document.createElement("aside"); banner.id = "caixaUnreadAlert"; banner.dataset.scope = scope;
-          banner.setAttribute("role", "status"); banner.setAttribute("aria-live", "polite");
-          var text = document.createElement("strong"); banner.appendChild(text);
-          var button = document.createElement("button"); button.type = "button"; button.textContent = "Ver mensagem";
-          button.addEventListener("click", function () { if (banner.caixaOpen) banner.caixaOpen(); }); banner.appendChild(button);
-          document.body.appendChild(banner);
-        }
-        banner.caixaOpen = info.open;
-        var signature = info.count + ":" + info.requestId;
-        if (banner.dataset.signature !== signature) {
-          banner.firstElementChild.textContent = info.count + (info.count === 1 ? " mensagem não lida no atendimento" : " mensagens não lidas no atendimento");
-          banner.dataset.signature = signature;
-        }
-      },
+      openRequestsScreen: function () { return showScreen("atendimentosCaixa"); },
       claimProduct: async function (id) {
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
         await refreshReplenishmentData();
@@ -9623,6 +9636,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         return claimReplenishmentRequest(id);
       },
       openProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        await showScreen("reposicao");
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
         replenishmentState.activeFilter = "";
         replenishmentState.renderLimit = Math.max(replenishmentState.renderLimit, replenishmentState.requests.length);
@@ -9636,8 +9651,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderAll() {
-    if (getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
-      renderCaixaRequestsScreen();
+    if (getActiveScreenId() === "atendimentosCaixa") { renderCaixaRequestsScreen(); return; }
+    if (IS_CP_ALAMO && getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
       return;
     }
     renderStockFreshnessAlert();
@@ -9759,7 +9774,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishment() {
-    renderCaixaRequestsScreen();
     if (!$("replenishmentList")) return;
     var attendantView = isAttendant();
     applyReplenishmentRoleView(attendantView);
@@ -10459,6 +10473,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return { type: "TRANSFERENCIA", id: transfer.id, title: transferDisplayName(transfer), subtitle: transferRouteDestinationLabel(transfer), source: transfer };
     });
     var operationalTasks = getMyOperationalTasks().filter(function (task) {
+      if (!IS_CP_ALAMO && task.referenceType === "CAIXA_AJUSTE") return false; // The cashier bell owns these alerts as well.
       return ["CONCLUIDA", "CANCELADA"].indexOf(task.status) < 0;
     }).map(function (task) {
       var details = task.description || "Central de Tarefas";
@@ -10472,6 +10487,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       };
     });
     var replenishments = getVisibleReplenishmentRequests().filter(function (request) {
+      if (!IS_CP_ALAMO && String(request.id || "").startsWith("caixa-")) return false; // Handled by the global cashier bell, not a permanent task panel.
       if (request.status === "PENDENTE" && canClaimReplenishmentRequest(request)) return true;
       if (["EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(request.status) < 0) return false;
       return request.responsavelId === authState.currentUser.id;
@@ -10623,6 +10639,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function createReplenishmentNotification(request, type) {
     if (!request || !authState.currentUser) return;
+    if (!IS_CP_ALAMO && String(request.id || "").startsWith("caixa-") && (!type || type === "created")) return; // One urgent alert per cashier request.
     if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return;
     if (!shouldNotifyCurrentUserAboutReplenishment(request)) return;
     var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || "", request.cancellationRequestedAt || ""].join(":");

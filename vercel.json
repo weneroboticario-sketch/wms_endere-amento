@@ -1,4 +1,5 @@
 {
+  "git": { "deploymentEnabled": { "feat/wms-caixa-alertas-globais": false } },
   "redirects": [
     {
       "source": "/:path*",
