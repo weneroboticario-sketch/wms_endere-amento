@@ -29,7 +29,7 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
   $("menuToggle")?.replaceChildren(icon(Menu,24));
   const brand=document.createElement("div");brand.className="mobile-brand";
   const brandText=document.createElement("span");brandText.innerHTML='<strong>WMS</strong><small>ENDEREÇAMENTO</small>';brand.append(icon(Box,32),brandText);header.append(brand);
-  const taskButton=button("Minhas tarefas",Bell);taskButton.className="mobile-task-button";const badge=document.createElement("span");badge.className="mobile-task-count";taskButton.append(badge);taskButton.addEventListener("click",()=>{if(canAccess("transferencias"))navigate("transferencias");});header.append(taskButton);
+  const taskButton=button("Minhas tarefas e atendimentos",Bell);taskButton.className="mobile-task-button";const badge=document.createElement("span");badge.className="mobile-task-count";taskButton.append(badge);taskButton.addEventListener("click",()=>{if(canAccess("atendimentosCaixa")&&(Number($("caixaPendingCount")?.textContent)>0||!canAccess("transferencias")))navigate("atendimentosCaixa");else if(canAccess("transferencias"))navigate("transferencias");});header.append(taskButton);
   const menu=document.createElement("dialog");menu.className="mobile-more-menu";menu.setAttribute("aria-label","Mais módulos");
   const menuClose=button("Fechar menu",X);menuClose.addEventListener("click",()=>menu.close());
   const menuHeading=document.createElement("header");menuHeading.append(document.createTextNode("Mais"),menuClose);
@@ -143,8 +143,10 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
   function refresh(){
     observer.disconnect();
     if(media.matches&&!mobile)enter();if(!media.matches&&mobile)leave();
-    const authenticated=isAuthenticated();nav.hidden=!authenticated;taskButton.hidden=!authenticated||!canAccess("transferencias");
-    const count=$("topTaskCount")?.textContent.trim()||"0";badge.textContent=count;badge.hidden=count==="0";
+    const authenticated=isAuthenticated();nav.hidden=!authenticated;taskButton.hidden=!authenticated||(!canAccess("transferencias")&&!canAccess("atendimentosCaixa"));
+    const caixa=Number($("caixaPendingCount")?.textContent)||0;
+    const count=caixa||Number($("topTaskCount")?.textContent)||0;badge.textContent=String(count);badge.hidden=count===0;
+    taskButton.setAttribute('aria-label',caixa?caixa+' atendimentos pendentes do caixa':'Minhas tarefas');
     const active=document.querySelector(".screen.active")?.id;
     nav.querySelectorAll("[data-mobile-nav]").forEach(item=>{const key=item.dataset.mobileNav;const target=key==="home"?(canAccess("globalDashboard")?"globalDashboard":"dashboard"):key==="capture"?"bipagem":key==="replenishment"?"reposicao":key==="search"?"consultaSku":key==="communication"?"comunicacao":null;item.hidden=!!target&&!canAccess(target);const selected=key==="more"?active==="transferencias":key==="home"?["dashboard","globalDashboard"].includes(active):active===target;item.setAttribute("aria-current",selected?"page":"false");});
     nav.style.gridTemplateColumns="repeat("+[...nav.children].filter(item=>!item.hidden).length+",minmax(0,1fr))";
@@ -157,7 +159,7 @@ export function initializeWmsMobile({navigate,canAccess,isAuthenticated}){
       const newSource=document.querySelector('[data-transfer-tab="newTransferSection"]');transferCreate.hidden=!newSource||newSource.hidden||window.getComputedStyle(newSource).display==="none";
     }
     screens.forEach(screen=>observer.observe(screen,{childList:true,subtree:true,attributes:true,attributeFilter:["hidden","class"],characterData:true}));
-    observer.observe(sidebar,{subtree:true,attributes:true,attributeFilter:["hidden","class"]});observer.observe(document.body,{attributes:true,attributeFilter:["class"]});if($("topTaskCount"))observer.observe($("topTaskCount"),{childList:true,characterData:true,subtree:true});
+    observer.observe(sidebar,{subtree:true,attributes:true,attributeFilter:["hidden","class"]});observer.observe(document.body,{attributes:true,attributeFilter:["class"]});if($("topTaskCount"))observer.observe($("topTaskCount"),{childList:true,characterData:true,subtree:true});if($("caixaPendingCount"))observer.observe($("caixaPendingCount"),{childList:true,characterData:true,subtree:true});
   }
   function schedule(){window.cancelAnimationFrame(frame);frame=window.requestAnimationFrame(refresh);}
   const observer=new window.MutationObserver(schedule);media.addEventListener("change",schedule);refresh();

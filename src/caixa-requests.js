@@ -1,5 +1,5 @@
 import { createElement, MessageCircle } from "lucide";
-import { caixaAttendanceView } from "./caixa-attendance.js";
+import { caixaAttendanceView, caixaAttendanceBucket } from "./caixa-attendance.js";
 import { mountCaixaChat } from "./caixa-chat.js";
 import { createCaixaUnread } from "./caixa-unread.js";
 import { createCaixaProductLookup } from "./caixa-product-lookup.js";
@@ -34,9 +34,12 @@ export function mountCaixaRequests(host, context) {
   let renderPending = () => {};
   const header = node("header", undefined, host); header.className = "ca-header";
   const title = node("div", undefined, header);
-  node("h2", "CLIENTE NO CAIXA", title);
+  node("h2", "Atendimentos do caixa", title);
   node("p", context.role === "CAIXA" ? "Solicitações prioritárias para o estoque" : "Fila de atendimento prioritário · cliente sempre tem preferência", title);
   const syncState = node("small", "Sincronização: conectando…", title); syncState.setAttribute("role", "status");
+  const scopeHint = node("small", "", title);
+  const showSync = value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", DADOS_POSSIVELMENTE_DESATUALIZADOS: "consulta de segurança ativa", FALHA_SINCRONIZACAO: "falha ao atualizar; tente Atualizar" }[value] || value); };
+  if (context.attendanceFeed) showSync(context.attendanceFeed.state());
   const controls = node("div", undefined, host); controls.className = "ca-toolbar";
   const tabs = node("nav", undefined, controls); tabs.className = "ca-tabs";
   const tabButtons = {};
@@ -135,13 +138,14 @@ export function mountCaixaRequests(host, context) {
   const chat = mountCaixaChat({ host, context, rpc, canChat, onRead: async (requestId, messages) => {
     await unread.acknowledge(requestId, messages); showUnread();
   } });
-  const refresh = async (automatic = false) => {
+  const refresh = async (automatic = false, providedRows) => {
     const sequence = ++revision, actor = context.actor, warehouse = context.warehouse;
-    const response = await context.client.rpc("list_wms_caixa_attendance", { code: warehouse });
+    const response = Array.isArray(providedRows) ? { data: providedRows } : context.attendanceFeed ? { data: await context.attendanceFeed.read() } : await context.client.rpc("list_wms_caixa_attendance", { code: warehouse });
     if (!current() || sequence !== revision || actor !== context.actor || warehouse !== context.warehouse) return;
     if (response.error) throw new Error(response.error.message || "Não foi possível atualizar os pedidos.");
     updated.textContent = "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
     if (!Array.isArray(response.data)) throw new Error("A central aguarda ativação da migration de atendimento.");
+    scopeHint.textContent = response.data.length >= 100 ? "Exibindo as 100 solicitações mais recentes; o contador corresponde a este conjunto." : "";
     const nextRows = response.data;
     observeRequests(nextRows); chat.reconcile(nextRows); renderPending(nextRows);
     if (!initialized) {
@@ -155,6 +159,15 @@ export function mountCaixaRequests(host, context) {
     if (automatic && ((document.activeElement && host.contains(document.activeElement)) || chat.hasDraft() || Array.from(host.querySelectorAll("textarea")).some(input => input.value))) return;
     rows = response.data || []; snapshot = next;
     renderList();
+    if (context.focusRequest?.()) host.caixaReveal(context.focusRequest());
+  };
+  host.caixaReveal = id => {
+    if (!current()) return;
+    const row = rows.find(row => row.id === id);
+    if (!row) return;
+    filter.tab = caixaAttendanceBucket(row, context.actor, context.role); filter.search = ''; search.value = '';
+    renderList(); context.focusedRequest?.();
+    Array.from(list.querySelectorAll('[data-request-id]')).find(node => node.dataset.requestId === id)?.scrollIntoView({block:'nearest'});
   };
   function renderList() {
     const view = caixaAttendanceView(rows, context.actor, context.role, filter.tab, filter.search);
@@ -413,7 +426,15 @@ export function mountCaixaRequests(host, context) {
   }
 
   refresh().then(() => pollMessageNotices()).catch(error => { if (current()) feedback.textContent = error.message; });
-  const synchronization = createOperationalSync({ client: context.client, actor: context.actor, role: context.role, warehouse: context.warehouse, isCurrent: current,
+  const synchronization = context.attendanceFeed ? { stop: context.attendanceFeed.subscribe(({ rows, tables, state }) => {
+    if (state && current()) showSync(state);
+    if (!current() || busy) return;
+    const update = async () => {
+      if (tables.includes('wms_caixa_requests')) await refresh(true, rows);
+      if (tables.includes('wms_caixa_request_messages')) { await pollMessageNotices(); await chat.poll(); }
+    };
+    void update().catch(error => { if (current()) feedback.textContent = error.message; });
+  }) } : createOperationalSync({ client: context.client, actor: context.actor, role: context.role, warehouse: context.warehouse, isCurrent: current,
     allowRealtime: context.allowOperationalRealtime === true,
     onStop: () => { chat.clear(); context.onUnreadMessages?.({ count: 0 }); },
     onState: value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", DADOS_POSSIVELMENTE_DESATUALIZADOS: "consulta de segurança ativa", FALHA_SINCRONIZACAO: "falha ao atualizar; nova tentativa automática" }[value] || value); },
