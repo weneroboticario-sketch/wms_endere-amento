@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
+import { createScopedSingleFlight } from '../src/request-coalescing.js';
 const source = fs.readFileSync(new URL("../script.js", import.meta.url), "utf8");
 function fixture() {
   const calls = [];
@@ -10,7 +11,7 @@ function fixture() {
     { id: "q", warehouseCode: "VDCG", codigoMaterial: "1314", sourceType: "LOJA", totalDisponivel: 2 },
     { id: "other", warehouseCode: "VDAR", codigoMaterial: "01314", sourceType: "CAPTACAO", totalDisponivel: 99 }
   ];
-  const sandbox = { stockState: { positionCache: {} }, activeWarehouseCode: () => "VDCG", normalizeWarehouseCode: x => x, normalizeText: x => x, unique: values => [...new Set(values)], isSupabaseReady: () => true,
+  const sandbox = { IS_CP_ALAMO: false, stockCacheGeneration: 0, stockReadSingleFlight: createScopedSingleFlight(), authState: {currentUser:{id:'operator',role:'OPERADOR'}}, stockState: { positionCache: {} }, activeWarehouseCode: () => "VDCG", normalizeWarehouseCode: x => x, normalizeText: x => x, unique: values => [...new Set(values)], isSupabaseReady: () => true,
     stockPositionSelectColumns: () => "*", stockPositionLegacySelectColumns: () => "*", fromDbStockPosition: row => row,
     buildStockSuggestion: (sku, quantity, rows, warehouse) => ({ sku, quantity, warehouse, stock: rows.reduce((sum, row) => sum + row.totalDisponivel, 0), count: rows.length }),
     supabaseDb: { from() {
@@ -47,4 +48,27 @@ test("query aliases preserve alphanumeric identifiers and cache lookup works bot
   assert.equal(unpadded.length,2);
   assert.equal(calls.length,1);
   assert.ok(calls[0].codigo_material.includes("01314"));
+});
+
+test('concurrent equivalent SKU reads make one query without doubling balances', async () => {
+  const {sandbox:s,calls} = fixture();
+  const [a,b] = await Promise.all([s.getStockPositionsForSkus(['01314']),s.getStockPositionsForSkus(['1314'])]);
+  assert.equal(calls.length,1); assert.equal(a.length,2); assert.equal(b.length,2);
+});
+
+test('invalidation during a stock read rejects obsolete results and never refills the cache', async () => {
+  const {sandbox:s} = fixture();
+  const read = s.getStockPositionsForSkus(['01314']);
+  await Promise.resolve(); s.stockCacheGeneration++;
+  await assert.rejects(read,{name:'AbortError'});
+  assert.equal(Object.keys(s.stockState.positionCache).length,0);
+  assert.equal((await s.getStockPositionsForSkus(['01314'])).length,2);
+});
+
+test('old user cannot refill stock cache after logout', async () => {
+  const {sandbox:s} = fixture();
+  const read = s.getStockPositionsForSkus(['01314']);
+  await Promise.resolve(); s.authState.currentUser=null;
+  await assert.rejects(read,{name:'AbortError'});
+  assert.equal(Object.keys(s.stockState.positionCache).length,0);
 });
