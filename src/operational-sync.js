@@ -2,10 +2,9 @@ import { nextRealtimeRetryDelay } from "./sync-control.js";
 import { recordOperationalDiagnostic } from "./operational-diagnostics.js";
 
 // One scoped channel; events invalidate only the affected operational domain.
-export function createOperationalSync({ client, actor, role, warehouse, isCurrent, onRefresh, onState = () => {}, onStop = () => {}, allowRealtime = true, timers = globalThis }) {
+export function createOperationalSync({ client, actor, role, warehouse, isCurrent, onRefresh, onState = () => {}, onStop = () => {}, allowRealtime = true, timers = globalThis, tables = [["wms_caixa_requests", "warehouse_code"], ["wms_caixa_request_messages", "warehouse_code"]] }) {
   let channel, retry, debounce, stopped = false, live = false, epoch = 0, failures = 0, refreshing = false, ticks = 0;
   const pending = new Set(), seen = new Set();
-  const tables = [["wms_caixa_requests", "warehouse_code"], ["wms_caixa_request_messages", "warehouse_code"]];
   const active = () => !stopped && isCurrent();
   const diagnostic = (event, category, result) => recordOperationalDiagnostic({ module: "caixa", event, category, result, warehouse, operationId: actor + ":" + role });
   const state = value => { if (active()) onState(value); diagnostic("sync-state", value); };
