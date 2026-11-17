@@ -28,3 +28,14 @@ Data da preparação: 2026-11-16 (America/Campo_Grande)
 
 ## Bloqueio
 Não publicar nem alterar conexão de produção enquanto o repositório GitHub independente não existir e as verificações forem concluídas.
+
+## Descoberta crítica — domínio ativo de Dourados
+- `wms-dourados.vercel.app` tem redirecionamento permanente para `wms-cpalamo.vercel.app` no `vercel.json` publicado.
+- O alias `wms-cpalamo.vercel.app` está associado a **outro deployment**, também no projeto Vercel Dourados: `dpl_E5RrKwZWXMvo7UuYB92bZSzP8kKT` (READY; fonte `cli`).
+- Esse deployment não usa exatamente o mesmo código do commit Git `e31b681`: `package.json` usa Node `>=20.19`, não define `prebuild`, e contém dependências diferentes da baseline Git.
+- **Não substituir nem reconectar o domínio do alias `wms-cpalamo.vercel.app` com base apenas no commit `e31b681`.**
+- Antes do corte de Git, identificar qual versão/aplicação atende os operadores de Dourados, preservar o deployment CLI e comparar seu código e fluxos com a versão Git.
+- Evitar qualquer alteração no projeto CP ÁLAMO; nomes de domínio não comprovam equivalência funcional entre sistemas.
+
+## Continuidade
+A branch de preparação preserva somente o estado publicado pelo Git convencional; o deployment CLI associado ao alias deve ser tratado como fonte operacional distinta até validação.
