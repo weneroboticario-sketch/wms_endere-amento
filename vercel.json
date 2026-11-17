@@ -1,6 +1,7 @@
 {
   "git": {
     "deploymentEnabled": {
+      "feat/wms-replenishment-export-owner-20261117": false,
       "feat/wms-caixa-alertas-globais": false,
       "integration/wms-performance-alertas-20261116": false,
       "perf/wms-otimizacao-segura": false

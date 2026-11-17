@@ -30,6 +30,7 @@ import {
 import { escapeHtml, installHtmlSecurity, randomId } from "./src/utils.js";
 import { buildPackedProductRows, packedProductCsv, parseTransferQuantity } from "./src/transfer-export.js";
 import { buildReplenishmentExportRows, fillReplenishmentTemplate } from "./src/replenishment-export.js";
+import { createOwnerExport } from "./src/replenishment-owner-export.js";
 import { DEFAULT_WAREHOUSE_CODE, DEFAULT_WAREHOUSE_ID, WAREHOUSE_SEED } from "./src/warehouses.js";
 import {
   formatLinhaSeparacaoStationName,
@@ -5303,10 +5304,21 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   var replenishmentExportHistory = [];
+  var ownerExportController = null;
+  var ownerAttendActions = {};
   var replenishmentExportHistoryWarehouse = "";
   var pendingReplenishmentExport = null;
 
   async function loadReplenishmentExportHistory() {
+    if (!IS_CP_ALAMO) {
+      if (!authState.currentUser || !isSupabaseReady()) return;
+      if (!ownerExportController) ownerExportController = createOwnerExport({
+        root: $("replenishmentExportPanel"), db: function () { return supabaseDb; },
+        context: function () { return { warehouse: activeWarehouseCode(), user: authState.currentUser,
+          authId: authState.currentUser && authState.currentUser.authUserId }; }
+      });
+      return ownerExportController.refresh();
+    }
     if (!isSupabaseReady() || !canUseNetwork() || !authState.currentUser || isAttendant()) return;
     var warehouse = activeWarehouseCode();
     var response = await supabaseDb.from("wms_replenishment_export_batches")
@@ -5967,6 +5979,23 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
     qty = Number(qty ?? 0);
     if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
+    if (!IS_CP_ALAMO) {
+      var warehouse = activeWarehouseCode(), actorId = authState.currentUser.id;
+      var key = warehouse + ":" + actorId + ":" + id + ":" + qty + ":" + (observation || "");
+      if (!ownerAttendActions[key]) ownerAttendActions[key] = randomId();
+      var result = await supabaseDb.rpc("wms_replenishment_owner_export", {
+        p_warehouse: warehouse, p_action: "ATTEND",
+        p_payload: { request_id: id, quantity: qty, observation: observation || "", action_id: ownerAttendActions[key] }
+      });
+      if (result.error) throw result.error;
+      delete ownerAttendActions[key];
+      if (activeWarehouseCode() !== warehouse || !authState.currentUser || authState.currentUser.id !== actorId) {
+        throw new Error("Atendimento salvo. O usuário ou estoque mudou; atualize a fila para consultar.");
+      }
+      var saved = fromDbReplenishmentRequest(result.data);
+      upsertById(replenishmentState.requests, saved);
+      return saved;
+    }
     var requested = Number(request.requestedQty || 0);
     var attended = Number(request.attendedQty || 0) + qty;
     var pending = Math.max(0, requested - attended);
