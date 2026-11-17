@@ -1,0 +1,2111 @@
+{
+  "generated_local_date": "2026-11-16",
+  "purpose": "Proveniencia para separacao WMS Enderecamento / WMS Dourados; apenas metadados, sem segredos nem dados de estoque",
+  "sourceGit": {
+    "repository": "weneroboticario-sketch/wms_endere-amento",
+    "repositoryId": "1304510359",
+    "baselineCommit": "e31b681e3e1e8cea72739ad0a10d32d02efef199",
+    "treeSha": "2b1527f0a7c5c8a2b051e6b30c2884b1aded58d9",
+    "totalEntries": 356,
+    "files": [
+      {
+        "path": ".env.example",
+        "gitBlobSha": "28822efab1fa0b21e06fd9c01af1106097d5b8fc",
+        "bytes": 363
+      },
+      {
+        "path": ".gitignore",
+        "gitBlobSha": "2ae66c00eaae7f21bb20ef50d5b0ba96e4918b6d",
+        "bytes": 95
+      },
+      {
+        "path": "PACKING-TRACEABILITY.md",
+        "gitBlobSha": "9b075c8293ed2710874698573c72ee12ab58c73f",
+        "bytes": 6987
+      },
+      {
+        "path": "README.md",
+        "gitBlobSha": "4546478576a8234f8c46a244391b2e2dbe479e16",
+        "bytes": 3505
+      },
+      {
+        "path": "api/supabase-config.js",
+        "gitBlobSha": "9949686a70cf79390e987e2f0866edca26f448eb",
+        "bytes": 3465
+      },
+      {
+        "path": "deno.lock",
+        "gitBlobSha": "63410540f897844bfb8027f772b3b423d0cb9ef1",
+        "bytes": 5726
+      },
+      {
+        "path": "docs/CHANGELOG-SECURITY.md",
+        "gitBlobSha": "eb820d6fe6a02778e52c27403d8bc0acb8db2208",
+        "bytes": 10174
+      },
+      {
+        "path": "docs/CORRECAO_IMPORTACAO_ENDERECAMENTO_2026_10_15.md",
+        "gitBlobSha": "fb33d56a31dc680ad0e1074a56e830ba8fe2d195",
+        "bytes": 2350
+      },
+      {
+        "path": "docs/EXPORTACAO_REPOSICAO.md",
+        "gitBlobSha": "6e50f8da6b5ff03ed313a69b5a4341662b55c2ff",
+        "bytes": 2334
+      },
+      {
+        "path": "docs/FECHAMENTO_PENDENCIAS_20261013.md",
+        "gitBlobSha": "97dfdc6c1e9413b7277996cc13ae200cac2259fb",
+        "bytes": 1345
+      },
+      {
+        "path": "docs/RECUPERACAO_SENHA_EMAIL.md",
+        "gitBlobSha": "567c000d47005684f494bf818ec0f5dd1dabbe6d",
+        "bytes": 1283
+      },
+      {
+        "path": "docs/RELATORIO_AUDITORIA_COMPLETA_TRANSFERENCIAS.md",
+        "gitBlobSha": "4595fe4a6be80a993332470b2f969438a82e326a",
+        "bytes": 5786
+      },
+      {
+        "path": "docs/RELATORIO_AUDITORIA_GERAL_WMS.md",
+        "gitBlobSha": "964e44e4d8d58190edb8f219ea4950fd575f1d03",
+        "bytes": 6833
+      },
+      {
+        "path": "docs/RELATORIO_CARREGAMENTO_INICIAL.md",
+        "gitBlobSha": "69c98797f74e1f6db440ca6e4f116fba13e89daa",
+        "bytes": 3746
+      },
+      {
+        "path": "docs/RELATORIO_CORRECAO_IDEMPOTENCY_REPOSICAO.md",
+        "gitBlobSha": "4c36fc77b03c23317230fa219486c6d7f576ab58",
+        "bytes": 3560
+      },
+      {
+        "path": "docs/RELATORIO_CORRECAO_INICIO_TRANSFERENCIA.md",
+        "gitBlobSha": "0616e70d58c3e0e2ed8fc97901a83fe185eb4e95",
+        "bytes": 1743
+      },
+      {
+        "path": "docs/RELATORIO_CORRECAO_TRANSFERENCIAS_SUPABASE_REALTIME.md",
+        "gitBlobSha": "afb4c98ddaf0e0d6d19054f216e81343bc005e11",
+        "bytes": 3395
+      },
+      {
+        "path": "docs/RELATORIO_CORRECAO_UNIFICACAO_TRANSFERENCIAS.md",
+        "gitBlobSha": "33974c0d0b21644c07c1597281f5e0ba269cde0b",
+        "bytes": 4529
+      },
+      {
+        "path": "docs/RELATORIO_DASHBOARD_GLOBAL_ALAMO.md",
+        "gitBlobSha": "ab1336d9e6e9e565ba1c5a499a56236144c7cc04",
+        "bytes": 9200
+      },
+      {
+        "path": "docs/RELATORIO_DASHBOARD_PROFISSIONAL.md",
+        "gitBlobSha": "97a62dc6271ea0a0c4a9e36da0327645adc64157",
+        "bytes": 5669
+      },
+      {
+        "path": "docs/RELATORIO_ESTABILIZACAO_SCHEMA_WMS.md",
+        "gitBlobSha": "b29266e5f246685403dd0adfcbf8ef6f5ea74fc5",
+        "bytes": 2424
+      },
+      {
+        "path": "docs/RELATORIO_GESTAO_USUARIOS_ORGANIZADA.md",
+        "gitBlobSha": "d69e5176eef62d04382303c76b165c44078b6880",
+        "bytes": 2288
+      },
+      {
+        "path": "docs/RELATORIO_LIMPEZA_E_OTIMIZACAO_WMS.md",
+        "gitBlobSha": "efcfdc8bf206db3c3ad8049a8207ab8b9312d0e1",
+        "bytes": 2710
+      },
+      {
+        "path": "docs/RELATORIO_MANUTENCAO_SEGURA_BANCO.md",
+        "gitBlobSha": "0f874bfe878e3583a061c0cb6b199ca3281a7b0a",
+        "bytes": 2369
+      },
+      {
+        "path": "docs/RELATORIO_MIGRATION_COLUNAS_AUSENTES_WMS.md",
+        "gitBlobSha": "ec68832e850d809d907208ad533bdb7232d80af7",
+        "bytes": 1919
+      },
+      {
+        "path": "docs/RELATORIO_PERFIL_ATENDENTE.md",
+        "gitBlobSha": "ed16f90ae1d7a6d6f0ec72ed7a55c704ca5b37e4",
+        "bytes": 6058
+      },
+      {
+        "path": "docs/RELATORIO_REPOSICAO_INTEGRADA_WMS.md",
+        "gitBlobSha": "871477205c3bf5de68c9072f01bb33dd00bdfac8",
+        "bytes": 2808
+      },
+      {
+        "path": "docs/RELATORIO_REVISAO_GERAL_WMS.md",
+        "gitBlobSha": "cba0b3ae9abfb60cb16218ca304c70e91e0c857b",
+        "bytes": 6049
+      },
+      {
+        "path": "docs/RELATORIO_SAUDE_SISTEMA_WMS.md",
+        "gitBlobSha": "7ff68dc3f673f7e079aeee3d73569507be4b7da9",
+        "bytes": 2177
+      },
+      {
+        "path": "docs/RELATORIO_TRANSFERENCIAS_CRUD_REALTIME.md",
+        "gitBlobSha": "56e7545e1a7e8211c6e7abd4a8f1e08febf8d51a",
+        "bytes": 3131
+      },
+      {
+        "path": "docs/RELATORIO_TRANSFERENCIA_CAIXA.md",
+        "gitBlobSha": "fca9d064fc9fc541c41b4b9261202269ebad2868",
+        "bytes": 2810
+      },
+      {
+        "path": "docs/RELATORIO_TROCA_CONSULTAS_WMS_PARA_CAPTACAO.md",
+        "gitBlobSha": "cd7408dba5e2b3f3985e80c9527c764991e7ea60",
+        "bytes": 4884
+      },
+      {
+        "path": "docs/RELATORIO_VISAO_GERAL_ADMINISTRATIVA.md",
+        "gitBlobSha": "8d98ee5a8e995929dbfc5d8ff1182d7eacf93657",
+        "bytes": 435
+      },
+      {
+        "path": "docs/TRANSFER_INVOICE_WMS.md",
+        "gitBlobSha": "a0bd8de5841472804954de580ff182abc1b5be73",
+        "bytes": 1068
+      },
+      {
+        "path": "docs/VISAO_ADMINISTRATIVA_ENDERECAMENTO.md",
+        "gitBlobSha": "5a1b6f6c9357a74c28bce345a8d59878a7431958",
+        "bytes": 1308
+      },
+      {
+        "path": "docs/bootstrap-admin.md",
+        "gitBlobSha": "d67a817ad33677bd91b6f7279c9da0cf19d7fc09",
+        "bytes": 1197
+      },
+      {
+        "path": "docs/caixa-profile.md",
+        "gitBlobSha": "f69c5cd5ac020f6b798d2347a09e886d583fd1fe",
+        "bytes": 1830
+      },
+      {
+        "path": "docs/caixa-read-receipts-20261030.md",
+        "gitBlobSha": "fa858049c032525b24fe6861b124aef433f808f2",
+        "bytes": 3667
+      },
+      {
+        "path": "docs/central-revistas-validation.md",
+        "gitBlobSha": "2917dfa43e687110b129b5a03985665157c687dd",
+        "bytes": 3287
+      },
+      {
+        "path": "docs/communication.md",
+        "gitBlobSha": "b2ddb875f8be8e78a14e059930e7d553b2e7cf65",
+        "bytes": 12478
+      },
+      {
+        "path": "docs/sku-photo-lookup.md",
+        "gitBlobSha": "2e9f9235780a27ee9f9b5fd04d55174fa86d9ab8",
+        "bytes": 3154
+      },
+      {
+        "path": "docs/whatsapp-assisted-import.md",
+        "gitBlobSha": "49853ddd07c23d4425c038a0c072bc7f4292d242",
+        "bytes": 7366
+      },
+      {
+        "path": "docs/whatsapp-assisted-release.md",
+        "gitBlobSha": "f23ed2655b631c711aebd67b3f9b127bcc2c5adf",
+        "bytes": 10619
+      },
+      {
+        "path": "docs/wms-stabilization-20261030.md",
+        "gitBlobSha": "0ea6cfef0f41cfb269ba84cd081d01f29f49ef36",
+        "bytes": 2936
+      },
+      {
+        "path": "docs/xss-audit.md",
+        "gitBlobSha": "e1760bf0551df0f0d90de357011c86654c9561c7",
+        "bytes": 2207
+      },
+      {
+        "path": "eslint.config.js",
+        "gitBlobSha": "502b615295f25ce9358e6dcd2e8fcbf5bf97e083",
+        "bytes": 1043
+      },
+      {
+        "path": "index.html",
+        "gitBlobSha": "56733a7a0cd076925968e7042f888bee4ca96898",
+        "bytes": 90044
+      },
+      {
+        "path": "package-lock.json",
+        "gitBlobSha": "1715b6d65a1b52e24da20a2049f3259f5f78063d",
+        "bytes": 91243
+      },
+      {
+        "path": "package.json",
+        "gitBlobSha": "6f0e46cc9d7cb014670a4b4c1dc559bdebdbe680",
+        "bytes": 1023
+      },
+      {
+        "path": "public/data/builtin-products.json",
+        "gitBlobSha": "3383d1ac73f33fb2d634588c89b3cd065c44e65b",
+        "bytes": 1427039
+      },
+      {
+        "path": "public/icon.svg",
+        "gitBlobSha": "2cc5a2c87c674a9017a080f29962fb68225e3210",
+        "bytes": 279
+      },
+      {
+        "path": "public/magazine-ocr-bootstrap.js",
+        "gitBlobSha": "b96c95e1a5650800a64c059afbaf93253566841c",
+        "bytes": 604
+      },
+      {
+        "path": "public/manifest-cpalamo.webmanifest",
+        "gitBlobSha": "ec82a81e5be5683be89bbfa9d6335bdf44d27eea",
+        "bytes": 370
+      },
+      {
+        "path": "public/manifest.webmanifest",
+        "gitBlobSha": "9f1ea4cc7cdc8bc978ec6c4d799dae4a68279805",
+        "bytes": 434
+      },
+      {
+        "path": "public/sw.js",
+        "gitBlobSha": "27467ecdc87f677a6ce41856b8fbce315a6844a5",
+        "bytes": 4344
+      },
+      {
+        "path": "public/templates/materiais-reposicao.xlsx",
+        "gitBlobSha": "8c4ebbf03d8801620bcdc4c58cc832278feeea99",
+        "bytes": 3555
+      },
+      {
+        "path": "script.js",
+        "gitBlobSha": "5a744985d2873b5caeec81784c5288ee6795e295",
+        "bytes": 1047818
+      },
+      {
+        "path": "scripts/prepare-magazine-assets.mjs",
+        "gitBlobSha": "01717b21438fa3fd378b1c8c6a4dd39ee5a6dd1b",
+        "bytes": 1080
+      },
+      {
+        "path": "scripts/provision-auth-users.mjs",
+        "gitBlobSha": "210be422553bada9449f2f43852a5002cfbe35c7",
+        "bytes": 3422
+      },
+      {
+        "path": "scripts/reconcile-known-legacy-export.sql",
+        "gitBlobSha": "9e3c8715c53d45f338f3650f784a11893121c92c",
+        "bytes": 2696
+      },
+      {
+        "path": "scripts/verify-stock-overview.mjs",
+        "gitBlobSha": "4567244c5eadaab8a1604ddb403c09c678eedafe",
+        "bytes": 4075
+      },
+      {
+        "path": "scripts/verify-transfer-invoice.mjs",
+        "gitBlobSha": "7279c20894361f065dba9e1812399bab70b1fb78",
+        "bytes": 4739
+      },
+      {
+        "path": "src/access-control.js",
+        "gitBlobSha": "3fb1234bca6cf3f1c31ebda187f813f728a26cf7",
+        "bytes": 484
+      },
+      {
+        "path": "src/addressing-bindings.js",
+        "gitBlobSha": "aab7e4325495a0764aebb6aeb5eede2c656421ba",
+        "bytes": 2699
+      },
+      {
+        "path": "src/addressing-presence.js",
+        "gitBlobSha": "7cff79c2dfee0d0ecce23a4c88481e84dab4eca3",
+        "bytes": 4995
+      },
+      {
+        "path": "src/auth.js",
+        "gitBlobSha": "9adcf9020a8177cf690834250d06e704ae4786f3",
+        "bytes": 2508
+      },
+      {
+        "path": "src/caixa-attendance.js",
+        "gitBlobSha": "861d39693153cd9bfa91528109e8764b42d05e7a",
+        "bytes": 1417
+      },
+      {
+        "path": "src/caixa-chat.js",
+        "gitBlobSha": "afbabb33db4711a6c48b18584c813518d2c6d539",
+        "bytes": 9508
+      },
+      {
+        "path": "src/caixa-entry.js",
+        "gitBlobSha": "77d70dd722c198be15af7226c7407f121b8644e8",
+        "bytes": 87
+      },
+      {
+        "path": "src/caixa-loader.js",
+        "gitBlobSha": "68c5e91a4ef9d6e0a54ccd0b61726c93c9dc7a0a",
+        "bytes": 1153
+      },
+      {
+        "path": "src/caixa-product-lookup.js",
+        "gitBlobSha": "ca78746a088e802e0feb38d361c4e97d1675f815",
+        "bytes": 1538
+      },
+      {
+        "path": "src/caixa-queue-view.js",
+        "gitBlobSha": "1a990db58569011566abf424dd159ced45992948",
+        "bytes": 2616
+      },
+      {
+        "path": "src/caixa-request-composer.js",
+        "gitBlobSha": "66bf02691e1f4c8f55b9c9c9b0393c4c82c0c0a2",
+        "bytes": 8928
+      },
+      {
+        "path": "src/caixa-requests.css",
+        "gitBlobSha": "e880cfc9b156279be120ff33a601b201548670aa",
+        "bytes": 12512
+      },
+      {
+        "path": "src/caixa-requests.js",
+        "gitBlobSha": "1128046d2e136f12a93ff56e65414e6478c2b579",
+        "bytes": 33379
+      },
+      {
+        "path": "src/caixa-unread.js",
+        "gitBlobSha": "7cd13d8babbc9faa46a9f6aaf4b34f2a716f9a64",
+        "bytes": 1147
+      },
+      {
+        "path": "src/communication-api.js",
+        "gitBlobSha": "df775e42e1de78c7d7bb7b4d742937130f99575f",
+        "bytes": 3383
+      },
+      {
+        "path": "src/communication-media.js",
+        "gitBlobSha": "5a6b243e407aad82b4c8b7c28640021607163a4d",
+        "bytes": 2754
+      },
+      {
+        "path": "src/communication-runtime.js",
+        "gitBlobSha": "25f5dc42acaaebd4e94902947c13378694b0dd77",
+        "bytes": 4682
+      },
+      {
+        "path": "src/communication-view.js",
+        "gitBlobSha": "c1a2bebb12495fbdb4ad84ab0665491f96609699",
+        "bytes": 39653
+      },
+      {
+        "path": "src/communication.css",
+        "gitBlobSha": "10f49e53d6c600dae272bedcbcc4f825e1d3f878",
+        "bytes": 7070
+      },
+      {
+        "path": "src/global-dashboard-service.js",
+        "gitBlobSha": "f708f0b02759a93152bbf02256c7aea532cf379d",
+        "bytes": 6508
+      },
+      {
+        "path": "src/global-dashboard-view.js",
+        "gitBlobSha": "ccc8ae30c7e787af9953c55fe1ab8326056d1b29",
+        "bytes": 51777
+      },
+      {
+        "path": "src/global-dashboard.css",
+        "gitBlobSha": "ac4349cadfca60ba0653c06e721f1bd40096fa28",
+        "bytes": 13127
+      },
+      {
+        "path": "src/inbound-receipts-domain.js",
+        "gitBlobSha": "44599a6c7c1868af14305dc3975635be1fcfa112",
+        "bytes": 4119
+      },
+      {
+        "path": "src/inbound-receipts-view.js",
+        "gitBlobSha": "d1d0f5da057caa20e9e0d88cd10b7b2f13619818",
+        "bytes": 17837
+      },
+      {
+        "path": "src/inbound-receipts.css",
+        "gitBlobSha": "ccbce23e9fd1810069750010a02714835c31ac75",
+        "bytes": 5324
+      },
+      {
+        "path": "src/inbound-receipts.js",
+        "gitBlobSha": "0fe7df2436898978d570fc55d558af22875a76c6",
+        "bytes": 23117
+      },
+      {
+        "path": "src/linha-separacao.js",
+        "gitBlobSha": "28835bf230aa0d694986c1548debaad6752cb4cb",
+        "bytes": 495
+      },
+      {
+        "path": "src/magazines-api.js",
+        "gitBlobSha": "c2ae2bea351c861c8e58e2a7f2e84d8e23334e6d",
+        "bytes": 4744
+      },
+      {
+        "path": "src/magazines-domain.js",
+        "gitBlobSha": "92366084b4b431ab0ff040e26845fc9a42f47bc9",
+        "bytes": 7717
+      },
+      {
+        "path": "src/magazines-loader.js",
+        "gitBlobSha": "c397665ff0c86184eb9830e4266520987b4f46f0",
+        "bytes": 641
+      },
+      {
+        "path": "src/magazines-pdf.js",
+        "gitBlobSha": "f70b6c64aec694483e109594f0c52b91e2690f2e",
+        "bytes": 4688
+      },
+      {
+        "path": "src/magazines-stock.js",
+        "gitBlobSha": "9ae857a347bf6d48db123bd5a6caf8a21cd77af5",
+        "bytes": 4238
+      },
+      {
+        "path": "src/magazines-view.js",
+        "gitBlobSha": "d665db7929a987185bd5ab5762c5e169450a65ba",
+        "bytes": 38355
+      },
+      {
+        "path": "src/magazines.css",
+        "gitBlobSha": "1d4b5c9e0ef29fbe023b6762f216df5fefd1a90d",
+        "bytes": 2360
+      },
+      {
+        "path": "src/operational-diagnostics.js",
+        "gitBlobSha": "ce84c9b93fd7de6d614294414b510ac9ff5ff90c",
+        "bytes": 599
+      },
+      {
+        "path": "src/operational-sync.js",
+        "gitBlobSha": "c37fe68b43a66134d70240a2857cbdd7074872c5",
+        "bytes": 4409
+      },
+      {
+        "path": "src/product-catalog.js",
+        "gitBlobSha": "8baebc41e551d780baa1fc0e9efed2765163d454",
+        "bytes": 559
+      },
+      {
+        "path": "src/replenishment-export.js",
+        "gitBlobSha": "22716865c0755fbbd940fea1950853262e5405fe",
+        "bytes": 1336
+      },
+      {
+        "path": "src/replenishment.js",
+        "gitBlobSha": "9da6dbfb2dfa1adde0ede468c251a5ef0118972b",
+        "bytes": 4012
+      },
+      {
+        "path": "src/request-coalescing.js",
+        "gitBlobSha": "8a25c94d178d54c412d1f7ff8ccfd05994a1ad44",
+        "bytes": 347
+      },
+      {
+        "path": "src/schema-diagnostics.js",
+        "gitBlobSha": "b303ad679919b186ab0a91dd3b9001f0c816c644",
+        "bytes": 280
+      },
+      {
+        "path": "src/shelf-barcode-scanner.js",
+        "gitBlobSha": "a6a377d8bcd39dcfc24d8d7e9d819b5eb3646bb3",
+        "bytes": 6927
+      },
+      {
+        "path": "src/shelf-location-lookup.js",
+        "gitBlobSha": "5b77a28b9216158e3f675d795fd78c49e944563a",
+        "bytes": 1119
+      },
+      {
+        "path": "src/sku-barcode-import-ui.js",
+        "gitBlobSha": "c87523de7de55ce61f25cab7637c431b5fb63725",
+        "bytes": 3372
+      },
+      {
+        "path": "src/sku-barcode-links.js",
+        "gitBlobSha": "aad6fa504b1776c95a7457c7638a45c2796ea1f1",
+        "bytes": 1942
+      },
+      {
+        "path": "src/sku-live-barcode.js",
+        "gitBlobSha": "20fef76b254c9e25a4ddb4effee01aea12920cac",
+        "bytes": 4801
+      },
+      {
+        "path": "src/sku-photo-barcode.worker.js",
+        "gitBlobSha": "2f69ae499679b8d4032bf4c9fc3b5978bf33b859",
+        "bytes": 2360
+      },
+      {
+        "path": "src/sku-photo-domain.js",
+        "gitBlobSha": "b8a311c3c1dcc0830c0277e9b4dac654d04debd4",
+        "bytes": 3533
+      },
+      {
+        "path": "src/sku-photo-engine.js",
+        "gitBlobSha": "8b2116ce1ee9dd13dd0e1c29a151e06a1ce38e4a",
+        "bytes": 3498
+      },
+      {
+        "path": "src/sku-photo-lookup.css",
+        "gitBlobSha": "a2d3793704e58d885b2e2efd047b3285befc8c40",
+        "bytes": 2760
+      },
+      {
+        "path": "src/sku-photo-lookup.js",
+        "gitBlobSha": "2e4051ba833d90edd80795875ec2731f28396ae1",
+        "bytes": 15054
+      },
+      {
+        "path": "src/stock-freshness.js",
+        "gitBlobSha": "445409a09f550b504aec8720a808f5e092636d0e",
+        "bytes": 1556
+      },
+      {
+        "path": "src/stock-overview.css",
+        "gitBlobSha": "1c0a758314a3afb85275ee9f28df290760f87c6c",
+        "bytes": 2262
+      },
+      {
+        "path": "src/stock-overview.js",
+        "gitBlobSha": "ea9fc04299eee8cda97e936590b314ab4d41af0c",
+        "bytes": 8731
+      },
+      {
+        "path": "src/stock-pagination.js",
+        "gitBlobSha": "ef014a613c6d1cc030548b38ead948f86c94d4f5",
+        "bytes": 692
+      },
+      {
+        "path": "src/supabase-client.js",
+        "gitBlobSha": "7d9af99ec4b837568ffd463e3f3d044ad41e7fe7",
+        "bytes": 376
+      },
+      {
+        "path": "src/sync-control.js",
+        "gitBlobSha": "c48db3c4a3c9478ad750b998236f6059f24fcfd7",
+        "bytes": 212
+      },
+      {
+        "path": "src/task-sound.js",
+        "gitBlobSha": "4fb1c944c242ee49114b2489db73636f3cd894a7",
+        "bytes": 3484
+      },
+      {
+        "path": "src/transfer-export.js",
+        "gitBlobSha": "f88734fa0c25398ccb4869b19dbf0f30fc09fd7e",
+        "bytes": 1373
+      },
+      {
+        "path": "src/transfer-invoice.css",
+        "gitBlobSha": "763abf28748f511e6b9b764313a93fc40708435b",
+        "bytes": 922
+      },
+      {
+        "path": "src/transfer-invoice.js",
+        "gitBlobSha": "c5bd6ae641c1b3e0ee7e6716037c795f885ec249",
+        "bytes": 7970
+      },
+      {
+        "path": "src/transfer-packing-api.js",
+        "gitBlobSha": "2766734662d379ebea682d0ac4d331501c573c4d",
+        "bytes": 2218
+      },
+      {
+        "path": "src/transfer-packing-audit.js",
+        "gitBlobSha": "3b6ff0b179049d19adae2b0408ef1cb617d9f754",
+        "bytes": 5336
+      },
+      {
+        "path": "src/transfer-packing-view.js",
+        "gitBlobSha": "17b3c0ec1f61ee7559a5443a396dda217022a001",
+        "bytes": 12751
+      },
+      {
+        "path": "src/transfer-packing.css",
+        "gitBlobSha": "bc65fd8e52c978c422d4b76c15d87da2922975a2",
+        "bytes": 1099
+      },
+      {
+        "path": "src/utils.js",
+        "gitBlobSha": "1426715ea6893f34f2c98c6009550a59df52af55",
+        "bytes": 3671
+      },
+      {
+        "path": "src/warehouses.js",
+        "gitBlobSha": "b9dcc1e46dab5d4ec13673081bbcd09e03aa27b9",
+        "bytes": 823
+      },
+      {
+        "path": "src/whatsapp-assisted-api.js",
+        "gitBlobSha": "4e1b810a26905aa0d80cd2421866b0dc111f3508",
+        "bytes": 5318
+      },
+      {
+        "path": "src/whatsapp-assisted-live.js",
+        "gitBlobSha": "3c78467a48c6e08290dc21565a2568b90c410922",
+        "bytes": 19540
+      },
+      {
+        "path": "src/whatsapp-assisted-review.js",
+        "gitBlobSha": "9bf6684acdfbdd2b1d89e3ef95749d2cc707d2e6",
+        "bytes": 8288
+      },
+      {
+        "path": "src/whatsapp-assisted-workflow.js",
+        "gitBlobSha": "bf0dcf2f9d45e2ed8a3a66739efc4b19b22d4d4b",
+        "bytes": 3136
+      },
+      {
+        "path": "src/whatsapp-message.js",
+        "gitBlobSha": "e637b6e2e0de3a3b9ef075a4db0ac0d14d57fb5a",
+        "bytes": 2644
+      },
+      {
+        "path": "src/wms-desktop.css",
+        "gitBlobSha": "f796ce2b78ad53beb6f1c9ee9e8dbc93ad88aa54",
+        "bytes": 12077
+      },
+      {
+        "path": "src/wms-mobile.css",
+        "gitBlobSha": "60e5e7e588a1d779c433f016188c57b3bd8af1a4",
+        "bytes": 22596
+      },
+      {
+        "path": "src/wms-mobile.js",
+        "gitBlobSha": "0f2506fcf382eae9ec9aff20e058958f8f440e3a",
+        "bytes": 17475
+      },
+      {
+        "path": "style.css",
+        "gitBlobSha": "47f69d363a1a028e78291bafe0df67997924d14c",
+        "bytes": 115096
+      },
+      {
+        "path": "supabase/.gitignore",
+        "gitBlobSha": "ad9264f0b14b294627f8e77383875c994af54865",
+        "bytes": 72
+      },
+      {
+        "path": "supabase/README.md",
+        "gitBlobSha": "92e728c0d8390c0af2cdc86be268a51e7c125257",
+        "bytes": 2983
+      },
+      {
+        "path": "supabase/config.toml",
+        "gitBlobSha": "64ad76763069a3b8876c8fcff608e5abb9763d04",
+        "bytes": 15677
+      },
+      {
+        "path": "supabase/functions/manage-wms-user/handler.ts",
+        "gitBlobSha": "e43b2e661c686ce018740a0a8343df06588a6d0b",
+        "bytes": 13646
+      },
+      {
+        "path": "supabase/functions/manage-wms-user/index.ts",
+        "gitBlobSha": "0d1fbf31a68502ea043fe357b91f7911f594e4c1",
+        "bytes": 218
+      },
+      {
+        "path": "supabase/functions/manage-wms-user/permissions.ts",
+        "gitBlobSha": "a68f0e18da0f4058ad40cb1038c227131c346078",
+        "bytes": 1273
+      },
+      {
+        "path": "supabase/functions/wms-communication/handler.ts",
+        "gitBlobSha": "c04c6ce26c13ad6ee5c7d77bc6adc784fadee873",
+        "bytes": 5264
+      },
+      {
+        "path": "supabase/functions/wms-communication/index.ts",
+        "gitBlobSha": "9cba276e75e1859752c28713d87851b6c2d271cd",
+        "bytes": 737
+      },
+      {
+        "path": "supabase/functions/wms-communication/push-domain.ts",
+        "gitBlobSha": "b723038e2e20ac9293c7354bfa2a269dc13f20a2",
+        "bytes": 3644
+      },
+      {
+        "path": "supabase/functions/wms-communication/server-config.ts",
+        "gitBlobSha": "5b2b25043ec26ebce960938e384ed30ac1e7d6bf",
+        "bytes": 1528
+      },
+      {
+        "path": "supabase/functions/wms-communication/worker-auth.ts",
+        "gitBlobSha": "d4994e29d48baf53606cd85f3b81f7b49c7744ac",
+        "bytes": 878
+      },
+      {
+        "path": "supabase/migrations/20260923000000_legacy_baseline.sql",
+        "gitBlobSha": "fc5a5291ac769477f2cb5b816cad5fab6ad49c00",
+        "bytes": 122968
+      },
+      {
+        "path": "supabase/migrations/20260924012751_auth_profile_foundation.sql",
+        "gitBlobSha": "0ed7dad9f50eb4200a863fe817c8cccc6355de50",
+        "bytes": 5149
+      },
+      {
+        "path": "supabase/migrations/20260924012758_rls_security_hardening.sql",
+        "gitBlobSha": "2f65fb5b6cdc54b8d148af93197192cfd55b4734",
+        "bytes": 11398
+      },
+      {
+        "path": "supabase/migrations/20260924014042_operational_data_integrity.sql",
+        "gitBlobSha": "d16d967ae4d47cf7a9618daaff32b083c3bc13a6",
+        "bytes": 9209
+      },
+      {
+        "path": "supabase/migrations/20260924115056_user_supervision_compatibility.sql",
+        "gitBlobSha": "ff300d06c2b510232e3fa970f35afa3216127bdc",
+        "bytes": 826
+      },
+      {
+        "path": "supabase/migrations/20260930184528_allow_operator_binding_delete.sql",
+        "gitBlobSha": "9e813da102a6541863383b2bba865924a72afee4",
+        "bytes": 980
+      },
+      {
+        "path": "supabase/migrations/20261001001530_addressing_concurrency_fast_path.sql",
+        "gitBlobSha": "7e1e11327d809bb16216a4df823d77a2fb0b3623",
+        "bytes": 7428
+      },
+      {
+        "path": "supabase/migrations/20261001143352_atendente_profile_and_priority.sql",
+        "gitBlobSha": "ebeb4028f43d4e3a766268202d0449459e2d86a4",
+        "bytes": 8741
+      },
+      {
+        "path": "supabase/migrations/20261001210406_replenishment_cancellation_request.sql",
+        "gitBlobSha": "fc73586a9d48c8b6b8de4e518c7f130928955a9c",
+        "bytes": 6813
+      },
+      {
+        "path": "supabase/migrations/20261006005523_addressing_history_optional.sql",
+        "gitBlobSha": "037f18f52448e6839c4e09de682fc08240b8a8ac",
+        "bytes": 2392
+      },
+      {
+        "path": "supabase/migrations/20261007010406_email_password_recovery.sql",
+        "gitBlobSha": "fe855da88e28e328d89af8f76fdbb3e8f7665119",
+        "bytes": 1725
+      },
+      {
+        "path": "supabase/migrations/20261007123000_central_tarefas.sql",
+        "gitBlobSha": "ab1c4bf99f21cecda78c9be8482eb49845bcc642",
+        "bytes": 34988
+      },
+      {
+        "path": "supabase/migrations/20261008120000_tarefas_arquivamento.sql",
+        "gitBlobSha": "d3db60a83a50ce225397713221f77c176e1009bf",
+        "bytes": 6340
+      },
+      {
+        "path": "supabase/migrations/20261008150000_wms_resolve_login_email.sql",
+        "gitBlobSha": "cf5c9215c2fda920ec75a3c3443880df87e2d498",
+        "bytes": 845
+      },
+      {
+        "path": "supabase/migrations/20261008184900_fix_task_reference_upsert.sql",
+        "gitBlobSha": "3281a91c81b2c04b7a0e44d128cdd8111356b81e",
+        "bytes": 980
+      },
+      {
+        "path": "supabase/migrations/20261010122825_replenishment_export_batches.sql",
+        "gitBlobSha": "22da94d4adc2c10e00e538f7b102beaa09f1592c",
+        "bytes": 5611
+      },
+      {
+        "path": "supabase/migrations/20261013150858_global_admin_overview.sql",
+        "gitBlobSha": "efd489668b76c034b50fd4194ea7412429c4aba1",
+        "bytes": 25196
+      },
+      {
+        "path": "supabase/migrations/20261013205124_global_dashboard_executive.sql",
+        "gitBlobSha": "3bddbefa8f4100f716e0a5f95461def61c1fd173",
+        "bytes": 5377
+      },
+      {
+        "path": "supabase/migrations/20261013210945_stock_import_active_key_upsert.sql",
+        "gitBlobSha": "9d17233ee315070b7d119119845f73fdeeb3c607",
+        "bytes": 3952
+      },
+      {
+        "path": "supabase/migrations/20261013213851_global_dashboard_import_period.sql",
+        "gitBlobSha": "4062693d9b9020a279e745f36317a0bf1bc94d6a",
+        "bytes": 2961
+      },
+      {
+        "path": "supabase/migrations/20261013233105_cpalamo_display_name.sql",
+        "gitBlobSha": "9c0ad4d5a6ae78d008ba0dba28bfb482cd5557c9",
+        "bytes": 278
+      },
+      {
+        "path": "supabase/migrations/20261015155644_main_import_binding_natural_key.sql",
+        "gitBlobSha": "0fd1e19afb3ff47188401c791bda65cc1ee754fe",
+        "bytes": 3818
+      },
+      {
+        "path": "supabase/migrations/20261019134634_transfer_invoice_completion.sql",
+        "gitBlobSha": "d0638646e0a066027ddb2af59aa220e6b494fc36",
+        "bytes": 4854
+      },
+      {
+        "path": "supabase/migrations/20261020160000_transfer_hard_delete.sql",
+        "gitBlobSha": "095e9b9c0e226cae2cdad5fcc152d877942ff254",
+        "bytes": 2465
+      },
+      {
+        "path": "supabase/migrations/20261023150000_addressing_presence.sql",
+        "gitBlobSha": "50bef540b2005ba627a2b118b286000fe5ba1027",
+        "bytes": 581
+      },
+      {
+        "path": "supabase/migrations/20261028210821_whatsapp_assisted_import_paused.sql",
+        "gitBlobSha": "a6df2d9ab0cbcef05e9734cf48e9896b8ba80fa5",
+        "bytes": 20990
+      },
+      {
+        "path": "supabase/migrations/20261029134824_whatsapp_assisted_archive_requests.sql",
+        "gitBlobSha": "d50f9de902d3d619290c356f6a77c1c39b17a97e",
+        "bytes": 5242
+      },
+      {
+        "path": "supabase/migrations/20261029153333_caixa_profile_requests.sql",
+        "gitBlobSha": "f0e3f4e91837c2d6c2b8a536f4d1f81645e9c2ce",
+        "bytes": 12467
+      },
+      {
+        "path": "supabase/migrations/20261029154622_caixa_urgent_replenishment.sql",
+        "gitBlobSha": "27ea32dc1b57f3c51557bd9c1aa42672485634b0",
+        "bytes": 9995
+      },
+      {
+        "path": "supabase/migrations/20261029155040_caixa_item_lookup.sql",
+        "gitBlobSha": "f299839264b5de01672e8bafe63268c5fd5a54a7",
+        "bytes": 1947
+      },
+      {
+        "path": "supabase/migrations/20261029181023_caixa_request_chat_reviewed.sql",
+        "gitBlobSha": "32b220b4badfc88dcdbb33222006418534b76958",
+        "bytes": 12023
+      },
+      {
+        "path": "supabase/migrations/20261029193120_caixa_request_hard_delete.sql",
+        "gitBlobSha": "b75b068bc2388cf111ac31d17d3ded24c9d1bb3c",
+        "bytes": 6765
+      },
+      {
+        "path": "supabase/migrations/20261030025059_wms_task_security.sql",
+        "gitBlobSha": "7363d283517bc954149fc4226e0bfa7aabce59fd",
+        "bytes": 27585
+      },
+      {
+        "path": "supabase/migrations/20261030025101_wms_operational_realtime.sql",
+        "gitBlobSha": "63728d9aed7f83ccb2fc042f7a01479fcee2843c",
+        "bytes": 721
+      },
+      {
+        "path": "supabase/migrations/20261030030939_wms_catalog_policy_initplan.sql",
+        "gitBlobSha": "18a3fba01e059b13b9f10710d16b117bf27c0889",
+        "bytes": 257
+      },
+      {
+        "path": "supabase/migrations/20261030130608_caixa_message_read_receipts.sql",
+        "gitBlobSha": "b2fefe0e087dc3c54f0e5600ef7d8c63d2fe46fe",
+        "bytes": 4375
+      },
+      {
+        "path": "supabase/migrations/20261105202255_wms_inbound_receipts.sql",
+        "gitBlobSha": "60362e6cc40a47dd517d515e7cb0c89273962c05",
+        "bytes": 20559
+      },
+      {
+        "path": "supabase/migrations/20261105210637_wms_inbound_xml_line_compatibility.sql",
+        "gitBlobSha": "115852d6a89de9b5157a7334a55f86826f8aa186",
+        "bytes": 6039
+      },
+      {
+        "path": "supabase/migrations/20261106180540_wms_inbound_cancel_delete.sql",
+        "gitBlobSha": "f76eeafeb2992b70ca9cae6a6ae827bc932022a7",
+        "bytes": 4152
+      },
+      {
+        "path": "supabase/migrations/20261109140435_wms_packing_traceability.sql",
+        "gitBlobSha": "42945ce9c2d2d77faf3f431c7072d3e25f208c63",
+        "bytes": 28037
+      },
+      {
+        "path": "supabase/migrations/20261109184545_wms_magazine_center.sql",
+        "gitBlobSha": "1e7194834541ea29a249c2eb0628c69a4472aba2",
+        "bytes": 24954
+      },
+      {
+        "path": "supabase/migrations/20261111123430_wms_sku_photo_lookup.sql",
+        "gitBlobSha": "03a7c334c126c87a643c0397040756c9e0c3316a",
+        "bytes": 2597
+      },
+      {
+        "path": "supabase/migrations/20261111154000_wms_persistent_barcode_registry.sql",
+        "gitBlobSha": "748e95d4988fb34e4ffd6de70115f46ee90e8f34",
+        "bytes": 6832
+      },
+      {
+        "path": "supabase/migrations/20261111162000_wms_ean_registration_for_sku_roles.sql",
+        "gitBlobSha": "cefcc8b103cfe49261d252c02f904b7bf1cc2b64",
+        "bytes": 2611
+      },
+      {
+        "path": "supabase/migrations/20261111171000_wms_gtin_five_digit_sku_fallback.sql",
+        "gitBlobSha": "6afbd0fe2bb10afcf0f02c9986b157b299359406",
+        "bytes": 2864
+      },
+      {
+        "path": "supabase/migrations/20261112134100_wms_communication_core.sql",
+        "gitBlobSha": "757f1b4f419c1d67ca280e8f70bb28283500b27b",
+        "bytes": 43466
+      },
+      {
+        "path": "supabase/migrations/20261112134113_wms_communication_storage_push.sql",
+        "gitBlobSha": "f432c8214b12c6b73ada28b74abf28bfa71dcc83",
+        "bytes": 6654
+      },
+      {
+        "path": "supabase/migrations/20261112140839_wms_communication_push_worker.sql",
+        "gitBlobSha": "927fd8af9f4c170ea4a1477b0721839e46cea212",
+        "bytes": 2607
+      },
+      {
+        "path": "supabase/migrations/20261112141546_wms_communication_signed_worker.sql",
+        "gitBlobSha": "8712ef0d4dfd9fdd0d26873e02707926232b99ea",
+        "bytes": 1291
+      },
+      {
+        "path": "supabase/proposals/caixa_hard_delete.sql",
+        "gitBlobSha": "b75b068bc2388cf111ac31d17d3ded24c9d1bb3c",
+        "bytes": 6765
+      },
+      {
+        "path": "supabase/proposals/caixa_item_lookup.sql",
+        "gitBlobSha": "f299839264b5de01672e8bafe63268c5fd5a54a7",
+        "bytes": 1947
+      },
+      {
+        "path": "supabase/proposals/caixa_profile.sql",
+        "gitBlobSha": "f0e3f4e91837c2d6c2b8a536f4d1f81645e9c2ce",
+        "bytes": 12467
+      },
+      {
+        "path": "supabase/proposals/caixa_urgent_replenishment.sql",
+        "gitBlobSha": "27ea32dc1b57f3c51557bd9c1aa42672485634b0",
+        "bytes": 9995
+      },
+      {
+        "path": "supabase/proposals/whatsapp_assisted_approval.sql",
+        "gitBlobSha": "3d4576b41fbd1de58aa639577959d05756a17d31",
+        "bytes": 20989
+      },
+      {
+        "path": "supabase/proposals/whatsapp_assisted_archive.sql",
+        "gitBlobSha": "ce3d24930c8c2355867e3c9c052c085dc8eebc15",
+        "bytes": 5241
+      },
+      {
+        "path": "supabase/proposals/wms_catalog_policy_initplan.sql",
+        "gitBlobSha": "18a3fba01e059b13b9f10710d16b117bf27c0889",
+        "bytes": 257
+      },
+      {
+        "path": "supabase/proposals/wms_operational_realtime.sql",
+        "gitBlobSha": "63728d9aed7f83ccb2fc042f7a01479fcee2843c",
+        "bytes": 721
+      },
+      {
+        "path": "supabase/proposals/wms_task_security.sql",
+        "gitBlobSha": "7363d283517bc954149fc4226e0bfa7aabce59fd",
+        "bytes": 27585
+      },
+      {
+        "path": "supabase/setup/communication-worker.sql",
+        "gitBlobSha": "361e23574534a7a5f58d5207e6a8a5fbce27a88a",
+        "bytes": 566
+      },
+      {
+        "path": "supabase/tests/rls.sql",
+        "gitBlobSha": "20673bd48464ded6f9932b1e917d4e905b8c72b8",
+        "bytes": 8641
+      },
+      {
+        "path": "tests/access-control.test.js",
+        "gitBlobSha": "5252dd7c3c85d26aa4fb3b4f5e6b7f26ffd8022d",
+        "bytes": 949
+      },
+      {
+        "path": "tests/address-export-refresh.test.js",
+        "gitBlobSha": "a5f5d7bc0b40db8245c1f0e0fb2d5039433a722b",
+        "bytes": 4176
+      },
+      {
+        "path": "tests/addressing-multiple-locations.test.js",
+        "gitBlobSha": "9d76359ed3a30f8f867001421bae82cb776c2e90",
+        "bytes": 3800
+      },
+      {
+        "path": "tests/addressing-pagination.test.js",
+        "gitBlobSha": "0dc1b8997d5a0debeed028911a46a57747984e88",
+        "bytes": 1579
+      },
+      {
+        "path": "tests/addressing-presence-db.test.js",
+        "gitBlobSha": "a87bacc77872cd58f611f28c8b20cc6bfe614178",
+        "bytes": 2453
+      },
+      {
+        "path": "tests/addressing-presence.test.js",
+        "gitBlobSha": "741b07e7b810521f83d5bfbc257eb4d668065869",
+        "bytes": 3743
+      },
+      {
+        "path": "tests/addressing-stale-save.test.js",
+        "gitBlobSha": "7f96205c5d01b6f439a26393069cc0bfc0149553",
+        "bytes": 4047
+      },
+      {
+        "path": "tests/addressing-ui.test.js",
+        "gitBlobSha": "15065ef02fd47011b56d70f45ce0512dd3af41c5",
+        "bytes": 8096
+      },
+      {
+        "path": "tests/attendant-ui.test.js",
+        "gitBlobSha": "27a04cb05361dff4c9e15984765831ed8ba7e53e",
+        "bytes": 4692
+      },
+      {
+        "path": "tests/attendente-rls.test.js",
+        "gitBlobSha": "37d16d23c49e1dba7c55436df11a9080d862f4cd",
+        "bytes": 12365
+      },
+      {
+        "path": "tests/cache-invalidation.test.js",
+        "gitBlobSha": "011cb730ec496f34c86d8fd5e2d0e2f7454ad116",
+        "bytes": 2794
+      },
+      {
+        "path": "tests/caixa-attendance.test.js",
+        "gitBlobSha": "2da3e9685b67bfe28aebe7bef169ba58a26c92ee",
+        "bytes": 1856
+      },
+      {
+        "path": "tests/caixa-chat-db.test.js",
+        "gitBlobSha": "a193c7363ff2577419e6f712efde845f5c026c8a",
+        "bytes": 9990
+      },
+      {
+        "path": "tests/caixa-chat-ui.test.js",
+        "gitBlobSha": "952bffd5f9d323f37b2b535f60d0b63c327de591",
+        "bytes": 6891
+      },
+      {
+        "path": "tests/caixa-delete-desktop.html",
+        "gitBlobSha": "405b2aaae5c5be4e408219f87d237d20c9baee28",
+        "bytes": 337
+      },
+      {
+        "path": "tests/caixa-desktop-preview.html",
+        "gitBlobSha": "5591d3587ca6accf8fef4d099239a09e0e19802b",
+        "bytes": 316
+      },
+      {
+        "path": "tests/caixa-hard-delete-db.test.js",
+        "gitBlobSha": "ffbc31cb18b2238e33da8d382561491a802c843f",
+        "bytes": 8914
+      },
+      {
+        "path": "tests/caixa-loader.test.js",
+        "gitBlobSha": "10f5f928e3b7c6543199c98c82e9ec86879d7df5",
+        "bytes": 1831
+      },
+      {
+        "path": "tests/caixa-product-lookup.test.js",
+        "gitBlobSha": "df02af8473a12f0cc6d12268e7d4ea5bf602d2eb",
+        "bytes": 1636
+      },
+      {
+        "path": "tests/caixa-profile.test.js",
+        "gitBlobSha": "4763bd0a296df112c903e7565acf09db266ecee9",
+        "bytes": 12180
+      },
+      {
+        "path": "tests/caixa-queue-view.test.js",
+        "gitBlobSha": "442ec53374e7a8bfb8221ae908ed643a4af9457b",
+        "bytes": 3168
+      },
+      {
+        "path": "tests/caixa-quick-desktop.html",
+        "gitBlobSha": "650fad348b761996e7bffdde78479b62cc7f237e",
+        "bytes": 351
+      },
+      {
+        "path": "tests/caixa-read-receipts-db.test.js",
+        "gitBlobSha": "d58a5ceeb2d3c7c76916940f4539602dc2d9ca50",
+        "bytes": 7969
+      },
+      {
+        "path": "tests/caixa-request-composer.test.js",
+        "gitBlobSha": "4bbb04a41057e465c0d3ea62f11d11594ad48a48",
+        "bytes": 5730
+      },
+      {
+        "path": "tests/caixa-ui.test.js",
+        "gitBlobSha": "f41e355a6806363c9ee42caa1da325c5e12adb86",
+        "bytes": 25413
+      },
+      {
+        "path": "tests/caixa-unread.test.js",
+        "gitBlobSha": "e8c25b00a7bd6f9d89b7e91ff5cbe066e09ebd3f",
+        "bytes": 2763
+      },
+      {
+        "path": "tests/caixa-visual.html",
+        "gitBlobSha": "17ea727414dd7990ed54d5c2991951b78f0137d4",
+        "bytes": 1391
+      },
+      {
+        "path": "tests/caixa-visual.js",
+        "gitBlobSha": "d562b3ff10db855ace9960365adeb12d86c33871",
+        "bytes": 6388
+      },
+      {
+        "path": "tests/catalog-auth-recovery.test.js",
+        "gitBlobSha": "2b809ee7cbc59cf319970afdbe6b85ffd05fa5f6",
+        "bytes": 1637
+      },
+      {
+        "path": "tests/catalog-policy-initplan.test.js",
+        "gitBlobSha": "bacf8a337e85086e47ab2ac0337309195a1f0a48",
+        "bytes": 2276
+      },
+      {
+        "path": "tests/communication-client.test.js",
+        "gitBlobSha": "dca1188f44098391ff1baab9d984add3fc0ab682",
+        "bytes": 4481
+      },
+      {
+        "path": "tests/communication-config.test.js",
+        "gitBlobSha": "e4594697a742df2d3066a2001af2e939870dddbd",
+        "bytes": 3595
+      },
+      {
+        "path": "tests/communication-db.test.js",
+        "gitBlobSha": "7526e3d5b2ab39057dcb33892ec702a02bbdc5af",
+        "bytes": 9002
+      },
+      {
+        "path": "tests/communication-fixture.js",
+        "gitBlobSha": "f1916fc8773b0439e40367f7116d75c44cb06139",
+        "bytes": 5500
+      },
+      {
+        "path": "tests/communication-push.test.js",
+        "gitBlobSha": "6d10a727294607fc39a19d0f274ba181bca851e1",
+        "bytes": 5647
+      },
+      {
+        "path": "tests/communication-runtime.test.js",
+        "gitBlobSha": "16dff2581bb1901fe8147b458cd5c3b8c3b69641",
+        "bytes": 3368
+      },
+      {
+        "path": "tests/communication-server.mjs",
+        "gitBlobSha": "e42c9edbeaaf01dd94aa05526efba026f552caf0",
+        "bytes": 6241
+      },
+      {
+        "path": "tests/communication-storage-db.test.js",
+        "gitBlobSha": "f48a28cb7c84bd51355a526eff31d4a86044bb58",
+        "bytes": 3461
+      },
+      {
+        "path": "tests/communication-visual.html",
+        "gitBlobSha": "f89768a17d3d11f90c9679ebbbfff74f27827bc8",
+        "bytes": 1726
+      },
+      {
+        "path": "tests/communication-visual.js",
+        "gitBlobSha": "7e254827f66dd6811e9919fcd8ba0a9fcc0bbe69",
+        "bytes": 3172
+      },
+      {
+        "path": "tests/direct-picking.test.js",
+        "gitBlobSha": "0ff3e5ccc3ada76bba746f1c7ce8746cd05cf101",
+        "bytes": 3466
+      },
+      {
+        "path": "tests/fixtures/task-security-baseline.sql",
+        "gitBlobSha": "a95289c5d0cbc52cb1dc25876107cf0e31df3e80",
+        "bytes": 24313
+      },
+      {
+        "path": "tests/fixtures/task-security-rollback.sql",
+        "gitBlobSha": "99170474a484ded172253471263dbc9b76c5bffc",
+        "bytes": 18514
+      },
+      {
+        "path": "tests/global-dashboard-db.test.js",
+        "gitBlobSha": "7d9bcdae84be88aaa0439c97b2734a8b0997a7c8",
+        "bytes": 10606
+      },
+      {
+        "path": "tests/global-dashboard-fixture.js",
+        "gitBlobSha": "8ad1eec38e5b856e7e53a4e98e821b6d3392b8e2",
+        "bytes": 5791
+      },
+      {
+        "path": "tests/global-dashboard-service.test.js",
+        "gitBlobSha": "439c8f5759a3407d834ac5df1c8e1e5321ac8bae",
+        "bytes": 4606
+      },
+      {
+        "path": "tests/import-bindings-natural-key.test.js",
+        "gitBlobSha": "e54be3ecbed81223d8effb3f608380883a2495ad",
+        "bytes": 7013
+      },
+      {
+        "path": "tests/inbound-receipts-db.test.js",
+        "gitBlobSha": "db524e488135aebf1247331dd7cfb7e8f4ece03b",
+        "bytes": 20417
+      },
+      {
+        "path": "tests/inbound-receipts-view.test.js",
+        "gitBlobSha": "023341a226f6cbd34408213536a6e703da9a3b91",
+        "bytes": 5491
+      },
+      {
+        "path": "tests/inbound-receipts.test.js",
+        "gitBlobSha": "7c3a07659a24928b7c94f620c5c284b799b8aaa4",
+        "bytes": 3152
+      },
+      {
+        "path": "tests/inbound-visual.html",
+        "gitBlobSha": "703d8cd35b29bf226ac273972d533d2ec212da05",
+        "bytes": 1465
+      },
+      {
+        "path": "tests/inbound-visual.js",
+        "gitBlobSha": "27fc41969052684348cbc687198cbaab6addd7f1",
+        "bytes": 4572
+      },
+      {
+        "path": "tests/legacy-import-retirement.test.js",
+        "gitBlobSha": "756e5fb4110909adc5388009a5f99e05cf3effc5",
+        "bytes": 1017
+      },
+      {
+        "path": "tests/linha-separacao.test.js",
+        "gitBlobSha": "d80bce36745cf266cb2aac74d16a6e8c80586c8c",
+        "bytes": 1207
+      },
+      {
+        "path": "tests/magazines-api.test.js",
+        "gitBlobSha": "b8f41ae2b9f61a35969c9435b17b958f364ed97a",
+        "bytes": 2125
+      },
+      {
+        "path": "tests/magazines-db.test.js",
+        "gitBlobSha": "e609c0f2f87e76f1ac15ca7756fc105b49546b87",
+        "bytes": 8434
+      },
+      {
+        "path": "tests/magazines-domain.test.js",
+        "gitBlobSha": "d7871a8dbb6aa57fcb461da28b095fb99e88d3ce",
+        "bytes": 4284
+      },
+      {
+        "path": "tests/magazines-fixtures.js",
+        "gitBlobSha": "a72248aa9e54b392f68c1f48b5186c4d99337d5e",
+        "bytes": 1882
+      },
+      {
+        "path": "tests/magazines-pdf.test.js",
+        "gitBlobSha": "55935a87f3622bd5b039ac413bc20d7608625189",
+        "bytes": 835
+      },
+      {
+        "path": "tests/magazines-stock.test.js",
+        "gitBlobSha": "95135b27b4b002c1f1e8d599d04cdd0e58d0d4d4",
+        "bytes": 3520
+      },
+      {
+        "path": "tests/magazines-visual.html",
+        "gitBlobSha": "cb3b2cce3f5f466b6c9ff5199b19bf82c4de6fd5",
+        "bytes": 1397
+      },
+      {
+        "path": "tests/magazines-visual.js",
+        "gitBlobSha": "0d31b1c4decc10dd618157e1ded117bf3466c89e",
+        "bytes": 7225
+      },
+      {
+        "path": "tests/manage-wms-user-handler.test.js",
+        "gitBlobSha": "ae1bd2dcff38c41c1aafa8ba11d61b45a9fb803d",
+        "bytes": 4670
+      },
+      {
+        "path": "tests/manage-wms-user-permissions.test.js",
+        "gitBlobSha": "a2e9e619cde7b5576557dc6d6d3035808b950987",
+        "bytes": 999
+      },
+      {
+        "path": "tests/module-loading-preservation.test.js",
+        "gitBlobSha": "bcb36a729ed8875ca11211305546c6ecc58449e9",
+        "bytes": 2961
+      },
+      {
+        "path": "tests/operational-realtime-db.test.js",
+        "gitBlobSha": "3050e0937fc3f4418593cfa415467d513fc63c05",
+        "bytes": 1047
+      },
+      {
+        "path": "tests/operational-sync.test.js",
+        "gitBlobSha": "86d57b9639f8844acf4077520b27ea88f508f1b5",
+        "bytes": 4080
+      },
+      {
+        "path": "tests/packing-visual.html",
+        "gitBlobSha": "04151a4969b14fd4a05ead2e8f028fbeffe08bb4",
+        "bytes": 3295
+      },
+      {
+        "path": "tests/password-recovery.test.js",
+        "gitBlobSha": "415753717bdb7df0e340d00ca923ba7d34d0f628",
+        "bytes": 2856
+      },
+      {
+        "path": "tests/replenishment-completion.test.js",
+        "gitBlobSha": "9a403e72e3cbf6923379d79d859b7068caade76f",
+        "bytes": 2643
+      },
+      {
+        "path": "tests/replenishment-duplicate-confirmation.test.js",
+        "gitBlobSha": "e6d765376bce4f91567ff110f01655e4ac409034",
+        "bytes": 5162
+      },
+      {
+        "path": "tests/replenishment-export-db.test.js",
+        "gitBlobSha": "d125d7a30dd6843e919329baf115fad19c8e1b1a",
+        "bytes": 4025
+      },
+      {
+        "path": "tests/replenishment-export.test.js",
+        "gitBlobSha": "36017fdc10dd6b1845bd2e66bfbe40e82b50315b",
+        "bytes": 2219
+      },
+      {
+        "path": "tests/replenishment-overdelivery.test.js",
+        "gitBlobSha": "d8b831cb4a55d40c6f7b33baff701287e1efddff",
+        "bytes": 2433
+      },
+      {
+        "path": "tests/replenishment-priority.test.js",
+        "gitBlobSha": "4cbb3b1ee4e10e9680866aba974c24203222dbf9",
+        "bytes": 1889
+      },
+      {
+        "path": "tests/replenishment-route.test.js",
+        "gitBlobSha": "acb5b28b71117153f76320fa34a71e1de651d39c",
+        "bytes": 4416
+      },
+      {
+        "path": "tests/replenishment-visibility.test.js",
+        "gitBlobSha": "700f4f2fcd98dcba41470e4beeefd721ed653c62",
+        "bytes": 5840
+      },
+      {
+        "path": "tests/request-coalescing.test.js",
+        "gitBlobSha": "c987422292c1cdcce1963d0e7e9ce46f230aa765",
+        "bytes": 1014
+      },
+      {
+        "path": "tests/schema-diagnostics.test.js",
+        "gitBlobSha": "e5bc37e0392cf954776f5ab47487d7d73a1cbc43",
+        "bytes": 1068
+      },
+      {
+        "path": "tests/security-utils.test.js",
+        "gitBlobSha": "0cf2f91ad98dd70b229c6ac39e44754bf23d8ac0",
+        "bytes": 1257
+      },
+      {
+        "path": "tests/shelf-barcode-lookup.test.js",
+        "gitBlobSha": "04a6db15f4268903a7d788e15a6a6d3146837fef",
+        "bytes": 3850
+      },
+      {
+        "path": "tests/sku-barcode-db.test.js",
+        "gitBlobSha": "222d656a466765040fb9532a8a2c76794a756589",
+        "bytes": 7395
+      },
+      {
+        "path": "tests/sku-barcode-links.test.js",
+        "gitBlobSha": "d3aac819e944431f09cd8dd3f0e60a64cfecc97f",
+        "bytes": 2025
+      },
+      {
+        "path": "tests/sku-camera-auto-open.test.js",
+        "gitBlobSha": "5f66bb4ee02c3d1aea45342b9d2ff829c4470290",
+        "bytes": 1382
+      },
+      {
+        "path": "tests/sku-current-address.test.js",
+        "gitBlobSha": "6001695fe19b8f7488892995135834581b40f922",
+        "bytes": 2541
+      },
+      {
+        "path": "tests/sku-live-barcode.test.js",
+        "gitBlobSha": "94319074c7005db14a8ef1a1708577afafe94215",
+        "bytes": 6469
+      },
+      {
+        "path": "tests/sku-photo-db.test.js",
+        "gitBlobSha": "48b166601243e84b55f0cfb1dee12a578e1f9e98",
+        "bytes": 3890
+      },
+      {
+        "path": "tests/sku-photo-domain.test.js",
+        "gitBlobSha": "3b6c79482b18d8914031d856787efdbc338e7288",
+        "bytes": 3333
+      },
+      {
+        "path": "tests/sku-photo-engine.test.js",
+        "gitBlobSha": "41706153121fdc4d2c45c87332e98cc60ff4aa02",
+        "bytes": 2298
+      },
+      {
+        "path": "tests/sku-photo-visual.html",
+        "gitBlobSha": "2c43573c56794ac48d5c9629a3e7b19f29dc2917",
+        "bytes": 1282
+      },
+      {
+        "path": "tests/sku-photo-visual.js",
+        "gitBlobSha": "e4a01dde8ea88adc4b9120379c1bb1feeb9aa3df",
+        "bytes": 2796
+      },
+      {
+        "path": "tests/stock-freshness.test.js",
+        "gitBlobSha": "fe64adcf897ab85b31123202da66f7ac1caadf99",
+        "bytes": 1857
+      },
+      {
+        "path": "tests/stock-import-active-key.test.js",
+        "gitBlobSha": "5f87eca82c44fdfa064afcba42ccd92f64fd03b8",
+        "bytes": 4200
+      },
+      {
+        "path": "tests/stock-import-export.test.js",
+        "gitBlobSha": "2a22723bbc3f46d9628a13ddb3177e856af9581d",
+        "bytes": 6334
+      },
+      {
+        "path": "tests/stock-import-performance.test.js",
+        "gitBlobSha": "257f3ea33d46dc658325062a982008d953c4c623",
+        "bytes": 6440
+      },
+      {
+        "path": "tests/stock-overview.test.js",
+        "gitBlobSha": "163837d4b2aeb36090394ca7245f111de101e701",
+        "bytes": 3322
+      },
+      {
+        "path": "tests/stock-pagination.test.js",
+        "gitBlobSha": "528543aef40d70311b6488e54e8c64b732a2b39f",
+        "bytes": 1500
+      },
+      {
+        "path": "tests/supabase-config-security.test.js",
+        "gitBlobSha": "095b3237f62474ace00597845bc3ee02ed1a7379",
+        "bytes": 1767
+      },
+      {
+        "path": "tests/task-reference-upsert.test.js",
+        "gitBlobSha": "9f0f8ebb1d54817b54cbcdd81adee646ba53e21b",
+        "bytes": 3863
+      },
+      {
+        "path": "tests/task-security.test.js",
+        "gitBlobSha": "fe37e318f7ec5bb82efacaefb2a3acdebaa84eaa",
+        "bytes": 7011
+      },
+      {
+        "path": "tests/task-sound.test.js",
+        "gitBlobSha": "b94e1316dfe4c870d17b4e6864c7449fa9dbf6ef",
+        "bytes": 8452
+      },
+      {
+        "path": "tests/transfer-back-navigation.test.js",
+        "gitBlobSha": "cca70500383dd0e187a1cd4ec2637e4eaff8be2f",
+        "bytes": 4297
+      },
+      {
+        "path": "tests/transfer-box-packing-regression.test.js",
+        "gitBlobSha": "bc5918eb23494536d018b4442284fc997d01565c",
+        "bytes": 1872
+      },
+      {
+        "path": "tests/transfer-deletion.test.js",
+        "gitBlobSha": "2e7a93fbc5e30a16e67c98da85fa409096175f85",
+        "bytes": 2668
+      },
+      {
+        "path": "tests/transfer-export.test.js",
+        "gitBlobSha": "96dc8916a5915ef8d20d87c6dfb45cb925d9e067",
+        "bytes": 2891
+      },
+      {
+        "path": "tests/transfer-hard-delete-db.test.js",
+        "gitBlobSha": "46bedec4d6d3192a87db904565a516472f619cab",
+        "bytes": 4526
+      },
+      {
+        "path": "tests/transfer-invoice.test.js",
+        "gitBlobSha": "e789c3e42c79fec0a0ddbd7eafbbbdc9e879a390",
+        "bytes": 2889
+      },
+      {
+        "path": "tests/transfer-location-only.test.js",
+        "gitBlobSha": "0a6fefb08476bbbec933ece2d7365b882d284cf7",
+        "bytes": 1771
+      },
+      {
+        "path": "tests/transfer-packing-api.test.js",
+        "gitBlobSha": "4836b1587da89182061717942d335284bc0c71e6",
+        "bytes": 1116
+      },
+      {
+        "path": "tests/transfer-packing-audit.test.js",
+        "gitBlobSha": "533d069840a3e245b6697d50ecec91b572399f14",
+        "bytes": 3651
+      },
+      {
+        "path": "tests/transfer-packing-db.test.js",
+        "gitBlobSha": "dbea64962ff59c755d36014fa6648c133496e468",
+        "bytes": 11838
+      },
+      {
+        "path": "tests/transfer-packing-integration.test.js",
+        "gitBlobSha": "edcaa0ed9cc994cb7f329408b4d62c116e37c2c3",
+        "bytes": 3346
+      },
+      {
+        "path": "tests/transfer-realtime-render.test.js",
+        "gitBlobSha": "30e2df8091fbdf77dd36092a9bbd73e8dfcf6c2f",
+        "bytes": 1972
+      },
+      {
+        "path": "tests/transfer-sku-equivalence.test.js",
+        "gitBlobSha": "12b13195df81ea6a1e371ae180d09b972cf77915",
+        "bytes": 3255
+      },
+      {
+        "path": "tests/transfer-summary-repair.test.js",
+        "gitBlobSha": "96344d8c6f14bb093d792a97e03659702c2a629f",
+        "bytes": 1617
+      },
+      {
+        "path": "tests/transfer-sync-scope.test.js",
+        "gitBlobSha": "5865aeae9fa45863f113f83c7d41cd0798aa0839",
+        "bytes": 1705
+      },
+      {
+        "path": "tests/transfer-visual.html",
+        "gitBlobSha": "b6c13104087137f3829b91da76fafee57bd2c892",
+        "bytes": 2213
+      },
+      {
+        "path": "tests/user-warehouse-options.test.js",
+        "gitBlobSha": "cbcbd74ea206c05b21e44b81fa1751c0890d5dd8",
+        "bytes": 2492
+      },
+      {
+        "path": "tests/warehouse-login.test.js",
+        "gitBlobSha": "0aad89acf88997e394d32c41e68b5d6c82288a51",
+        "bytes": 1517
+      },
+      {
+        "path": "tests/whatsapp-assisted-api.test.js",
+        "gitBlobSha": "10d8f2bc8236eaf18cf2a6cf877a88faef9be721",
+        "bytes": 3266
+      },
+      {
+        "path": "tests/whatsapp-assisted-db.test.js",
+        "gitBlobSha": "6e0dd5857a6c87d419de32cc02b30c360184a9b8",
+        "bytes": 22181
+      },
+      {
+        "path": "tests/whatsapp-assisted-live.test.js",
+        "gitBlobSha": "21ec34cb0af50a59c7723a11f2347834ed1d4142",
+        "bytes": 4592
+      },
+      {
+        "path": "tests/whatsapp-assisted-workflow.test.js",
+        "gitBlobSha": "5cea70b63adb28e896ab71380a0e2f49107356b2",
+        "bytes": 3578
+      },
+      {
+        "path": "tests/whatsapp-message.test.js",
+        "gitBlobSha": "4a86ed026cc728f382799888986c326171be0d09",
+        "bytes": 3882
+      },
+      {
+        "path": "tests/wms-mobile-fixture.js",
+        "gitBlobSha": "c7aabbf805bef3f9a8fb778655f82787bc23bf8d",
+        "bytes": 5798
+      },
+      {
+        "path": "tests/wms-mobile.browser.mjs",
+        "gitBlobSha": "4134e904cdd96875a94b0f8c5c1c8b274d7724dd",
+        "bytes": 5637
+      },
+      {
+        "path": "tests/wms-mobile.html",
+        "gitBlobSha": "ab452c907e9af40164a7f1aad2fec1502ef73da9",
+        "bytes": 444
+      },
+      {
+        "path": "tests/wms-work-mobile.browser.mjs",
+        "gitBlobSha": "c8b84bc0f1c3de4669f5fdc8ed78cb6171216b03",
+        "bytes": 4032
+      },
+      {
+        "path": "vercel.json",
+        "gitBlobSha": "04bb96ae359bf40bae32bb8ee71ca41e7c3301a8",
+        "bytes": 1864
+      },
+      {
+        "path": "vite.config.js",
+        "gitBlobSha": "62a9e25fcb8c23c1353d2fed0b317948e399c6fb",
+        "bytes": 602
+      }
+    ]
+  },
+  "douradosCli": {
+    "vercelProjectId": "prj_pFjBXelJ6N9oMHc5WXaysH6aLa3Q",
+    "deploymentId": "dpl_E5RrKwZWXMvo7UuYB92bZSzP8kKT",
+    "domain": "wms-cpalamo.vercel.app",
+    "source": "cli",
+    "totalFiles": 94,
+    "treeComplete": true,
+    "files": [
+      {
+        "path": "src/.vercelignore",
+        "uid": "4628e67fa3eaa56575ef2205ba99f53f93faf007"
+      },
+      {
+        "path": "src/README.md",
+        "uid": "c48fe1f8929bbcff83aaf0dac64fa07a556e1aa6"
+      },
+      {
+        "path": "src/api/supabase-config.js",
+        "uid": "1b75d8dcc9d543c1cb3e6dee99f6ea1949eca254"
+      },
+      {
+        "path": "src/eslint.config.js",
+        "uid": "3b4ee93ff49758d24db3dd94c5aebce987ed9514"
+      },
+      {
+        "path": "src/index.html",
+        "uid": "03c60a645ee7c24d8b7b8601b5fce00d26263297"
+      },
+      {
+        "path": "src/package-lock.json",
+        "uid": "f9a48446ee418b7189b143ae178b5edb2c6e30d4"
+      },
+      {
+        "path": "src/package.json",
+        "uid": "c2376eb95d9355521488b114a01236d3e3a66d19"
+      },
+      {
+        "path": "src/public/data/builtin-products.json",
+        "uid": "b2c55aff1b97c3e3ad51fbba88eb508e845a2475"
+      },
+      {
+        "path": "src/public/icon.svg",
+        "uid": "8c2eaa8ccdcd091d74742f1318d9fcd8214cfec5"
+      },
+      {
+        "path": "src/public/manifest-cpalamo.webmanifest",
+        "uid": "4b4e177e699bebdfb6a68cfa1d2e2d08bc52a707"
+      },
+      {
+        "path": "src/public/manifest.webmanifest",
+        "uid": "9e501b21d8651cd5d8391024bcfaf2447067b18a"
+      },
+      {
+        "path": "src/public/sgo-logo.jpg",
+        "uid": "f7716cdfd31b24638fb91c02fd472ba4cccf2be6"
+      },
+      {
+        "path": "src/public/sw.js",
+        "uid": "b31c3b039fcd519aff10ef47b724b0ee842db91c"
+      },
+      {
+        "path": "src/public/templates/materiais-reposicao.xlsx",
+        "uid": "2b0fd6d1dc5c1fa1f16f3c215f6162b4bcdb363b"
+      },
+      {
+        "path": "src/script.js",
+        "uid": "fc5b6f014b049a3a3e9c421d796d7f7c15b87f00"
+      },
+      {
+        "path": "src/src/access-control.js",
+        "uid": "2bbaa84c180cc9afff8d2982cc5e6e9ab3554508"
+      },
+      {
+        "path": "src/src/addressing-bindings.js",
+        "uid": "38cb14d613457f272abc2343b8b1ceac1927ddfb"
+      },
+      {
+        "path": "src/src/auth.js",
+        "uid": "20eaac501558c4ad9f84ed6df967867675b90738"
+      },
+      {
+        "path": "src/src/compact-control.css",
+        "uid": "3f4670493ecc818ae2ce310e3d69a748e830bf52"
+      },
+      {
+        "path": "src/src/compact-control.js",
+        "uid": "7bf9384dacc1e8a0123defb62fb915b1948c28d1"
+      },
+      {
+        "path": "src/src/cpalamo-appearance.js",
+        "uid": "6fcbf649c7949adb30fe05228245bbd387a60426"
+      },
+      {
+        "path": "src/src/cpalamo-logout.js",
+        "uid": "5c22ed439ff7d89b96acfb9de8dc94647cb6d4a5"
+      },
+      {
+        "path": "src/src/cpalamo-p0-operational-fetch.js",
+        "uid": "7dde8527639136163c217354b098b9076ae6f3e3"
+      },
+      {
+        "path": "src/src/cpalamo-session-guard.js",
+        "uid": "b8412e751d0612a8202ee5362ab4550d6596c1f6"
+      },
+      {
+        "path": "src/src/cpalamo-theme.css",
+        "uid": "7704609090314835aa6413fbf93d5b2cdb114062"
+      },
+      {
+        "path": "src/src/expedition-policy.js",
+        "uid": "a26dca08754d62e02eca197c1505c3b71890ba68"
+      },
+      {
+        "path": "src/src/expedition-workflow.css",
+        "uid": "2b521dd1445340df7d07e7c5dbad9ec0dadf9a56"
+      },
+      {
+        "path": "src/src/expedition-workflow.js",
+        "uid": "9ed1d9b09a866025a1e4eb6c10e76e5ff8257fd5"
+      },
+      {
+        "path": "src/src/fiscal-transfer-export.js",
+        "uid": "3a45bd62ecc53269890fa8a04eec632182f66df7"
+      },
+      {
+        "path": "src/src/global-dashboard-service.js",
+        "uid": "aeb1867a481490abd704b84f26a6630d6a76e17a"
+      },
+      {
+        "path": "src/src/global-dashboard-view.js",
+        "uid": "6869eade0dbd839b5166f3ed297a4de1dc29b614"
+      },
+      {
+        "path": "src/src/global-dashboard.css",
+        "uid": "043572fb5b107dd3aab5fe8767aa9cab1dbc3e9a"
+      },
+      {
+        "path": "src/src/invoice-xml-document.js",
+        "uid": "263d4703fe8097a25d653b714f2380c3b37d5e0f"
+      },
+      {
+        "path": "src/src/linha-separacao.js",
+        "uid": "85fd30b2828176166ddc976e79decf160c012c29"
+      },
+      {
+        "path": "src/src/losses-domain.js",
+        "uid": "4bfcbb6c0809ba1bdc6c4ed46fc2c1826bd66446"
+      },
+      {
+        "path": "src/src/losses-dre.css",
+        "uid": "291f3e394c3b37c7acc729473fe7b88e796598ea"
+      },
+      {
+        "path": "src/src/losses-dre.js",
+        "uid": "01d61152136aed5f10acea925db0303ae9bc0181"
+      },
+      {
+        "path": "src/src/management-workspace.css",
+        "uid": "d3fcc01607bfc0a306727618c746272865f76ebe"
+      },
+      {
+        "path": "src/src/management-workspace.js",
+        "uid": "7e999b1bbce936041f36a765702065d9ac8f6513"
+      },
+      {
+        "path": "src/src/nfe-drawer.js",
+        "uid": "c8c01784dbc9e523475e3c9b20086e411131960a"
+      },
+      {
+        "path": "src/src/nfe-engine.js",
+        "uid": "cc17ca0896b0cad8e4b309d4989622737323958b"
+      },
+      {
+        "path": "src/src/nfe-native-reader.js",
+        "uid": "8cd8f967badf091a7d5d0094d3e6aabaa789c273"
+      },
+      {
+        "path": "src/src/nfe-readonly.css",
+        "uid": "36e88efd9bd9076903af77d81bd932154c688d92"
+      },
+      {
+        "path": "src/src/nfe-readonly.js",
+        "uid": "3af4fb4c6af07fa138443c29073160aa79c00ae3"
+      },
+      {
+        "path": "src/src/nfe-server-parser.js",
+        "uid": "8890bab4605ac5480a302c3281fb82eb95f19465"
+      },
+      {
+        "path": "src/src/nfe-service.js",
+        "uid": "5849ad373433e07e6c1b852b0845e5f639953d5f"
+      },
+      {
+        "path": "src/src/nfe-signature-server.js",
+        "uid": "960f11ad51eba70cb9e7160df8c65140ab15b5d2"
+      },
+      {
+        "path": "src/src/process-navigation.css",
+        "uid": "e33262d3c9aa0b4b569072460add970c795dd771"
+      },
+      {
+        "path": "src/src/process-navigation.js",
+        "uid": "3305c152ed17bd23ecbf1b137d906b1777b49193"
+      },
+      {
+        "path": "src/src/product-catalog.js",
+        "uid": "e7a64dd968ee89c07dde21a856e3131e79635794"
+      },
+      {
+        "path": "src/src/pulmao-stock.js",
+        "uid": "c6ab672ac0dbd4cdd50f91f0b31b11d071188155"
+      },
+      {
+        "path": "src/src/purchase-suggestions-domain.js",
+        "uid": "ef1b85189bdc33f9b57bce7e05a23c97a8cbb87f"
+      },
+      {
+        "path": "src/src/purchase-suggestions-service.js",
+        "uid": "01318b57c5c6de9b97531974c1e636668bb0fa34"
+      },
+      {
+        "path": "src/src/purchase-suggestions.css",
+        "uid": "36871e5513caa9d98fd3c97a1328aab63d7a36f1"
+      },
+      {
+        "path": "src/src/purchase-suggestions.js",
+        "uid": "544dc456b4d30181a182eff43a9b129ea2d2aac4"
+      },
+      {
+        "path": "src/src/purchase-transfer-builder.css",
+        "uid": "6a1da4af44d79d12c56f8fd7934c3d2f1a357a8c"
+      },
+      {
+        "path": "src/src/purchase-transfer-builder.js",
+        "uid": "1356e0a4deec5fa99935cc487fbebc2078e5aec4"
+      },
+      {
+        "path": "src/src/purchase-transfer-model.js",
+        "uid": "7a18d5ff112ae8afedfd7178a795b5dd730c4fab"
+      },
+      {
+        "path": "src/src/purchases-process.js",
+        "uid": "07351759ed1174f4d5518643b33bebd2e7272830"
+      },
+      {
+        "path": "src/src/purchases-stock-choice.css",
+        "uid": "2e393d7b4e104108860dcd83f0af321bfc90c79a"
+      },
+      {
+        "path": "src/src/purchases-stock-choice.js",
+        "uid": "3b8975f0e08044eedf0667cac24a37e176cf6ea9"
+      },
+      {
+        "path": "src/src/purchases-workflow.css",
+        "uid": "44e68f59f5ab86aa1a23baa809957f4743e3ff97"
+      },
+      {
+        "path": "src/src/purchases-workflow.js",
+        "uid": "325203c2b77c380d1f6ffb2ea6644e24fca7d9f4"
+      },
+      {
+        "path": "src/src/reference-control.css",
+        "uid": "ffd67f6b5b83800c3bc065dd66240e97ac22187b"
+      },
+      {
+        "path": "src/src/reference-control.js",
+        "uid": "5eb9397581731eae71ac676c21dd85ce53c60ec3"
+      },
+      {
+        "path": "src/src/replenishment-capture-balances.js",
+        "uid": "1afb997e809c8a4aa3c2b1fab02ee72e0288f26a"
+      },
+      {
+        "path": "src/src/replenishment-editor.js",
+        "uid": "6e6ebb562851755c47e0ba14a69d47f86405ea05"
+      },
+      {
+        "path": "src/src/replenishment-export.js",
+        "uid": "55def5ce4b3acd76944f470c547ed6c04b68a0e5"
+      },
+      {
+        "path": "src/src/replenishment-express.css",
+        "uid": "6d2bd60225a121d8d0a66a84055de4e4e978a627"
+      },
+      {
+        "path": "src/src/replenishment-intents.js",
+        "uid": "760d8779fba56fd8f2f67c8b8ac7a740b3823b1b"
+      },
+      {
+        "path": "src/src/replenishment.js",
+        "uid": "7f3553cd6baaf9244c0dcac8d3394b565f3547ad"
+      },
+      {
+        "path": "src/src/reverse-logistics.js",
+        "uid": "4169dcc4a8d8768dff5b9bc61f33c0dee1ae028b"
+      },
+      {
+        "path": "src/src/schema-diagnostics.js",
+        "uid": "a637b3ced7c47d581e88a52b46bc9e6df62200dc"
+      },
+      {
+        "path": "src/src/stock-freshness.js",
+        "uid": "a894a62799ff165a72d811c9d4d523640f0d6d9a"
+      },
+      {
+        "path": "src/src/stock-position-reader.js",
+        "uid": "d0d9369c49ebb6557866995e6a93d4d7c6128b3a"
+      },
+      {
+        "path": "src/src/supabase-client.js",
+        "uid": "db2a45ce8075957f8a4ac45c0ed59e3d70a0ada8"
+      },
+      {
+        "path": "src/src/sync-control.js",
+        "uid": "21fdaa5c0c9fa93b7b15e558a82775d37f5f8cfa"
+      },
+      {
+        "path": "src/src/task-notifications.css",
+        "uid": "4887f6d192ce51f25d0b70248ed06a546165c5b3"
+      },
+      {
+        "path": "src/src/task-notifications.js",
+        "uid": "ed4b7b05df3ace14f68f23b45b0838d46f2a96bf"
+      },
+      {
+        "path": "src/src/transfer-central.css",
+        "uid": "7bf8ccd326ab60cec7e35991c2c5a3528fb05188"
+      },
+      {
+        "path": "src/src/transfer-central.js",
+        "uid": "4624f9b4e99c1bb82179a7028ad21352cc00ede8"
+      },
+      {
+        "path": "src/src/transfer-expedition.js",
+        "uid": "7c9a73eaa2792f40e45121faab09d57161a132d5"
+      },
+      {
+        "path": "src/src/transfer-export.js",
+        "uid": "909f1d70f8bf5b01b9af33d5286400c4ad6a9506"
+      },
+      {
+        "path": "src/src/transfer-retention.css",
+        "uid": "676faf5b589e0020b11880085c5368d1582a600f"
+      },
+      {
+        "path": "src/src/transfer-retention.js",
+        "uid": "1edb0e429a9822156050a1ed50e3cdd0e97b0039"
+      },
+      {
+        "path": "src/src/transfer-summary.js",
+        "uid": "4e1e43d6bf9446b3619ef41e9e622aa92fea905d"
+      },
+      {
+        "path": "src/src/user-warehouse-access.js",
+        "uid": "beece5a226fc0abe637e4225751d7c5649875080"
+      },
+      {
+        "path": "src/src/utils.js",
+        "uid": "2579ec8dfb69e18cec445b773a7e8a3852a8b3f1"
+      },
+      {
+        "path": "src/src/warehouses.js",
+        "uid": "64e4ef18272df3fe889044b9e80be20a4bc5dd9b"
+      },
+      {
+        "path": "src/style.css",
+        "uid": "a05fcbb5583de67df9101f9db658e039a225d9bf"
+      },
+      {
+        "path": "src/supabase-schema.sql",
+        "uid": "a895ae7b7ac03a09414b45cca96f7536a9fcdbc8"
+      },
+      {
+        "path": "src/vercel.json",
+        "uid": "36a5c2d6d1b410d10012f0d24b69b0bac9d4f2b5"
+      },
+      {
+        "path": "src/vite.config.js",
+        "uid": "923a6cc9900a2b31ad096d2c28c056d5794d4546"
+      },
+      {
+        "path": "out/api/supabase-config",
+        "uid": "team_sUmxjo89NMKzL80FeYsi72kw-5b406feac2fd2ac709de34bc08b35eb6d1"
+      }
+    ]
+  },
+  "douradosGit": {
+    "vercelProjectId": "prj_pFjBXelJ6N9oMHc5WXaysH6aLa3Q",
+    "deploymentId": "dpl_5QziYVcKBT534Ju26uLPrxBBfQBY",
+    "domain": "wms-dourados.vercel.app",
+    "commitSha": "e31b681e3e1e8cea72739ad0a10d32d02efef199"
+  },
+  "mainWMS": {
+    "vercelProjectId": "prj_HTVBYmk1nVKClLoAQt5WnrQEd85s",
+    "deploymentId": "dpl_wjkVFccx1ZF4vEbgXvN3V2cACK56",
+    "domain": "wms-endere-amento.vercel.app",
+    "commitSha": "d45288f4bfabf35799fa10fe0b1c8a7a8d87d857"
+  },
+  "databaseProjects": {
+    "dourados": "ztxdqvxvkfgfqowaiaep",
+    "enderecamento": "bzqulgdtfpcmkyaldssy"
+  },
+  "caution": "Este manifesto nao confirma que os bytes do deploy CLI correspondem ao baseline Git. Nao executar corte de trafego sem testes funcionais."
+}
