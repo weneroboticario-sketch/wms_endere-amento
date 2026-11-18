@@ -13,7 +13,8 @@ test("partial completion closes the request and exports only the attended quanti
   const context = vm.createContext({
     getReplenishmentById: () => request,
     nowIso: () => "2026-10-20T20:00:00.000Z",
-    updateReplenishmentRow: async (id, patch) => Object.assign(request, patch)
+    updateReplenishmentRow: async (id, patch) => Object.assign(request, patch),
+    authState: { currentUser: { id: "op", name: "Operador" } }
   });
   vm.runInContext(completionSource, context);
   await context.completeReplenishmentRequest(request.id);
@@ -22,6 +23,8 @@ test("partial completion closes the request and exports only the attended quanti
   assert.equal(request.requestedQty, 31);
   assert.equal(request.attendedQty, 10);
   assert.ok(request.finishedAt);
+  assert.equal(request.completedById, "op");
+  assert.equal(request.completedByName, "Operador");
   assert.deepEqual(buildReplenishmentExportRows([{
     id: request.id, warehouse_code: "VDCG", codigo_material: "48060",
     quantidade_solicitada: request.requestedQty, quantidade_atendida: request.attendedQty, status: request.status

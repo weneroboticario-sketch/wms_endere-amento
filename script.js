@@ -10,6 +10,7 @@ import { createCommunicationRuntime } from "./src/communication-runtime.js";
 import { mountInboundReceipts } from "./src/inbound-receipts.js";
 import { createWmsSupabaseClient } from "./src/supabase-client.js";
 import { mountCaixaRequests } from "./src/caixa-loader.js";
+import { createCaixaAlerts } from "./src/caixa-alerts.js";
 import { renderWhatsAppAssistedReview } from "./src/whatsapp-assisted-review.js";
 import { whatsappAssistedEnabled, whatsappAssistedIntakeEnabled } from "./src/whatsapp-assisted-api.js";
 import { createTransferInvoiceController } from "./src/transfer-invoice.js";
@@ -38,6 +39,9 @@ import { loadBuiltinProducts } from "./src/product-catalog.js";
 import { nextRealtimeRetryDelay } from "./src/sync-control.js";
 import { operationalDiagnostics } from "./src/operational-diagnostics.js";
 import { createScopedSingleFlight } from "./src/request-coalescing.js";
+import { createReferenceCache } from "./src/reference-cache.js";
+import { readIncrementalPages } from "./src/incremental-pages.js";
+import { isServiceRestricted, isCancelledRequest, serviceFailureMessage, recordRequestHealth, requestHealthSnapshot } from "./src/request-health.js";
 import {
   buildAddressingOccupantSnapshot,
   planBindingRemoval,
@@ -143,6 +147,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var stockOverviewController = null;
   var operationalCatalogPromise = null;
   var productCatalogSingleFlight = createScopedSingleFlight();
+  var caixaAlertsRuntime = null;
+  var caixaAlertsScope = "";
+  var productReferenceCache = createReferenceCache();
+  var stockReadSingleFlight = createScopedSingleFlight();
+  var stockCacheGeneration = 0;
+  var skuAddressController = null;
 
   async function ensureOperationalCatalog() {
     if (!operationalCatalogPromise) operationalCatalogPromise = loadBuiltinProducts().then(function (products) { BUILTIN_PRODUCTS = products; });
@@ -624,7 +634,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function isSupabaseTransientNetworkError(error) {
-    var message = formatSupabaseError(error).toLowerCase();
+    if (!IS_CP_ALAMO && (isServiceRestricted(error) || isCancelledRequest(error))) return false;
+    var message = (IS_CP_ALAMO ? formatSupabaseError(error) : String(error && (error.message || error.details || error.hint) || error || "")).toLowerCase();
     return message.indexOf("failed to fetch") >= 0 ||
       message.indexOf("networkerror") >= 0 ||
       message.indexOf("network error") >= 0 ||
@@ -640,14 +651,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var waits = [0, 800, 2000, 4000, 7000, 10000];
     var lastError = null;
     for (var attempt = 0; attempt < waits.length; attempt += 1) {
+      var requestStarted = performance.now();
       try {
         if (waits[attempt]) await delay(waits[attempt]);
+        requestStarted = performance.now();
         var response = await operation();
+        if (!IS_CP_ALAMO) recordRequestHealth(label, requestStarted, { status: response && (response.status || (response.error ? response.error.status : 200)), rows: response && Array.isArray(response.data) ? response.data.length : 0, attempt: attempt });
         if (!response || !response.error || !isSupabaseTransientNetworkError(response.error) || attempt === waits.length - 1) {
           return response;
         }
         lastError = response.error;
       } catch (error) {
+        if (!IS_CP_ALAMO) recordRequestHealth(label, requestStarted, { status: error.status, attempt: attempt });
         if (!isSupabaseTransientNetworkError(error)) throw error;
         lastError = error;
         if (attempt === waits.length - 1) return { error: error, data: null };
@@ -868,6 +883,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function invalidateWarehouseModuleCaches(warehouseCode) {
+    productReferenceCache.clear();
     var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     await Promise.all(WAREHOUSE_CACHE_MODULES.map(function (moduleName) {
       var scopedKey = cacheKeyForWarehouse(moduleName, normalizedWarehouseCode);
@@ -922,6 +938,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function resetLazyModuleState(keepUsers) {
+    stockCacheGeneration++;
+    productReferenceCache.clear();
+    if (skuAddressController) skuAddressController.abort();
     moduleLoadState.accessRequests = false;
     moduleLoadState.core = false;
     moduleLoadState.transfers = false;
@@ -1057,6 +1076,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function ensureScreenDataLoaded(screenId) {
+    if (screenId === "atendimentosCaixa") { renderCaixaRequestsScreen(); return true; }
     if (screenId === "comunicacao" && !IS_CP_ALAMO) { var runtime = await ensureCommunication(); if (runtime) await runtime.show(); return true; }
     if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
       var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
@@ -2102,6 +2122,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function fetchWarehouseUpdatedRows(tableName, timeColumn, sinceIso, orderColumn) {
     if (isOptionalRealtimeTableDisabled(tableName)) return [];
+    if (!IS_CP_ALAMO) return fetchStableWarehouseUpdates(tableName, timeColumn, sinceIso);
     var selectColumns = tableName === "wms_transfers" ? transferSummarySelectColumns() : tableName === "wms_transfer_items" ? transferItemDetailSelectColumns() : "*";
     try {
       var response = await selectRowsWithMissingColumnFallback(tableName, selectColumns, function (query) {
@@ -2125,6 +2146,31 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (fallbackResponse.error) throw fallbackResponse.error;
         return (fallbackResponse.data || []).filter(processRowMatchesActiveWarehouse);
       }
+      if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
+        disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async function fetchStableWarehouseUpdates(tableName, timeColumn, sinceIso) {
+    var warehouse = activeWarehouseCode();
+    var actor = authState.currentUser && authState.currentUser.id;
+    var generation = realtimeState.syncGeneration;
+    var columns = tableName === "wms_transfers" ? transferSummarySelectColumns() : tableName === "wms_transfer_items" ? transferItemDetailSelectColumns() : "*";
+    try {
+      return await readIncrementalPages(async function (cursor, pageSize) {
+        var response = await selectRowsWithMissingColumnFallback(tableName, columns, function (query) {
+          query = query.eq("warehouse_code", warehouse);
+          if (sinceIso) query = query.gte(timeColumn, sinceIso);
+          if (cursor) query = query.or(timeColumn + ".gt." + cursor.time + ",and(" + timeColumn + ".eq." + cursor.time + ",id.gt." + JSON.stringify(cursor.id) + ")");
+          return query.order(timeColumn, { ascending: true }).order("id", { ascending: true }).limit(pageSize);
+        });
+        if (response.error) throw response.error;
+        return response.data || [];
+      }, { timeColumn: timeColumn, isCurrent: function () { return activeWarehouseCode() === warehouse && authState.currentUser && authState.currentUser.id === actor && realtimeState.syncGeneration === generation; } });
+    } catch (error) {
       if (isOptionalRealtimeTable(tableName) && (isMissingTransferTableError(error) || isMissingColumnError(error))) {
         disableOptionalRealtimeTable(tableName, error, "live-optional-" + tableName);
         return [];
@@ -2306,7 +2352,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var catalogScope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":");
     return productCatalogSingleFlight(catalogScope, async function () {
       if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
-      var catalogRows = await performProductCatalogWithAuthRecovery();
+      var catalogRows = IS_CP_ALAMO ? await performProductCatalogWithAuthRecovery() : await productReferenceCache.read(catalogScope, performProductCatalogWithAuthRecovery);
       if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
       return catalogRows;
     });
@@ -2400,6 +2446,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         updateSupabaseStatus("Dados principais salvos em wms_bindings. Historico nao salvo porque wms_history esta sem a coluna datetime; aplique as migrations do Supabase.", "warning");
       }
       if (productsDirty) {
+        productReferenceCache.clear();
         var products = Object.keys(state.products).map(function (sku) {
           return { sku: sku, product_name: state.products[sku] };
         });
@@ -4314,6 +4361,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function invalidateStockCacheForWarehouseSource(warehouseCode, sourceType, skus) {
+    stockCacheGeneration++;
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     var source = normalizeText(sourceType || "").toUpperCase();
     var skuList = unique((skus || []).map(normalizeSku).filter(Boolean));
@@ -4445,6 +4493,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function getStockPositionsForSkus(skus, warehouseCode) {
+    if (IS_CP_ALAMO) return performStockPositionsForSkus(skus, warehouseCode);
+    var scope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, normalizeWarehouseCode(warehouseCode || activeWarehouseCode()), stockCacheGeneration, unique((skus || []).map(normalizeSkuKey).filter(Boolean)).sort().join(",")].join(":");
+    return stockReadSingleFlight(scope, function () { return performStockPositionsForSkus(skus, warehouseCode); });
+  }
+
+  async function performStockPositionsForSkus(skus, warehouseCode) {
+    var actor = authState.currentUser && authState.currentUser.id;
+    var activeWarehouse = activeWarehouseCode();
+    var generation = stockCacheGeneration;
+    var positionCache = stockState.positionCache;
     var warehouse = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     var cleanSkus = unique((skus || []).map(normalizeSkuKey).filter(Boolean));
     if (!cleanSkus.length || !isSupabaseReady()) return [];
@@ -4472,6 +4530,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           .limit(Math.max(1000, missing.length * 4));
       }
       if (response.error) throw response.error;
+      if (!IS_CP_ALAMO && (stockCacheGeneration !== generation || positionCache !== stockState.positionCache || activeWarehouseCode() !== activeWarehouse || !authState.currentUser || authState.currentUser.id !== actor)) throw Object.assign(new Error("Consulta de saldo obsoleta. Consulte novamente."), { name: "AbortError" });
       missing.forEach(function (sku) {
         stockState.positionCache[stockCacheKey(warehouse, "CAPTACAO", sku)] = [];
         stockState.positionCache[stockCacheKey(warehouse, "LOJA", sku)] = [];
@@ -5325,7 +5384,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,last_attended_by_id,last_attended_by_name,no_stock_by_id,no_stock_by_name,completed_by_id,completed_by_name,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -5362,6 +5421,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimedById: row.claimed_by_id || "",
       claimedByName: row.claimed_by_name || "",
       claimedAt: row.claimed_at || "",
+      lastAttendedById: row.last_attended_by_id || "",
+      lastAttendedByName: row.last_attended_by_name || "",
+      noStockById: row.no_stock_by_id || "",
+      noStockByName: row.no_stock_by_name || "",
+      completedById: row.completed_by_id || "",
+      completedByName: row.completed_by_name || "",
       returnedToQueueAt: row.returned_to_queue_at || "",
       returnedToQueueById: row.returned_to_queue_by_id || "",
       returnedToQueueByName: row.returned_to_queue_by_name || "",
@@ -5416,6 +5481,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimed_by_id: item.claimedById || "",
       claimed_by_name: item.claimedByName || "",
       claimed_at: item.claimedAt || null,
+      last_attended_by_id: item.lastAttendedById || "",
+      last_attended_by_name: item.lastAttendedByName || "",
+      no_stock_by_id: item.noStockById || "",
+      no_stock_by_name: item.noStockByName || "",
+      completed_by_id: item.completedById || "",
+      completed_by_name: item.completedByName || "",
       returned_to_queue_at: item.returnedToQueueAt || null,
       returned_to_queue_by_id: item.returnedToQueueById || "",
       returned_to_queue_by_name: item.returnedToQueueByName || "",
@@ -5646,6 +5717,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimedById: "",
       claimedByName: "",
       claimedAt: "",
+      lastAttendedById: "",
+      lastAttendedByName: "",
+      noStockById: "",
+      noStockByName: "",
+      completedById: "",
+      completedByName: "",
       returnedToQueueAt: "",
       returnedToQueueById: "",
       returnedToQueueByName: "",
@@ -5906,6 +5983,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function updateReplenishmentQuantity(id, qty, observation) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
     qty = Number(qty ?? 0);
     if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
     var requested = Number(request.requestedQty || 0);
@@ -5913,12 +5991,21 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
     if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
-    return updateReplenishmentRow(id, {
+    var actorName = authState.currentUser.name || authState.currentUser.username || "";
+    var patch = {
       attendedQty: attended,
       pendingQty: pending,
       status: status,
       observacao: normalizeText(observation || request.observacao)
-    });
+    };
+    if (qty > 0) {
+      patch.lastAttendedById = authState.currentUser.id;
+      patch.lastAttendedByName = actorName;
+    } else {
+      patch.noStockById = authState.currentUser.id;
+      patch.noStockByName = actorName;
+    }
+    return updateReplenishmentRow(id, patch);
   }
 
   async function markReplenishmentNoStock(id, reason) {
@@ -5929,6 +6016,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function completeReplenishmentRequest(id) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
@@ -5936,6 +6024,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       status: "CONCLUIDO",
       pendingQty: 0,
       finishedAt: now,
+      completedById: authState.currentUser.id,
+      completedByName: authState.currentUser.name || authState.currentUser.username || "",
       durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
     });
   }
@@ -6606,9 +6696,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         authLoginIdentifier = String(resolvedLogin.data).trim();
       }
     }
+    if (!IS_CP_ALAMO && resolvedLogin && resolvedLogin.error && serviceFailureMessage(resolvedLogin.error)) {
+      setStatus("loginStatus", serviceFailureMessage(resolvedLogin.error), "error");
+      return;
+    }
     var authResponse = await signInWithUsername(supabaseDb, authLoginIdentifier, password, AUTH_EMAIL_DOMAIN);
     if (authResponse.error || !authResponse.data || !authResponse.data.session) {
-      setStatus("loginStatus", "Usuario ou senha invalidos", "error");
+      setStatus("loginStatus", (!IS_CP_ALAMO && serviceFailureMessage(authResponse.error)) || "Usuario ou senha invalidos", "error");
       return;
     }
     await ensureWarehousesLoaded();
@@ -6640,7 +6734,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     requestBrowserNotificationPermission();
     } catch (error) {
       console.error("Erro ao entrar:", error);
-      showLogin("Usuario ou senha invalidos", "error");
+      showLogin((!IS_CP_ALAMO && serviceFailureMessage(error)) || "Usuario ou senha invalidos", "error");
     } finally {
       authState.loginInProgress = false;
       if (loginButton) {
@@ -6657,6 +6751,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     applyRoleClass();
     updateLoggedUserUi();
     applyRolePermissions();
+    ensureCaixaAlerts();
     if (isGlobalDashboardScope()) {
       resetSessionInactivityTimeout();
       await showScreen("globalDashboard");
@@ -6666,7 +6761,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (authState.currentUser.role === "CAIXA") {
       await ensureWarehousesLoaded();
       resetSessionInactivityTimeout();
-      await showScreen("reposicao");
+      await showScreen(IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa");
       return;
     }
     await ensureOperationalCatalog();
@@ -6691,11 +6786,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function showLogin(message, type) {
+    stopCaixaAlerts();
     if (communicationRuntime) { void communicationRuntime.dispose(); communicationRuntime = null; }
     communicationScope = ""; communicationStarting = null;
     if ($("communicationAlert")) $("communicationAlert").hidden = true;
     if (skuPhotoController) skuPhotoController.close();
-    if ($("caixaUnreadAlert")) $("caixaUnreadAlert").remove();
     taskSound.stop();
     taskAlertState.pendingSound = false;
     authState.currentUser = null;
@@ -6782,6 +6877,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function logout() {
+    stopCaixaAlerts();
     if (communicationRuntime) { await communicationRuntime.dispose({ unsubscribe: true }); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopTaskPolling();
     stopLeaderLiveSync();
@@ -6825,6 +6921,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return;
     }
     if (code === activeWarehouseCode()) return;
+    stopCaixaAlerts();
     if (communicationRuntime) { await communicationRuntime.dispose(); communicationRuntime = null; } communicationScope = ""; communicationStarting = null;
     stopLeaderLiveSync();
     stopTaskPolling();
@@ -6832,12 +6929,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     setActiveWarehouse(code);
     resetLazyModuleState(true);
     applyRolePermissions();
+    ensureCaixaAlerts();
     if (isGlobalDashboardScope()) {
       await showScreen("globalDashboard");
       return;
     }
     if (authState.currentUser.role === "CAIXA") {
-      await showScreen("reposicao");
+      await showScreen(IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa");
       return;
     }
     await ensureOperationalCatalog();
@@ -6930,7 +7028,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function defaultScreenForUser() {
     if (!authState.currentUser) return "dashboard";
-    if (authState.currentUser.role === "CAIXA") return "reposicao";
+    if (authState.currentUser.role === "CAIXA") return IS_CP_ALAMO ? "reposicao" : "atendimentosCaixa";
     if (isGlobalDashboardScope()) return "globalDashboard";
     if (["OPERADOR", "ATENDENTE"].indexOf(authState.currentUser.role) >= 0) return "consultaSku";
     return "dashboard";
@@ -6986,7 +7084,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
+    if (screenId === "excellence") return !IS_CP_ALAMO && import.meta.env.VITE_LOGISTICA_EXCELENCIA_ENABLED === "true" && !!authState.currentUser && !isGlobalDashboardScope();
     if (!authState.currentUser) return false;
+    if (screenId === "atendimentosCaixa") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "CAIXA"].includes(authState.currentUser.role);
+    if (!IS_CP_ALAMO && screenId === "reposicao" && authState.currentUser.role === "CAIXA") return false;
     if (screenId === "comunicacao") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
@@ -7783,6 +7884,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { table: "wms_replenishment_requests", column: "responsavel_id" },
       { table: "wms_replenishment_requests", column: "solicitado_por_id" },
       { table: "wms_replenishment_requests", column: "claimed_by_id" },
+      { table: "wms_replenishment_requests", column: "last_attended_by_id" },
+      { table: "wms_replenishment_requests", column: "no_stock_by_id" },
+      { table: "wms_replenishment_requests", column: "completed_by_id" },
       { table: "wms_replenishment_requests", column: "created_by_id" },
       { table: "wms_notifications", column: "user_id" },
       { table: "wms_task_notifications", column: "user_id" },
@@ -8376,6 +8480,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (screenId === "excellence") {
+      var excellenceActor = authState.currentUser.id;
+      var excellenceWarehouse = activeWarehouseCode();
+      Promise.all([import("./src/excellence/service.js"), import("./src/excellence/view.js")]).then(function (modules) {
+        if (!authState.currentUser || authState.currentUser.id !== excellenceActor || activeWarehouseCode() !== excellenceWarehouse || getActiveScreenId() !== "excellence") return;
+        var service = modules[0].createExcellenceService({ client: supabaseDb, warehouse: excellenceWarehouse, isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === excellenceActor && activeWarehouseCode() === excellenceWarehouse && getActiveScreenId() === "excellence"; } });
+        return modules[1].mountExcellence($("excellence"), { service: service, actorId: excellenceActor, leader: isAdminOrSupervisor(), admin: isAdmin() });
+      }).catch(function (error) { if (getActiveScreenId() === "excellence") $("excellence").textContent = error.message; });
+    }
     if (!IS_CP_ALAMO && canAccessScreen("comunicacao")) {
       ensureCommunication().then(function (runtime) { if (runtime) runtime.setActive(getActiveScreenId() === "comunicacao"); }).catch(function () {});
       if (!communicationLinkConsumed && new window.URLSearchParams(window.location.search).has("comm")) {
@@ -8423,6 +8536,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function updateModuleSubtitleLabel(screenId) {
+    if (screenId === "atendimentosCaixa") return "Atendimentos do caixa";
     if (screenId === "comunicacao") return "Comunicação";
     if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
@@ -9570,17 +9684,43 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].join("");
   }
 
+  function stopCaixaAlerts() {
+    caixaAlertsRuntime?.close(); caixaAlertsRuntime = null; caixaAlertsScope = "";
+    var root = $("caixaRequestsRoot");
+    if (root) { root.caixaStop?.(); delete root.caixaReveal; delete root.dataset.scope; delete root.dataset.targetRequest; root.replaceChildren(); }
+  }
+
+  function ensureCaixaAlerts() {
+    if (!canAccessScreen("atendimentosCaixa") || !isSupabaseReady()) return null;
+    var actor = authState.currentUser.id, role = authState.currentUser.role, warehouse = activeWarehouseCode();
+    var scope = actor + ":" + role + ":" + warehouse;
+    if (caixaAlertsRuntime && caixaAlertsScope === scope) return caixaAlertsRuntime;
+    stopCaixaAlerts(); caixaAlertsScope = scope;
+    caixaAlertsRuntime = createCaixaAlerts({ client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      allowRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
+      isCurrent: function () { return authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse; },
+      onCount: function (count) { var badge = $("caixaPendingCount"); if (badge) { badge.textContent = String(count); badge.hidden = !count; badge.parentElement.setAttribute("aria-label", count + " atendimentos pendentes do caixa"); } },
+      onOpen: async function (id) { var root = $("caixaRequestsRoot"); root.dataset.targetRequest = id; await showScreen("atendimentosCaixa"); root.caixaReveal?.(id); },
+      onSound: function () { return taskSound.play("replenishment", 0.16); },
+      describeSku: findProductName,
+      onError: function (error) { recordPerformanceError("alertas-caixa", error); }
+    });
+    caixaAlertsRuntime.mountSettings($("caixaAlertSettings")); caixaAlertsRuntime.start();
+    return caixaAlertsRuntime;
+  }
+
   function renderCaixaRequestsScreen() {
-    if (!$("caixaRequestsRoot") || IS_CP_ALAMO) return;
-    var caixaOnly = authState.currentUser.role === "CAIXA";
-    Array.from($("reposicao").children).forEach(function (child) { if (child.id !== "caixaRequestsRoot") child.hidden = caixaOnly; });
-    $("caixaRequestsRoot").hidden = authState.currentUser.role === "ATENDENTE";
-    if ($("caixaRequestsRoot").hidden) return;
+    if (!$("caixaRequestsRoot") || !canAccessScreen("atendimentosCaixa")) return;
+    var alerts = ensureCaixaAlerts();
+    $("caixaRequestsRoot").hidden = false;
     var actor = authState.currentUser.id;
     var role = authState.currentUser.role;
     var warehouse = activeWarehouseCode();
     mountCaixaRequests($("caixaRequestsRoot"), {
       client: supabaseDb, actor: actor, role: role, warehouse: warehouse,
+      attendanceFeed: alerts && alerts.feed,
+      focusRequest: function () { return $("caixaRequestsRoot").dataset.targetRequest; },
+      focusedRequest: function () { delete $("caixaRequestsRoot").dataset.targetRequest; },
       allowOperationalRealtime: import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true",
       canDeletePermanently: isGlobalAdminUser(authState.currentUser),
       onDeleted: async function (request) {
@@ -9591,31 +9731,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           if (authState.currentUser && authState.currentUser.id === actor && activeWarehouseCode() === warehouse) renderReplenishment();
         }
       },
-      openRequestsScreen: function () { return showScreen("reposicao"); },
-      onUnreadMessages: function (info) {
-        var scope = actor + ":" + warehouse + ":" + role;
-        var banner = $("caixaUnreadAlert");
-        var sameSession = authState.currentUser && authState.currentUser.id === actor && authState.currentUser.role === role && activeWarehouseCode() === warehouse;
-        if (!sameSession || !info.count) {
-          if (banner && banner.dataset.scope === scope) banner.remove();
-          return;
-        }
-        if (!banner || banner.dataset.scope !== scope) {
-          if (banner) banner.remove();
-          banner = document.createElement("aside"); banner.id = "caixaUnreadAlert"; banner.dataset.scope = scope;
-          banner.setAttribute("role", "status"); banner.setAttribute("aria-live", "polite");
-          var text = document.createElement("strong"); banner.appendChild(text);
-          var button = document.createElement("button"); button.type = "button"; button.textContent = "Ver mensagem";
-          button.addEventListener("click", function () { if (banner.caixaOpen) banner.caixaOpen(); }); banner.appendChild(button);
-          document.body.appendChild(banner);
-        }
-        banner.caixaOpen = info.open;
-        var signature = info.count + ":" + info.requestId;
-        if (banner.dataset.signature !== signature) {
-          banner.firstElementChild.textContent = info.count + (info.count === 1 ? " mensagem não lida no atendimento" : " mensagens não lidas no atendimento");
-          banner.dataset.signature = signature;
-        }
-      },
+      openRequestsScreen: function () { return showScreen("atendimentosCaixa"); },
       claimProduct: async function (id) {
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
         await refreshReplenishmentData();
@@ -9623,6 +9739,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         return claimReplenishmentRequest(id);
       },
       openProduct: async function (id) {
+        if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
+        await showScreen("reposicao");
         if (!authState.currentUser || authState.currentUser.id !== actor || activeWarehouseCode() !== warehouse) throw new Error("Usuário ou estoque mudou.");
         replenishmentState.activeFilter = "";
         replenishmentState.renderLimit = Math.max(replenishmentState.renderLimit, replenishmentState.requests.length);
@@ -9636,8 +9754,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderAll() {
-    if (getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
-      renderCaixaRequestsScreen();
+    if (getActiveScreenId() === "atendimentosCaixa") { renderCaixaRequestsScreen(); return; }
+    if (IS_CP_ALAMO && getActiveScreenId() === "reposicao" && authState.currentUser.role === "CAIXA") {
       return;
     }
     renderStockFreshnessAlert();
@@ -9759,7 +9877,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function renderReplenishment() {
-    renderCaixaRequestsScreen();
     if (!$("replenishmentList")) return;
     var attendantView = isAttendant();
     applyReplenishmentRoleView(attendantView);
@@ -10459,6 +10576,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       return { type: "TRANSFERENCIA", id: transfer.id, title: transferDisplayName(transfer), subtitle: transferRouteDestinationLabel(transfer), source: transfer };
     });
     var operationalTasks = getMyOperationalTasks().filter(function (task) {
+      if (!IS_CP_ALAMO && task.referenceType === "CAIXA_AJUSTE") return false; // The cashier bell owns these alerts as well.
       return ["CONCLUIDA", "CANCELADA"].indexOf(task.status) < 0;
     }).map(function (task) {
       var details = task.description || "Central de Tarefas";
@@ -10472,6 +10590,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       };
     });
     var replenishments = getVisibleReplenishmentRequests().filter(function (request) {
+      if (!IS_CP_ALAMO && String(request.id || "").startsWith("caixa-")) return false; // Handled by the global cashier bell, not a permanent task panel.
       if (request.status === "PENDENTE" && canClaimReplenishmentRequest(request)) return true;
       if (["EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(request.status) < 0) return false;
       return request.responsavelId === authState.currentUser.id;
@@ -10623,6 +10742,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function createReplenishmentNotification(request, type) {
     if (!request || !authState.currentUser) return;
+    if (!IS_CP_ALAMO && String(request.id || "").startsWith("caixa-") && (!type || type === "created")) return; // One urgent alert per cashier request.
     if (normalizeWarehouseCode(request.warehouseCode) !== activeWarehouseCode()) return;
     if (!shouldNotifyCurrentUserAboutReplenishment(request)) return;
     var notifyKey = [type || "created", request.id || "", request.status || "", request.responsavelId || "", request.cancellationRequestedAt || ""].join(":");
@@ -10901,6 +11021,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stopLeaderLiveSync() {
+    realtimeState.incrementalCursors = {};
     realtimeState.syncGeneration = (realtimeState.syncGeneration || 0) + 1;
     if (addressingPresenceController) addressingPresenceController.stop();
     addressingPresenceController = null;
@@ -10949,7 +11070,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (!rawWarehouseCodeValue(row) && isMultiWarehouseMode()) scheduleTransferRealtimeRefresh("realtime-warehouse-indefinido", 500);
       return;
     }
-    realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
+    if (IS_CP_ALAMO) realtimeState.lastLiveUpdateAt = row.updated_at || row.created_at || nowIso();
     try {
       transferDebugLog("Realtime " + ((payload && payload.eventType) || "EVENTO") + " recebido", payload);
       realtimeState.recentEvents.unshift({
@@ -11153,18 +11274,30 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (shouldLoadFullTransfers) await loadTransferData();
         else await loadTransferTaskSummaries();
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
+        if (!currentScope()) return;
         realtimeState.lastLiveUpdateAt = nowIso();
       } else {
+        var cursors = realtimeState.incrementalCursors || {};
+        var transferSince = IS_CP_ALAMO ? since : cursors.wms_transfers || since;
+        var itemSince = IS_CP_ALAMO ? since : cursors.wms_transfer_items || since;
         var shouldFetchTransferRows = moduleLoadState.transfers || realtimeState.transferTasksLoaded;
-        var transferRows = shouldFetchTransferRows ? await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", since) : [];
+        var transferRows = shouldFetchTransferRows ? await fetchWarehouseUpdatedRows("wms_transfers", "updated_at", transferSince) : [];
         if (!currentScope()) return;
         var shouldFetchItemRows = moduleLoadState.transfers && (transferState.activeTransferId || Object.keys(transferState.loadedItemTransferIds || {}).length > 0);
-        var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", since) : [];
+        var itemRows = shouldFetchItemRows ? await fetchWarehouseUpdatedRows("wms_transfer_items", "updated_at", itemSince) : [];
         if (!currentScope()) return;
         transferRows.forEach(function (row) { applyLocalTransferUpdate(fromDbTransfer(row)); });
         itemRows.forEach(function (row) { applyLocalTransferItemUpdate(fromDbTransferItem(row)); });
         if (moduleLoadState.replenishment) await refreshReplenishmentData();
+        if (!currentScope()) return;
         var newest = [since].concat(transferRows.map(function (row) { return row.updated_at || row.created_at || ""; }), itemRows.map(function (row) { return row.updated_at || row.created_at || ""; })).sort().pop();
+        if (!IS_CP_ALAMO) {
+          // Separate server timestamps: a newer transfer must not skip a delayed item update.
+          realtimeState.incrementalCursors = {
+            wms_transfers: [transferSince].concat(transferRows.map(function (row) { return row.updated_at || ""; })).filter(Boolean).sort().pop(),
+            wms_transfer_items: [itemSince].concat(itemRows.map(function (row) { return row.updated_at || ""; })).filter(Boolean).sort().pop()
+          };
+        }
         realtimeState.lastLiveUpdateAt = newest || nowIso();
         writeTransferCacheSoon();
       }
@@ -11175,6 +11308,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       setSyncStatus("Ao vivo", "success");
     } catch (error) {
       if (!currentScope()) return;
+      if (!IS_CP_ALAMO && (isServiceRestricted(error) || isCancelledRequest(error))) {
+        realtimeState.refreshPending = false;
+        if (isServiceRestricted(error)) setSyncStatus(serviceFailureMessage(error), "error");
+        return;
+      }
       if (!isExpectedLegacySchemaCompatibilityError(error)) recordPerformanceError("live-transfer", error);
       // A sincronização incremental é recuperável: um schema antigo ou uma resposta
       // interrompida não deve bloquear a operação nem deixar o status em erro permanente.
@@ -12803,6 +12941,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
+      !IS_CP_ALAMO ? "<p><strong>Requisições recentes (sem conteúdo):</strong> " + escapeHtml(JSON.stringify(requestHealthSnapshot().slice(-12))) + ".</p>" : "",
       "<p><strong>Comunicação Caixa/Estoque:</strong> " + escapeHtml(JSON.stringify(operationalDiagnostics().filter(function (entry) { return entry.warehouse === warehouse; }).slice(-8))) + ".</p>",
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
       "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
@@ -16327,16 +16466,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return node ? normalizeText(node.textContent) : "";
   }
 
-  async function fetchCurrentSkuAddresses(sku, warehouseCode) {
+  async function fetchCurrentSkuAddresses(sku, warehouseCode, signal) {
     if (!isSupabaseReady() || !canUseNetwork()) return findBySku(sku);
     var legacyLocations = findBySku(sku).filter(function (binding) {
       return splitSkuValues(binding.sourceSkuValue || binding.sku).length > 1 && bindingMatchesWarehouseCode(binding, warehouseCode);
     });
     var response = await runSupabaseRequestWithRetry("sku-current-addresses", function () {
-      return supabaseDb.from("wms_bindings").select("*")
+      var query = supabaseDb.from("wms_bindings").select("*")
         .eq("warehouse_code", warehouseCode)
         .in("sku", unique([normalizeSku(sku), normalizeSkuKey(sku)]))
         .order("updated_at", { ascending: false });
+      return signal ? query.abortSignal(signal) : query;
     });
     if (response.error) throw response.error;
     var current = expandDbBindingRows(response.data || []);
@@ -16347,6 +16487,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function renderSkuSearch() {
     if (authState.currentUser && authState.currentUser.role === "CAIXA") return renderCaixaItemLookup();
+    var addressController = null;
+    if (!IS_CP_ALAMO) {
+      if (skuAddressController) skuAddressController.abort();
+      skuAddressController = addressController = new window.AbortController();
+    }
     var queryStartedAt = performance.now();
     window.clearTimeout(skuSearchTimer);
     var sku = firstSkuValue($("skuSearchInput").value);
@@ -16369,9 +16514,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var stockSuggestion = null;
     var stockError = "";
     try {
-      list = await fetchCurrentSkuAddresses(sku, requestedWarehouse);
+      list = await fetchCurrentSkuAddresses(sku, requestedWarehouse, addressController && addressController.signal);
       refreshProductNamesForBindings(list);
     } catch (addressError) {
+      if (!IS_CP_ALAMO && (isCancelledRequest(addressError) || addressController.signal.aborted)) return;
       recordPerformanceError("consulta-sku-endereco", addressError);
     }
     if (requestSeq !== skuSearchRequestSeq || requestedWarehouse !== activeWarehouseCode()) return;
@@ -18545,7 +18691,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var legacyElapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
       return legacyValue.length >= 5 && legacyElapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
     }
-    return $("packingCodeMode") && $("packingCodeMode").value === "MODO_SCANNER" ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
+    var rawCode = String($("transferScanInput").value || "").trim().replace(/\D/g, "");
+    return rawCode.length > 5 ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
   }
 
   var outboundPackingController;
@@ -18564,7 +18711,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         invalidateTransferStatsCache();
       },
       refresh: renderTransferWork,
-      status: function (message, type) { setStatus("transferWorkStatus", message, type); }
+      status: function (message, type) { setStatus("transferWorkStatus", message, type); },
+      playScanSound: function () { void playTaskSound(); }
     });
     return outboundPackingController;
   }
@@ -18698,7 +18846,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function addExtraTransferItem(transfer, sku, qty, observation, inputType) {
     if (!IS_CP_ALAMO && transferState.activeWorkMode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
-      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: sku, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(), code_read: true });
+      var extraRaw = String($("transferScanInput").value || sku).trim();
+      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: extraRaw, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(extraRaw), code_read: true });
       if (extraSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
@@ -18864,7 +19013,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
       var auditBox = isBoxQuantityItem(item) ? readTransferBoxPackingInput(item, auditQty) : null;
       if (auditBox && !auditBox.valid) { setStatus("transferWorkStatus", auditBox.message || "Confira a conversão UN/CX.", "error"); return; }
-      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, $("transferScanInput").value.trim()), raw_code: $("transferScanInput").value.trim(), code_method: packingController().method(), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
+      var auditRaw = $("transferScanInput").value.trim();
+      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, auditRaw), raw_code: auditRaw, code_method: packingController().method(auditRaw), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
       if (auditSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
@@ -19346,7 +19496,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       "Rota: " + transferRouteOriginLabel(transfer) + " > " + transferRouteDestinationLabel(transfer),
       "Responsavel: " + (transfer.responsibleName || "-"),
       "Status: " + transferStatusDisplayLabel(transfer.status),
-      "Itens: " + items.length
+      "Itens: " + items.length,
+      "Eventos de bipagem/conferencia e todo o historico vinculado tambem serao apagados definitivamente."
     ];
     var modal = $("transferDeleteModal");
     if (!modal) {
@@ -19384,10 +19535,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
-    if (transfer.packingAuditVersion > 0 && !IS_CP_ALAMO) {
-      showToast("Transferência com auditoria preservada. Registre correções em vez de excluir o histórico.", "warning");
-      return false;
-    }
     if (!transferBelongsToActiveWarehouse(transfer)) {
       showToast("Esta transferencia pertence a outro estoque.", "error");
       return false;
@@ -20021,6 +20168,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function formatSupabaseError(error) {
     if (!error) return "erro desconhecido";
+    if (!IS_CP_ALAMO && serviceFailureMessage(error)) return serviceFailureMessage(error);
     if (typeof error === "string") return error;
     var message = error.message || error.details || error.hint || error.code || JSON.stringify(error);
     var lower = String(message + " " + (error.code || "")).toLowerCase();

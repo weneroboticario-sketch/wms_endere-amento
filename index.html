@@ -109,6 +109,7 @@
         <div class="menu-section">
           <p class="menu-label">Operacao</p>
           <button class="menu-item" data-icon="SKU" data-screen="centralRevistas" type="button">Central de Revistas</button>
+          <button class="menu-item" data-icon="DAS" data-screen="excellence" type="button" hidden>Logística de Excelência</button>
           <button class="menu-item" data-icon="SKU" data-screen="consultaSku" type="button">Consultar SKU</button>
           <button class="menu-item" data-icon="TAR" data-screen="comunicacao" type="button">Comunicação <span class="menu-badge" data-comm-count hidden>0</span></button>
           <button class="menu-item" data-icon="LOC" data-screen="consultaPrateleira" type="button">Ler Prateleira</button>
@@ -119,6 +120,7 @@
           <p class="menu-label">Processos</p>
           <button class="menu-item transfer-full-menu" data-icon="TRF" data-screen="transferencias" type="button">Transferencias</button>
           <button class="menu-item" data-icon="REP" data-screen="reposicao" type="button">Pedidos de Reposicao <span class="menu-badge" id="replenishmentMenuBadge" hidden>0</span></button>
+          <button class="menu-item" data-icon="TAR" data-screen="atendimentosCaixa" type="button">Atendimentos do caixa</button>
         </div>
         <div class="menu-section">
           <p class="menu-label">Gestao</p>
@@ -196,6 +198,7 @@
           <strong id="topSyncLabel">Inicializando</strong>
         </div>
         <button class="secondary-button" id="topLogoutButton" type="button">Sair</button>
+        <button class="secondary-button caixa-bell" data-screen-target="atendimentosCaixa" type="button" aria-label="Atendimentos pendentes do caixa"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><span>Caixa</span><span id="caixaPendingCount" data-caixa-count hidden>0</span></button>
         <button class="secondary-button" data-screen-target="comunicacao" type="button">Mensagens <span data-comm-count hidden>0</span></button>
       </div>
 
@@ -206,6 +209,7 @@
       <section class="screen" id="globalDashboard" hidden></section>
       <section class="screen" id="stockOverview" hidden></section>
       <section class="screen" id="centralRevistas" hidden></section>
+      <section class="screen" id="excellence" hidden></section>
       <section id="communicationAlert" hidden role="status"><button type="button" class="secondary-button" data-open-communication-alert>Nova mensagem na Comunicação</button><button type="button" class="secondary-button" data-dismiss-communication-alert>Dispensar</button></section>
       <section class="screen" id="comunicacao" hidden></section>
       <section class="screen active" id="dashboard">
@@ -556,8 +560,11 @@
         </section>
       </section>
 
-      <section class="screen" id="reposicao">
+      <section class="screen" id="atendimentosCaixa" hidden>
+        <div id="caixaAlertSettings"></div>
         <div class="panel" id="caixaRequestsRoot" hidden></div>
+      </section>
+      <section class="screen" id="reposicao">
         <div class="page-title">
           <div>
             <p class="eyebrow">Operacao CAPTACAO</p>
