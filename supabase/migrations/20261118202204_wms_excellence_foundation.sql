@@ -201,6 +201,7 @@ create function private.excellence_revision(p_cycle uuid) returns text language 
  select md5(to_jsonb(c)::text||coalesce((select id::text from public.wms_excellence_audit_log where warehouse_code=c.warehouse_code order by id desc limit 1),'0'))
  from public.wms_excellence_cycles c where c.id=p_cycle
 $revision$;
+revoke all on function private.excellence_cycle_member(uuid,text),private.excellence_absent_at(uuid,text,timestamptz),private.excellence_revision(uuid) from public,anon,authenticated;
 create function public.wms_excellence_api(p_warehouse text,p_action text,p_data jsonb default '{}') returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare actor text:=private.current_wms_profile_id();leader boolean:=private.excellence_leader(p_warehouse);
@@ -211,6 +212,9 @@ begin
  if p_action='CYCLES' then return coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_cycles where warehouse_code=p_warehouse order by start_date desc,id limit 40)x),'[]');end if;
  if p_action='CANDIDATES' then
   if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
+  if nullif(p_data->>'cycle_id','') is null
+   or not exists(select 1 from public.wms_excellence_cycles x where x.id=(p_data->>'cycle_id')::uuid and x.warehouse_code=p_warehouse)
+  then raise exception 'Ciclo não encontrado.';end if;
   return coalesce((select jsonb_agg(jsonb_build_object(
    'id',u.id,'name',u.name,'role',u.role,
    'member',exists(select 1 from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id),
@@ -260,6 +264,7 @@ begin
   if not leader or c.status in ('CLOSED','ARCHIVED') then raise exception 'Liderança necessária para registrar elegibilidade.' using errcode='42501';end if;
   person:=nullif(p_data->>'user_id','');
   if person is null or not private.excellence_cycle_member(c.id,person) then raise exception 'Colaborador fora do ciclo.';end if;
+  if length(trim(coalesce(p_data->>'justification','')))=0 then raise exception 'Justificativa obrigatória.';end if;
   if (p_data->>'absence_type') not in ('FERIAS','FOLGA','ATESTADO','AFASTAMENTO','TREINAMENTO','OUTRA_ATIVIDADE') then raise exception 'Tipo de ausência inválido.';end if;
   if (p_data->>'from')::date<c.start_date or (p_data->>'to')::date>c.end_date or (p_data->>'to')::date<(p_data->>'from')::date then raise exception 'Período de ausência fora do ciclo.';end if;
   insert into public.wms_excellence_absences(cycle_id,warehouse_code,user_id,absence_type,start_date,end_date,justification,created_by_id)
