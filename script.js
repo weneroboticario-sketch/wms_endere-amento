@@ -19452,7 +19452,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       "Rota: " + transferRouteOriginLabel(transfer) + " > " + transferRouteDestinationLabel(transfer),
       "Responsavel: " + (transfer.responsibleName || "-"),
       "Status: " + transferStatusDisplayLabel(transfer.status),
-      "Itens: " + items.length
+      "Itens: " + items.length,
+      "Eventos de bipagem/conferencia e todo o historico vinculado tambem serao apagados definitivamente."
     ];
     var modal = $("transferDeleteModal");
     if (!modal) {
@@ -19490,10 +19491,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }
     var transfer = getTransferById(id);
     if (!transfer) return false;
-    if (transfer.packingAuditVersion > 0 && !IS_CP_ALAMO) {
-      showToast("Transferência com auditoria preservada. Registre correções em vez de excluir o histórico.", "warning");
-      return false;
-    }
     if (!transferBelongsToActiveWarehouse(transfer)) {
       showToast("Esta transferencia pertence a outro estoque.", "error");
       return false;
