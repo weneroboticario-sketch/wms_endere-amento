@@ -32,10 +32,10 @@ test('first operator claims standard task and validation creates auditable evide
   assert.equal(claimed.atribuido_para,'op');
   assert.equal(claimed.status,'EM_ANDAMENTO');
   await assert.rejects(f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]),/já foi assumida/);
-  const done=(await f.db.query("select concluir_tarefa($1,'{}'::jsonb,null) t",[task.id])).rows[0].t;
+  const done=(await f.db.query("select to_jsonb(concluir_tarefa($1,'{}'::jsonb,null)) t",[task.id])).rows[0].t;
   assert.equal(done.status,'AGUARDANDO_VALIDACAO');
   await f.asActor('sup');
-  const validated=(await f.db.query('select validar_tarefa($1,null) t',[task.id])).rows[0].t;
+  const validated=(await f.db.query('select to_jsonb(validar_tarefa($1,null)) t',[task.id])).rows[0].t;
   assert.equal(validated.status,'CONCLUIDA');
   await f.db.exec('reset role');
   const evidence=(await f.db.query("select * from wms_excellence_evidence where source_id=$1 and event_type='STANDARD_TASK_VALIDATED'",[task.id])).rows[0];
@@ -66,7 +66,7 @@ test('seven-address audit requires seven unique addresses and blocks weekly reus
    /7 endereços/
   );
   const addresses=['A1','A2','A3','A4','A5','A6','A7'];
-  const done=(await f.db.query("select concluir_tarefa($1,$2::jsonb,null) t",[task.id,JSON.stringify({enderecos_conferidos:addresses})])).rows[0].t;
+  const done=(await f.db.query("select to_jsonb(concluir_tarefa($1,$2::jsonb,null)) t",[task.id,JSON.stringify({enderecos_conferidos:addresses})])).rows[0].t;
   assert.equal(done.status,'AGUARDANDO_VALIDACAO');
 
   await f.asActor('admin');
