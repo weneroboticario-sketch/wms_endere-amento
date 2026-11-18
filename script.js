@@ -7053,6 +7053,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
+    if (screenId === "excellence") return !IS_CP_ALAMO && import.meta.env.VITE_LOGISTICA_EXCELENCIA_ENABLED === "true" && !!authState.currentUser && !isGlobalDashboardScope();
     if (!authState.currentUser) return false;
     if (screenId === "atendimentosCaixa") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "CAIXA"].includes(authState.currentUser.role);
     if (!IS_CP_ALAMO && screenId === "reposicao" && authState.currentUser.role === "CAIXA") return false;
@@ -8445,6 +8446,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("sidebar").classList.remove("open");
     updateModuleSubtitle(screenId);
+    if (screenId === "excellence") {
+      var excellenceActor = authState.currentUser.id;
+      var excellenceWarehouse = activeWarehouseCode();
+      Promise.all([import("./src/excellence/service.js"), import("./src/excellence/view.js")]).then(function (modules) {
+        if (!authState.currentUser || authState.currentUser.id !== excellenceActor || activeWarehouseCode() !== excellenceWarehouse || getActiveScreenId() !== "excellence") return;
+        var service = modules[0].createExcellenceService({ client: supabaseDb, warehouse: excellenceWarehouse, isCurrent: function () { return !!authState.currentUser && authState.currentUser.id === excellenceActor && activeWarehouseCode() === excellenceWarehouse && getActiveScreenId() === "excellence"; } });
+        return modules[1].mountExcellence($("excellence"), { service: service, actorId: excellenceActor, leader: isAdminOrSupervisor(), admin: isAdmin() });
+      }).catch(function (error) { if (getActiveScreenId() === "excellence") $("excellence").textContent = error.message; });
+    }
     if (!IS_CP_ALAMO && canAccessScreen("comunicacao")) {
       ensureCommunication().then(function (runtime) { if (runtime) runtime.setActive(getActiveScreenId() === "comunicacao"); }).catch(function () {});
       if (!communicationLinkConsumed && new window.URLSearchParams(window.location.search).has("comm")) {
