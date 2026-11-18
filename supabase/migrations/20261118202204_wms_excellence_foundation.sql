@@ -243,14 +243,23 @@ begin
   if (p_data->>'from')::date<c.start_date or (p_data->>'to')::date>c.end_date or (p_data->>'to')::date<(p_data->>'from')::date then raise exception 'Período de ausência fora do ciclo.';end if;
   insert into public.wms_excellence_absences(cycle_id,warehouse_code,user_id,absence_type,start_date,end_date,justification,created_by_id)
   values(c.id,p_warehouse,person,p_data->>'absence_type',(p_data->>'from')::date,(p_data->>'to')::date,p_data->>'justification',actor)
-  returning to_jsonb(wms_excellence_absences.*) into result;return result;
+  returning to_jsonb(wms_excellence_absences.*) into result;
+  update public.wms_excellence_evidence e set metadata=jsonb_set(e.metadata,'{exemption_validated}','true'::jsonb,true)
+   where e.cycle_id=c.id and e.user_id=person
+   and (e.evidence_date at time zone coalesce((select config->>'timeZone' from public.wms_excellence_criteria_versions where id=c.criteria_version_id),'America/Cuiaba'))::date
+       between (p_data->>'from')::date and (p_data->>'to')::date;
+  return result;
  end if;
  if p_action='REMOVE_ABSENCE' then
   if not leader or c.status in ('CLOSED','ARCHIVED') then raise exception 'Liderança necessária.' using errcode='42501';end if;
   update public.wms_excellence_absences set status='CANCELLED'
    where id=(p_data->>'absence_id')::uuid and cycle_id=c.id and status='VALIDATED'
    returning to_jsonb(wms_excellence_absences.*) into result;
-  if result is null then raise exception 'Ausência não encontrada.';end if;return result;
+  if result is null then raise exception 'Ausência não encontrada.';end if;
+  person:=result->>'user_id';
+  update public.wms_excellence_evidence e set metadata=jsonb_set(e.metadata,'{exemption_validated}',to_jsonb(private.excellence_absent_at(c.id,person,e.evidence_date)),true)
+   where e.cycle_id=c.id and e.user_id=person;
+  return result;
  end if;
  person:=coalesce(nullif(p_data->>'user_id',''),actor);
  if not private.excellence_read(p_warehouse,person) or not private.excellence_user(p_warehouse,person) then raise exception 'Colaborador fora do acesso.' using errcode='42501';end if;
