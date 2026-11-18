@@ -18647,7 +18647,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var legacyElapsed = transferState.scanInputStartedAt ? Date.now() - transferState.scanInputStartedAt : 9999;
       return legacyValue.length >= 5 && legacyElapsed <= 900 ? "BIPAGEM" : "DIGITACAO_MANUAL";
     }
-    return $("packingCodeMode") && $("packingCodeMode").value === "MODO_SCANNER" ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
+    var rawCode = String($("transferScanInput").value || "").trim().replace(/\D/g, "");
+    return rawCode.length > 5 ? "MODO_SCANNER" : "DIGITACAO_MANUAL";
   }
 
   var outboundPackingController;
@@ -18666,7 +18667,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         invalidateTransferStatsCache();
       },
       refresh: renderTransferWork,
-      status: function (message, type) { setStatus("transferWorkStatus", message, type); }
+      status: function (message, type) { setStatus("transferWorkStatus", message, type); },
+      playScanSound: function () { void playTaskSound(); }
     });
     return outboundPackingController;
   }
@@ -18800,7 +18802,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function addExtraTransferItem(transfer, sku, qty, observation, inputType) {
     if (!IS_CP_ALAMO && transferState.activeWorkMode === "MONTAGEM" && !isXmlConferenceTransfer(transfer)) {
-      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: sku, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(), code_read: true });
+      var extraRaw = String($("transferScanInput").value || sku).trim();
+      var extraSaved = await packingController().perform(transfer, null, { operation: "ITEM_EXTRA", sku: sku, raw_code: extraRaw, quantity: qty, description: findProductName(sku) || "Item extra", reason: observation, code_method: packingController().method(extraRaw), code_read: true });
       if (extraSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
@@ -18966,7 +18969,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       }
       var auditBox = isBoxQuantityItem(item) ? readTransferBoxPackingInput(item, auditQty) : null;
       if (auditBox && !auditBox.valid) { setStatus("transferWorkStatus", auditBox.message || "Confira a conversão UN/CX.", "error"); return; }
-      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, $("transferScanInput").value.trim()), raw_code: $("transferScanInput").value.trim(), code_method: packingController().method(), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
+      var auditRaw = $("transferScanInput").value.trim();
+      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, auditRaw), raw_code: auditRaw, code_method: packingController().method(auditRaw), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
       if (auditSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }

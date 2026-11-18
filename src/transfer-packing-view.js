@@ -5,11 +5,11 @@ import './transfer-packing.css';
 const value=v=>v===null?'Conversão indefinida':String(v);
 const historyQuantity=e=>e.audit_version===1?e.quantity:`${e.quantity??'—'} (legado; unidade não validada)`;
 const historyReads=e=>e.audit_version===1?e.payload?.code_reads||0:'Não registrado';
-export function createPackingController({client,scope,warehouse,items,events,setEvents,accept,refresh,status}){
+export function createPackingController({client,scope,warehouse,items,events,setEvents,accept,refresh,status,playScanSound=()=>{}}){
  const gateway=createPackingGateway({client:{rpc:(...args)=>client().rpc(...args)},storage:window.sessionStorage,scope});
  let active=null,selected=null,loaded=false,loadedTransfer='',queue=Promise.resolve(),lastCode='';
  const el=id=>document.getElementById(id);
- const method=()=>el('packingCodeMode')?.value||'MANUAL';
+ const method=raw=>String(raw??el('transferScanInput')?.value??'').trim().replace(/\D/g,'').length>5?'MODO_SCANNER':'MANUAL';
  const pendingSafe=()=>{try{return gateway.pending();}catch{return null;}};
  async function history(t){
   const captured=scope();loaded=false;loadedTransfer='';
@@ -30,8 +30,9 @@ export function createPackingController({client,scope,warehouse,items,events,set
  }
  function controls(){
   if(el('packingAuditControls'))return;
-  const host=document.createElement('div');host.id='packingAuditControls';host.innerHTML=`<label>Entrada do código<select id="packingCodeMode"><option value="MANUAL">Informar manualmente</option><option value="MODO_SCANNER">Ler código — modo scanner</option></select></label><label>Quantidade<select id="packingQuantityMode"><option value="MANUAL">Informar quantidade manual</option><option value="UNITARIA">Uma unidade UN por leitura</option></select></label><small>O modo scanner é declarado pelo operador. Leitores em modo teclado não comprovam a captura física.</small><button type="button" class="secondary-button" id="packingRetry" hidden>Tentar novamente a operação</button>`;
+  const host=document.createElement('div');host.id='packingAuditControls';host.innerHTML=`<p id="packingDetectedMethod" role="status">Digite o SKU de 5 dígitos ou bipe o código completo.</p><label>Quantidade<select id="packingQuantityMode"><option value="MANUAL">Informar quantidade manual</option><option value="UNITARIA">Uma unidade UN por leitura</option></select></label><small>Origem detectada automaticamente: código completo (mais de 5 dígitos) = bipagem; SKU de 5 dígitos = digitação.</small><button type="button" class="secondary-button" id="packingRetry" hidden>Tentar novamente a operação</button>`;
   el('transferScanInput').before(host);
+  el('transferScanInput').addEventListener('input',()=>{const raw=el('transferScanInput').value;el('packingDetectedMethod').textContent=raw?`Entrada identificada: ${method(raw)==='MODO_SCANNER'?'bipagem — código completo':'digitação — SKU de 5 dígitos'}.`:'Digite o SKU de 5 dígitos ou bipe o código completo.';});
   el('packingRetry').onclick=async()=>{
    try{const request=gateway.pending();const result=await gateway.retry();if(result.stale)return;accept(result.data);status('Operação confirmada sem duplicação.','success');refresh();el('transferQuantityInput').value='';el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';el('transferScanInput').focus();}
    catch(error){if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);status(error.message,'error');render(active,selected);}
@@ -74,11 +75,12 @@ export function createPackingController({client,scope,warehouse,items,events,set
  return {history,render,report,perform,method,codeReadRequired:(item,raw)=>lastCode!==`${scope()}:${item.id}:${raw}`,
   locate(t,item,raw){
    if(el('packingQuantityMode')?.value==='UNITARIA'){
-    if(method()!=='MODO_SCANNER'){status('Leitura unitária exige selecionar o modo scanner.','error');return Promise.resolve(false);}
-    const captured=scope();const action={operation:'LEITURA_UNITARIA',quantity:1,raw_code:raw,code_method:method()};
-    queue=queue.then(()=>scope()===captured?perform(t,items(t.id).find(x=>x.id===item.id),action):false);return queue;
+    if(method(raw)!=='MODO_SCANNER'){status('Para registrar uma unidade por leitura, bipe o código completo do produto.','error');return Promise.resolve(false);}
+    const captured=scope();const action={operation:'LEITURA_UNITARIA',quantity:1,raw_code:raw,code_method:method(raw)};
+    queue=queue.then(async()=>{if(scope()!==captured)return false;const ok=await perform(t,items(t.id).find(x=>x.id===item.id),action);if(ok)playScanSound();return ok;});return queue;
    }
-   return perform(t,item,{operation:'LEITURA_SKU',raw_code:raw,code_method:method()}).then(ok=>{if(ok)lastCode=`${scope()}:${item.id}:${item.sku}`;return ok;});
+   const codeMethod=method(raw);
+   return perform(t,item,{operation:'LEITURA_SKU',raw_code:raw,code_method:codeMethod}).then(ok=>{if(ok){lastCode=`${scope()}:${item.id}:${item.sku}`;if(codeMethod==='MODO_SCANNER')playScanSound();}return ok;});
   }
  };
 }
