@@ -18,10 +18,18 @@ export default async function handler(req, res) {
   };
   if (body.action === 'TEAM') { res.status(200).json(await readTeamEvaluation(rpc,{cycle_id:body.cycle_id})); return; }
   if (body.action === 'CLOSE') {
-   // The same authenticated user session performs the final write.
-   // The database independently validates admin role, warehouse scope, revision, coverage and snapshots.
+   // The backend secret proves that the snapshots came through the shared server-side engine.
+   // The database still validates the caller's authenticated admin identity, scope, revision and coverage.
+   const closeSecret = process.env.EXCELLENCE_CLOSE_SECRET;
+   if (!closeSecret) { res.status(503).json({ error: 'Fechamento administrativo ainda não configurado.' }); return; }
    const prepared = await prepareCycleClosure(rpc, body.cycle_id);
-   const result = await client.rpc('wms_excellence_close_cycle', { p_cycle: body.cycle_id, p_actor_auth: user.user.id, p_revision: prepared.revision, p_assessments: prepared.snapshots });
+   const result = await client.rpc('wms_excellence_close_cycle', {
+    p_cycle: body.cycle_id,
+    p_actor_auth: user.user.id,
+    p_revision: prepared.revision,
+    p_assessments: prepared.snapshots,
+    p_backend_secret: closeSecret
+   });
    if (result.error) throw Error(result.error.message);
    res.status(200).json(result.data); return;
   }
