@@ -12,9 +12,12 @@ alter table public.wms_replenishment_requests
 
 create or replace function private.excellence_actor_name(person text)
 returns text language sql stable security definer set search_path='' as $actor_name$
- select coalesce(nullif(name,''),nullif(username,''),person) from public.wms_users where id=person
+ select coalesce(nullif(name,''),nullif(username,''),person)
+ from public.wms_users
+ where id=person and id=private.current_wms_profile_id()
 $actor_name$;
-revoke all on function private.excellence_actor_name(text) from public,anon,authenticated;
+revoke all on function private.excellence_actor_name(text) from public,anon,authenticated,service_role;
+grant execute on function private.excellence_actor_name(text) to authenticated;
 
 create or replace function public.stamp_wms_replenishment_actor_attribution()
 returns trigger language plpgsql security invoker set search_path='' as $attr$
