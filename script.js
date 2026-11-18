@@ -5597,7 +5597,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     taskCenterState.loading = true;
     try {
       var excellenceTasksResponse = await supabaseDb.rpc("wms_excellence_ensure_standard_tasks", { p_warehouse: activeWarehouseCode() });
-      if (excellenceTasksResponse.error && !isMissingFunctionError(excellenceTasksResponse.error)) {
+      if (excellenceTasksResponse.error && !isMissingRpcFunctionError(excellenceTasksResponse.error)) {
         console.warn("Falha ao preparar tarefas avaliadas:", excellenceTasksResponse.error.message || excellenceTasksResponse.error);
       }
       var taskColumns = "id,codigo_visivel,tipo,titulo,descricao,estoque_id,localizacao_alvo,sku_alvo,quantidade_planejada,referencia_tipo,referencia_id,criado_por,delegado_por,atribuido_para,prioridade,prazo_sla,status,motivo_bloqueio,motivo_cancelamento,resultado_execucao,data_criacao,data_inicio,data_conclusao,tempo_execucao_segundos,arquivada,arquivada_por,data_arquivamento";
