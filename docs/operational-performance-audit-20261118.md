@@ -40,3 +40,17 @@ Leitura das migrations locais e consulta somente de metadados information_schema
 ## Estado real
 
 P0 iniciada. Branch isolada criada. P0 completa e P1–P4 pendentes. Nenhuma interface, migration ou funcionalidade nova está disponível. Produção intacta nesta tarefa.
+
+## Avanço de 18/11 — regras de domínio e permissões consultadas
+
+Implementado src/operational-performance-domain.js com referências de origem únicas, normalização conservadora de tarefas, resumo por estoque/pessoa/período e proibição de autovalidação por qualquer executor participante. Nenhuma pontuação é calculada. O resumo mede apenas tarefas atribuídas com atividade datada no período; não é total de tarefas pendentes nem prova de execução física.
+
+Testes: quatro cenários aprovados usando node --test --test-isolation=none (o isolamento padrão foi bloqueado por spawn EPERM no ambiente). ESLint dos dois novos arquivos aprovado. Não foi executado build ou regressão completa nesta etapa; ainda não existe integração com a interface.
+
+Consulta de pg_policies em produção, somente leitura, confirmou:
+- Tarefas: operadores leem as próprias atribuições; administradores/supervisores têm escopo por estoque.
+- Recebimentos: acesso mediado por private.can_read_wms_inbound; verificar a função e histórico de contagem antes de implementar adaptador.
+- Endereçamento e reposição: políticas operacionais por estoque são mais amplas que o acesso individual necessário para desempenho. Não reutilizar leituras genéricas desses módulos para expor avaliações individuais.
+- A política wms_caixa_operational_isolation exige examinar também o atributo permissive/restrictive antes de concluir a combinação efetiva das políticas. Nenhuma política foi alterada.
+
+Próximo trabalho: completar auditoria de funções de autorização e índices; criar camada de acesso do novo módulo com permissão explícita de liderança, RLS individual, desligamento independente e metadados de execução compartilhada. Persistência, rotinas, painel, feedbacks, evidências, avaliações e relatórios continuam pendentes. A validação de autovalidação em JS é regra de domínio testada, não substitui controle transacional no banco.
