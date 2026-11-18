@@ -28,7 +28,7 @@ test('first operator claims standard task and validation creates auditable evide
   await f.db.exec('reset role');
   const task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='RETIRAR_RECICLAGEM' limit 1")).rows[0];
   await f.asActor('op');
-  const claimed=(await f.db.query('select (wms_excellence_claim_standard_task($1)).*',[task.id])).rows[0];
+  const claimed=(await f.db.query('select to_jsonb(wms_excellence_claim_standard_task($1)) t',[task.id])).rows[0].t;
   assert.equal(claimed.atribuido_para,'op');
   assert.equal(claimed.status,'EM_ANDAMENTO');
   await assert.rejects(f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]),/já foi assumida/);
