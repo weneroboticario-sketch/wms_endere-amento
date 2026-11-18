@@ -10,7 +10,7 @@ test('closure denies browser writes and incomplete inputs; trusted snapshots are
   await assert.rejects(f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4)',[f.cycle.id,'00000000-0000-4000-8000-000000000001','x','[]']),/permission denied/);
   await f.db.exec("reset role;update wms_excellence_cycles set status='CALIBRATION'");
   // Test-only trusted worker output. This verifies the storage boundary, not the scoring engine.
-  const people = (await f.db.query("select id from wms_users where private.excellence_user('VDCG',id)")).rows;
+  const people = (await f.db.query("select user_id id from wms_excellence_cycle_members where cycle_id=$1 and eligible",[f.cycle.id])).rows;
   const revision = (await f.db.query('select private.excellence_revision($1) r',[f.cycle.id])).rows[0].r;
   const configured = (await f.db.query('select config from wms_excellence_criteria_versions')).rows[0].config.criteria;
   const snapshots = people.map(person=>({user_id:person.id,calculation:{version:f.cycle.criteria_version_id,complete:true,preliminary:false,definitiveScore:90,pendingPoints:0,assessedPoints:90,criteria:configured.map(row=>({id:row.id,points:row.weight*0.9,coverageSufficient:true}))},evidence:[],scores:[]}));
@@ -48,7 +48,7 @@ test('complete synthetic cycle is calculated by shared engine then frozen with c
  const f=await excellenceFixture();
  try {
   await f.db.exec("reset role;update wms_excellence_cycles set status='CALIBRATION'");
-  const people=(await f.db.query("select id from wms_users where private.excellence_user('VDCG',id)")).rows;
+  const people=(await f.db.query("select user_id id from wms_excellence_cycle_members where cycle_id=$1 and eligible",[f.cycle.id])).rows;
   const insert=async(person,criterion,source,sourceId,day,metadata={})=>(await f.db.query(`insert into wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,description,metadata) values($1,'VDCG',$2,$3,$4,$5,'SYNTHETIC_VALIDATED',$6,'Fato sintético para teste',$7::jsonb) returning id`,[f.cycle.id,person,criterion,source,sourceId,day+'T12:00:00Z',JSON.stringify(metadata)])).rows[0].id;
   for(const {id:person} of people){
    const auditor=person==='admin'?'sup':'admin';
