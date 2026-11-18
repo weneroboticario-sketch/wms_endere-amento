@@ -1,7 +1,7 @@
 import { replenishmentExecutionScore } from './evidence-engine.js';
 import { executionScore, verificationScore, composeAssessment } from './evaluation-engine.js';
 /** The same deterministic engine is used by the server and the explanation view. */
-export function calculatePreliminary({ cycle, config, evidence, scores, period: cyclePeriod, evidenceTruncated = false }) {
+export function calculatePreliminary({ cycle, config, evidence, scores, absences = [], period: cyclePeriod, evidenceTruncated = false }) {
  if (config.engineVersion !== 2) return { criteria: config.criteria.map(row => ({ ...row, points: null, sample: 0 })), score: null, days: 0, sources: 0, confidence: 'INSUFICIENTE', warnings: ['LEGACY_RULE_VERSION'], limitation: 'Versão anterior: crie um novo ciclo com a composição por critério. Não recalcular ciclos antigos silenciosamente.' };
  const period = cyclePeriod;
  if (!period || !(Date.parse(period.from) < Date.parse(period.to))) throw Error('Período do ciclo não confirmado pelo servidor.');
@@ -33,6 +33,7 @@ export function calculatePreliminary({ cycle, config, evidence, scores, period: 
  return { ...composition, criteria, score: composition.complete ? composition.assessedPoints : null,
   days: new Set(eligible.map(row => row.evidence_date.slice(0,10))).size, sources: new Set(eligible.map(row => row.source_table)).size,
   confidence: composition.complete ? 'ALTA' : criteria.some(row => row.assessedPoints > 0) ? 'BAIXA' : 'INSUFICIENTE',
-  warnings: [...(!composition.complete ? ['EVIDENCE_INSUFFICIENT'] : []), ...(evidenceTruncated ? ['PARTIAL_EVIDENCE_PAGE'] : [])],
-  limitation: 'Pontuação experimental. Atividades sem autoria, complexidade ou validação comprovada permanecem N/D. Nenhuma nota manual vira ponto automático.' };
+  absencePeriods: absences.filter(row => row.status === 'VALIDATED').length,
+  warnings: [...(!composition.complete ? ['EVIDENCE_INSUFFICIENT'] : []), ...(evidenceTruncated ? ['PARTIAL_EVIDENCE_PAGE'] : []), ...(absences.some(row => row.status === 'VALIDATED') ? ['VALIDATED_ABSENCE_RECORDED'] : [])],
+  limitation: 'Pontuação experimental. Ausências validadas neutralizam oportunidades sobrepostas; pouca oportunidade reduz confiança, não gera nota baixa. Atividades sem autoria, complexidade ou validação comprovada permanecem N/D.' };
 }
