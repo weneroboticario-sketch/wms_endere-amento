@@ -9,6 +9,8 @@ test('foundation uses real Postgres RLS, immutable criteria and authenticated au
   await db.exec(await readFoundationSql());
   await asActor(db, 'admin');
   const cycle = await rpc('CREATE_CYCLE', { name: 'Calibração sintética', from: '2026-11-01', to: '2026-11-30' });
+  await assert.rejects(rpc('ENABLE', { cycle_id: cycle.id }), /Defina a equipe/);
+  await rpc('SET_MEMBERS', { cycle_id: cycle.id, member_ids: ['op'] });
   await rpc('ENABLE', { cycle_id: cycle.id });
   await asActor(db, 'op');
   await rpc('INITIATIVE', { cycle_id: cycle.id, title: 'Melhoria', description: 'Exemplo sintético' });
