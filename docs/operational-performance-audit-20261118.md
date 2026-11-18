@@ -54,3 +54,11 @@ Consulta de pg_policies em produção, somente leitura, confirmou:
 - A política wms_caixa_operational_isolation exige examinar também o atributo permissive/restrictive antes de concluir a combinação efetiva das políticas. Nenhuma política foi alterada.
 
 Próximo trabalho: completar auditoria de funções de autorização e índices; criar camada de acesso do novo módulo com permissão explícita de liderança, RLS individual, desligamento independente e metadados de execução compartilhada. Persistência, rotinas, painel, feedbacks, evidências, avaliações e relatórios continuam pendentes. A validação de autovalidação em JS é regra de domínio testada, não substitui controle transacional no banco.
+
+## Prompt master — Logística de Excelência
+
+Requisitos integrais preservados em docs/logistica-excelencia-requisitos.md. Este documento passa a orientar o mesmo módulo, sem criar uma segunda aba de desempenho.
+
+Adicionado núcleo experimental de configuração em src/operational-performance-program.js: dez setores iniciais como sugestões editáveis futuras; calibração de 30 dias configurável; configuração desativada por padrão; rankings e premiações automáticas desativados; snapshot imutável dos critérios; cobertura mínima por critério obrigatório; nota permanece N/D. São funções de domínio, ainda sem persistência ou interface.
+
+Sete testes dos dois arquivos de domínio aprovados. ESLint dos quatro arquivos aprovado. Não executada regressão completa, teste físico de celular ou build nesta etapa. Estes resultados não comprovam funcionamento integrado ou segurança do backend. Implementação completa, prévia funcional, RLS e migrações continuam pendentes.
