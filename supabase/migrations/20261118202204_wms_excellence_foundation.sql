@@ -533,6 +533,9 @@ create function public.wms_excellence_close_cycle(p_cycle uuid,p_actor_auth uuid
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare c public.wms_excellence_cycles; actor public.wms_users; item jsonb; person text; expected integer; supplied integer;
 begin
+ if auth.uid() is null or auth.uid() is distinct from p_actor_auth then
+  raise exception 'Sessão administrativa necessária.' using errcode='42501';
+ end if;
  select * into actor from public.wms_users where auth_user_id=p_actor_auth and coalesce(active,true) and not coalesce(archived,false);
  if not found or actor.role<>'ADMINISTRADOR' then raise exception 'Administrador autenticado necessário.' using errcode='42501';end if;
  select * into c from public.wms_excellence_cycles where id=p_cycle for update;
@@ -568,8 +571,8 @@ begin
  values(c.warehouse_code,actor.id,'wms_excellence_cycles',c.id::text,'CLOSE',jsonb_build_object('assessment_count',supplied,'source_revision',p_revision));
  return jsonb_build_object('closed',true,'count',supplied);
 end $$;
-revoke all on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) from public,anon,authenticated;
-grant execute on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) to service_role;
+revoke all on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) from public,anon,authenticated,service_role;
+grant execute on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) to authenticated;
 create function private.excellence_closed_guard() returns trigger language plpgsql set search_path='' as $$
 begin
  if tg_table_name='wms_excellence_cycles' then
