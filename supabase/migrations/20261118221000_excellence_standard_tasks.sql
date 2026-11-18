@@ -163,10 +163,16 @@ returns jsonb
 language plpgsql
 security definer
 set search_path=''
-as $$
-declare first_day date;last_day date;result jsonb;cycle_id uuid;version_id uuid;
+as $
+declare
+  first_day date;
+  last_day date;
+  actor text:=private.current_wms_profile_id();
+  version_id uuid;
+  result jsonb;
+  config jsonb:='{"engineVersion":2,"timeZone":"America/Cuiaba","minimumDays":3,"minimumSample":5,"complexityWeights":{"SIMPLES":1,"INTERMEDIARIA":2,"COMPLEXA":3},"criteria":[{"id":"EXECUCAO","weight":25,"automaticMaximum":25,"assistedMaximum":0,"formula":"EXECUTION"},{"id":"QUALIDADE","weight":25,"automaticMaximum":20,"assistedMaximum":5,"formula":"VERIFICATION"},{"id":"INICIATIVA","weight":20,"automaticMaximum":0,"assistedMaximum":20},{"id":"ORGANIZACAO","weight":10,"automaticMaximum":10,"assistedMaximum":0,"formula":"VERIFICATION"},{"id":"TRABALHO_EM_EQUIPE","weight":10,"automaticMaximum":0,"assistedMaximum":10},{"id":"POSTURA","weight":10,"automaticMaximum":0,"assistedMaximum":10}],"bands":[{"minimum":90,"label":"Excelência"},{"minimum":85,"label":"Alto desempenho"},{"minimum":80,"label":"Bom desempenho"},{"minimum":60,"label":"Em desenvolvimento"},{"minimum":0,"label":"Necessita de acompanhamento"}],"executionModel":"HYBRID"}'::jsonb;
 begin
-  if private.current_wms_role()<>'ADMINISTRADOR' or not private.can_access_warehouse(upper(p_warehouse)) then
+  if private.current_wms_role()<>'ADMINISTRADOR' or actor is null or not private.can_access_warehouse(upper(p_warehouse)) then
     raise exception 'Administrador necessário.' using errcode='42501';
   end if;
   first_day:=date_trunc('month',p_month)::date;
@@ -177,20 +183,24 @@ begin
       and status<>'ARCHIVED'
       and daterange(start_date,end_date,'[]') && daterange(first_day,last_day,'[]')
   ) then raise exception 'Já existe ciclo sobreposto neste mês.';end if;
-  result:=public.wms_excellence_api(
-    upper(p_warehouse),'CREATE_CYCLE',
-    jsonb_build_object(
-      'name',coalesce(nullif(trim(p_name),''),'Avaliação Mensal - '||to_char(first_day,'YYYY-MM')),
-      'from',first_day::text,'to',last_day::text,'execution_model','TASKS'
-    )
-  );
-  cycle_id:=(result->>'id')::uuid;
-  select criteria_version_id into version_id from public.wms_excellence_cycles where id=cycle_id;
-  update public.wms_excellence_criteria_versions
-  set config=jsonb_set(config,'{executionModel}','"HYBRID"'::jsonb,true)
-  where id=version_id;
+
+  insert into public.wms_excellence_criteria_versions(warehouse_code,version,config,created_by_id)
+  values(
+    upper(p_warehouse),
+    (select coalesce(max(version),0)+1 from public.wms_excellence_criteria_versions where warehouse_code=upper(p_warehouse)),
+    config,
+    actor
+  ) returning id into version_id;
+
+  insert into public.wms_excellence_cycles(warehouse_code,name,start_date,end_date,criteria_version_id,created_by_id)
+  values(
+    upper(p_warehouse),
+    coalesce(nullif(trim(p_name),''),'Avaliação Mensal - '||to_char(first_day,'MM/YYYY')),
+    first_day,last_day,version_id,actor
+  )
+  returning to_jsonb(wms_excellence_cycles.*) into result;
   return result;
-end $$;
+end $;
 revoke all on function public.wms_excellence_create_monthly_cycle(text,date,text) from public,anon,authenticated,service_role;
 grant execute on function public.wms_excellence_create_monthly_cycle(text,date,text) to authenticated;
 
