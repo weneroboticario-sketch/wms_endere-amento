@@ -1,23 +1,25 @@
 /** Relative cycle metric, never points per request. Typed facts are emitted by SQL. */
 export function replenishmentExecutionScore(evidence, maximum) {
  const latest=new Map();
- for(const row of evidence.filter(row=>row.source_table==='wms_replenishment_requests')) {
+ for(const row of evidence.filter(row=>['wms_replenishment_requests','wms_replenishment_participation_events'].includes(row.source_table))) {
   const role=row.metadata?.replenishment_role||'EXECUTOR';
-  const key=row.source_id+':'+role;
+  const requestId=row.metadata?.request_id||row.source_id;
+  const key=requestId+':'+role;
   const previous=latest.get(key);
   if(!previous || Date.parse(row.evidence_date)>Date.parse(previous.evidence_date) || (Date.parse(row.evidence_date)===Date.parse(previous.evidence_date) && row.event_type.startsWith('REPLENISHMENT_COMPLETED'))) latest.set(key,row);
  }
  const included=[],excluded=[];let numerator=0;
  for(const row of latest.values()) {
   const role=row.metadata?.replenishment_role||'EXECUTOR';
-  const id=row.source_table+':'+row.source_id;
+  const requestId=row.metadata?.request_id||row.source_id;
+  const id='wms_replenishment_requests:'+requestId;
   if(row.metadata?.exemption_validated===true) {excluded.push({id,role,reason:'AUSENCIA_OU_IMPEDIMENTO_VALIDADO'});continue;}
   if(role==='EXECUTOR' && ['REPLENISHMENT_NO_STOCK','REPLENISHMENT_RETURNED_TO_QUEUE'].includes(row.event_type)) {excluded.push({id,role,reason:'IMPEDIMENTO_OU_AUSENCIA_VALIDADA'});continue;}
   if(row.metadata.opportunity_verified!==true) {excluded.push({id,role,reason:'AUTORIA_OU_RESPONSABILIDADE_NAO_COMPROVADA'});continue;}
   const completed=
    (role==='SOLICITANTE' && row.event_type==='REPLENISHMENT_REQUEST_PROCESSED')
    || (role==='CONCLUIDOR' && row.event_type==='REPLENISHMENT_COMPLETION_RECORDED')
-   || (role==='EXECUTOR' && row.event_type.startsWith('REPLENISHMENT_COMPLETED'));
+   || (role==='EXECUTOR' && (row.event_type.startsWith('REPLENISHMENT_COMPLETED') || row.event_type==='REPLENISHMENT_ATTENDED'));
   if(completed)numerator++;
   included.push({id,role,completed});
  }
