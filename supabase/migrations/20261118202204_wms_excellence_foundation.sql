@@ -119,11 +119,14 @@ create function private.excellence_immutable() returns trigger language plpgsql 
 create trigger excellence_criteria_immutable before update or delete on public.wms_excellence_criteria for each row execute function private.excellence_immutable();
 create trigger excellence_versions_immutable before update or delete on public.wms_excellence_criteria_versions for each row execute function private.excellence_immutable();
 create trigger excellence_audit_immutable before update or delete on public.wms_excellence_audit_log for each row execute function private.excellence_immutable();
-create function private.excellence_audit() returns trigger language plpgsql security definer set search_path='' as $$
+create function private.excellence_audit() returns trigger language plpgsql security definer set search_path='' as $audit$
+ declare row_data jsonb:=case when tg_op='DELETE' then to_jsonb(old) else to_jsonb(new) end;
  begin
  insert into public.wms_excellence_audit_log(warehouse_code,actor_id,table_name,record_id,action,before_data,after_data)
- values(new.warehouse_code,private.current_wms_profile_id(),tg_table_name,new.id::text,tg_op,case when tg_op='UPDATE' then to_jsonb(old) else null end,to_jsonb(new));
- return new;end $$;
+ values(row_data->>'warehouse_code',private.current_wms_profile_id(),tg_table_name,row_data->>'id',tg_op,
+  case when tg_op in ('UPDATE','DELETE') then to_jsonb(old) else null end,
+  case when tg_op in ('INSERT','UPDATE') then to_jsonb(new) else null end);
+ return case when tg_op='DELETE' then old else new end;end $audit$;
 do $$declare tab text;begin
  foreach tab in array array['criteria_versions','criteria','cycles','cycle_members','absences','evidence','manual_scores','initiatives','assessments','calibrations','awards','audit_log'] loop
  execute format('alter table public.%I enable row level security','wms_excellence_'||tab);
@@ -136,7 +139,7 @@ do $$declare tab text;begin
  else
  execute format('create policy excellence_read on public.%I for select to authenticated using(private.excellence_read(warehouse_code,user_id))','wms_excellence_'||tab);
  end if;
- if tab<>'audit_log' then execute format('create trigger excellence_audit after insert or update on public.%I for each row execute function private.excellence_audit()','wms_excellence_'||tab);end if;
+ if tab<>'audit_log' then execute format('create trigger excellence_audit after insert or update or delete on public.%I for each row execute function private.excellence_audit()','wms_excellence_'||tab);end if;
  end loop;end $$;
 grant execute on function private.excellence_read(text,text),private.excellence_leader(text) to authenticated;
 
