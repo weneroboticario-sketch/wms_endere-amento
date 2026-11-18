@@ -207,7 +207,10 @@ begin
  if p_action='CYCLES' then return coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_cycles where warehouse_code=p_warehouse order by start_date desc,id limit 40)x),'[]');end if;
  if p_action='CANDIDATES' then
   if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
-  return coalesce((select jsonb_agg(jsonb_build_object('id',u.id,'name',u.name,'role',u.role))
+  return coalesce((select jsonb_agg(jsonb_build_object(
+   'id',u.id,'name',u.name,'role',u.role,
+   'selected',exists(select 1 from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id and m.eligible)
+  ))
    from public.wms_users u where private.excellence_user(p_warehouse,u.id)),'[]');
  end if;
  if p_action='CREATE_CYCLE' then
@@ -294,12 +297,14 @@ begin
  return jsonb_build_object('cycle',to_jsonb(c),'config',(select config from public.wms_excellence_criteria_versions where id=c.criteria_version_id),
  'period',jsonb_build_object('from',c.start_date::timestamp at time zone 'America/Cuiaba','to',(c.end_date+1)::timestamp at time zone 'America/Cuiaba'),
  'members',coalesce((with proof as(select user_id,jsonb_agg(to_jsonb(e) order by evidence_date desc,id desc) evidence from public.wms_excellence_evidence e where cycle_id=c.id group by user_id),
- rating as(select user_id,jsonb_agg(to_jsonb(m)) scores from public.wms_excellence_manual_scores m where cycle_id=c.id group by user_id)
+ rating as(select user_id,jsonb_agg(to_jsonb(m)) scores from public.wms_excellence_manual_scores m where cycle_id=c.id group by user_id),
+ leave as(select user_id,jsonb_agg(to_jsonb(a) order by start_date,id) absences from public.wms_excellence_absences a where cycle_id=c.id and status='VALIDATED' group by user_id)
  select jsonb_agg(jsonb_build_object('user_id',u.id,'name',u.name,'evidence',coalesce(proof.evidence,'[]'::jsonb),'scores',coalesce(rating.scores,'[]'::jsonb),
+ 'absences',coalesce(leave.absences,'[]'::jsonb),
  'snapshot',(select a.result from public.wms_excellence_assessments a where a.cycle_id=c.id and a.user_id=u.id)))
  from public.wms_excellence_cycle_members cm
  join public.wms_users u on u.id=cm.user_id
- left join proof on proof.user_id=u.id left join rating on rating.user_id=u.id
+ left join proof on proof.user_id=u.id left join rating on rating.user_id=u.id left join leave on leave.user_id=u.id
  where cm.cycle_id=c.id and cm.eligible and private.excellence_user(p_warehouse,u.id)),'[]'::jsonb));end if;
  if p_action='DIRECTORY' then
  if not leader then
