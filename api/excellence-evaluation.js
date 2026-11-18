@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   if (body.action === 'CLOSE') {
    // Privileged key is used only for the final write, never for reading another person's data.
    // The database independently checks admin identity, scope, revision, coverage and snapshots.
-   const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+   const secret = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
    if (!secret) { res.status(503).json({ error: 'Fechamento administrativo ainda não configurado.' }); return; }
    const prepared = await prepareCycleClosure(rpc, body.cycle_id);
    const trusted = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
