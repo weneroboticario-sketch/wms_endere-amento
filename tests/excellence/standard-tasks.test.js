@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { excellenceFixture } from './fixture.js';
+import { readEvaluation } from '../../src/excellence/evaluation-service.js';
 
 test('standard evaluated tasks are seeded and generated once per active day', async () => {
  const f=await excellenceFixture();
@@ -95,5 +96,29 @@ test('monthly cycle is full-month and uses hybrid execution', async () => {
   assert.equal(String(row.start_date),'2026-12-01');
   assert.equal(String(row.end_date),'2026-12-31');
   assert.equal(row.model,'HYBRID');
+ } finally { await f.db.close(); }
+});
+
+
+test('validated standard task contributes to execution and organization scoring', async () => {
+ const f=await excellenceFixture();
+ try {
+  await f.asActor('admin');
+  await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-18')");
+  await f.db.exec('reset role');
+  const task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='ORGANIZAR_PAPELAO' and resultado_execucao->>'excellence_task_day'='2026-11-18'")).rows[0];
+  await f.asActor('op');
+  await f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]);
+  await f.db.query("select concluir_tarefa($1,'{}'::jsonb,'Organização concluída')",[task.id]);
+  await f.asActor('sup');
+  await f.db.query("select validar_tarefa($1,'Conferido pela liderança')",[task.id]);
+  await f.asActor('op');
+  const result=await readEvaluation(f.rpc,{cycle_id:f.cycle.id});
+  const execution=result.calculation.criteria.find(row=>row.id==='EXECUCAO');
+  const organization=result.calculation.criteria.find(row=>row.id==='ORGANIZACAO');
+  assert.equal(execution.automatic,25);
+  assert.ok(execution.explanation.automatic.included.some(row=>row.id==='operacao_tarefas:'+task.id));
+  assert.equal(organization.explanation.automatic.denominator,1);
+  assert.equal(organization.explanation.automatic.numerator,1);
  } finally { await f.db.close(); }
 });
