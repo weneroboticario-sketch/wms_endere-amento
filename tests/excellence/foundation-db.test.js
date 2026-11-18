@@ -10,6 +10,7 @@ test('foundation uses real Postgres RLS, immutable criteria and authenticated au
   await asActor(db, 'admin');
   const cycle = await rpc('CREATE_CYCLE', { name: 'Calibração sintética', from: '2026-11-01', to: '2026-11-30' });
   await assert.rejects(rpc('ENABLE', { cycle_id: cycle.id }), /Defina a equipe/);
+  await rpc('SET_MEMBERS', { cycle_id: cycle.id, member_ids: ['op','sup'] });
   await rpc('SET_MEMBERS', { cycle_id: cycle.id, member_ids: ['op'] });
   await rpc('ENABLE', { cycle_id: cycle.id });
   await asActor(db, 'op');
@@ -32,5 +33,6 @@ test('foundation uses real Postgres RLS, immutable criteria and authenticated au
   await assert.rejects(db.exec("update wms_excellence_criteria_versions set version=2"), /imutável/);
   await assert.rejects(db.exec("delete from wms_excellence_audit_log"), /imutável/);
   assert.ok((await db.query('select count(*)::int n from wms_excellence_audit_log')).rows[0].n >= 4);
+  assert.ok((await db.query("select count(*)::int n from wms_excellence_audit_log where table_name='wms_excellence_cycle_members' and action='DELETE'")).rows[0].n >= 1);
  } finally { await db.close(); }
 });
