@@ -24,7 +24,9 @@ test('replenishment responsibility, full/partial/no-stock/return events, origin 
   const origin=await f.rpc('ORIGIN',{cycle_id:f.cycle.id,evidence_id:full.id});assert.equal(origin.id,'flow-op');assert.equal(origin.duration_seconds,512);assert.equal(origin.responsible_id,'op');
   await f.asActor('sup');const team=await f.rpc('DASHBOARD',{cycle_id:f.cycle.id,user_id:'op'});assert.ok(team.evidence.some(row=>row.id===full.id));
   const partial=(await f.rpc('DASHBOARD',{cycle_id:f.cycle.id})).evidence.find(row=>row.source_id==='partial');assert.equal(partial.direction,'NEUTRAL');assert.equal(partial.event_type,'REPLENISHMENT_COMPLETED_PARTIAL');
-  await f.asActor('cash');assert.ok(!(await f.rpc('DASHBOARD',{cycle_id:f.cycle.id})).evidence.some(row=>row.source_id==='flow-op'));
+  await f.asActor('cash');const requesterView=await f.rpc('DASHBOARD',{cycle_id:f.cycle.id});
+  assert.ok(requesterView.evidence.some(row=>row.source_id==='flow-op'&&row.metadata?.replenishment_role==='SOLICITANTE'));
+  assert.ok(!requesterView.evidence.some(row=>row.source_id==='flow-op'&&row.metadata?.replenishment_role==='EXECUTOR'));
   await assert.rejects(f.rpc('ORIGIN',{cycle_id:f.cycle.id,evidence_id:full.id}),/não disponível/);
  }finally{await f.db.close();}
 });
