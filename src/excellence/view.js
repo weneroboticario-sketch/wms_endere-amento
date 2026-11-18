@@ -212,7 +212,8 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   button('Tarefas avaliadas',showTaskCatalog,controls);
   const creation = node('details'); creation.append(node('summary','Criar avaliação mensal'));
   const form = node('form');
-  const month = node('input'); month.type='month'; month.required=true; month.value=new Date().toISOString().slice(0,7);
+  const month = node('input'); month.type='month'; month.required=true;
+  const localNow=new Date();month.value=localNow.getFullYear()+'-'+String(localNow.getMonth()+1).padStart(2,'0');
   const label=node('label','Mês da avaliação');label.append(month);form.append(label);
   const submit=node('button','Criar mês em rascunho','primary-button');submit.type='submit';form.append(submit);
   form.append(node('p','O ciclo cobre automaticamente do dia 1 ao último dia do mês e começa desativado.'));
