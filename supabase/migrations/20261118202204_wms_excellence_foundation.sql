@@ -32,8 +32,9 @@ create table public.wms_excellence_cycles (
 create table public.wms_excellence_cycle_members (
  id uuid primary key default gen_random_uuid(),cycle_id uuid not null,warehouse_code text not null,
  user_id text not null references public.wms_users(id),role_snapshot text,function_snapshot text,
- eligible boolean not null default true,included_from date,included_to date,
+ eligible boolean not null default true,included_from date,included_to date,eligibility_reason text,
  created_by_id text not null references public.wms_users(id),created_at timestamptz not null default now(),
+ updated_by_id text references public.wms_users(id),updated_at timestamptz not null default now(),
  foreign key(cycle_id,warehouse_code) references public.wms_excellence_cycles(id,warehouse_code),
  unique(cycle_id,user_id),check(included_to is null or included_from is null or included_to>=included_from)
 );
@@ -241,6 +242,17 @@ begin
   if n<>(select count(distinct value) from jsonb_array_elements_text(p_data->'member_ids')) then raise exception 'Há colaborador inválido ou fora da unidade.';end if;
   return coalesce((select jsonb_agg(to_jsonb(m)) from public.wms_excellence_cycle_members m where m.cycle_id=c.id),'[]');
  end if;
+ if p_action='SET_MEMBER_ELIGIBILITY' then
+  if not admin or c.status in ('CLOSED','ARCHIVED') then raise exception 'Administrador necessário para alterar elegibilidade.' using errcode='42501';end if;
+  person:=nullif(p_data->>'user_id','');
+  if person is null or length(trim(coalesce(p_data->>'justification','')))=0 then raise exception 'Colaborador e justificativa são obrigatórios.';end if;
+  update public.wms_excellence_cycle_members
+   set eligible=(p_data->>'eligible')::boolean,eligibility_reason=p_data->>'justification',updated_by_id=actor,updated_at=now()
+   where cycle_id=c.id and user_id=person
+   returning to_jsonb(wms_excellence_cycle_members.*) into result;
+  if result is null then raise exception 'Colaborador não pertence ao ciclo.';end if;
+  return result;
+ end if;
  if p_action='ADD_ABSENCE' then
   if not leader or c.status in ('CLOSED','ARCHIVED') then raise exception 'Liderança necessária para registrar elegibilidade.' using errcode='42501';end if;
   person:=nullif(p_data->>'user_id','');
@@ -442,10 +454,10 @@ begin
  if c.status<>'CALIBRATION' or not c.enabled then raise exception 'Ciclo precisa estar em calibração.';end if;
  if private.excellence_revision(c.id) is distinct from p_revision then raise exception 'Dados alterados: recalcule e revise antes de fechar.' using errcode='40001';end if;
  if jsonb_typeof(p_assessments) is distinct from 'array' or jsonb_array_length(p_assessments)=0 then raise exception 'Avaliações obrigatórias.';end if;
- select count(*) into expected from public.wms_excellence_cycle_members where cycle_id=c.id and eligible;
+ select count(*) into expected from public.wms_excellence_cycle_members where cycle_id=c.id and private.excellence_cycle_member(c.id,user_id);
  select count(distinct value->>'user_id') into supplied from jsonb_array_elements(p_assessments);
  if supplied<>expected or supplied<>jsonb_array_length(p_assessments) then raise exception 'Todos os colaboradores elegíveis precisam de avaliação completa, sem duplicação.';end if;
- foreach person in array array(select user_id from public.wms_excellence_cycle_members where cycle_id=c.id and eligible) loop
+ foreach person in array array(select user_id from public.wms_excellence_cycle_members where cycle_id=c.id and private.excellence_cycle_member(c.id,user_id)) loop
  if not exists(select 1 from jsonb_array_elements(p_assessments) x where x->>'user_id'=person) then raise exception 'Colaborador sem avaliação.';end if;
  end loop;
  for item in select value from jsonb_array_elements(p_assessments) loop
