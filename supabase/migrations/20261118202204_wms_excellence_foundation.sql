@@ -1,5 +1,45 @@
--- Isolated Logística de Excelência foundation. No operational table changes.
+-- Logística de Excelência foundation + immutable operational attribution required for fair scoring.
 begin;
+alter table public.wms_replenishment_requests
+ add column if not exists last_attended_by_id text,
+ add column if not exists last_attended_by_name text,
+ add column if not exists no_stock_by_id text,
+ add column if not exists no_stock_by_name text,
+ add column if not exists completed_by_id text,
+ add column if not exists completed_by_name text;
+
+create or replace function public.stamp_wms_replenishment_actor_attribution()
+returns trigger language plpgsql security invoker set search_path='' as $attr$
+declare actor text:=private.current_wms_profile_id(); actor_name text;
+begin
+ if tg_op='UPDATE' then
+  new.last_attended_by_id:=old.last_attended_by_id; new.last_attended_by_name:=old.last_attended_by_name;
+  new.no_stock_by_id:=old.no_stock_by_id; new.no_stock_by_name:=old.no_stock_by_name;
+  new.completed_by_id:=old.completed_by_id; new.completed_by_name:=old.completed_by_name;
+ end if;
+ if actor is null then return new;end if;
+ select coalesce(nullif(name,''),username,actor) into actor_name from public.wms_users where id=actor;
+ actor_name:=coalesce(actor_name,actor);
+ if tg_op='INSERT' then
+  new.solicitado_por_id:=actor;
+  new.solicitado_por_nome:=actor_name;
+ end if;
+ if tg_op='UPDATE' and coalesce(new.quantidade_atendida,0)>coalesce(old.quantidade_atendida,0) then
+  new.last_attended_by_id:=actor;new.last_attended_by_name:=actor_name;
+ end if;
+ if tg_op='UPDATE' and new.status='SEM_ESTOQUE' and old.status is distinct from new.status then
+  new.no_stock_by_id:=actor;new.no_stock_by_name:=actor_name;
+ end if;
+ if tg_op='UPDATE' and new.status in ('CONCLUIDO','ENTREGUE_NA_LOJA') and old.status is distinct from new.status then
+  new.completed_by_id:=actor;new.completed_by_name:=actor_name;
+ end if;
+ return new;
+end $attr$;
+drop trigger if exists stamp_replenishment_actor_attribution on public.wms_replenishment_requests;
+create trigger stamp_replenishment_actor_attribution
+before insert or update on public.wms_replenishment_requests
+for each row execute function public.stamp_wms_replenishment_actor_attribution();
+revoke all on function public.stamp_wms_replenishment_actor_attribution() from public,anon,authenticated;
 create table public.wms_excellence_criteria_versions (
  id uuid primary key default gen_random_uuid(), warehouse_code text not null,
  operational_weight numeric not null default 55,leadership_weight numeric not null default 45,check(operational_weight+leadership_weight=100),version integer not null check(version>0), config jsonb not null check(jsonb_typeof(config)='object'),
@@ -157,7 +197,7 @@ create trigger excellence_manual_updated before update on public.wms_excellence_
 
 
 create function private.excellence_replenishment_fact(r jsonb) returns jsonb language plpgsql immutable set search_path='' as $$
-declare actor text:=coalesce(nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id','')); kind text; qty numeric; requested numeric; direction text:='NEUTRAL';
+declare actor text:=coalesce(nullif(r->>'last_attended_by_id',''),nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id','')); kind text; qty numeric; requested numeric; direction text:='NEUTRAL';
 begin
  if coalesce((r->>'is_deleted')::boolean,false) then return null;end if;
  qty:=nullif(r->>'quantidade_atendida','')::numeric; requested:=nullif(r->>'quantidade_solicitada','')::numeric;
@@ -173,8 +213,8 @@ begin
  return jsonb_build_object('actor',actor,'event',kind,'direction',direction,'sku',r->>'codigo_material',
  'requested',requested,'attended',qty,'pending',r->'quantidade_pendente','duration_seconds',r->'duration_seconds',
  'started_at',r->'started_at','claimed_at',r->'claimed_at','finished_at',r->'finished_at',
- 'opportunity_verified',nullif(r->>'started_at','') is not null and nullif(r->>'claimed_at','') is not null and r->>'responsavel_id'=r->>'claimed_by_id','responsible_id',r->>'responsavel_id','claimed_by_id',r->>'claimed_by_id','score_effect',null,
- 'attribution','RECORDED_RESPONSIBLE','limitation','Responsável registrado não comprova execução exclusiva ou prazo acordado.');
+ 'opportunity_verified',nullif(r->>'started_at','') is not null and nullif(r->>'claimed_at','') is not null and (nullif(r->>'last_attended_by_id','') is not null or r->>'responsavel_id'=r->>'claimed_by_id'),'responsible_id',r->>'responsavel_id','claimed_by_id',r->>'claimed_by_id','last_attended_by_id',r->>'last_attended_by_id','replenishment_role','EXECUTOR','score_effect',null,
+ 'attribution',case when nullif(r->>'last_attended_by_id','') is not null then 'RECORDED_ATTENDANT' else 'RECORDED_RESPONSIBLE' end,'limitation','Execução usa autoria do atendimento quando disponível; histórico anterior usa responsável/claim como fallback.');
 end $$;
 
 -- Companion API. Install after excellence_foundation.sql. No operational writes.
@@ -392,11 +432,48 @@ begin
   ) else null end
  )||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
  get diagnostics n=row_count;inserted:=inserted+n;
+ if source='wms_replenishment_requests' then
+  target:=nullif(r->>'solicitado_por_id','');
+  if target is not null and private.excellence_user(p_warehouse,target) and private.excellence_cycle_member(c.id,target) then
+   stamp:=coalesce(r->>'finished_at',r->>'claimed_at',r->>'created_at')::timestamptz;
+   insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
+   values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id','REPLENISHMENT_REQUEST_PROCESSED',stamp,
+    case when coalesce((r->>'is_deleted')::boolean,false) or r->>'status'='CANCELADO' then 'NEUTRAL' else 'POSITIVE' end,
+    'Reposição: solicitação processada pelo fluxo operacional.',
+    jsonb_build_object(
+     'sku',r->>'codigo_material','requested',nullif(r->>'quantidade_solicitada','')::numeric,
+     'replenishment_role','SOLICITANTE','attribution','RECORDED_REQUESTER',
+     'opportunity_verified',not coalesce((r->>'is_deleted')::boolean,false)
+       and r->>'status'<>'CANCELADO'
+       and nullif(r->>'quantidade_solicitada','')::numeric>0
+       and (nullif(r->>'claimed_at','') is not null or r->>'status' in ('CONCLUIDO','ENTREGUE_NA_LOJA','SEM_ESTOQUE','ATENDIDO_PARCIAL','SEPARADO')),
+     'exemption_validated',private.excellence_absent_at(c.id,target,stamp),
+     'score_effect',null
+    )) on conflict do nothing;
+   get diagnostics n=row_count;inserted:=inserted+n;
+  end if;
+  target:=nullif(r->>'completed_by_id','');
+  if target is not null
+     and target is distinct from coalesce(nullif(r->>'last_attended_by_id',''),nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id',''))
+     and r->>'status' in ('CONCLUIDO','ENTREGUE_NA_LOJA')
+     and private.excellence_user(p_warehouse,target) and private.excellence_cycle_member(c.id,target) then
+   stamp:=coalesce(r->>'finished_at',r->>'updated_at',r->>'created_at')::timestamptz;
+   insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
+   values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id','REPLENISHMENT_COMPLETION_RECORDED',stamp,'POSITIVE',
+    'Reposição: conclusão registrada por colaborador diferente do executor principal.',
+    jsonb_build_object(
+     'sku',r->>'codigo_material','attended',nullif(r->>'quantidade_atendida','')::numeric,
+     'replenishment_role','CONCLUIDOR','attribution','RECORDED_COMPLETER','opportunity_verified',true,
+     'exemption_validated',private.excellence_absent_at(c.id,target,stamp),'score_effect',null
+    )) on conflict do nothing;
+   get diagnostics n=row_count;inserted:=inserted+n;
+  end if;
+ end if;
  end loop;end loop;
  return jsonb_build_object('processed',not has_more,'has_more',has_more,'cursors',cursors,'inserted',inserted,'limitations',jsonb_build_array(
  'Tarefas derivadas de Reposição/Transferência são ignoradas para evitar dupla evidência.',
  'Tarefas independentes só pontuam automaticamente quando complexidade e prazo estiverem comprovados antes do início.',
- 'Reposição usa responsável/claim autenticado; ausência validada neutraliza a oportunidade.',
+ 'Reposição separa SOLICITANTE, EXECUTOR e CONCLUIDOR; volume bruto não vira ponto e ausência validada neutraliza a oportunidade.',
  'Endereçamento sem ID confiável permanece fora da pontuação individual.',
  'Processamento em páginas de até 500 registros por fonte, com cursor por data e ID.'));end if;
  if p_action='VALIDATE_INITIATIVE' then
