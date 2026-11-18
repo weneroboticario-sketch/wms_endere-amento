@@ -7885,6 +7885,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { table: "wms_replenishment_requests", column: "solicitado_por_id" },
       { table: "wms_replenishment_requests", column: "claimed_by_id" },
       { table: "wms_replenishment_requests", column: "last_attended_by_id" },
+      { table: "wms_replenishment_requests", column: "no_stock_by_id" },
       { table: "wms_replenishment_requests", column: "completed_by_id" },
       { table: "wms_replenishment_requests", column: "created_by_id" },
       { table: "wms_notifications", column: "user_id" },
