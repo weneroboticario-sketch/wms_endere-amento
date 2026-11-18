@@ -9,11 +9,32 @@ export function calculatePreliminary({ cycle, config, evidence, scores, absences
  const eligible = evidence.filter(inPeriod);
  const assistedIds = new Set(scores.flatMap(row => row.evidence_ids || []));
  const facts = eligible.filter(row => !assistedIds.has(row.id));
- const taskFacts = facts.filter(row => row.source_table === 'operacao_tarefas').map(row => ({ ...row.metadata.task_fact, factId: row.source_table + ':' + row.source_id }));
+ const standardTaskIds = new Set(facts.filter(row => row.source_table === 'operacao_tarefas' && row.event_type === 'STANDARD_TASK_VALIDATED').map(row => row.source_id));
+ const taskFacts = facts.filter(row => row.metadata.task_fact && !(row.source_table === 'operacao_tarefas' && row.event_type !== 'STANDARD_TASK_VALIDATED' && standardTaskIds.has(row.source_id))).map(row => ({ ...row.metadata.task_fact, factId: row.source_table + ':' + row.source_id }));
  const verificationFacts = facts.filter(row => row.metadata.verification_fact).map(row => ({ ...row.metadata.verification_fact, factId: row.source_table + ':' + row.source_id }));
  const criteria = config.criteria.map(criterion => {
   let automatic = { points: criterion.automaticMaximum === 0 ? 0 : null, included: [], excluded: [], numerator: null, denominator: null, formula: 'Não disponível' };
-  if (criterion.formula === 'EXECUTION') automatic = config.executionModel === 'REPLENISHMENT' ? replenishmentExecutionScore(facts, criterion.automaticMaximum) : executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
+  if (criterion.formula === 'EXECUTION') {
+   if (config.executionModel === 'REPLENISHMENT') automatic = replenishmentExecutionScore(facts, criterion.automaticMaximum);
+   else if (config.executionModel === 'TASKS') automatic = executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
+   else if (config.executionModel === 'HYBRID') {
+    const replenishment = replenishmentExecutionScore(facts, criterion.automaticMaximum);
+    const tasks = executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
+    const available = [
+     replenishment.points === null ? null : { source: 'REPOSICAO', score: replenishment },
+     tasks.points === null ? null : { source: 'TAREFAS', score: tasks }
+    ].filter(Boolean);
+    automatic = available.length ? {
+     points: available.reduce((sum,row) => sum + row.score.points / criterion.automaticMaximum, 0) / available.length * criterion.automaticMaximum,
+     numerator: null,
+     denominator: available.reduce((sum,row) => sum + Number(row.score.denominator || 0), 0),
+     maximum: criterion.automaticMaximum,
+     included: available.flatMap(row => row.score.included.map(item => ({ ...item, source: row.source }))),
+     excluded: [replenishment,tasks].flatMap(row => row.excluded || []),
+     formula: 'média das taxas verificadas das fontes disponíveis (Reposição e Tarefas) × máximo; volume bruto não aumenta a nota'
+    } : { points: null, numerator: null, denominator: 0, maximum: criterion.automaticMaximum, included: [], excluded: [...(replenishment.excluded||[]),...(tasks.excluded||[])], formula: 'sem oportunidades verificadas nas fontes disponíveis' };
+   }
+  }
   else if (criterion.formula === 'VERIFICATION') automatic = verificationScore(verificationFacts, { ...period, criterion: criterion.id, minimumSample: config.minimumSample, maximum: criterion.automaticMaximum });
   const candidates = scores.filter(row => row.criterion_id === criterion.id && row.evaluator_id !== row.user_id && row.evidence_ids?.length && row.evidence_ids.every(id => eligible.some(e => e.id === id)) && row.justification?.trim());
   const manual = candidates.length === 1 ? candidates[0] : null;

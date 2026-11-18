@@ -5596,6 +5596,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (taskCenterState.loading && !options.force) return false;
     taskCenterState.loading = true;
     try {
+      var excellenceTasksResponse = await supabaseDb.rpc("wms_excellence_ensure_standard_tasks", { p_warehouse: activeWarehouseCode() });
+      if (excellenceTasksResponse.error && !isMissingRpcFunctionError(excellenceTasksResponse.error)) {
+        console.warn("Falha ao preparar tarefas avaliadas:", excellenceTasksResponse.error.message || excellenceTasksResponse.error);
+      }
       var taskColumns = "id,codigo_visivel,tipo,titulo,descricao,estoque_id,localizacao_alvo,sku_alvo,quantidade_planejada,referencia_tipo,referencia_id,criado_por,delegado_por,atribuido_para,prioridade,prazo_sla,status,motivo_bloqueio,motivo_cancelamento,resultado_execucao,data_criacao,data_inicio,data_conclusao,tempo_execucao_segundos,arquivada,arquivada_por,data_arquivamento";
       var activeTaskQuery = supabaseDb
         .from("operacao_tarefas")
@@ -5603,7 +5607,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         .eq("arquivada", false)
         .order("data_criacao", { ascending: false })
         .limit(300);
-      if (authState.currentUser.role === "OPERADOR") activeTaskQuery = activeTaskQuery.eq("atribuido_para", authState.currentUser.id);
+      if (authState.currentUser.role === "OPERADOR") {
+        activeTaskQuery = activeTaskQuery.or("atribuido_para.eq." + authState.currentUser.id + ",and(atribuido_para.is.null,referencia_tipo.eq.EXCELLENCE_STANDARD)");
+      }
       var activeTasksResponse = await activeTaskQuery;
       if (activeTasksResponse.error) throw activeTasksResponse.error;
       taskCenterState.tasks = (activeTasksResponse.data || []).map(fromDbOperationalTask);
@@ -10582,11 +10588,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var details = task.description || "Central de Tarefas";
       if (task.referenceType && task.referenceId) details += " | Ref.: " + task.referenceType + " #" + task.referenceId;
       return {
-        type: task.type === "REPOSICAO" ? "REPOSICAO" : "TRANSFERENCIA",
+        type: task.type || "AVULSA",
         id: task.id,
         title: task.visibleCode || task.title || "Tarefa",
         subtitle: details,
-        source: { status: task.status }
+        source: task
       };
     });
     var replenishments = getVisibleReplenishmentRequests().filter(function (request) {
@@ -10649,6 +10655,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!task) return "Não foi possível carregar suas tarefas. Tente novamente.";
     if (task.type === "REPOSICAO" && task.source && task.source.status === "PENDENTE") return "Novo pedido de reposição disponível para puxar.";
     if (task.type === "REPOSICAO") return "Você recebeu um pedido de reposição para atender.";
+    if (task.source && task.source.referenceType === "EXCELLENCE_STANDARD") {
+      if (task.source.status === "PENDENTE" && !task.source.assignedTo) return "Nova tarefa avaliada disponível. O primeiro colaborador que assumir fica responsável.";
+      if (task.source.status === "AGUARDANDO_VALIDACAO") return "Tarefa avaliada concluída e aguardando validação.";
+      return "Você possui uma tarefa avaliada em andamento.";
+    }
     var transfer = task.source || task;
     if (transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO") return "Sua transferência voltou para revalidação. Confira a montagem da caixa.";
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA") return "Separação concluída. Faça a montagem da caixa.";
@@ -12415,15 +12426,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function getMyOperationalTasks() {
     if (!authState.currentUser || authState.currentUser.role !== "OPERADOR") return [];
     return taskCenterState.tasks.filter(function (task) {
-      return task.assignedTo === authState.currentUser.id;
+      if (task.assignedTo === authState.currentUser.id) return true;
+      return task.referenceType === "EXCELLENCE_STANDARD" && task.status === "PENDENTE" && !task.assignedTo;
     }).sort(function (a, b) {
+      var aAvailable = a.referenceType === "EXCELLENCE_STANDARD" && !a.assignedTo ? 1 : 0;
+      var bAvailable = b.referenceType === "EXCELLENCE_STANDARD" && !b.assignedTo ? 1 : 0;
+      if (aAvailable !== bAvailable) return bAvailable - aAvailable;
       return Date.parse(b.createdAt || "") - Date.parse(a.createdAt || "");
     });
   }
 
   function myOperationalTaskCardHtml(task) {
-    var action = task.status === "PENDENTE" || task.status === "ATRIBUIDA" ? "Iniciar" : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA" ? "Continuar" : "Ver resultado");
-    var ref = task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa";
+    var availableStandard = task.referenceType === "EXCELLENCE_STANDARD" && task.status === "PENDENTE" && !task.assignedTo;
+    var action = availableStandard ? "Assumir" : (task.status === "PENDENTE" || task.status === "ATRIBUIDA" ? "Iniciar" : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA" ? "Continuar" : "Ver resultado"));
+    var ref = task.referenceType === "EXCELLENCE_STANDARD" ? "Tarefa avaliada" : (task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa");
     return [
       '<article class="transfer-card">',
       '<span class="eyebrow">Central de Tarefas</span>',
@@ -19723,10 +19739,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       showToast("Tarefa não encontrada.", "error");
       return;
     }
+    var standardTask = task.referenceType === "EXCELLENCE_STANDARD";
     var actions = [];
     if (authState.currentUser && authState.currentUser.role === "OPERADOR") {
-      if (task.status === "PENDENTE" || task.status === "ATRIBUIDA") actions.push("iniciar");
+      if (standardTask && task.status === "PENDENTE" && !task.assignedTo) actions.push("assumir");
+      else if (task.status === "PENDENTE" || task.status === "ATRIBUIDA") actions.push("iniciar");
       if (["EM_ANDAMENTO", "BLOQUEADA"].indexOf(task.status) >= 0) actions.push("concluir", "bloquear");
+    }
+    if (actions.indexOf("assumir") >= 0) {
+      if (window.confirm("Deseja assumir e iniciar esta tarefa avaliada agora?")) {
+        await callTaskRpc("wms_excellence_claim_standard_task", { p_task_id: task.id });
+        return;
+      }
     }
     if (actions.indexOf("iniciar") >= 0) {
       if (window.confirm("Deseja iniciar esta tarefa agora?")) {
@@ -19737,8 +19761,22 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (actions.indexOf("concluir") >= 0) {
       var done = window.confirm("Deseja concluir esta tarefa agora?");
       if (done) {
-        var result = window.prompt("Resumo da execução (opcional):", "");
-        await callTaskRpc("concluir_tarefa", { p_tarefa_id: task.id, p_resultado_execucao: {}, p_observacao: normalizeText(result) || null });
+        var result = "";
+        var executionPayload = {};
+        if (standardTask && task.executionResult && task.executionResult.excellence_template_code === "CONFERENCIA_7_ENDERECOS") {
+          var addressesText = window.prompt("Informe exatamente 7 endereços conferidos, separados por vírgula, ponto e vírgula ou quebra de linha:", "");
+          if (addressesText === null) return;
+          var addresses = addressesText.split(/[,;\n]+/).map(function (value) { return normalizeText(value).toUpperCase(); }).filter(Boolean);
+          if (addresses.length !== 7 || new Set(addresses).size !== 7) {
+            showToast("Informe exatamente 7 endereços diferentes.", "warning");
+            return;
+          }
+          executionPayload.enderecos_conferidos = addresses;
+          result = "Conferência de 7 endereços registrada.";
+        } else {
+          result = window.prompt("Resumo da execução (opcional):", "") || "";
+        }
+        await callTaskRpc("concluir_tarefa", { p_tarefa_id: task.id, p_resultado_execucao: executionPayload, p_observacao: normalizeText(result) || null });
         return;
       }
     }

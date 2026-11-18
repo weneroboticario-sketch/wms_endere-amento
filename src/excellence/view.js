@@ -9,6 +9,36 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
  const cycles = node('select'); cycles.setAttribute('aria-label', 'Ciclo'); controls.append(cycles);
  const users = node('select'); users.setAttribute('aria-label', 'Colaborador'); controls.append(users);
  const body = node('div'); shell.append(body);
+ async function showTaskCatalog() {
+  status.textContent='Carregando tarefas avaliadas…';
+  try {
+   const templates=await service.taskTemplates();
+   body.replaceChildren(node('h3','Tarefas avaliadas'),node('p','Estas rotinas entram na avaliação somente quando forem assumidas, concluídas e validadas. Reposição e Transferências continuam pelos fluxos próprios.'));
+   for(const template of templates){
+    const card=node('article',undefined,'panel');
+    card.append(node('strong',template.title),node('p',(template.description||'')+' · '+template.cadence+' · '+template.criterion_id+' · '+template.complexity),node('p','Status: '+(template.active?'Ativa':'Inativa')));
+    button(template.active?'Desativar':'Ativar',async()=>{await service.setTaskTemplateActive(template.id,!template.active);await showTaskCatalog();},card);
+    body.append(card);
+   }
+   const form=node('form',undefined,'panel');
+   form.append(node('h4','Adicionar nova tarefa avaliada'));
+   const title=node('input');title.required=true;title.maxLength=120;title.placeholder='Nome da tarefa';
+   const description=node('textarea');description.maxLength=1000;description.placeholder='Como deve ser executada';
+   const criterion=node('select');for(const value of ['ORGANIZACAO','QUALIDADE']){const option=node('option',value);option.value=value;criterion.append(option);}
+   const type=node('select');for(const value of ['ORGANIZACAO','AUDITORIA','ENDERECAMENTO','INVENTARIO','AVULSA']){const option=node('option',value);option.value=value;type.append(option);}
+   const complexity=node('select');for(const value of ['SIMPLES','INTERMEDIARIA','COMPLEXA']){const option=node('option',value);option.value=value;complexity.append(option);}
+   const cadence=node('select');for(const value of ['DAILY','WEEKLY','MONTHLY']){const option=node('option',({DAILY:'Diária',WEEKLY:'Semanal',MONTHLY:'Mensal'})[value]);option.value=value;cadence.append(option);}
+   const target=node('input');target.type='number';target.min='1';target.step='1';target.placeholder='Meta de quantidade (opcional)';
+   for(const [labelText,input] of [['Tarefa',title],['Descrição',description],['Critério principal',criterion],['Tipo',type],['Complexidade',complexity],['Periodicidade',cadence],['Meta',target]]){const label=node('label',labelText);label.append(input);form.append(label);}
+   const submit=node('button','Adicionar tarefa','primary-button');submit.type='submit';form.append(submit);
+   form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{
+    const code=title.value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,60);
+    await service.saveTaskTemplate({code,title:title.value.trim(),description:description.value.trim(),criterion_id:criterion.value,task_type:type.value,complexity:complexity.value,cadence:cadence.value,quantity_target:target.value||null,weekdays:[1,2,3,4,5,6],sla_time:'23:59',active:true,config:{}});
+    form.reset();await showTaskCatalog();
+   }catch(error){status.textContent=error.message;}finally{submit.disabled=false;}};
+   body.append(form);status.textContent='Tarefas avaliadas atualizadas.';
+  } catch(error){status.textContent=error.message;}
+ }
  async function perform(action, data = {}) {
   status.textContent = 'Processando…';
   try { const value = await service.rpc(action, { cycle_id: cycle?.id, user_id: person, ...data }); status.textContent = 'Atualizado.'; return value; }
@@ -179,25 +209,22 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   tabs.querySelector('button')?.click();
  }
  if (admin) {
-  const creation = node('details'); creation.append(node('summary','Criar ciclo de avaliação'));
+  button('Tarefas avaliadas',showTaskCatalog,controls);
+  const creation = node('details'); creation.append(node('summary','Criar avaliação mensal'));
   const form = node('form');
-  const name = node('input'); name.required=true; name.maxLength=120;
-  const from = node('input'); from.type='date'; from.required=true;
-  const to = node('input'); to.type='date'; to.required=true;
-  for (const [text,input] of [['Nome do ciclo',name],['Início',from],['Encerramento',to]]) {
-   const label=node('label',text);label.append(input);form.append(label);
-  }
-  const submit=node('button','Criar ciclo em rascunho','primary-button');submit.type='submit';form.append(submit);
-  form.append(node('p','O ciclo começa desativado. Ative após revisar as datas e as regras experimentais.'));
+  const month = node('input'); month.type='month'; month.required=true;
+  const localNow=new Date();month.value=localNow.getFullYear()+'-'+String(localNow.getMonth()+1).padStart(2,'0');
+  const label=node('label','Mês da avaliação');label.append(month);form.append(label);
+  const submit=node('button','Criar mês em rascunho','primary-button');submit.type='submit';form.append(submit);
+  form.append(node('p','O ciclo cobre automaticamente do dia 1 ao último dia do mês e começa desativado.'));
   form.onsubmit=async event=>{
-   event.preventDefault();
-   const span=(Date.parse(to.value)-Date.parse(from.value))/86400000;
-   if(!Number.isFinite(span)||span<0||span>62){status.textContent='Informe um intervalo de até 63 dias, com encerramento após o início.';return;}
-   submit.disabled=true;
+   event.preventDefault();submit.disabled=true;
    try{
-    await perform('CREATE_CYCLE',{name:name.value.trim(),from:from.value,to:to.value});
+    const [year,number]=month.value.split('-');
+    const name='Avaliação Mensal - '+number+'/'+year;
+    await service.createMonthlyCycle({month:month.value,name});
     await mountExcellence(root,{service,actorId,leader,admin});
-   }catch{/* Server error is displayed in status. */}finally{submit.disabled=false;}
+   }catch(error){status.textContent=error.message;}finally{submit.disabled=false;}
   };
   creation.append(form);shell.insertBefore(creation,controls);
  }
