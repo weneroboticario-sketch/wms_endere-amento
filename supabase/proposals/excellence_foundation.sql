@@ -69,6 +69,7 @@ create table public.wms_excellence_audit_log (
 );
 create index excellence_evidence_person_period on public.wms_excellence_evidence(cycle_id,user_id,evidence_date desc,id);
 create index excellence_cycles_unit_period on public.wms_excellence_cycles(warehouse_code,start_date,end_date);
+create index excellence_audit_unit_revision on public.wms_excellence_audit_log(warehouse_code,id desc);
 create index excellence_audit_unit_date on public.wms_excellence_audit_log(warehouse_code,created_at desc);
 
 create function private.excellence_leader(unit text) returns boolean language sql stable security definer set search_path='' as $$

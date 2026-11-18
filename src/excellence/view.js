@@ -1,3 +1,4 @@
+import { synchronizeEvidence } from './synchronization.js';
 export async function mountExcellence(root, { service, actorId, leader, admin }) {
  let cycle = null, person = actorId, dashboard = null;
  const node = (tag, text, cls) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (cls) el.className = cls; return el; };
@@ -117,7 +118,11 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   const directory = await perform('DIRECTORY');
   for (const row of directory) { const option = node('option', row.name || row.id); option.value = row.id; users.append(option); }
   users.value = actorId; users.onchange = async () => { person = users.value; await load().catch(() => {}); };
-  if (leader) button('Gerar evidências do ciclo', async () => { const result = await perform('SYNC'); await load(); status.textContent = result.limitations.join(' '); });
+  if (leader) button('Gerar evidências do ciclo', async () => { const result = await synchronizeEvidence({ rpc: (action, data) => perform(action, data), cycleId: cycle.id, onProgress: progress => { status.textContent = 'Processadas ' + progress.page + ' páginas · ' + progress.inserted + ' evidências novas'; } }); await load(); status.textContent = result.limitations.join(' '); });
+  if (admin && cycle.status !== 'CLOSED') button('Fechar ciclo revisado', async () => {
+   if (!window.confirm('Fechar o ciclo ' + cycle.name + '? Todas as avaliações precisam estar completas e revisadas. O histórico será preservado e ficará imutável.')) return;
+   await perform('CLOSE'); await load();
+  });
   if (admin && !cycle.enabled) button('Ativar ciclo local', async () => { await perform('ENABLE'); await load(); });
   await load();
  } else status.textContent = 'Nenhum ciclo cadastrado. Implantação e ativação dependem da administração.';

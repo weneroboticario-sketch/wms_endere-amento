@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { communicationFixture, asActor } from '../communication-fixture.js';
 export async function excellenceFixture() {
  const db = await communicationFixture();
- for (const name of ['excellence_foundation.sql', 'excellence_api.sql']) await db.exec(await readFile(new URL('../../supabase/proposals/' + name, import.meta.url), 'utf8'));
+ for (const name of ['excellence_foundation.sql', 'excellence_api.sql', 'excellence_closure.sql']) await db.exec(await readFile(new URL('../../supabase/proposals/' + name, import.meta.url), 'utf8'));
  await db.exec(`create table wms_transfer_events(id text primary key,warehouse_code text,user_id text,event_type text,created_at timestamptz,sku text,quantity numeric);
  insert into wms_transfer_events values('synthetic-event-1','VDCG','op','CONFERENCIA','2026-11-18T12:00:00Z','01314',4);
  insert into operacao_tarefas(id,codigo_visivel,tipo,titulo,estoque_id,atribuido_para,status,data_conclusao)
