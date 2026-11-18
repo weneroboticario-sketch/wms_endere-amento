@@ -13,6 +13,7 @@ test('standard evaluated tasks are seeded and generated once per active day', as
   const second=(await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-18') n")).rows[0].n;
   assert.equal(first,5);
   assert.equal(second,0);
+  await f.db.exec('reset role');
   const rows=(await f.db.query("select count(*)::int n from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_task_day'='2026-11-18'")).rows[0].n;
   assert.equal(rows,5);
  } finally { await f.db.close(); }
@@ -23,6 +24,7 @@ test('first operator claims standard task and validation creates auditable evide
  try {
   await f.asActor('admin');
   await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-18')");
+  await f.db.exec('reset role');
   const task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='RETIRAR_RECICLAGEM' limit 1")).rows[0];
   await f.asActor('op');
   const claimed=(await f.db.query('select wms_excellence_claim_standard_task($1) t',[task.id])).rows[0].t;
@@ -48,6 +50,7 @@ test('seven-address audit requires seven unique addresses and blocks weekly reus
  try {
   await f.asActor('admin');
   await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-18')");
+  await f.db.exec('reset role');
   let task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='CONFERENCIA_7_ENDERECOS' and resultado_execucao->>'excellence_task_day'='2026-11-18'")).rows[0];
   await f.asActor('op');
   await f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]);
@@ -61,6 +64,7 @@ test('seven-address audit requires seven unique addresses and blocks weekly reus
 
   await f.asActor('admin');
   await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-19')");
+  await f.db.exec('reset role');
   task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='CONFERENCIA_7_ENDERECOS' and resultado_execucao->>'excellence_task_day'='2026-11-19'")).rows[0];
   await f.asActor('op');
   await f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]);
@@ -76,6 +80,7 @@ test('monthly cycle is full-month and uses hybrid execution', async () => {
  try {
   await f.asActor('admin');
   const cycle=(await f.db.query("select wms_excellence_create_monthly_cycle('VDCG','2026-12-01','Avaliação Mensal - 12/2026') result")).rows[0].result;
+  await f.db.exec('reset role');
   const row=(await f.db.query(`
     select c.start_date,c.end_date,v.config->>'executionModel' model
     from wms_excellence_cycles c join wms_excellence_criteria_versions v on v.id=c.criteria_version_id
