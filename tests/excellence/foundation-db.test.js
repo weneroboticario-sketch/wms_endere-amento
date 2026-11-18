@@ -20,9 +20,11 @@ test('foundation uses real Postgres RLS, immutable criteria and authenticated au
   await asActor(db, 'other');
   assert.deepEqual((await db.query('select * from wms_excellence_initiatives')).rows, []);
   await assert.rejects(rpc('DASHBOARD', { cycle_id: cycle.id }), /Acesso não autorizado/);
+  await db.exec('reset role');
+  const proof = (await db.query("insert into wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,description) values($1,'VDCG','op','QUALIDADE','fixture','verified-1','TEST',now(),'Evidência sintética') returning id", [cycle.id])).rows[0].id;
   await asActor(db, 'sup');
-  await rpc('MANUAL_SCORE', { cycle_id: cycle.id, user_id: 'op', criterion_id: 'EXECUCAO', score: 80, justification: 'Observação comprovada' });
-  await assert.rejects(rpc('MANUAL_SCORE', { cycle_id: cycle.id, user_id: 'sup', criterion_id: 'EXECUCAO', score: 90, justification: 'ok' }), /Autovalidação/);
+  await rpc('MANUAL_SCORE', { cycle_id: cycle.id, user_id: 'op', criterion_id: 'QUALIDADE', evidence_ids: [proof], score: 80, justification: 'Observação comprovada' });
+  await assert.rejects(rpc('MANUAL_SCORE', { cycle_id: cycle.id, user_id: 'sup', criterion_id: 'QUALIDADE', score: 90, justification: 'ok' }), /Autovalidação/);
   const dashboard = await rpc('DASHBOARD', { cycle_id: cycle.id, user_id: 'op' });
   assert.equal(dashboard.scores[0].score, 80);
   assert.equal(dashboard.initiatives.length, 1);

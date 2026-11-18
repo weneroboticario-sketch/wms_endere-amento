@@ -28,7 +28,7 @@ create table public.wms_excellence_evidence (
 create table public.wms_excellence_manual_scores (
  id uuid primary key default gen_random_uuid(),cycle_id uuid not null,warehouse_code text not null,
  user_id text not null references public.wms_users(id),evaluator_id text not null references public.wms_users(id),
- criterion_id text not null,score numeric not null check(score between 0 and 100),
+ evidence_ids uuid[] not null default '{}',criterion_id text not null,score numeric not null check(score between 0 and 100),
  justification text not null check(length(trim(justification)) between 1 and 2000),created_at timestamptz not null default now(),
  check(user_id<>evaluator_id),foreign key(cycle_id,warehouse_code) references public.wms_excellence_cycles(id,warehouse_code),
  unique(cycle_id,user_id,criterion_id)

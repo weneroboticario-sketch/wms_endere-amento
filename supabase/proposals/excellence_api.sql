@@ -16,7 +16,7 @@ begin
  if not coalesce(admin,false) then raise exception 'Administrador necessário.' using errcode='42501';end if;
  insert into public.wms_excellence_criteria_versions(warehouse_code,version,config,created_by_id)
  values(p_warehouse,(select coalesce(max(version),0)+1 from public.wms_excellence_criteria_versions where warehouse_code=p_warehouse),
- '{"operationalShare":55,"manualShare":45,"minimumDays":3,"minimumSources":2,"criteria":[{"id":"EXECUCAO","weight":25},{"id":"QUALIDADE","weight":25},{"id":"INICIATIVA","weight":20},{"id":"ORGANIZACAO","weight":10},{"id":"TRABALHO_EM_EQUIPE","weight":10},{"id":"POSTURA","weight":10}]}',actor) returning id into v;
+ '{"engineVersion":2,"timeZone":"America/Cuiaba","minimumDays":3,"minimumSample":5,"complexityWeights":{"SIMPLES":1,"INTERMEDIARIA":2,"COMPLEXA":3},"criteria":[{"id":"EXECUCAO","weight":25,"automaticMaximum":25,"assistedMaximum":0,"formula":"EXECUTION"},{"id":"QUALIDADE","weight":25,"automaticMaximum":20,"assistedMaximum":5,"formula":"VERIFICATION"},{"id":"INICIATIVA","weight":20,"automaticMaximum":0,"assistedMaximum":20},{"id":"ORGANIZACAO","weight":10,"automaticMaximum":10,"assistedMaximum":0,"formula":"VERIFICATION"},{"id":"TRABALHO_EM_EQUIPE","weight":10,"automaticMaximum":0,"assistedMaximum":10},{"id":"POSTURA","weight":10,"automaticMaximum":0,"assistedMaximum":10}],"bands":[{"minimum":90,"label":"Excelência"},{"minimum":85,"label":"Alto desempenho"},{"minimum":80,"label":"Bom desempenho"},{"minimum":60,"label":"Em desenvolvimento"},{"minimum":0,"label":"Necessita de acompanhamento"}]}',actor) returning id into v;
  insert into public.wms_excellence_cycles(warehouse_code,name,start_date,end_date,criteria_version_id,created_by_id)
  values(p_warehouse,p_data->>'name',(p_data->>'from')::date,(p_data->>'to')::date,v,actor) returning to_jsonb(wms_excellence_cycles.*) into result;
  return result;end if;
@@ -25,9 +25,9 @@ begin
  person:=coalesce(nullif(p_data->>'user_id',''),actor);
  if not private.excellence_read(p_warehouse,person) or not private.excellence_user(p_warehouse,person) then raise exception 'Colaborador fora do acesso.' using errcode='42501';end if;
  if p_action='DASHBOARD' then
- return jsonb_build_object('cycle',to_jsonb(c),'config',(select config from public.wms_excellence_criteria_versions where id=c.criteria_version_id),
+ return jsonb_build_object('period',jsonb_build_object('from',c.start_date::timestamp at time zone coalesce((select config->>'timeZone' from public.wms_excellence_criteria_versions where id=c.criteria_version_id),'America/Cuiaba'),'to',(c.end_date+1)::timestamp at time zone coalesce((select config->>'timeZone' from public.wms_excellence_criteria_versions where id=c.criteria_version_id),'America/Cuiaba')),'cycle',to_jsonb(c),'config',(select config from public.wms_excellence_criteria_versions where id=c.criteria_version_id),
  'evidence',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_evidence where cycle_id=c.id and user_id=person order by evidence_date desc,id limit 100)x),'[]'),
- 'scores',coalesce((select jsonb_agg(to_jsonb(x)) from public.wms_excellence_manual_scores x where cycle_id=c.id and user_id=person),'[]'),
+ 'evidenceTruncated',(select count(*)>100 from public.wms_excellence_evidence where cycle_id=c.id and user_id=person),'scores',coalesce((select jsonb_agg(to_jsonb(x)) from public.wms_excellence_manual_scores x where cycle_id=c.id and user_id=person),'[]'),
  'initiatives',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_initiatives where cycle_id=c.id and user_id=person order by created_at desc limit 100)x),'[]'),
  'calibrations',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_calibrations where cycle_id=c.id and user_id=person order by created_at desc limit 100)x),'[]'));
  end if;
@@ -75,10 +75,12 @@ begin
  if p_action='MANUAL_SCORE' then
  if person=actor then raise exception 'Autovalidação não permitida.';end if;
  criterion:=p_data->>'criterion_id';
- if not exists(select 1 from public.wms_excellence_criteria_versions v,jsonb_array_elements(v.config->'criteria') k where v.id=c.criteria_version_id and k->>'id'=criterion) then raise exception 'Critério inválido.';end if;
- insert into public.wms_excellence_manual_scores(cycle_id,warehouse_code,user_id,evaluator_id,criterion_id,score,justification)
- values(c.id,p_warehouse,person,actor,criterion,(p_data->>'score')::numeric,p_data->>'justification')
- on conflict(cycle_id,user_id,criterion_id) do update set score=excluded.score,justification=excluded.justification,evaluator_id=actor returning to_jsonb(wms_excellence_manual_scores.*) into result;
+ if not exists(select 1 from public.wms_excellence_criteria_versions v,jsonb_array_elements(v.config->'criteria') k where v.id=c.criteria_version_id and k->>'id'=criterion and (k->>'assistedMaximum')::numeric>0) then raise exception 'Critério inválido.';end if;
+ if jsonb_typeof(p_data->'evidence_ids') is distinct from 'array' or jsonb_array_length(p_data->'evidence_ids')=0 then raise exception 'Evidências complementares obrigatórias.';end if;
+ if exists(select 1 from jsonb_array_elements_text(p_data->'evidence_ids') x where not exists(select 1 from public.wms_excellence_evidence e where e.id=x::uuid and e.cycle_id=c.id and e.user_id=person)) then raise exception 'Evidência fora da avaliação.';end if;
+ insert into public.wms_excellence_manual_scores(cycle_id,warehouse_code,user_id,evaluator_id,criterion_id,score,justification,evidence_ids)
+ values(c.id,p_warehouse,person,actor,criterion,(p_data->>'score')::numeric,p_data->>'justification',array(select jsonb_array_elements_text(p_data->'evidence_ids')::uuid))
+ on conflict(cycle_id,user_id,criterion_id) do update set score=excluded.score,justification=excluded.justification,evidence_ids=excluded.evidence_ids,evaluator_id=actor returning to_jsonb(wms_excellence_manual_scores.*) into result;
  return result;end if;
  if p_action='CALIBRATION' then
  if person=actor then raise exception 'Autovalidação não permitida.';end if;
