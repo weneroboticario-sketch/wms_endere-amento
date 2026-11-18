@@ -178,13 +178,13 @@ create function private.excellence_user(unit text,person text) returns boolean l
  select exists(select 1 from public.wms_users u where u.id=person and coalesce(u.active,true) and not coalesce(u.archived,false)
  and unit=any(string_to_array(coalesce(u.allowed_warehouse_codes,u.warehouse_code,''),',')))
 $$;
-create function private.excellence_cycle_member(p_cycle uuid,person text) returns boolean language sql stable security definer set search_path='' as $
+create function private.excellence_cycle_member(p_cycle uuid,person text) returns boolean language sql stable security definer set search_path='' as $cycle$
  select exists(select 1 from public.wms_excellence_cycle_members m
   where m.cycle_id=p_cycle and m.user_id=person and m.eligible
   and (m.included_from is null or m.included_from <= (select end_date from public.wms_excellence_cycles where id=p_cycle))
   and (m.included_to is null or m.included_to >= (select start_date from public.wms_excellence_cycles where id=p_cycle)))
-$;
-create function private.excellence_absent_at(p_cycle uuid,person text,moment timestamptz) returns boolean language sql stable security definer set search_path='' as $
+$cycle$;
+create function private.excellence_absent_at(p_cycle uuid,person text,moment timestamptz) returns boolean language sql stable security definer set search_path='' as $absence$
  select exists(
   select 1 from public.wms_excellence_absences a
   join public.wms_excellence_cycles c on c.id=a.cycle_id
@@ -192,11 +192,11 @@ create function private.excellence_absent_at(p_cycle uuid,person text,moment tim
   where a.cycle_id=p_cycle and a.user_id=person and a.status='VALIDATED'
   and (moment at time zone coalesce(v.config->>'timeZone','America/Cuiaba'))::date between a.start_date and a.end_date
  )
-$;
-create function private.excellence_revision(p_cycle uuid) returns text language sql stable security definer set search_path='' as $
+$absence$;
+create function private.excellence_revision(p_cycle uuid) returns text language sql stable security definer set search_path='' as $revision$
  select md5(to_jsonb(c)::text||coalesce((select id::text from public.wms_excellence_audit_log where warehouse_code=c.warehouse_code order by id desc limit 1),'0'))
  from public.wms_excellence_cycles c where c.id=p_cycle
-$$;
+$revision$;
 create function public.wms_excellence_api(p_warehouse text,p_action text,p_data jsonb default '{}') returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare actor text:=private.current_wms_profile_id();leader boolean:=private.excellence_leader(p_warehouse);
