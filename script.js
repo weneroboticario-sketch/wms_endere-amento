@@ -10588,11 +10588,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var details = task.description || "Central de Tarefas";
       if (task.referenceType && task.referenceId) details += " | Ref.: " + task.referenceType + " #" + task.referenceId;
       return {
-        type: task.type === "REPOSICAO" ? "REPOSICAO" : "TRANSFERENCIA",
+        type: task.type || "AVULSA",
         id: task.id,
         title: task.visibleCode || task.title || "Tarefa",
         subtitle: details,
-        source: { status: task.status }
+        source: task
       };
     });
     var replenishments = getVisibleReplenishmentRequests().filter(function (request) {
@@ -10655,6 +10655,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!task) return "Não foi possível carregar suas tarefas. Tente novamente.";
     if (task.type === "REPOSICAO" && task.source && task.source.status === "PENDENTE") return "Novo pedido de reposição disponível para puxar.";
     if (task.type === "REPOSICAO") return "Você recebeu um pedido de reposição para atender.";
+    if (task.source && task.source.referenceType === "EXCELLENCE_STANDARD") {
+      if (task.source.status === "PENDENTE" && !task.source.assignedTo) return "Nova tarefa avaliada disponível. O primeiro colaborador que assumir fica responsável.";
+      if (task.source.status === "AGUARDANDO_VALIDACAO") return "Tarefa avaliada concluída e aguardando validação.";
+      return "Você possui uma tarefa avaliada em andamento.";
+    }
     var transfer = task.source || task;
     if (transfer.status === "CORRECAO_SOLICITADA" || transfer.status === "EM_CORRECAO") return "Sua transferência voltou para revalidação. Confira a montagem da caixa.";
     if (transfer.status === "SEPARACAO_CONCLUIDA" || transfer.status === "EM_LACRE" || transfer.status === "EM_MONTAGEM_CAIXA") return "Separação concluída. Faça a montagem da caixa.";
@@ -12421,15 +12426,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function getMyOperationalTasks() {
     if (!authState.currentUser || authState.currentUser.role !== "OPERADOR") return [];
     return taskCenterState.tasks.filter(function (task) {
-      return task.assignedTo === authState.currentUser.id;
+      if (task.assignedTo === authState.currentUser.id) return true;
+      return task.referenceType === "EXCELLENCE_STANDARD" && task.status === "PENDENTE" && !task.assignedTo;
     }).sort(function (a, b) {
+      var aAvailable = a.referenceType === "EXCELLENCE_STANDARD" && !a.assignedTo ? 1 : 0;
+      var bAvailable = b.referenceType === "EXCELLENCE_STANDARD" && !b.assignedTo ? 1 : 0;
+      if (aAvailable !== bAvailable) return bAvailable - aAvailable;
       return Date.parse(b.createdAt || "") - Date.parse(a.createdAt || "");
     });
   }
 
   function myOperationalTaskCardHtml(task) {
-    var action = task.status === "PENDENTE" || task.status === "ATRIBUIDA" ? "Iniciar" : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA" ? "Continuar" : "Ver resultado");
-    var ref = task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa";
+    var availableStandard = task.referenceType === "EXCELLENCE_STANDARD" && task.status === "PENDENTE" && !task.assignedTo;
+    var action = availableStandard ? "Assumir" : (task.status === "PENDENTE" || task.status === "ATRIBUIDA" ? "Iniciar" : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA" ? "Continuar" : "Ver resultado"));
+    var ref = task.referenceType === "EXCELLENCE_STANDARD" ? "Tarefa avaliada" : (task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa");
     return [
       '<article class="transfer-card">',
       '<span class="eyebrow">Central de Tarefas</span>',
