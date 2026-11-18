@@ -27,7 +27,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    const criterion=node('select');for(const value of ['ORGANIZACAO','QUALIDADE']){const option=node('option',value);option.value=value;criterion.append(option);}
    const type=node('select');for(const value of ['ORGANIZACAO','AUDITORIA','ENDERECAMENTO','INVENTARIO','AVULSA']){const option=node('option',value);option.value=value;type.append(option);}
    const complexity=node('select');for(const value of ['SIMPLES','INTERMEDIARIA','COMPLEXA']){const option=node('option',value);option.value=value;complexity.append(option);}
-   const cadence=node('select');for(const value of ['DAILY','WEEKLY','MONTHLY','MANUAL']){const option=node('option',({DAILY:'Diária',WEEKLY:'Semanal',MONTHLY:'Mensal',MANUAL:'Manual'})[value]);option.value=value;cadence.append(option);}
+   const cadence=node('select');for(const value of ['DAILY','WEEKLY','MONTHLY']){const option=node('option',({DAILY:'Diária',WEEKLY:'Semanal',MONTHLY:'Mensal'})[value]);option.value=value;cadence.append(option);}
    const target=node('input');target.type='number';target.min='1';target.step='1';target.placeholder='Meta de quantidade (opcional)';
    for(const [labelText,input] of [['Tarefa',title],['Descrição',description],['Critério principal',criterion],['Tipo',type],['Complexidade',complexity],['Periodicidade',cadence],['Meta',target]]){const label=node('label',labelText);label.append(input);form.append(label);}
    const submit=node('button','Adicionar tarefa','primary-button');submit.type='submit';form.append(submit);
