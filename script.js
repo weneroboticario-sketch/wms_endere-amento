@@ -5384,7 +5384,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,last_attended_by_id,last_attended_by_name,no_stock_by_id,no_stock_by_name,completed_by_id,completed_by_name,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -5421,6 +5421,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimedById: row.claimed_by_id || "",
       claimedByName: row.claimed_by_name || "",
       claimedAt: row.claimed_at || "",
+      lastAttendedById: row.last_attended_by_id || "",
+      lastAttendedByName: row.last_attended_by_name || "",
+      noStockById: row.no_stock_by_id || "",
+      noStockByName: row.no_stock_by_name || "",
+      completedById: row.completed_by_id || "",
+      completedByName: row.completed_by_name || "",
       returnedToQueueAt: row.returned_to_queue_at || "",
       returnedToQueueById: row.returned_to_queue_by_id || "",
       returnedToQueueByName: row.returned_to_queue_by_name || "",
@@ -5475,6 +5481,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimed_by_id: item.claimedById || "",
       claimed_by_name: item.claimedByName || "",
       claimed_at: item.claimedAt || null,
+      last_attended_by_id: item.lastAttendedById || "",
+      last_attended_by_name: item.lastAttendedByName || "",
+      no_stock_by_id: item.noStockById || "",
+      no_stock_by_name: item.noStockByName || "",
+      completed_by_id: item.completedById || "",
+      completed_by_name: item.completedByName || "",
       returned_to_queue_at: item.returnedToQueueAt || null,
       returned_to_queue_by_id: item.returnedToQueueById || "",
       returned_to_queue_by_name: item.returnedToQueueByName || "",
@@ -5705,6 +5717,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       claimedById: "",
       claimedByName: "",
       claimedAt: "",
+      lastAttendedById: "",
+      lastAttendedByName: "",
+      noStockById: "",
+      noStockByName: "",
+      completedById: "",
+      completedByName: "",
       returnedToQueueAt: "",
       returnedToQueueById: "",
       returnedToQueueByName: "",
@@ -5965,6 +5983,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function updateReplenishmentQuantity(id, qty, observation) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
     qty = Number(qty ?? 0);
     if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
     var requested = Number(request.requestedQty || 0);
@@ -5972,12 +5991,21 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
     if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
-    return updateReplenishmentRow(id, {
+    var actorName = authState.currentUser.name || authState.currentUser.username || "";
+    var patch = {
       attendedQty: attended,
       pendingQty: pending,
       status: status,
       observacao: normalizeText(observation || request.observacao)
-    });
+    };
+    if (qty > 0) {
+      patch.lastAttendedById = authState.currentUser.id;
+      patch.lastAttendedByName = actorName;
+    } else {
+      patch.noStockById = authState.currentUser.id;
+      patch.noStockByName = actorName;
+    }
+    return updateReplenishmentRow(id, patch);
   }
 
   async function markReplenishmentNoStock(id, reason) {
@@ -5988,6 +6016,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function completeReplenishmentRequest(id) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
+    if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
     if (Number(request.attendedQty || 0) <= 0) throw new Error("Informe o motivo em Sem estoque quando nada foi atendido.");
     var now = nowIso();
     var started = request.startedAt || request.createdAt || now;
@@ -5995,6 +6024,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       status: "CONCLUIDO",
       pendingQty: 0,
       finishedAt: now,
+      completedById: authState.currentUser.id,
+      completedByName: authState.currentUser.name || authState.currentUser.username || "",
       durationSeconds: Math.max(0, Math.round((new Date(now).getTime() - new Date(started).getTime()) / 1000))
     });
   }
@@ -7853,6 +7884,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       { table: "wms_replenishment_requests", column: "responsavel_id" },
       { table: "wms_replenishment_requests", column: "solicitado_por_id" },
       { table: "wms_replenishment_requests", column: "claimed_by_id" },
+      { table: "wms_replenishment_requests", column: "last_attended_by_id" },
+      { table: "wms_replenishment_requests", column: "completed_by_id" },
       { table: "wms_replenishment_requests", column: "created_by_id" },
       { table: "wms_notifications", column: "user_id" },
       { table: "wms_task_notifications", column: "user_id" },
