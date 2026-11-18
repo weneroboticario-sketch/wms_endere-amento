@@ -218,6 +218,12 @@ create table public.wms_excellence_audit_log (
  table_name text not null,record_id text not null,action text not null,before_data jsonb,after_data jsonb,
  created_at timestamptz not null default now()
 );
+create table private.wms_excellence_runtime_config (
+ key text primary key,
+ secret_hash text not null,
+ updated_at timestamptz not null default now()
+);
+revoke all on table private.wms_excellence_runtime_config from public,anon,authenticated,service_role;
 create index excellence_evidence_person_period on public.wms_excellence_evidence(cycle_id,user_id,evidence_date desc,id);
 create index excellence_cycles_unit_period on public.wms_excellence_cycles(warehouse_code,start_date,end_date);
 create index excellence_cycle_members_cycle_user on public.wms_excellence_cycle_members(cycle_id,user_id) where eligible;
@@ -619,12 +625,18 @@ grant execute on function public.wms_excellence_api(text,text,jsonb) to authenti
 
 -- Only a trusted backend may submit results computed with the shared engine.
 -- Browser/authenticated roles cannot supply a score or snapshot directly.
-create function public.wms_excellence_close_cycle(p_cycle uuid,p_actor_auth uuid,p_revision text,p_assessments jsonb)
+create function public.wms_excellence_close_cycle(p_cycle uuid,p_actor_auth uuid,p_revision text,p_assessments jsonb,p_backend_secret text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare c public.wms_excellence_cycles; actor public.wms_users; item jsonb; person text; expected integer; supplied integer;
 begin
  if auth.uid() is null or auth.uid() is distinct from p_actor_auth then
   raise exception 'Sessão administrativa necessária.' using errcode='42501';
+ end if;
+ if nullif(p_backend_secret,'') is null or not exists(
+  select 1 from private.wms_excellence_runtime_config cfg
+  where cfg.key='cycle_close_secret' and cfg.secret_hash=md5(p_backend_secret)
+ ) then
+  raise exception 'Fechamento disponível somente pelo backend autorizado.' using errcode='42501';
  end if;
  select * into actor from public.wms_users where auth_user_id=p_actor_auth and coalesce(active,true) and not coalesce(archived,false);
  if not found or actor.role<>'ADMINISTRADOR' then raise exception 'Administrador autenticado necessário.' using errcode='42501';end if;
@@ -661,8 +673,8 @@ begin
  values(c.warehouse_code,actor.id,'wms_excellence_cycles',c.id::text,'CLOSE',jsonb_build_object('assessment_count',supplied,'source_revision',p_revision));
  return jsonb_build_object('closed',true,'count',supplied);
 end $$;
-revoke all on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) from public,anon,authenticated,service_role;
-grant execute on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb) to authenticated;
+revoke all on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb,text) from public,anon,authenticated,service_role;
+grant execute on function public.wms_excellence_close_cycle(uuid,uuid,text,jsonb,text) to authenticated;
 create function private.excellence_closed_guard() returns trigger language plpgsql set search_path='' as $$
 begin
  if tg_table_name='wms_excellence_cycles' then
