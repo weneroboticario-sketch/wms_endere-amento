@@ -11,7 +11,7 @@ async function asActor(actor){await db.exec('reset role');await db.query("select
 const rpc=async(action,data={})=>(await db.query('select wms_excellence_api($1,$2,$3::jsonb) result',['VDCG',action,JSON.stringify(data)])).rows[0].result;
 try {
  await db.exec(bootstrap);await db.exec(foundation);await asActor('admin');
- const cycle=await rpc('CREATE_CYCLE',{name:'Novembro 2026 · Demonstração',from:'2026-11-01',to:'2026-11-30'});await rpc('ENABLE',{cycle_id:cycle.id});await rpc('SYNC',{cycle_id:cycle.id});
+ const cycle=await rpc('CREATE_CYCLE',{name:'Novembro 2026 · Demonstração',from:'2026-11-01',to:'2026-11-30'});await rpc('SET_MEMBERS',{cycle_id:cycle.id,member_ids:['op','sup']});await rpc('ENABLE',{cycle_id:cycle.id});await rpc('SYNC',{cycle_id:cycle.id});
  async function render(){
   const current=++generation,actor=actorInput.value;
   const service={rpc(action,data={}){
