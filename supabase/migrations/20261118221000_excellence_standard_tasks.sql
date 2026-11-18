@@ -163,7 +163,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path=''
-as $
+as $monthly_cycle$
 declare
   first_day date;
   last_day date;
@@ -200,7 +200,7 @@ begin
   )
   returning to_jsonb(wms_excellence_cycles.*) into result;
   return result;
-end $;
+end $monthly_cycle$;
 revoke all on function public.wms_excellence_create_monthly_cycle(text,date,text) from public,anon,authenticated,service_role;
 grant execute on function public.wms_excellence_create_monthly_cycle(text,date,text) to authenticated;
 
