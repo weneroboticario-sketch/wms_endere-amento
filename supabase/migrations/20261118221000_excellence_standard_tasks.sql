@@ -316,11 +316,11 @@ begin
     if count_all<>7 or count_distinct<>7 or exists(select 1 from unnest(addresses) a where a='') then
       raise exception 'Informe 7 endereços válidos e sem repetição.';
     end if;
-    select count(distinct upper(trim(coalesce(nullif(b.location_code,''),nullif(b.codigo_endereco,''),nullif(b.endereco,''),nullif(b.address,'')))))
+    select count(distinct upper(trim(coalesce(nullif(b.location_code,''),nullif(b.codigo_endereco,'')))))
       into count_valid
     from public.wms_bindings b
     where b.warehouse_code=new.estoque_id
-      and upper(trim(coalesce(nullif(b.location_code,''),nullif(b.codigo_endereco,''),nullif(b.endereco,''),nullif(b.address,''))))=any(addresses);
+      and upper(trim(coalesce(nullif(b.location_code,''),nullif(b.codigo_endereco,''))))=any(addresses);
     if count_valid<>7 then
       raise exception 'Um ou mais endereços informados não existem no estoque atual.';
     end if;
