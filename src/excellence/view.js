@@ -42,7 +42,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
      explanation.append(node('p', 'Período: ' + rule.period.from + ' até ' + rule.period.to + ' (fim exclusivo)'));
      explanation.append(node('p', 'Versão dos critérios: ' + rule.version));
      for (const excluded of rule.automatic.excluded) {
-      const reason = { AUTORIA_OU_RESPONSABILIDADE_NAO_COMPROVADA: 'Executor ou responsabilidade ainda não comprovados', PRAZO_FORA_DO_PERIODO: 'Prazo fora do período', IMPEDIMENTO_OU_AUSENCIA_VALIDADA: 'Impedimento ou ausência validada', COMPLEXIDADE_NAO_COMPROVADA: 'Complexidade anterior à execução não comprovada', SITUACAO_AGUARDANDO_REVISAO: 'Situação aguardando revisão', VERIFICACAO_NAO_ELEGIVEL: 'Verificação sem os requisitos necessários' }[excluded.reason] || excluded.reason;
+      const reason = { AUTORIA_OU_RESPONSABILIDADE_NAO_COMPROVADA: 'Executor ou responsabilidade ainda não comprovados', PRAZO_FORA_DO_PERIODO: 'Prazo fora do período', IMPEDIMENTO_OU_AUSENCIA_VALIDADA: 'Impedimento ou ausência validada', AUSENCIA_OU_IMPEDIMENTO_VALIDADO: 'Período neutralizado por ausência/impedimento validado', COMPLEXIDADE_NAO_COMPROVADA: 'Complexidade anterior à execução não comprovada', SITUACAO_AGUARDANDO_REVISAO: 'Situação aguardando revisão', VERIFICACAO_NAO_ELEGIVEL: 'Verificação sem os requisitos necessários' }[excluded.reason] || excluded.reason;
       explanation.append(node('p', 'Registro desconsiderado: ' + excluded.id + ' · ' + reason));
      }
      if (rule.assisted) explanation.append(node('p', 'Avaliação assistida: ' + rule.assisted.score + '/100 × ' + rule.assisted.maximum + ' · ' + rule.assisted.justification));
@@ -85,11 +85,22 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
      }
      card.append(detail);
     },card);
-    if (leader && person !== actorId) button('Validar observação', async () => {
-     const score = window.prompt('Avaliação da observação (0–100):'); if (score === null) return;
-     const justification = window.prompt('Fundamento verificável da avaliação:'); if (!justification) return;
-     await perform('REVIEW_EVIDENCE', { evidence_id: row.id, score: Number(score), justification }); await load();
-    }, card);
+    if (leader && person !== actorId) {
+     const verification=row.metadata?.verification_fact;
+     if(verification) card.append(node('p',`Verificação independente: ${verification.criterion} · ${verification.result}`));
+     const review=node('form');review.className='panel';
+     const criterion=node('select');criterion.setAttribute('aria-label','Critério da verificação');
+     for(const value of ['QUALIDADE','ORGANIZACAO']){const option=node('option',value);option.value=value;criterion.append(option);}
+     const outcome=node('select');outcome.setAttribute('aria-label','Resultado da verificação');
+     for(const value of ['CONFORME','NAO_CONFORME']){const option=node('option',value==='CONFORME'?'Conforme':'Não conforme');option.value=value;outcome.append(option);}
+     const justification=node('textarea');justification.placeholder='Fundamento verificável';justification.required=true;justification.maxLength=1000;
+     const submit=node('button',verification?'Atualizar verificação':'Registrar verificação','secondary-button');submit.type='submit';
+     review.append(node('strong','Verificação independente'),criterion,outcome,justification,submit);
+     review.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{
+      await perform('REVIEW_EVIDENCE',{evidence_id:row.id,criterion_id:criterion.value,result:outcome.value,justification:justification.value.trim()});await load();
+     }finally{submit.disabled=false;}};
+     card.append(review);
+    }
     content.append(card);
    }
   }), tabs);
@@ -109,6 +120,27 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    }, content);
   }), tabs);
   if (leader) {
+   button('Elegibilidade', () => show(() => {
+    content.append(node('h4','Ausências e impedimentos validados'));
+    if(!dashboard.absences.length) content.append(node('p','Nenhum período registrado para este colaborador.'));
+    for(const row of dashboard.absences){
+     const card=node('article',undefined,'panel');
+     card.append(node('strong',row.absence_type),node('p',row.start_date+' até '+row.end_date),node('p',row.justification));
+     button('Cancelar registro',async()=>{await perform('REMOVE_ABSENCE',{absence_id:row.id});await load();},card);
+     content.append(card);
+    }
+    const form=node('form',undefined,'panel');
+    const type=node('select');for(const value of ['FERIAS','FOLGA','ATESTADO','AFASTAMENTO','TREINAMENTO','OUTRA_ATIVIDADE']){const option=node('option',value);option.value=value;type.append(option);}
+    const from=node('input');from.type='date';from.required=true;
+    const to=node('input');to.type='date';to.required=true;
+    const justification=node('textarea');justification.placeholder='Justificativa';justification.required=true;justification.maxLength=1000;
+    const submit=node('button','Registrar período','secondary-button');submit.type='submit';
+    form.append(node('strong','Registrar ausência/impedimento'),type,from,to,justification,submit);
+    form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;try{
+     await perform('ADD_ABSENCE',{absence_type:type.value,from:from.value,to:to.value,justification:justification.value.trim()});await load();
+    }finally{submit.disabled=false;}};
+    content.append(form);
+   }), tabs);
    button('Visão da Equipe',async()=>{
     const team=await perform('TEAM');
     show(()=>{
@@ -170,11 +202,32 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
  const available = await service.rpc('CYCLES');
  for (const row of available) { const option = node('option', row.name); option.value = row.id; cycles.append(option); }
  cycle = available[0] || null;
- cycles.onchange = async () => { cycle = available.find(row => row.id === cycles.value); await load().catch(() => {}); };
+ async function refreshDirectory(){
+  users.replaceChildren();
+  const directory=await perform('DIRECTORY');
+  for(const row of directory){const option=node('option',row.name||row.id);option.value=row.id;users.append(option);}
+  person=directory.some(row=>row.id===actorId)?actorId:(directory[0]?.id||actorId);
+  users.value=person;
+ }
+ cycles.onchange = async () => { cycle = available.find(row => row.id === cycles.value); await refreshDirectory(); await load().catch(() => {}); };
  if (cycle) {
-  const directory = await perform('DIRECTORY');
-  for (const row of directory) { const option = node('option', row.name || row.id); option.value = row.id; users.append(option); }
-  users.value = actorId; users.onchange = async () => { person = users.value; await load().catch(() => {}); };
+  await refreshDirectory();
+  users.onchange = async () => { person = users.value; await load().catch(() => {}); };
+  if (admin && !cycle.enabled) button('Definir equipe do ciclo', async () => {
+   const candidates=await perform('CANDIDATES');
+   body.replaceChildren(node('h3','Equipe elegível · '+cycle.name),node('p','Selecione somente quem será comparado neste ciclo. Usuários fora da equipe não entram no fechamento.'));
+   const form=node('form',undefined,'panel');
+   const checks=[];
+   for(const candidate of candidates){
+    const label=node('label');const input=node('input');input.type='checkbox';input.value=candidate.id;input.checked=Boolean(candidate.selected);
+    label.append(input,document.createTextNode(' '+(candidate.name||candidate.id)+' · '+candidate.role));form.append(label);checks.push(input);
+   }
+   const submit=node('button','Salvar equipe','primary-button');submit.type='submit';form.append(submit);
+   form.onsubmit=async event=>{event.preventDefault();const member_ids=checks.filter(input=>input.checked).map(input=>input.value);submit.disabled=true;try{
+    await perform('SET_MEMBERS',{member_ids});await mountExcellence(root,{service,actorId,leader,admin});
+   }finally{submit.disabled=false;}};
+   body.append(form);
+  });
   if (leader) button('Gerar evidências do ciclo', async () => { const result = await synchronizeEvidence({ rpc: (action, data) => perform(action, data), cycleId: cycle.id, onProgress: progress => { status.textContent = 'Processadas ' + progress.page + ' páginas · ' + progress.inserted + ' evidências novas'; } }); await load(); status.textContent = result.limitations.join(' '); });
   if (admin && cycle.status !== 'CLOSED') button('Fechar ciclo revisado', async () => {
    if (!window.confirm('Fechar o ciclo ' + cycle.name + '? Todas as avaliações precisam estar completas e revisadas. O histórico será preservado e ficará imutável.')) return;
