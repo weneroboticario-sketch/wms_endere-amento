@@ -14,7 +14,7 @@ test('operational source -> evidence -> own dashboard -> manual score -> calibra
   assert.equal(replay.evidence.length, 3);
   assert.equal(calculatePreliminary(replay).score, null);
   const event = replay.evidence.find(row => row.source_table === 'wms_transfer_events');
-  await f.rpc('REVIEW_EVIDENCE', { cycle_id: f.cycle.id, user_id: 'op', evidence_id: event.id, score: 85, justification: 'Conferência sintética revisada' });
+  await f.rpc('REVIEW_EVIDENCE', { cycle_id: f.cycle.id, user_id: 'op', evidence_id: event.id, criterion_id: 'QUALIDADE', result: 'CONFORME', justification: 'Conferência sintética revisada' });
   await f.rpc('MANUAL_SCORE', { cycle_id: f.cycle.id, user_id: 'op', criterion_id: 'QUALIDADE', evidence_ids: [event.id], score: 80, justification: 'Verificado' });
   await f.rpc('CALIBRATION', { cycle_id: f.cycle.id, user_id: 'op', score: 82, justification: 'Proposta, sem fechamento' });
   await f.asActor('op');
