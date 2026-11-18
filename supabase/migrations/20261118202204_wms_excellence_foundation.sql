@@ -51,7 +51,7 @@ revoke all on function public.stamp_wms_replenishment_actor_attribution() from p
 create table if not exists public.wms_replenishment_participation_events (
  id bigint generated always as identity primary key,
  warehouse_code text not null,
- request_id text not null references public.wms_replenishment_requests(id),
+ request_id text not null,
  event_type text not null check(event_type in ('REQUESTED','ATTENDED','NO_STOCK','COMPLETED','RETURNED')),
  actor_id text not null references public.wms_users(id),
  actor_name_snapshot text,
