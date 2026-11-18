@@ -12,7 +12,7 @@ export async function excellenceFixture() {
  const rpc = async (action, data = {}, unit = 'VDCG') => (await db.query('select wms_excellence_api($1,$2,$3::jsonb) result', [unit, action, JSON.stringify(data)])).rows[0].result;
  await asActor(db, 'admin');
  const cycle = await rpc('CREATE_CYCLE', { execution_model: 'TASKS', name: 'Novembro 2026 · Calibração local', from: '2026-11-01', to: '2026-11-30' });
- await rpc('SET_MEMBERS', { cycle_id: cycle.id, member_ids: ['op'] });
+ await rpc('SET_MEMBERS', { cycle_id: cycle.id, member_ids: ['op','sup','cash'] });
  await rpc('ENABLE', { cycle_id: cycle.id });
  await rpc('SYNC', { cycle_id: cycle.id });
  return { db, rpc, cycle, asActor: actor => asActor(db, actor) };
