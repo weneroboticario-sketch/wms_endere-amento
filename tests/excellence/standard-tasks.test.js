@@ -48,6 +48,12 @@ test('first operator claims standard task and validation creates auditable evide
 test('seven-address audit requires seven unique addresses and blocks weekly reuse', async () => {
  const f=await excellenceFixture();
  try {
+  await f.db.exec(`reset role;
+   insert into wms_bindings(id,warehouse_code,sku,location_code,codigo_endereco) values
+   ('a1','VDCG','01314','A1',null),('a2','VDCG','01314','A2',null),('a3','VDCG','01314','A3',null),
+   ('a4','VDCG','01314','A4',null),('a5','VDCG','01314','A5',null),('a6','VDCG','01314','A6',null),
+   ('a7','VDCG','01314','A7',null),('b2','VDCG','01314','B2',null),('b3','VDCG','01314','B3',null),
+   ('b4','VDCG','01314','B4',null),('b5','VDCG','01314','B5',null),('b6','VDCG','01314','B6',null),('b7','VDCG','01314','B7',null);`);
   await f.asActor('admin');
   await f.db.query("select wms_excellence_ensure_standard_tasks('VDCG','2026-11-18')");
   await f.db.exec('reset role');
