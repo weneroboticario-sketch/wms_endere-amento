@@ -11,7 +11,7 @@ alter table public.wms_replenishment_requests
 
 create or replace function public.stamp_wms_replenishment_actor_attribution()
 returns trigger language plpgsql security invoker set search_path='' as $attr$
-declare actor text:=private.current_wms_profile_id(); actor_name text;
+declare actor text:=case when current_user='authenticated' then private.current_wms_profile_id() else null end; actor_name text;
 begin
  if tg_op='UPDATE' then
   new.last_attended_by_id:=old.last_attended_by_id; new.last_attended_by_name:=old.last_attended_by_name;
@@ -198,7 +198,7 @@ create trigger excellence_manual_updated before update on public.wms_excellence_
 
 
 create function private.excellence_replenishment_fact(r jsonb) returns jsonb language plpgsql immutable set search_path='' as $$
-declare actor text:=coalesce(nullif(r->>'last_attended_by_id',''),nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id','')); kind text; qty numeric; requested numeric; direction text:='NEUTRAL';
+declare actor text:=case when r->>'status'='SEM_ESTOQUE' then coalesce(nullif(r->>'no_stock_by_id',''),nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id','')) else coalesce(nullif(r->>'last_attended_by_id',''),nullif(r->>'responsavel_id',''),nullif(r->>'claimed_by_id','')) end; kind text; qty numeric; requested numeric; direction text:='NEUTRAL';
 begin
  if coalesce((r->>'is_deleted')::boolean,false) then return null;end if;
  qty:=nullif(r->>'quantidade_atendida','')::numeric; requested:=nullif(r->>'quantidade_solicitada','')::numeric;
@@ -214,7 +214,7 @@ begin
  return jsonb_build_object('actor',actor,'event',kind,'direction',direction,'sku',r->>'codigo_material',
  'requested',requested,'attended',qty,'pending',r->'quantidade_pendente','duration_seconds',r->'duration_seconds',
  'started_at',r->'started_at','claimed_at',r->'claimed_at','finished_at',r->'finished_at',
- 'opportunity_verified',nullif(r->>'started_at','') is not null and nullif(r->>'claimed_at','') is not null and (nullif(r->>'last_attended_by_id','') is not null or r->>'responsavel_id'=r->>'claimed_by_id'),'responsible_id',r->>'responsavel_id','claimed_by_id',r->>'claimed_by_id','last_attended_by_id',r->>'last_attended_by_id','replenishment_role','EXECUTOR','score_effect',null,
+ 'opportunity_verified',nullif(r->>'started_at','') is not null and nullif(r->>'claimed_at','') is not null and (nullif(r->>'last_attended_by_id','') is not null or r->>'responsavel_id'=r->>'claimed_by_id'),'responsible_id',r->>'responsavel_id','claimed_by_id',r->>'claimed_by_id','last_attended_by_id',r->>'last_attended_by_id','no_stock_by_id',r->>'no_stock_by_id','replenishment_role','EXECUTOR','score_effect',null,
  'attribution',case when nullif(r->>'last_attended_by_id','') is not null then 'RECORDED_ATTENDANT' else 'RECORDED_RESPONSIBLE' end,'limitation','Execução usa autoria do atendimento quando disponível; histórico anterior usa responsável/claim como fallback.');
 end $$;
 
