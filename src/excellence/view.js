@@ -228,6 +228,22 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    }finally{submit.disabled=false;}};
    body.append(form);
   });
+  if (admin && cycle.enabled && !['CLOSED','ARCHIVED'].includes(cycle.status)) button('Gerenciar elegibilidade', async () => {
+   const candidates=(await perform('CANDIDATES')).filter(candidate=>candidate.member);
+   body.replaceChildren(node('h3','Elegibilidade do ciclo · '+cycle.name),node('p','Excluir alguém do ciclo exige justificativa e fica registrado na auditoria. Ausências temporárias devem ser registradas na aba Elegibilidade do colaborador.'));
+   for(const candidate of candidates){
+    const card=node('article',undefined,'panel');
+    card.append(node('strong',(candidate.name||candidate.id)+' · '+(candidate.eligible?'Elegível':'Fora do ciclo')));
+    if(candidate.eligibility_reason)card.append(node('p','Última justificativa: '+candidate.eligibility_reason));
+    const reason=node('textarea');reason.placeholder='Justificativa obrigatória';reason.required=true;reason.maxLength=1000;
+    const toggle=node('button',candidate.eligible?'Excluir da avaliação':'Reincluir na avaliação','secondary-button');toggle.type='button';
+    toggle.onclick=async()=>{if(!reason.value.trim()){status.textContent='Informe a justificativa da alteração.';return;}toggle.disabled=true;try{
+     await perform('SET_MEMBER_ELIGIBILITY',{user_id:candidate.id,eligible:!candidate.eligible,justification:reason.value.trim()});
+     await mountExcellence(root,{service,actorId,leader,admin});
+    }finally{toggle.disabled=false;}};
+    card.append(reason,toggle);body.append(card);
+   }
+  });
   if (leader) button('Gerar evidências do ciclo', async () => { const result = await synchronizeEvidence({ rpc: (action, data) => perform(action, data), cycleId: cycle.id, onProgress: progress => { status.textContent = 'Processadas ' + progress.page + ' páginas · ' + progress.inserted + ' evidências novas'; } }); await load(); status.textContent = result.limitations.join(' '); });
   if (admin && cycle.status !== 'CLOSED') button('Fechar ciclo revisado', async () => {
    if (!window.confirm('Fechar o ciclo ' + cycle.name + '? Todas as avaliações precisam estar completas e revisadas. O histórico será preservado e ficará imutável.')) return;
