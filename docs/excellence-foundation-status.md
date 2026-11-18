@@ -37,3 +37,14 @@ Supabase bzqulgdtfpcmkyaldssy ACTIVE_HEALTHY. Banco: 688600755 bytes. wms_stock_
 ## Reversão e limites
 
 Desativar flag remove acesso ao módulo; carregamento sob demanda evita trabalho de background. SQL ainda só local: nenhum rollback de produção necessário. Quando houver implantação, preservar tabelas e histórico; não derrubar dados como reversão. A prévia local comprova uma vertical sintética e não comprova funcionamento com dados reais, todos os dispositivos ou todas as regras do programa. Fundação completa ainda pendente.
+
+## Motor de avaliação solicitado — incremento local
+
+Requisitos detalhados preservados em docs/excellence-evaluation-requirements.md.
+Novo src/excellence/evaluation-engine.js implementa fórmulas parametrizadas de execução (prazo no período e complexidade anterior), qualidade/organização com amostra independente, avaliação assistida com fatos/oportunidade, e composição de pontos apurados/pendentes/não obtidos. Cada resultado mantém numerador, denominador, fontes/exclusões e regra. Zero assistido só é aceito com oportunidade e fundamento; ausência retorna null.
+
+Cinco novos testes do motor passaram e dois testes PostgreSQL de integração anteriores passaram; lint src/excellence/tests/excellence passou. Não foi repetida regressão total neste incremento, pois as novas funções ainda não estão conectadas à aplicação. Os 433 testes do incremento anterior não são apresentados como resultado da versão atual.
+
+Importante: o novo motor AINDA NÃO substitui src/excellence/scoring.js na tela nem no backend. A composição 55/45 uniforme da prévia anterior não satisfaz a nova distribuição por critério. Antes de disponibilizar é obrigatório conectar a configuração versionada correta (25/0,20/5,0/20,10/0,0/10,0/10), persistir os fatos elegíveis, validar parâmetros na RPC e calcular snapshots no servidor. Não reutilizar notas manuais como pontuação automática.
+
+Dashboard/gráficos solicitados, exportações, evolução entre períodos comparáveis, confiança estatística completa, simulador e fechamento permanecem pendentes. Nenhum gráfico decorativo com dados inventados foi acrescentado. Nenhuma publicação, custo adicional ou alteração do banco de produção.
