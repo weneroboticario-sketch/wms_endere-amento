@@ -72,7 +72,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    for (const row of dashboard.evidence) {
     const roleLabel={SOLICITANTE:'Solicitante',EXECUTOR:'Executor',CONCLUIDOR:'Concluidor'}[row.metadata?.replenishment_role]||'';
     const card = node('article', undefined, 'panel'); card.append(node('strong', ({REPLENISHMENT_REQUEST_PROCESSED:'Reposição · solicitação processada',REPLENISHMENT_COMPLETION_RECORDED:'Reposição · conclusão compartilhada',REPLENISHMENT_COMPLETED_FULL:'Reposição concluída · total',REPLENISHMENT_COMPLETED_PARTIAL:'Reposição concluída · parcial',REPLENISHMENT_COMPLETED:'Reposição concluída',REPLENISHMENT_NO_STOCK:'Reposição · sem estoque',REPLENISHMENT_RETURNED_TO_QUEUE:'Reposição devolvida à fila',REPLENISHMENT_ASSIGNED:'Reposição em atendimento'})[row.event_type]||row.event_type), ...(roleLabel?[node('p','Papel na reposição: '+roleLabel)]:[]), node('p', row.description), node('p', `${row.evidence_date} · ${row.source_table} · ${row.source_id} · Evidência ${row.id}`));
-    if(row.source_table==='wms_replenishment_requests') button('Ver origem', async () => {
+    if(['wms_replenishment_requests','wms_replenishment_participation_events'].includes(row.source_table)) button('Ver origem', async () => {
      const origin=await perform('ORIGIN',{evidence_id:row.id});
      const previous=card.querySelector('[data-origin]');if(previous)previous.remove();
      const detail=node('section',undefined,'panel');detail.dataset.origin='true';detail.append(node('h4','Registro original · somente consulta'));
@@ -82,6 +82,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
       detail.append(node('p','Solicitada: '+(origin.requested??'N/D')+' · Atendida: '+(origin.attended??'N/D')+' · Pendente: '+(origin.pending??'N/D')));
       detail.append(node('p','Duração: '+(origin.duration_seconds==null?'N/D':Math.floor(origin.duration_seconds/60)+'min '+origin.duration_seconds%60+'s')));
       detail.append(node('p','Conclusão: '+(origin.finished_at??'Não concluída')));
+      detail.append(node('p','Solicitante: '+(origin.requester_id||'N/D')+' · Executor mais recente: '+(origin.last_attended_by_id||origin.responsible_id||'N/D')+' · Concluiu: '+(origin.completed_by_id||'N/D')));
       detail.append(node('small','Identificador da origem: '+origin.id));
      }
      card.append(detail);
