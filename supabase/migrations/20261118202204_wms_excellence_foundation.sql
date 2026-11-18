@@ -488,35 +488,6 @@ begin
  cursors:=jsonb_set(cursors,array[source],jsonb_build_object('at',coalesce(r->>date_column,r->>'returned_to_queue_at',r->>'claimed_at'),'id',r->>'id'));
  if source='operacao_tarefas' and upper(coalesce(r->>'referencia_tipo','')) in ('REPOSICAO','TRANSFERENCIA') then continue;end if;
  replenishment_fact:=case when source='wms_replenishment_requests' then private.excellence_replenishment_fact(r) else null end;
- target:=case source when 'operacao_tarefas' then r->>'atribuido_para' -- assignment evidence, never proof of execution
- when 'wms_replenishment_requests' then replenishment_fact->>'actor'
- when 'wms_replenishment_participation_events' then r->>'actor_id'
- when 'wms_transfer_events' then r->>'user_id'
- else null end;
- if target is null or not private.excellence_user(p_warehouse,target) or not private.excellence_cycle_member(c.id,target) then continue;end if;
- stamp:=coalesce(r->>'data_conclusao',r->>'finished_at',r->>'event_at',r->>'created_at',r->>'returned_to_queue_at',r->>'claimed_at')::timestamptz;
- insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
- values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',case when source='wms_replenishment_participation_events' then
-   case r->>'event_type' when 'ATTENDED' then 'REPLENISHMENT_ATTENDED' when 'NO_STOCK' then 'REPLENISHMENT_NO_STOCK' when 'COMPLETED' then 'REPLENISHMENT_COMPLETION_RECORDED' when 'RETURNED' then 'REPLENISHMENT_RETURNED_TO_QUEUE' else 'REPLENISHMENT_PARTICIPATION_RECORDED' end
-   else coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED') end,stamp,case when source='wms_replenishment_participation_events' and r->>'event_type' in ('ATTENDED','COMPLETED') then 'POSITIVE' else coalesce(replenishment_fact->>'direction','NEUTRAL') end,case when source='wms_replenishment_participation_events' then 'Reposição: participação individual registrada pelo WMS.' when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object(
- 'sku',coalesce(r->>'sku',r->>'codigo_material'),'quantity',coalesce(r->'quantity',r->'quantidade_atendida'),
- 'attribution',case when source='wms_transfer_events' then 'EVENT_ACTOR' when replenishment_fact is not null then 'RECORDED_RESPONSIBLE' else 'RESPONSIBILITY_NOT_EXECUTION' end,
- 'score_effect',null,
- 'exemption_validated',private.excellence_absent_at(c.id,target,stamp),
- 'task_fact',case when source='operacao_tarefas' then jsonb_build_object(
-   'executorVerified',(r->>'status'='CONCLUIDA' and nullif(r->>'data_inicio','') is not null and nullif(r->>'data_conclusao','') is not null),
-   'responsibilityVerified',r->>'atribuido_para'=target,
-   'status',r->>'status','dueAt',r->>'prazo_sla','completedAt',r->>'data_conclusao',
-   'complexity',r->'resultado_execucao'->>'excellence_complexity','complexityDefinedBeforeStart',false,
-   'deliveryValidated',r->>'status'='CONCLUIDA','exemptionValidated',private.excellence_absent_at(c.id,target,stamp)
-  ) else null end,
- 'replenishment_role',case when source='wms_replenishment_participation_events' then
-   case r->>'event_type' when 'ATTENDED' then 'EXECUTOR' when 'NO_STOCK' then 'EXECUTOR' when 'COMPLETED' then 'CONCLUIDOR' else null end
-   else null end,
- 'opportunity_verified',case when source='wms_replenishment_participation_events' then r->>'event_type' in ('ATTENDED','COMPLETED') else null end,
- 'quantity_delta',case when source='wms_replenishment_participation_events' then r->'quantity_delta' else null end
- )||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
- get diagnostics n=row_count;inserted:=inserted+n;
  if source='wms_replenishment_requests' then
   target:=nullif(r->>'solicitado_por_id','');
   if target is not null and private.excellence_user(p_warehouse,target) and private.excellence_cycle_member(c.id,target) then
@@ -527,7 +498,7 @@ begin
     'Reposição: solicitação processada pelo fluxo operacional.',
     jsonb_build_object(
      'sku',r->>'codigo_material','requested',nullif(r->>'quantidade_solicitada','')::numeric,
-     'replenishment_role','SOLICITANTE','attribution','RECORDED_REQUESTER',
+     'replenishment_role','SOLICITANTE','request_id',r->>'id','attribution','RECORDED_REQUESTER',
      'opportunity_verified',not coalesce((r->>'is_deleted')::boolean,false)
        and r->>'status'<>'CANCELADO'
        and nullif(r->>'quantidade_solicitada','')::numeric>0
@@ -548,12 +519,43 @@ begin
     'Reposição: conclusão registrada por colaborador diferente do executor principal.',
     jsonb_build_object(
      'sku',r->>'codigo_material','attended',nullif(r->>'quantidade_atendida','')::numeric,
-     'replenishment_role','CONCLUIDOR','attribution','RECORDED_COMPLETER','opportunity_verified',true,
+     'replenishment_role','CONCLUIDOR','request_id',r->>'id','attribution','RECORDED_COMPLETER','opportunity_verified',true,
      'exemption_validated',private.excellence_absent_at(c.id,target,stamp),'score_effect',null
     )) on conflict do nothing;
    get diagnostics n=row_count;inserted:=inserted+n;
   end if;
  end if;
+ if source='wms_replenishment_participation_events' and r->>'event_type'='REQUESTED' then continue;end if;
+ target:=case source when 'operacao_tarefas' then r->>'atribuido_para' -- assignment evidence, never proof of execution
+ when 'wms_replenishment_requests' then replenishment_fact->>'actor'
+ when 'wms_replenishment_participation_events' then r->>'actor_id'
+ when 'wms_transfer_events' then r->>'user_id'
+ else null end;
+ if target is null or not private.excellence_user(p_warehouse,target) or not private.excellence_cycle_member(c.id,target) then continue;end if;
+ stamp:=coalesce(r->>'data_conclusao',r->>'finished_at',r->>'event_at',r->>'created_at',r->>'returned_to_queue_at',r->>'claimed_at')::timestamptz;
+ insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
+ values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',case when source='wms_replenishment_participation_events' then
+   case r->>'event_type' when 'ATTENDED' then 'REPLENISHMENT_ATTENDED' when 'NO_STOCK' then 'REPLENISHMENT_NO_STOCK' when 'COMPLETED' then 'REPLENISHMENT_COMPLETION_RECORDED' when 'RETURNED' then 'REPLENISHMENT_RETURNED_TO_QUEUE' else 'REPLENISHMENT_PARTICIPATION_RECORDED' end
+   else coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED') end,stamp,case when source='wms_replenishment_participation_events' and r->>'event_type' in ('ATTENDED','COMPLETED') then 'POSITIVE' else coalesce(replenishment_fact->>'direction','NEUTRAL') end,case when source='wms_replenishment_participation_events' then 'Reposição: participação individual registrada pelo WMS.' when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object(
+ 'sku',coalesce(r->>'sku',r->>'codigo_material',r->'metadata'->>'sku'),'quantity',coalesce(r->'quantity',r->'quantidade_atendida',r->'quantity_delta'),
+ 'attribution',case when source='wms_transfer_events' then 'EVENT_ACTOR' when source='wms_replenishment_participation_events' then 'RECORDED_PARTICIPANT' when replenishment_fact is not null then 'RECORDED_RESPONSIBLE' else 'RESPONSIBILITY_NOT_EXECUTION' end,
+ 'score_effect',null,
+ 'exemption_validated',private.excellence_absent_at(c.id,target,stamp),
+ 'task_fact',case when source='operacao_tarefas' then jsonb_build_object(
+   'executorVerified',(r->>'status'='CONCLUIDA' and nullif(r->>'data_inicio','') is not null and nullif(r->>'data_conclusao','') is not null),
+   'responsibilityVerified',r->>'atribuido_para'=target,
+   'status',r->>'status','dueAt',r->>'prazo_sla','completedAt',r->>'data_conclusao',
+   'complexity',r->'resultado_execucao'->>'excellence_complexity','complexityDefinedBeforeStart',false,
+   'deliveryValidated',r->>'status'='CONCLUIDA','exemptionValidated',private.excellence_absent_at(c.id,target,stamp)
+  ) else null end,
+ 'replenishment_role',case when source='wms_replenishment_participation_events' then
+   case r->>'event_type' when 'ATTENDED' then 'EXECUTOR' when 'NO_STOCK' then 'EXECUTOR' when 'COMPLETED' then 'CONCLUIDOR' when 'RETURNED' then 'EXECUTOR' else null end
+   else null end,
+ 'request_id',case when source='wms_replenishment_participation_events' then r->>'request_id' when source='wms_replenishment_requests' then r->>'id' else null end,
+ 'opportunity_verified',case when source='wms_replenishment_participation_events' then r->>'event_type' in ('ATTENDED','COMPLETED') else null end,
+ 'quantity_delta',case when source='wms_replenishment_participation_events' then r->'quantity_delta' else null end
+ )||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
+ get diagnostics n=row_count;inserted:=inserted+n;
  end loop;end loop;
  return jsonb_build_object('processed',not has_more,'has_more',has_more,'cursors',cursors,'inserted',inserted,'limitations',jsonb_build_array(
  'Tarefas derivadas de Reposição/Transferência são ignoradas para evitar dupla evidência.',
