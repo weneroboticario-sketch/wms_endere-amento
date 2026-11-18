@@ -294,7 +294,7 @@ language plpgsql
 security definer
 set search_path=''
 as $$
-declare template public.wms_excellence_task_templates;addresses text[];week_start date;count_all integer;count_distinct integer;count_valid integer;
+declare template public.wms_excellence_task_templates;addresses text[];audit_week_start date;count_all integer;count_distinct integer;count_valid integer;
 begin
   if new.referencia_tipo<>'EXCELLENCE_STANDARD'
      or new.status not in ('AGUARDANDO_VALIDACAO','CONCLUIDA')
@@ -324,10 +324,10 @@ begin
     if count_valid<>7 then
       raise exception 'Um ou mais endereços informados não existem no estoque atual.';
     end if;
-    week_start:=date_trunc('week',coalesce(new.data_conclusao,now()) at time zone 'America/Cuiaba')::date;
+    audit_week_start:=date_trunc('week',coalesce(new.data_conclusao,now()) at time zone 'America/Cuiaba')::date;
     if exists(
       select 1 from public.wms_excellence_address_audit_items x
-      where x.warehouse_code=new.estoque_id and x.week_start=week_start and x.address_code=any(addresses) and x.task_id<>new.id
+      where x.warehouse_code=new.estoque_id and x.week_start=audit_week_start and x.address_code=any(addresses) and x.task_id<>new.id
     ) then raise exception 'Um ou mais endereços já foram conferidos nesta semana.';end if;
   end if;
   return new;
@@ -345,7 +345,7 @@ language plpgsql
 security definer
 set search_path=''
 as $$
-declare template public.wms_excellence_task_templates;cycle public.wms_excellence_cycles;validator text;week_start date;criterion text;verification jsonb;
+declare template public.wms_excellence_task_templates;cycle public.wms_excellence_cycles;validator text;audit_week_start date;criterion text;verification jsonb;
 begin
   if new.referencia_tipo<>'EXCELLENCE_STANDARD' then return new;end if;
   select * into template from public.wms_excellence_task_templates
@@ -355,9 +355,9 @@ begin
 
   if new.status in ('AGUARDANDO_VALIDACAO','CONCLUIDA') and old.status not in ('AGUARDANDO_VALIDACAO','CONCLUIDA')
      and template.code='CONFERENCIA_7_ENDERECOS' then
-    week_start:=date_trunc('week',coalesce(new.data_conclusao,now()) at time zone 'America/Cuiaba')::date;
+    audit_week_start:=date_trunc('week',coalesce(new.data_conclusao,now()) at time zone 'America/Cuiaba')::date;
     insert into public.wms_excellence_address_audit_items(warehouse_code,task_id,actor_id,address_code,week_start)
-    select new.estoque_id,new.id,new.atribuido_para,upper(trim(value)),week_start
+    select new.estoque_id,new.id,new.atribuido_para,upper(trim(value)),audit_week_start
     from jsonb_array_elements_text(new.resultado_execucao->'enderecos_conferidos')
     on conflict do nothing;
   end if;
