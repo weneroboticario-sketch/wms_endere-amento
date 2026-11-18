@@ -213,7 +213,10 @@ begin
   if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
   return coalesce((select jsonb_agg(jsonb_build_object(
    'id',u.id,'name',u.name,'role',u.role,
-   'selected',exists(select 1 from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id and m.eligible)
+   'member',exists(select 1 from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id),
+   'selected',exists(select 1 from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id and m.eligible),
+   'eligible',coalesce((select m.eligible from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id),false),
+   'eligibility_reason',(select m.eligibility_reason from public.wms_excellence_cycle_members m where m.cycle_id=nullif(p_data->>'cycle_id','')::uuid and m.user_id=u.id)
   ))
    from public.wms_users u where private.excellence_user(p_warehouse,u.id)),'[]');
  end if;
