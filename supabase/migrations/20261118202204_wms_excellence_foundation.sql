@@ -1,6 +1,7 @@
 -- Logística de Excelência foundation + immutable operational attribution required for fair scoring.
 begin;
 alter table public.wms_replenishment_requests
+ add column if not exists created_at timestamptz default now(),
  add column if not exists solicitado_por_nome text,
  add column if not exists last_attended_by_id text,
  add column if not exists last_attended_by_name text,
