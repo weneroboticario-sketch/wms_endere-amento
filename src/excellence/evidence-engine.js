@@ -10,7 +10,7 @@ export function replenishmentExecutionScore(evidence, maximum) {
  const included=[],excluded=[];let numerator=0;
  for(const row of latest.values()) {
   const role=row.metadata?.replenishment_role||'EXECUTOR';
-  const id=row.source_table+':'+row.source_id+':'+role;
+  const id=row.source_table+':'+row.source_id;
   if(row.metadata?.exemption_validated===true) {excluded.push({id,role,reason:'AUSENCIA_OU_IMPEDIMENTO_VALIDADO'});continue;}
   if(role==='EXECUTOR' && ['REPLENISHMENT_NO_STOCK','REPLENISHMENT_RETURNED_TO_QUEUE'].includes(row.event_type)) {excluded.push({id,role,reason:'IMPEDIMENTO_OU_AUSENCIA_VALIDADA'});continue;}
   if(row.metadata.opportunity_verified!==true) {excluded.push({id,role,reason:'AUTORIA_OU_RESPONSABILIDADE_NAO_COMPROVADA'});continue;}
