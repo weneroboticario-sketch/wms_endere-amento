@@ -46,6 +46,77 @@ create trigger stamp_replenishment_actor_attribution
 before insert or update on public.wms_replenishment_requests
 for each row execute function public.stamp_wms_replenishment_actor_attribution();
 revoke all on function public.stamp_wms_replenishment_actor_attribution() from public,anon,authenticated;
+
+create table if not exists public.wms_replenishment_participation_events (
+ id bigint generated always as identity primary key,
+ warehouse_code text not null,
+ request_id text not null references public.wms_replenishment_requests(id),
+ event_type text not null check(event_type in ('REQUESTED','ATTENDED','NO_STOCK','COMPLETED','RETURNED')),
+ actor_id text not null references public.wms_users(id),
+ actor_name_snapshot text,
+ quantity_delta numeric,
+ event_at timestamptz not null default now(),
+ metadata jsonb not null default '{}'
+);
+alter table public.wms_replenishment_participation_events enable row level security;
+revoke all on table public.wms_replenishment_participation_events from public,anon,authenticated;
+create index if not exists idx_replenishment_participation_request
+ on public.wms_replenishment_participation_events(request_id,event_at,id);
+create index if not exists idx_replenishment_participation_actor_period
+ on public.wms_replenishment_participation_events(warehouse_code,actor_id,event_at,id);
+
+create or replace function private.record_wms_replenishment_participation()
+returns trigger language plpgsql security definer set search_path='' as $participation$
+declare actor text; actor_name text; delta numeric;
+begin
+ if tg_op='INSERT' then
+  actor:=nullif(new.solicitado_por_id,'');
+  if actor is not null then
+   actor_name:=coalesce(nullif(new.solicitado_por_nome,''),private.excellence_actor_name(actor),actor);
+   insert into public.wms_replenishment_participation_events(warehouse_code,request_id,event_type,actor_id,actor_name_snapshot,event_at,metadata)
+   values(new.warehouse_code,new.id,'REQUESTED',actor,actor_name,coalesce(new.created_at,now()),
+    jsonb_build_object('sku',new.codigo_material,'requested',new.quantidade_solicitada));
+  end if;
+  return new;
+ end if;
+
+ delta:=coalesce(new.quantidade_atendida,0)-coalesce(old.quantidade_atendida,0);
+ if delta>0 and nullif(new.last_attended_by_id,'') is not null then
+  actor:=new.last_attended_by_id;
+  actor_name:=coalesce(nullif(new.last_attended_by_name,''),private.excellence_actor_name(actor),actor);
+  insert into public.wms_replenishment_participation_events(warehouse_code,request_id,event_type,actor_id,actor_name_snapshot,quantity_delta,event_at,metadata)
+  values(new.warehouse_code,new.id,'ATTENDED',actor,actor_name,delta,now(),
+   jsonb_build_object('sku',new.codigo_material,'requested',new.quantidade_solicitada,'attended_total',new.quantidade_atendida));
+ end if;
+ if new.status='SEM_ESTOQUE' and old.status is distinct from new.status and nullif(new.no_stock_by_id,'') is not null then
+  actor:=new.no_stock_by_id;
+  actor_name:=coalesce(nullif(new.no_stock_by_name,''),private.excellence_actor_name(actor),actor);
+  insert into public.wms_replenishment_participation_events(warehouse_code,request_id,event_type,actor_id,actor_name_snapshot,event_at,metadata)
+  values(new.warehouse_code,new.id,'NO_STOCK',actor,actor_name,now(),jsonb_build_object('sku',new.codigo_material));
+ end if;
+ if new.status in ('CONCLUIDO','ENTREGUE_NA_LOJA') and old.status is distinct from new.status and nullif(new.completed_by_id,'') is not null then
+  actor:=new.completed_by_id;
+  actor_name:=coalesce(nullif(new.completed_by_name,''),private.excellence_actor_name(actor),actor);
+  insert into public.wms_replenishment_participation_events(warehouse_code,request_id,event_type,actor_id,actor_name_snapshot,event_at,metadata)
+  values(new.warehouse_code,new.id,'COMPLETED',actor,actor_name,coalesce(new.finished_at,now()),
+   jsonb_build_object('sku',new.codigo_material,'attended_total',new.quantidade_atendida));
+ end if;
+ if nullif(new.returned_to_queue_at::text,'') is not null
+    and new.returned_to_queue_at is distinct from old.returned_to_queue_at
+    and nullif(new.returned_to_queue_by_id,'') is not null then
+  actor:=new.returned_to_queue_by_id;
+  actor_name:=coalesce(nullif(new.returned_to_queue_by_name,''),private.excellence_actor_name(actor),actor);
+  insert into public.wms_replenishment_participation_events(warehouse_code,request_id,event_type,actor_id,actor_name_snapshot,event_at,metadata)
+  values(new.warehouse_code,new.id,'RETURNED',actor,actor_name,new.returned_to_queue_at,jsonb_build_object('sku',new.codigo_material));
+ end if;
+ return new;
+end $participation$;
+revoke all on function private.record_wms_replenishment_participation() from public,anon,authenticated;
+drop trigger if exists record_replenishment_participation on public.wms_replenishment_requests;
+create trigger record_replenishment_participation
+after insert or update on public.wms_replenishment_requests
+for each row execute function private.record_wms_replenishment_participation();
+
 create table public.wms_excellence_criteria_versions (
  id uuid primary key default gen_random_uuid(), warehouse_code text not null,
  operational_weight numeric not null default 55,leadership_weight numeric not null default 45,check(operational_weight+leadership_weight=100),version integer not null check(version>0), config jsonb not null check(jsonb_typeof(config)='object'),
@@ -399,10 +470,10 @@ begin
  period_start:=c.start_date::timestamp at time zone zone; period_end:=(c.end_date+1)::timestamp at time zone zone;
  -- Bounded backfill: cycle period only, explicit operator action, no triggers in operational tables.
  if c.end_date-c.start_date>62 then raise exception 'Processar ciclos de até 63 dias.';end if;
- foreach source in array array['operacao_tarefas','wms_replenishment_requests','wms_transfer_events'] loop
+ foreach source in array array['operacao_tarefas','wms_replenishment_requests','wms_replenishment_participation_events','wms_transfer_events'] loop
  if pg_catalog.to_regclass('public.'||source) is null then continue;end if;
  seen:=0;
- date_column:=case when source='operacao_tarefas' then 'data_conclusao' when source='wms_replenishment_requests' then 'finished_at' else 'created_at' end;
+ date_column:=case when source='operacao_tarefas' then 'data_conclusao' when source='wms_replenishment_requests' then 'finished_at' when source='wms_replenishment_participation_events' then 'event_at' else 'created_at' end;
  after_at:=nullif(p_data->'cursors'->source->>'at','')::timestamptz;
  after_id:=coalesce(p_data->'cursors'->source->>'id','');
  if after_at is not null and (after_at<period_start or after_at>=period_end) then raise exception 'Cursor fora do ciclo.';end if;
@@ -418,13 +489,16 @@ begin
  if source='operacao_tarefas' and upper(coalesce(r->>'referencia_tipo','')) in ('REPOSICAO','TRANSFERENCIA') then continue;end if;
  replenishment_fact:=case when source='wms_replenishment_requests' then private.excellence_replenishment_fact(r) else null end;
  target:=case source when 'operacao_tarefas' then r->>'atribuido_para' -- assignment evidence, never proof of execution
- when 'wms_replenishment_requests' then replenishment_fact->>'actor' -- responsibility only
+ when 'wms_replenishment_requests' then replenishment_fact->>'actor'
+ when 'wms_replenishment_participation_events' then r->>'actor_id'
  when 'wms_transfer_events' then r->>'user_id'
  else null end;
  if target is null or not private.excellence_user(p_warehouse,target) or not private.excellence_cycle_member(c.id,target) then continue;end if;
- stamp:=coalesce(r->>'data_conclusao',r->>'finished_at',r->>'created_at',r->>'returned_to_queue_at',r->>'claimed_at')::timestamptz;
+ stamp:=coalesce(r->>'data_conclusao',r->>'finished_at',r->>'event_at',r->>'created_at',r->>'returned_to_queue_at',r->>'claimed_at')::timestamptz;
  insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
- values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED'),stamp,coalesce(replenishment_fact->>'direction','NEUTRAL'),case when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object(
+ values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',case when source='wms_replenishment_participation_events' then
+   case r->>'event_type' when 'ATTENDED' then 'REPLENISHMENT_ATTENDED' when 'NO_STOCK' then 'REPLENISHMENT_NO_STOCK' when 'COMPLETED' then 'REPLENISHMENT_COMPLETION_RECORDED' when 'RETURNED' then 'REPLENISHMENT_RETURNED_TO_QUEUE' else 'REPLENISHMENT_PARTICIPATION_RECORDED' end
+   else coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED') end,stamp,case when source='wms_replenishment_participation_events' and r->>'event_type' in ('ATTENDED','COMPLETED') then 'POSITIVE' else coalesce(replenishment_fact->>'direction','NEUTRAL') end,case when source='wms_replenishment_participation_events' then 'Reposição: participação individual registrada pelo WMS.' when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object(
  'sku',coalesce(r->>'sku',r->>'codigo_material'),'quantity',coalesce(r->'quantity',r->'quantidade_atendida'),
  'attribution',case when source='wms_transfer_events' then 'EVENT_ACTOR' when replenishment_fact is not null then 'RECORDED_RESPONSIBLE' else 'RESPONSIBILITY_NOT_EXECUTION' end,
  'score_effect',null,
@@ -435,7 +509,12 @@ begin
    'status',r->>'status','dueAt',r->>'prazo_sla','completedAt',r->>'data_conclusao',
    'complexity',r->'resultado_execucao'->>'excellence_complexity','complexityDefinedBeforeStart',false,
    'deliveryValidated',r->>'status'='CONCLUIDA','exemptionValidated',private.excellence_absent_at(c.id,target,stamp)
-  ) else null end
+  ) else null end,
+ 'replenishment_role',case when source='wms_replenishment_participation_events' then
+   case r->>'event_type' when 'ATTENDED' then 'EXECUTOR' when 'NO_STOCK' then 'EXECUTOR' when 'COMPLETED' then 'CONCLUIDOR' else null end
+   else null end,
+ 'opportunity_verified',case when source='wms_replenishment_participation_events' then r->>'event_type' in ('ATTENDED','COMPLETED') else null end,
+ 'quantity_delta',case when source='wms_replenishment_participation_events' then r->'quantity_delta' else null end
  )||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
  get diagnostics n=row_count;inserted:=inserted+n;
  if source='wms_replenishment_requests' then
