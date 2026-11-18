@@ -29,6 +29,24 @@ create table public.wms_excellence_cycles (
  foreign key(criteria_version_id,warehouse_code) references public.wms_excellence_criteria_versions(id,warehouse_code),
  unique(id,warehouse_code)
 );
+create table public.wms_excellence_cycle_members (
+ id uuid primary key default gen_random_uuid(),cycle_id uuid not null,warehouse_code text not null,
+ user_id text not null references public.wms_users(id),role_snapshot text,function_snapshot text,
+ eligible boolean not null default true,included_from date,included_to date,
+ created_by_id text not null references public.wms_users(id),created_at timestamptz not null default now(),
+ foreign key(cycle_id,warehouse_code) references public.wms_excellence_cycles(id,warehouse_code),
+ unique(cycle_id,user_id),check(included_to is null or included_from is null or included_to>=included_from)
+);
+create table public.wms_excellence_absences (
+ id uuid primary key default gen_random_uuid(),cycle_id uuid not null,warehouse_code text not null,
+ user_id text not null references public.wms_users(id),
+ absence_type text not null check(absence_type in ('FERIAS','FOLGA','ATESTADO','AFASTAMENTO','TREINAMENTO','OUTRA_ATIVIDADE')),
+ start_date date not null,end_date date not null check(end_date>=start_date),
+ status text not null default 'VALIDATED' check(status in ('VALIDATED','CANCELLED')),
+ justification text not null check(length(trim(justification)) between 1 and 1000),
+ created_by_id text not null references public.wms_users(id),created_at timestamptz not null default now(),
+ foreign key(cycle_id,warehouse_code) references public.wms_excellence_cycles(id,warehouse_code)
+);
 create table public.wms_excellence_evidence (
  id uuid primary key default gen_random_uuid(),cycle_id uuid not null,warehouse_code text not null,
  user_id text not null references public.wms_users(id),user_name_snapshot text,created_by_id text references public.wms_users(id),source_type text not null default 'WMS',weight numeric,score_effect numeric,criterion_id text not null,
@@ -83,6 +101,9 @@ create table public.wms_excellence_audit_log (
 );
 create index excellence_evidence_person_period on public.wms_excellence_evidence(cycle_id,user_id,evidence_date desc,id);
 create index excellence_cycles_unit_period on public.wms_excellence_cycles(warehouse_code,start_date,end_date);
+create index excellence_cycle_members_cycle_user on public.wms_excellence_cycle_members(cycle_id,user_id) where eligible;
+create index excellence_cycle_members_user on public.wms_excellence_cycle_members(user_id,cycle_id);
+create index excellence_absences_cycle_user_period on public.wms_excellence_absences(cycle_id,user_id,start_date,end_date) where status='VALIDATED';
 create index excellence_audit_unit_revision on public.wms_excellence_audit_log(warehouse_code,id desc);
 create index excellence_audit_unit_date on public.wms_excellence_audit_log(warehouse_code,created_at desc);
 
@@ -104,7 +125,7 @@ create function private.excellence_audit() returns trigger language plpgsql secu
  values(new.warehouse_code,private.current_wms_profile_id(),tg_table_name,new.id::text,tg_op,case when tg_op='UPDATE' then to_jsonb(old) else null end,to_jsonb(new));
  return new;end $$;
 do $$declare tab text;begin
- foreach tab in array array['criteria_versions','criteria','cycles','evidence','manual_scores','initiatives','assessments','calibrations','awards','audit_log'] loop
+ foreach tab in array array['criteria_versions','criteria','cycles','cycle_members','absences','evidence','manual_scores','initiatives','assessments','calibrations','awards','audit_log'] loop
  execute format('alter table public.%I enable row level security','wms_excellence_'||tab);
  execute format('revoke all on public.%I from anon,authenticated','wms_excellence_'||tab);
  execute format('grant select on public.%I to authenticated','wms_excellence_'||tab);
@@ -157,7 +178,22 @@ create function private.excellence_user(unit text,person text) returns boolean l
  select exists(select 1 from public.wms_users u where u.id=person and coalesce(u.active,true) and not coalesce(u.archived,false)
  and unit=any(string_to_array(coalesce(u.allowed_warehouse_codes,u.warehouse_code,''),',')))
 $$;
-create function private.excellence_revision(p_cycle uuid) returns text language sql stable security definer set search_path='' as $$
+create function private.excellence_cycle_member(p_cycle uuid,person text) returns boolean language sql stable security definer set search_path='' as $
+ select exists(select 1 from public.wms_excellence_cycle_members m
+  where m.cycle_id=p_cycle and m.user_id=person and m.eligible
+  and (m.included_from is null or m.included_from <= (select end_date from public.wms_excellence_cycles where id=p_cycle))
+  and (m.included_to is null or m.included_to >= (select start_date from public.wms_excellence_cycles where id=p_cycle)))
+$;
+create function private.excellence_absent_at(p_cycle uuid,person text,moment timestamptz) returns boolean language sql stable security definer set search_path='' as $
+ select exists(
+  select 1 from public.wms_excellence_absences a
+  join public.wms_excellence_cycles c on c.id=a.cycle_id
+  join public.wms_excellence_criteria_versions v on v.id=c.criteria_version_id
+  where a.cycle_id=p_cycle and a.user_id=person and a.status='VALIDATED'
+  and (moment at time zone coalesce(v.config->>'timeZone','America/Cuiaba'))::date between a.start_date and a.end_date
+ )
+$;
+create function private.excellence_revision(p_cycle uuid) returns text language sql stable security definer set search_path='' as $
  select md5(to_jsonb(c)::text||coalesce((select id::text from public.wms_excellence_audit_log where warehouse_code=c.warehouse_code order by id desc limit 1),'0'))
  from public.wms_excellence_cycles c where c.id=p_cycle
 $$;
@@ -169,6 +205,11 @@ declare actor text:=private.current_wms_profile_id();leader boolean:=private.exc
 begin
  if auth.uid() is null or actor is null or not coalesce(private.can_access_warehouse(p_warehouse),false) then raise exception 'Acesso não autorizado.' using errcode='42501';end if;
  if p_action='CYCLES' then return coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_cycles where warehouse_code=p_warehouse order by start_date desc,id limit 40)x),'[]');end if;
+ if p_action='CANDIDATES' then
+  if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id',u.id,'name',u.name,'role',u.role))
+   from public.wms_users u where private.excellence_user(p_warehouse,u.id)),'[]');
+ end if;
  if p_action='CREATE_CYCLE' then
  if coalesce(p_data->>'execution_model','REPLENISHMENT') not in ('REPLENISHMENT','TASKS') then raise exception 'Modelo de execução inválido.';end if;
  if (p_data->>'to')::date-(p_data->>'from')::date not between 0 and 62 then raise exception 'Intervalo do ciclo deve ter até 63 dias.';end if;
@@ -181,8 +222,39 @@ begin
  return result;end if;
  select * into c from public.wms_excellence_cycles where id=(p_data->>'cycle_id')::uuid and warehouse_code=p_warehouse for update;
  if not found then raise exception 'Ciclo não encontrado.';end if;
+ if p_action='SET_MEMBERS' then
+  if not admin or c.status<>'DRAFT' then raise exception 'Equipe só pode ser definida pelo administrador antes da ativação.' using errcode='42501';end if;
+  if jsonb_typeof(p_data->'member_ids') is distinct from 'array' or jsonb_array_length(p_data->'member_ids')=0 then raise exception 'Selecione ao menos um colaborador.';end if;
+  delete from public.wms_excellence_cycle_members where cycle_id=c.id;
+  insert into public.wms_excellence_cycle_members(cycle_id,warehouse_code,user_id,role_snapshot,included_from,included_to,created_by_id)
+  select c.id,p_warehouse,u.id,u.role,c.start_date,c.end_date,actor
+  from public.wms_users u
+  where private.excellence_user(p_warehouse,u.id)
+    and u.id in (select distinct jsonb_array_elements_text(p_data->'member_ids'));
+  get diagnostics n=row_count;
+  if n<>(select count(distinct value) from jsonb_array_elements_text(p_data->'member_ids')) then raise exception 'Há colaborador inválido ou fora da unidade.';end if;
+  return coalesce((select jsonb_agg(to_jsonb(m)) from public.wms_excellence_cycle_members m where m.cycle_id=c.id),'[]');
+ end if;
+ if p_action='ADD_ABSENCE' then
+  if not leader or c.status in ('CLOSED','ARCHIVED') then raise exception 'Liderança necessária para registrar elegibilidade.' using errcode='42501';end if;
+  person:=nullif(p_data->>'user_id','');
+  if person is null or not private.excellence_cycle_member(c.id,person) then raise exception 'Colaborador fora do ciclo.';end if;
+  if (p_data->>'absence_type') not in ('FERIAS','FOLGA','ATESTADO','AFASTAMENTO','TREINAMENTO','OUTRA_ATIVIDADE') then raise exception 'Tipo de ausência inválido.';end if;
+  if (p_data->>'from')::date<c.start_date or (p_data->>'to')::date>c.end_date or (p_data->>'to')::date<(p_data->>'from')::date then raise exception 'Período de ausência fora do ciclo.';end if;
+  insert into public.wms_excellence_absences(cycle_id,warehouse_code,user_id,absence_type,start_date,end_date,justification,created_by_id)
+  values(c.id,p_warehouse,person,p_data->>'absence_type',(p_data->>'from')::date,(p_data->>'to')::date,p_data->>'justification',actor)
+  returning to_jsonb(wms_excellence_absences.*) into result;return result;
+ end if;
+ if p_action='REMOVE_ABSENCE' then
+  if not leader or c.status in ('CLOSED','ARCHIVED') then raise exception 'Liderança necessária.' using errcode='42501';end if;
+  update public.wms_excellence_absences set status='CANCELLED'
+   where id=(p_data->>'absence_id')::uuid and cycle_id=c.id and status='VALIDATED'
+   returning to_jsonb(wms_excellence_absences.*) into result;
+  if result is null then raise exception 'Ausência não encontrada.';end if;return result;
+ end if;
  person:=coalesce(nullif(p_data->>'user_id',''),actor);
  if not private.excellence_read(p_warehouse,person) or not private.excellence_user(p_warehouse,person) then raise exception 'Colaborador fora do acesso.' using errcode='42501';end if;
+ if (not leader or person<>actor) and not private.excellence_cycle_member(c.id,person) then raise exception 'Colaborador fora do ciclo.' using errcode='42501';end if;
  if p_action='ORIGIN' then
  select * into origin_evidence from public.wms_excellence_evidence where id=(p_data->>'evidence_id')::uuid and cycle_id=c.id and user_id=person;
  if not found or origin_evidence.source_table<>'wms_replenishment_requests' then raise exception 'Origem não disponível para esta evidência.';end if;
@@ -204,7 +276,8 @@ begin
  'evidence',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_evidence where cycle_id=c.id and user_id=person order by evidence_date desc,id desc limit 100)x),'[]'),
  'evidenceTruncated',(select count(*)>100 from public.wms_excellence_evidence where cycle_id=c.id and user_id=person),'scores',coalesce((select jsonb_agg(to_jsonb(x)) from public.wms_excellence_manual_scores x where cycle_id=c.id and user_id=person),'[]'),
  'initiatives',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_initiatives where cycle_id=c.id and user_id=person order by created_at desc limit 100)x),'[]'),
- 'calibrations',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_calibrations where cycle_id=c.id and user_id=person order by created_at desc limit 100)x),'[]'));
+ 'calibrations',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_calibrations where cycle_id=c.id and user_id=person order by created_at desc limit 100)x),'[]'),
+ 'absences',coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_absences where cycle_id=c.id and user_id=person and status='VALIDATED' order by start_date,id)x),'[]'));
  end if;
  if p_action='TEAM' then
  if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
@@ -215,10 +288,18 @@ begin
  rating as(select user_id,jsonb_agg(to_jsonb(m)) scores from public.wms_excellence_manual_scores m where cycle_id=c.id group by user_id)
  select jsonb_agg(jsonb_build_object('user_id',u.id,'name',u.name,'evidence',coalesce(proof.evidence,'[]'::jsonb),'scores',coalesce(rating.scores,'[]'::jsonb),
  'snapshot',(select a.result from public.wms_excellence_assessments a where a.cycle_id=c.id and a.user_id=u.id)))
- from public.wms_users u left join proof on proof.user_id=u.id left join rating on rating.user_id=u.id where private.excellence_user(p_warehouse,u.id)),'[]'::jsonb));end if;
+ from public.wms_excellence_cycle_members cm
+ join public.wms_users u on u.id=cm.user_id
+ left join proof on proof.user_id=u.id left join rating on rating.user_id=u.id
+ where cm.cycle_id=c.id and cm.eligible and private.excellence_user(p_warehouse,u.id)),'[]'::jsonb));end if;
  if p_action='DIRECTORY' then
- if not leader then return jsonb_build_array(jsonb_build_object('id',actor,'name',(select name from public.wms_users where id=actor)));end if;
- return coalesce((select jsonb_agg(jsonb_build_object('id',id,'name',name)) from public.wms_users where private.excellence_user(p_warehouse,id)),'[]');end if;
+ if not leader then
+  if not private.excellence_cycle_member(c.id,actor) then return '[]'::jsonb;end if;
+  return jsonb_build_array(jsonb_build_object('id',actor,'name',(select name from public.wms_users where id=actor)));
+ end if;
+ return coalesce((select jsonb_agg(jsonb_build_object('id',u.id,'name',u.name))
+  from public.wms_excellence_cycle_members m join public.wms_users u on u.id=m.user_id
+  where m.cycle_id=c.id and m.eligible and private.excellence_user(p_warehouse,u.id)),'[]');end if;
  if c.status in ('CLOSED','ARCHIVED') then raise exception 'Ciclo fechado é imutável.';end if;
  if p_action='INITIATIVE' then
  if person<>actor then raise exception 'Registre a própria iniciativa.';end if;
@@ -227,6 +308,7 @@ begin
  if not leader then raise exception 'Liderança necessária.' using errcode='42501';end if;
  if p_action='ENABLE' then
  if not admin then raise exception 'Administrador necessário.';end if;
+ if not exists(select 1 from public.wms_excellence_cycle_members where cycle_id=c.id and eligible) then raise exception 'Defina a equipe do ciclo antes de ativar.';end if;
  update public.wms_excellence_cycles set enabled=true,status='ACTIVE' where id=c.id and status='DRAFT';return jsonb_build_object('enabled',true);end if;
  if not c.enabled then raise exception 'Módulo desativado neste ciclo.';end if;
  if p_action='SYNC' then
@@ -234,7 +316,7 @@ begin
  period_start:=c.start_date::timestamp at time zone zone; period_end:=(c.end_date+1)::timestamp at time zone zone;
  -- Bounded backfill: cycle period only, explicit operator action, no triggers in operational tables.
  if c.end_date-c.start_date>62 then raise exception 'Processar ciclos de até 63 dias.';end if;
- foreach source in array array['operacao_tarefas','wms_replenishment_requests','wms_transfer_events','wms_history'] loop
+ foreach source in array array['operacao_tarefas','wms_replenishment_requests','wms_transfer_events'] loop
  if pg_catalog.to_regclass('public.'||source) is null then continue;end if;
  seen:=0;
  date_column:=case when source='operacao_tarefas' then 'data_conclusao' when source='wms_replenishment_requests' then 'finished_at' else 'created_at' end;
@@ -250,18 +332,36 @@ begin
  seen:=seen+1;
  if seen>500 then has_more:=true;exit;end if;
  cursors:=jsonb_set(cursors,array[source],jsonb_build_object('at',coalesce(r->>date_column,r->>'returned_to_queue_at',r->>'claimed_at'),'id',r->>'id'));
+ if source='operacao_tarefas' and upper(coalesce(r->>'referencia_tipo','')) in ('REPOSICAO','TRANSFERENCIA') then continue;end if;
  replenishment_fact:=case when source='wms_replenishment_requests' then private.excellence_replenishment_fact(r) else null end;
  target:=case source when 'operacao_tarefas' then r->>'atribuido_para' -- assignment evidence, never proof of execution
  when 'wms_replenishment_requests' then replenishment_fact->>'actor' -- responsibility only
  when 'wms_transfer_events' then r->>'user_id'
  else null end;
- if target is null or not private.excellence_user(p_warehouse,target) then continue;end if;
+ if target is null or not private.excellence_user(p_warehouse,target) or not private.excellence_cycle_member(c.id,target) then continue;end if;
  stamp:=coalesce(r->>'data_conclusao',r->>'finished_at',r->>'created_at',r->>'returned_to_queue_at',r->>'claimed_at')::timestamptz;
  insert into public.wms_excellence_evidence(cycle_id,warehouse_code,user_id,criterion_id,source_table,source_id,event_type,evidence_date,direction,description,metadata)
- values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED'),stamp,coalesce(replenishment_fact->>'direction','NEUTRAL'),case when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object('sku',r->>'sku','quantity',r->'quantity','attribution',case when source='wms_transfer_events' then 'EVENT_ACTOR' else 'RESPONSIBILITY_NOT_EXECUTION' end,'score_effect',null)||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
+ values(c.id,p_warehouse,target,'EXECUCAO',source,r->>'id',coalesce(replenishment_fact->>'event',r->>'event_type','OPERATION_RECORDED'),stamp,coalesce(replenishment_fact->>'direction','NEUTRAL'),case when replenishment_fact is not null then 'Reposição: atendimento registrado no WMS.' else 'Evento operacional registrado; contribuição sujeita à validação.' end,jsonb_build_object(
+ 'sku',coalesce(r->>'sku',r->>'codigo_material'),'quantity',coalesce(r->'quantity',r->'quantidade_atendida'),
+ 'attribution',case when source='wms_transfer_events' then 'EVENT_ACTOR' when replenishment_fact is not null then 'RECORDED_RESPONSIBLE' else 'RESPONSIBILITY_NOT_EXECUTION' end,
+ 'score_effect',null,
+ 'exemption_validated',private.excellence_absent_at(c.id,target,stamp),
+ 'task_fact',case when source='operacao_tarefas' then jsonb_build_object(
+   'executorVerified',(r->>'status'='CONCLUIDA' and nullif(r->>'data_inicio','') is not null and nullif(r->>'data_conclusao','') is not null),
+   'responsibilityVerified',r->>'atribuido_para'=target,
+   'status',r->>'status','dueAt',r->>'prazo_sla','completedAt',r->>'data_conclusao',
+   'complexity',r->'resultado_execucao'->>'excellence_complexity','complexityDefinedBeforeStart',false,
+   'deliveryValidated',r->>'status'='CONCLUIDA','exemptionValidated',private.excellence_absent_at(c.id,target,stamp)
+  ) else null end
+ )||coalesce(replenishment_fact,'{}'::jsonb)) on conflict do nothing;
  get diagnostics n=row_count;inserted:=inserted+n;
  end loop;end loop;
- return jsonb_build_object('processed',not has_more,'has_more',has_more,'cursors',cursors,'inserted',inserted,'limitations',jsonb_build_array('Tarefas: atribuição não comprova execução.','Reposição: claim mutável requer histórico autenticado.','Endereçamento: nome não estabelece identidade.','Processamento em páginas de até 500 registros por fonte, com cursor por data e ID.'));end if;
+ return jsonb_build_object('processed',not has_more,'has_more',has_more,'cursors',cursors,'inserted',inserted,'limitations',jsonb_build_array(
+ 'Tarefas derivadas de Reposição/Transferência são ignoradas para evitar dupla evidência.',
+ 'Tarefas independentes só pontuam automaticamente quando complexidade e prazo estiverem comprovados antes do início.',
+ 'Reposição usa responsável/claim autenticado; ausência validada neutraliza a oportunidade.',
+ 'Endereçamento sem ID confiável permanece fora da pontuação individual.',
+ 'Processamento em páginas de até 500 registros por fonte, com cursor por data e ID.'));end if;
  if p_action='VALIDATE_INITIATIVE' then
  if person=actor then raise exception 'Autovalidação não permitida.';end if;
  if p_data->>'decision' not in ('VALIDATED','REJECTED') or nullif(trim(p_data->>'justification'),'') is null then raise exception 'Decisão e justificativa obrigatórias.';end if;
@@ -277,8 +377,19 @@ begin
  if p_action='REVIEW_EVIDENCE' then
  if person=actor then raise exception 'Autovalidação não permitida.';end if;
  if length(trim(coalesce(p_data->>'justification','')))=0 then raise exception 'Justificativa obrigatória.';end if;
- if (p_data->>'score')::numeric not between 0 and 100 then raise exception 'Nota inválida.';end if;
- update public.wms_excellence_evidence set metadata=metadata||jsonb_build_object('reviewed_by',actor,'reviewed_at',now(),'operational_rating',(p_data->>'score')::numeric,'review_justification',p_data->>'justification') where id=(p_data->>'evidence_id')::uuid and cycle_id=c.id and user_id=person returning to_jsonb(wms_excellence_evidence.*) into result;
+ criterion:=p_data->>'criterion_id';
+ if criterion not in ('QUALIDADE','ORGANIZACAO') then raise exception 'Critério de verificação inválido.';end if;
+ if p_data->>'result' not in ('CONFORME','NAO_CONFORME') then raise exception 'Resultado da verificação inválido.';end if;
+ update public.wms_excellence_evidence
+ set metadata=metadata||jsonb_build_object(
+  'reviewed_by',actor,'reviewed_at',now(),'review_justification',p_data->>'justification',
+  'verification_fact',jsonb_build_object(
+    'criterion',criterion,'userId',person,'auditorId',actor,'independentlyValidated',true,
+    'responsibilityVerified',true,'result',p_data->>'result','at',evidence_date
+  )
+ )
+ where id=(p_data->>'evidence_id')::uuid and cycle_id=c.id and user_id=person
+ returning to_jsonb(wms_excellence_evidence.*) into result;
  if result is null then raise exception 'Evidência não encontrada.';end if;
  return result;end if;
  if p_action='MANUAL_SCORE' then
@@ -314,14 +425,14 @@ begin
  if c.status<>'CALIBRATION' or not c.enabled then raise exception 'Ciclo precisa estar em calibração.';end if;
  if private.excellence_revision(c.id) is distinct from p_revision then raise exception 'Dados alterados: recalcule e revise antes de fechar.' using errcode='40001';end if;
  if jsonb_typeof(p_assessments) is distinct from 'array' or jsonb_array_length(p_assessments)=0 then raise exception 'Avaliações obrigatórias.';end if;
- select count(*) into expected from public.wms_users where private.excellence_user(c.warehouse_code,id);
+ select count(*) into expected from public.wms_excellence_cycle_members where cycle_id=c.id and eligible;
  select count(distinct value->>'user_id') into supplied from jsonb_array_elements(p_assessments);
  if supplied<>expected or supplied<>jsonb_array_length(p_assessments) then raise exception 'Todos os colaboradores elegíveis precisam de avaliação completa, sem duplicação.';end if;
- foreach person in array array(select id from public.wms_users where private.excellence_user(c.warehouse_code,id)) loop
+ foreach person in array array(select user_id from public.wms_excellence_cycle_members where cycle_id=c.id and eligible) loop
  if not exists(select 1 from jsonb_array_elements(p_assessments) x where x->>'user_id'=person) then raise exception 'Colaborador sem avaliação.';end if;
  end loop;
  for item in select value from jsonb_array_elements(p_assessments) loop
- if not private.excellence_user(c.warehouse_code,item->>'user_id') or item->'calculation'->>'version' is distinct from c.criteria_version_id::text
+ if not private.excellence_user(c.warehouse_code,item->>'user_id') or not private.excellence_cycle_member(c.id,item->>'user_id') or item->'calculation'->>'version' is distinct from c.criteria_version_id::text
  or item->'calculation'->>'complete' is distinct from 'true' or item->'calculation'->>'pendingPoints' is distinct from '0'
  or (item->'calculation'->>'assessedPoints')::numeric not between 0 and 100
  or item->'calculation'->>'assessedPoints' is null or item->'calculation'->>'preliminary' is distinct from 'false' or (item->'calculation'->>'definitiveScore')::numeric is distinct from (item->'calculation'->>'assessedPoints')::numeric then raise exception 'Avaliação incompleta ou versão inválida.';end if;
