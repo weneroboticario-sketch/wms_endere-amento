@@ -7,15 +7,16 @@ test('closure denies browser writes and incomplete inputs; trusted snapshots are
  try {
   await f.asActor('admin');
   await assert.rejects(prepareCycleClosure(f.rpc,f.cycle.id),/insuficientes/);
-  await assert.rejects(f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4)',[f.cycle.id,'00000000-0000-4000-8000-000000000003','x','[]']),/Sessão administrativa/);
-  await f.db.exec("reset role;update wms_excellence_cycles set status='CALIBRATION'");
+  await assert.rejects(f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4,$5)',[f.cycle.id,'00000000-0000-4000-8000-000000000003','x','[]','test-close-secret']),/Sessão administrativa/);
+  await f.db.exec("reset role;update wms_excellence_cycles set status='CALIBRATION';insert into private.wms_excellence_runtime_config(key,secret_hash) values('cycle_close_secret',md5('test-close-secret')) on conflict(key) do update set secret_hash=excluded.secret_hash");
   // Test-only trusted worker output. This verifies the storage boundary, not the scoring engine.
   const people = (await f.db.query("select user_id id from wms_excellence_cycle_members where cycle_id=$1 and eligible",[f.cycle.id])).rows;
   const revision = (await f.db.query('select private.excellence_revision($1) r',[f.cycle.id])).rows[0].r;
   const configured = (await f.db.query('select config from wms_excellence_criteria_versions')).rows[0].config.criteria;
   const snapshots = people.map(person=>({user_id:person.id,calculation:{version:f.cycle.criteria_version_id,complete:true,preliminary:false,definitiveScore:90,pendingPoints:0,assessedPoints:90,criteria:configured.map(row=>({id:row.id,points:row.weight*0.9,coverageSufficient:true}))},evidence:[],scores:[]}));
-  const close = (r, rows) => f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4::jsonb) result',[f.cycle.id,'00000000-0000-4000-8000-000000000001',r,JSON.stringify(rows)]);
+  const close = (r, rows, secret='test-close-secret') => f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4::jsonb,$5) result',[f.cycle.id,'00000000-0000-4000-8000-000000000001',r,JSON.stringify(rows),secret]);
   await f.asActor('admin');
+  await assert.rejects(close(revision,snapshots,'wrong-secret'),/backend autorizado/);
   await assert.rejects(close('stale',snapshots),/Dados alterados/);
   await assert.rejects(close(revision,snapshots.slice(1)),/Todos os colaboradores/);
   await assert.rejects(close(revision,snapshots.map((row,i)=>i?row:{...row,calculation:{...row.calculation,complete:false}})),/incompleta/);
@@ -65,8 +66,9 @@ test('complete synthetic cycle is calculated by shared engine then frozen with c
   const prepared=await prepareCycleClosure(f.rpc,f.cycle.id);
   assert.equal(prepared.snapshots.length,people.length);
   assert.ok(prepared.snapshots.every(row=>row.calculation.assessedPoints===100&&row.calculation.pendingPoints===0));
+  await f.db.exec("reset role;insert into private.wms_excellence_runtime_config(key,secret_hash) values('cycle_close_secret',md5('test-close-secret')) on conflict(key) do update set secret_hash=excluded.secret_hash");
   await f.asActor('admin');
-  await f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4::jsonb)',[f.cycle.id,'00000000-0000-4000-8000-000000000001',prepared.revision,JSON.stringify(prepared.snapshots)]);
+  await f.db.query('select wms_excellence_close_cycle($1,$2,$3,$4::jsonb,$5)',[f.cycle.id,'00000000-0000-4000-8000-000000000001',prepared.revision,JSON.stringify(prepared.snapshots),'test-close-secret']);
   await f.asActor('op');const closed=await readEvaluation(f.rpc,{cycle_id:f.cycle.id});
   assert.equal(closed.calculation.score,100);assert.equal(closed.calculation.definitiveScore,100);assert.equal(closed.calculation.preliminary,false);assert.ok(closed.criteria.criteria);assert.ok(closed.evidence.length>=27);
   await f.db.exec("reset role;delete from wms_transfer_events");
