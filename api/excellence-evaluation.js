@@ -18,13 +18,10 @@ export default async function handler(req, res) {
   };
   if (body.action === 'TEAM') { res.status(200).json(await readTeamEvaluation(rpc,{cycle_id:body.cycle_id})); return; }
   if (body.action === 'CLOSE') {
-   // Privileged key is used only for the final write, never for reading another person's data.
-   // The database independently checks admin identity, scope, revision, coverage and snapshots.
-   const secret = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-   if (!secret) { res.status(503).json({ error: 'Fechamento administrativo ainda não configurado.' }); return; }
+   // The same authenticated user session performs the final write.
+   // The database independently validates admin role, warehouse scope, revision, coverage and snapshots.
    const prepared = await prepareCycleClosure(rpc, body.cycle_id);
-   const trusted = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
-   const result = await trusted.rpc('wms_excellence_close_cycle', { p_cycle: body.cycle_id, p_actor_auth: user.user.id, p_revision: prepared.revision, p_assessments: prepared.snapshots });
+   const result = await client.rpc('wms_excellence_close_cycle', { p_cycle: body.cycle_id, p_actor_auth: user.user.id, p_revision: prepared.revision, p_assessments: prepared.snapshots });
    if (result.error) throw Error(result.error.message);
    res.status(200).json(result.data); return;
   }
