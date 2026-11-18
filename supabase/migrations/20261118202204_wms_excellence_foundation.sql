@@ -9,6 +9,12 @@ alter table public.wms_replenishment_requests
  add column if not exists completed_by_id text,
  add column if not exists completed_by_name text;
 
+create or replace function private.excellence_actor_name(person text)
+returns text language sql stable security definer set search_path='' as $actor_name$
+ select coalesce(nullif(name,''),nullif(username,''),person) from public.wms_users where id=person
+$actor_name$;
+revoke all on function private.excellence_actor_name(text) from public,anon,authenticated;
+
 create or replace function public.stamp_wms_replenishment_actor_attribution()
 returns trigger language plpgsql security invoker set search_path='' as $attr$
 declare actor text:=case when current_user='authenticated' then private.current_wms_profile_id() else null end; actor_name text;
@@ -19,8 +25,7 @@ begin
   new.completed_by_id:=old.completed_by_id; new.completed_by_name:=old.completed_by_name;
  end if;
  if actor is null then return new;end if;
- select coalesce(nullif(name,''),username,actor) into actor_name from public.wms_users where id=actor;
- actor_name:=coalesce(actor_name,actor);
+ actor_name:=coalesce(private.excellence_actor_name(actor),actor);
  if tg_op='INSERT' then
   new.solicitado_por_id:=actor;
   new.solicitado_por_nome:=actor_name;
