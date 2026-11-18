@@ -410,10 +410,13 @@ begin
  if (not leader or person<>actor) and not private.excellence_cycle_member(c.id,person) then raise exception 'Colaborador fora do ciclo.' using errcode='42501';end if;
  if p_action='ORIGIN' then
  select * into origin_evidence from public.wms_excellence_evidence where id=(p_data->>'evidence_id')::uuid and cycle_id=c.id and user_id=person;
- if not found or origin_evidence.source_table<>'wms_replenishment_requests' then raise exception 'Origem não disponível para esta evidência.';end if;
- select to_jsonb(origin_row) into origin_record from public.wms_replenishment_requests origin_row where origin_row.id=origin_evidence.source_id and origin_row.warehouse_code=p_warehouse;
+ if not found or origin_evidence.source_table not in ('wms_replenishment_requests','wms_replenishment_participation_events') then raise exception 'Origem não disponível para esta evidência.';end if;
+ select to_jsonb(origin_row) into origin_record
+ from public.wms_replenishment_requests origin_row
+ where origin_row.id=case when origin_evidence.source_table='wms_replenishment_participation_events' then origin_evidence.metadata->>'request_id' else origin_evidence.source_id end
+   and origin_row.warehouse_code=p_warehouse;
  if origin_record is null then return jsonb_build_object('available',false,'message','Origem removida ou não disponível; evidência histórica preservada.');end if;
- return jsonb_build_object('available',true,'id',origin_record->>'id','sku',origin_record->>'codigo_material','status',origin_record->>'status','requested',origin_record->'quantidade_solicitada','attended',origin_record->'quantidade_atendida','pending',origin_record->'quantidade_pendente','responsible_id',origin_record->>'responsavel_id','started_at',origin_record->'started_at','finished_at',origin_record->'finished_at','duration_seconds',origin_record->'duration_seconds');
+ return jsonb_build_object('available',true,'id',origin_record->>'id','sku',origin_record->>'codigo_material','status',origin_record->>'status','requested',origin_record->'quantidade_solicitada','attended',origin_record->'quantidade_atendida','pending',origin_record->'quantidade_pendente','responsible_id',origin_record->>'responsavel_id','requester_id',origin_record->>'solicitado_por_id','last_attended_by_id',origin_record->>'last_attended_by_id','completed_by_id',origin_record->>'completed_by_id','started_at',origin_record->'started_at','finished_at',origin_record->'finished_at','duration_seconds',origin_record->'duration_seconds');
  end if;
  if p_action='ASSESSMENT' then
  select to_jsonb(a) into result from public.wms_excellence_assessments a where cycle_id=c.id and user_id=person;
