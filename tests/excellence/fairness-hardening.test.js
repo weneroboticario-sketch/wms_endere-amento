@@ -23,17 +23,20 @@ test('validated absences neutralize overlapping replenishment opportunities', as
   await f.db.exec(`reset role;
    update wms_replenishment_requests set claimed_at='2026-11-18T10:00:00Z',started_at='2026-11-18T10:00:00Z',responsavel_id='op',claimed_by_id='op',finished_at='2026-11-18T10:08:00Z',status='CONCLUIDO';`);
   await f.asActor('admin');
-  await f.rpc('SYNC',{cycle_id:f.cycle.id});
-  const absence=await f.rpc('ADD_ABSENCE',{cycle_id:f.cycle.id,user_id:'op',absence_type:'FOLGA',from:'2026-11-18',to:'2026-11-18',justification:'Folga validada para teste'});
+  const cycle=await f.rpc('CREATE_CYCLE',{name:'Ausência sobre reposição',from:'2026-11-01',to:'2026-11-30',execution_model:'REPLENISHMENT'});
+  await f.rpc('SET_MEMBERS',{cycle_id:cycle.id,member_ids:['op']});
+  await f.rpc('ENABLE',{cycle_id:cycle.id});
+  await f.rpc('SYNC',{cycle_id:cycle.id});
+  const absence=await f.rpc('ADD_ABSENCE',{cycle_id:cycle.id,user_id:'op',absence_type:'FOLGA',from:'2026-11-18',to:'2026-11-18',justification:'Folga validada para teste'});
   await f.asActor('op');
-  let result=await readEvaluation(f.rpc,{cycle_id:f.cycle.id});
+  let result=await readEvaluation(f.rpc,{cycle_id:cycle.id});
   const execution=result.calculation.criteria.find(row=>row.id==='EXECUCAO');
   assert.ok(execution.explanation.automatic.excluded.some(row=>row.reason==='AUSENCIA_OU_IMPEDIMENTO_VALIDADO'));
   assert.ok(result.calculation.warnings.includes('VALIDATED_ABSENCE_RECORDED'));
   await f.asActor('admin');
-  await f.rpc('REMOVE_ABSENCE',{cycle_id:f.cycle.id,absence_id:absence.id});
+  await f.rpc('REMOVE_ABSENCE',{cycle_id:cycle.id,absence_id:absence.id});
   await f.asActor('op');
-  result=await readEvaluation(f.rpc,{cycle_id:f.cycle.id});
+  result=await readEvaluation(f.rpc,{cycle_id:cycle.id});
   assert.equal(result.calculation.absencePeriods,0);
  }finally{await f.db.close();}
 });
