@@ -47,6 +47,7 @@ test('database stamps real actor even when client attempts to spoof replenishmen
  const f=await excellenceFixture();
  try {
   await f.db.exec(`reset role;
+   grant select,update on wms_replenishment_requests to authenticated;
    insert into wms_replenishment_requests(id,warehouse_code,codigo_material,status,solicitado_por_id,quantidade_solicitada,quantidade_atendida,quantidade_pendente,is_deleted)
    values('actor-stamp','VDCG','88082','PENDENTE','cash',6,0,6,false);`);
   await f.asActor('op');
