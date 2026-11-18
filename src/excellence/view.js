@@ -110,6 +110,29 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   }
   tabs.querySelector('button')?.click();
  }
+ if (admin) {
+  const creation = node('details'); creation.append(node('summary','Criar ciclo de avaliação'));
+  const form = node('form');
+  const name = node('input'); name.required=true; name.maxLength=120;
+  const from = node('input'); from.type='date'; from.required=true;
+  const to = node('input'); to.type='date'; to.required=true;
+  for (const [text,input] of [['Nome do ciclo',name],['Início',from],['Encerramento',to]]) {
+   const label=node('label',text);label.append(input);form.append(label);
+  }
+  const submit=node('button','Criar ciclo em rascunho','primary-button');submit.type='submit';form.append(submit);
+  form.append(node('p','O ciclo começa desativado. Ative após revisar as datas e as regras experimentais.'));
+  form.onsubmit=async event=>{
+   event.preventDefault();
+   const span=(Date.parse(to.value)-Date.parse(from.value))/86400000;
+   if(!Number.isFinite(span)||span<0||span>62){status.textContent='Informe um intervalo de até 63 dias, com encerramento após o início.';return;}
+   submit.disabled=true;
+   try{
+    await perform('CREATE_CYCLE',{name:name.value.trim(),from:from.value,to:to.value});
+    await mountExcellence(root,{service,actorId,leader,admin});
+   }catch{/* Server error is displayed in status. */}finally{submit.disabled=false;}
+  };
+  creation.append(form);shell.insertBefore(creation,controls);
+ }
  const available = await service.rpc('CYCLES');
  for (const row of available) { const option = node('option', row.name); option.value = row.id; cycles.append(option); }
  cycle = available[0] || null;

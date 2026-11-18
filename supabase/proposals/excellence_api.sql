@@ -17,6 +17,7 @@ begin
  if auth.uid() is null or actor is null or not coalesce(private.can_access_warehouse(p_warehouse),false) then raise exception 'Acesso não autorizado.' using errcode='42501';end if;
  if p_action='CYCLES' then return coalesce((select jsonb_agg(to_jsonb(x)) from (select * from public.wms_excellence_cycles where warehouse_code=p_warehouse order by start_date desc,id limit 40)x),'[]');end if;
  if p_action='CREATE_CYCLE' then
+ if (p_data->>'to')::date-(p_data->>'from')::date not between 0 and 62 then raise exception 'Intervalo do ciclo deve ter até 63 dias.';end if;
  if not coalesce(admin,false) then raise exception 'Administrador necessário.' using errcode='42501';end if;
  insert into public.wms_excellence_criteria_versions(warehouse_code,version,config,created_by_id)
  values(p_warehouse,(select coalesce(max(version),0)+1 from public.wms_excellence_criteria_versions where warehouse_code=p_warehouse),
