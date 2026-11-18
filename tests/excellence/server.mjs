@@ -1,4 +1,4 @@
-import { readEvaluation, prepareCycleClosure } from '../../src/excellence/evaluation-service.js';
+import { readEvaluation, prepareCycleClosure, readTeamEvaluation } from '../../src/excellence/evaluation-service.js';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { excellenceFixture } from './fixture.js';
@@ -25,7 +25,7 @@ createServer(async (req, res) => {
     await fixture.db.exec('set role service_role');
     return (await fixture.db.query('select wms_excellence_close_cycle($1,$2,$3,$4::jsonb) result',[request.data.cycle_id,'00000000-0000-4000-8000-000000000001',prepared.revision,JSON.stringify(prepared.snapshots)])).rows[0].result;
    }
-   return request.action === 'DASHBOARD' ? readEvaluation(fixture.rpc,request.data) : fixture.rpc(request.action, request.data); });
+   return request.action === 'DASHBOARD' ? readEvaluation(fixture.rpc,request.data) : request.action === 'TEAM' ? readTeamEvaluation(fixture.rpc,request.data) : fixture.rpc(request.action, request.data); });
    queue = operation.catch(() => {}); const result = await operation;
 
    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(result)); return;

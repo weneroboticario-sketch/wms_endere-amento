@@ -1,7 +1,7 @@
 export function createExcellenceService({ client, warehouse, isCurrent }) {
  return { async rpc(action, data = {}) {
   if (!isCurrent()) throw Error('Sessão ou unidade alterada.');
-  if (action === 'DASHBOARD' || action === 'CLOSE') {
+  if (action === 'DASHBOARD' || action === 'CLOSE' || action === 'TEAM') {
    const session = await client.auth.getSession();
    if (session.error || !session.data.session) throw Error('Autenticação necessária.');
    const response = await fetch('/api/excellence-evaluation', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.data.session.access_token }, body: JSON.stringify({ warehouse, action, cycle_id: data.cycle_id, user_id: data.user_id }) });

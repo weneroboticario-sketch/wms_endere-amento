@@ -70,8 +70,21 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   button('Evidências', () => show(() => {
    content.append(node('p', 'Até 100 registros recentes. Autoria operacional não implica responsabilidade por divergências.'));
    for (const row of dashboard.evidence) {
-    const card = node('article', undefined, 'panel'); card.append(node('strong', row.event_type), node('p', row.description), node('p', `${row.evidence_date} · ${row.source_table} · ${row.source_id} · Evidência ${row.id}`));
-    button('Ver origem', () => { status.textContent = `Referência original: ${row.source_table} / ${row.source_id}. Consulta detalhada da origem ainda não integrada.`; }, card);
+    const card = node('article', undefined, 'panel'); card.append(node('strong', ({REPLENISHMENT_COMPLETED_FULL:'Reposição concluída · total',REPLENISHMENT_COMPLETED_PARTIAL:'Reposição concluída · parcial',REPLENISHMENT_COMPLETED:'Reposição concluída',REPLENISHMENT_NO_STOCK:'Reposição · sem estoque',REPLENISHMENT_RETURNED_TO_QUEUE:'Reposição devolvida à fila',REPLENISHMENT_ASSIGNED:'Reposição em atendimento'})[row.event_type]||row.event_type), node('p', row.description), node('p', `${row.evidence_date} · ${row.source_table} · ${row.source_id} · Evidência ${row.id}`));
+    if(row.source_table==='wms_replenishment_requests') button('Ver origem', async () => {
+     const origin=await perform('ORIGIN',{evidence_id:row.id});
+     const previous=card.querySelector('[data-origin]');if(previous)previous.remove();
+     const detail=node('section',undefined,'panel');detail.dataset.origin='true';detail.append(node('h4','Registro original · somente consulta'));
+     if(!origin.available)detail.append(node('p',origin.message));
+     else {
+      detail.append(node('p','SKU '+origin.sku+' · '+origin.status));
+      detail.append(node('p','Solicitada: '+(origin.requested??'N/D')+' · Atendida: '+(origin.attended??'N/D')+' · Pendente: '+(origin.pending??'N/D')));
+      detail.append(node('p','Duração: '+(origin.duration_seconds==null?'N/D':Math.floor(origin.duration_seconds/60)+'min '+origin.duration_seconds%60+'s')));
+      detail.append(node('p','Conclusão: '+(origin.finished_at??'Não concluída')));
+      detail.append(node('small','Identificador da origem: '+origin.id));
+     }
+     card.append(detail);
+    },card);
     if (leader && person !== actorId) button('Validar observação', async () => {
      const score = window.prompt('Avaliação da observação (0–100):'); if (score === null) return;
      const justification = window.prompt('Fundamento verificável da avaliação:'); if (!justification) return;
@@ -81,7 +94,14 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    }
   }), tabs);
   button('Iniciativas', () => show(() => {
-   for (const row of dashboard.initiatives) content.append(node('p', `${row.title} · ${row.status}`));
+   for (const row of dashboard.initiatives) {
+    const card=node('article',undefined,'panel');card.append(node('strong',row.title),node('p',row.description),node('p',row.status));
+    if(leader&&person!==actorId&&row.status==='REGISTERED') for(const decision of ['VALIDATED','REJECTED']) button(decision==='VALIDATED'?'Validar iniciativa':'Não validar',async()=>{
+     const justification=window.prompt('Justificativa da análise:');if(!justification)return;
+     await perform('VALIDATE_INITIATIVE',{initiative_id:row.id,decision,justification});await load();
+    },card);
+    if(row.validation_notes)card.append(node('p',row.validation_notes));content.append(card);
+   }
    if (person === actorId) button('Registrar iniciativa', async () => {
     const title = window.prompt('Título da iniciativa:'); if (!title) return;
     const description = window.prompt('Ação e resultado:'); if (!description) return;
@@ -89,6 +109,20 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    }, content);
   }), tabs);
   if (leader) {
+   button('Visão da Equipe',async()=>{
+    const team=await perform('TEAM');
+    show(()=>{
+     const wrap=node('div');wrap.style.overflowX='auto';
+     const table=node('table');const header=node('tr');
+     for(const title of ['Colaborador','Automática','Assistida','Proposta','Confiança','Evidências','Pendentes','Ação'])header.append(node('th',title));table.append(header);
+     for(const member of team.rows){
+      const r=member.calculation;const tr=node('tr');
+      for(const value of [member.name,r.criteria.reduce((sum,x)=>sum+(x.automatic??0),0),r.criteria.reduce((sum,x)=>sum+(x.assisted??0),0),r.score??'N/D',r.confidence,member.evidenceCount,r.pendingPoints])tr.append(node('td',String(value)));
+      const action=node('td');button('Abrir',async()=>{person=member.user_id;users.value=person;await load();},action);tr.append(action);table.append(tr);
+     }
+     wrap.append(table);content.append(wrap);
+    });
+   },tabs);
    button('Avaliação manual', () => show(() => {
     for (const criterion of dashboard.config.criteria.filter(row => row.assistedMaximum > 0)) button(criterion.id, async () => {
      const score = window.prompt('Nota fundamentada (0–100):'); if (score === null) return;

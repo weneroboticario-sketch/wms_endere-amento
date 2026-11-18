@@ -1,14 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFoundationSql } from './schema.js';
 import { communicationFixture, asActor } from '../communication-fixture.js';
-const read = name => readFile(new URL('../../supabase/proposals/' + name, import.meta.url), 'utf8');
 test('foundation uses real Postgres RLS, immutable criteria and authenticated audit', async () => {
  const db = await communicationFixture();
  const rpc = async (action, data = {}, warehouse = 'VDCG') => (await db.query('select wms_excellence_api($1,$2,$3::jsonb) result', [warehouse, action, JSON.stringify(data)])).rows[0].result;
  try {
-  await db.exec(await read('excellence_foundation.sql'));
-  await db.exec(await read('excellence_api.sql'));
+  await db.exec(await readFoundationSql());
   await asActor(db, 'admin');
   const cycle = await rpc('CREATE_CYCLE', { name: 'Calibração sintética', from: '2026-11-01', to: '2026-11-30' });
   await rpc('ENABLE', { cycle_id: cycle.id });

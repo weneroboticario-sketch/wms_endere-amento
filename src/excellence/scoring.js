@@ -1,3 +1,4 @@
+import { replenishmentExecutionScore } from './evidence-engine.js';
 import { executionScore, verificationScore, composeAssessment } from './evaluation-engine.js';
 /** The same deterministic engine is used by the server and the explanation view. */
 export function calculatePreliminary({ cycle, config, evidence, scores, period: cyclePeriod, evidenceTruncated = false }) {
@@ -12,7 +13,7 @@ export function calculatePreliminary({ cycle, config, evidence, scores, period: 
  const verificationFacts = facts.filter(row => row.metadata.verification_fact).map(row => ({ ...row.metadata.verification_fact, factId: row.source_table + ':' + row.source_id }));
  const criteria = config.criteria.map(criterion => {
   let automatic = { points: criterion.automaticMaximum === 0 ? 0 : null, included: [], excluded: [], numerator: null, denominator: null, formula: 'Não disponível' };
-  if (criterion.formula === 'EXECUTION') automatic = executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
+  if (criterion.formula === 'EXECUTION') automatic = config.executionModel === 'REPLENISHMENT' ? replenishmentExecutionScore(facts, criterion.automaticMaximum) : executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
   else if (criterion.formula === 'VERIFICATION') automatic = verificationScore(verificationFacts, { ...period, criterion: criterion.id, minimumSample: config.minimumSample, maximum: criterion.automaticMaximum });
   const candidates = scores.filter(row => row.criterion_id === criterion.id && row.evaluator_id !== row.user_id && row.evidence_ids?.length && row.evidence_ids.every(id => eligible.some(e => e.id === id)) && row.justification?.trim());
   const manual = candidates.length === 1 ? candidates[0] : null;

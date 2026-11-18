@@ -32,3 +32,9 @@ export async function prepareCycleClosure(rpc, cycleId) {
  }
  return { revision, snapshots };
 }
+
+export async function readTeamEvaluation(rpc,data){
+ const team=await rpc('TEAM',data);
+ return {...team,rows:team.members.map(member=>({user_id:member.user_id,name:member.name,evidenceCount:member.evidence.length,
+ calculation:team.cycle.status==='CLOSED'?member.snapshot.calculation:calculatePreliminary({...team,...member})}))};
+}

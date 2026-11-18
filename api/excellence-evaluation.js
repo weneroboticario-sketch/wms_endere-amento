@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { readEvaluation, prepareCycleClosure } from '../src/excellence/evaluation-service.js';
+import { readEvaluation, prepareCycleClosure, readTeamEvaluation } from '../src/excellence/evaluation-service.js';
 export default async function handler(req, res) {
  res.setHeader('Cache-Control', 'no-store');
  if (req.method !== 'POST') { res.status(405).json({ error: 'Método não permitido.' }); return; }
@@ -16,6 +16,7 @@ export default async function handler(req, res) {
    const response = await client.rpc('wms_excellence_api', { p_warehouse: body.warehouse, p_action: action, p_data: data });
    if (response.error) throw Error(response.error.message); return response.data;
   };
+  if (body.action === 'TEAM') { res.status(200).json(await readTeamEvaluation(rpc,{cycle_id:body.cycle_id})); return; }
   if (body.action === 'CLOSE') {
    // Privileged key is used only for the final write, never for reading another person's data.
    // The database independently checks admin identity, scope, revision, coverage and snapshots.
