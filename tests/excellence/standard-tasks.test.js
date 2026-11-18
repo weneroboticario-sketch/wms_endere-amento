@@ -28,7 +28,7 @@ test('first operator claims standard task and validation creates auditable evide
   await f.db.exec('reset role');
   const task=(await f.db.query("select id from operacao_tarefas where referencia_tipo='EXCELLENCE_STANDARD' and resultado_execucao->>'excellence_template_code'='RETIRAR_RECICLAGEM' limit 1")).rows[0];
   await f.asActor('op');
-  const claimed=(await f.db.query('select wms_excellence_claim_standard_task($1) t',[task.id])).rows[0].t;
+  const claimed=(await f.db.query('select (wms_excellence_claim_standard_task($1)).*',[task.id])).rows[0];
   assert.equal(claimed.atribuido_para,'op');
   assert.equal(claimed.status,'EM_ANDAMENTO');
   await assert.rejects(f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]),/já foi assumida/);
@@ -63,7 +63,7 @@ test('seven-address audit requires seven unique addresses and blocks weekly reus
   await f.db.query('select wms_excellence_claim_standard_task($1)',[task.id]);
   await assert.rejects(
    f.db.query("select concluir_tarefa($1,$2::jsonb,null)",[task.id,JSON.stringify({enderecos_conferidos:['A1','A2','A3','A4','A5','A6']})]),
-   /exatamente 7/
+   /7 endereços/
   );
   const addresses=['A1','A2','A3','A4','A5','A6','A7'];
   const done=(await f.db.query("select concluir_tarefa($1,$2::jsonb,null) t",[task.id,JSON.stringify({enderecos_conferidos:addresses})])).rows[0].t;
@@ -93,8 +93,8 @@ test('monthly cycle is full-month and uses hybrid execution', async () => {
     from wms_excellence_cycles c join wms_excellence_criteria_versions v on v.id=c.criteria_version_id
     where c.id=$1
   `,[cycle.id])).rows[0];
-  assert.equal(String(row.start_date),'2026-12-01');
-  assert.equal(String(row.end_date),'2026-12-31');
+  assert.equal(new Date(row.start_date).toISOString().slice(0,10),'2026-12-01');
+  assert.equal(new Date(row.end_date).toISOString().slice(0,10),'2026-12-31');
   assert.equal(row.model,'HYBRID');
  } finally { await f.db.close(); }
 });
