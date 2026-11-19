@@ -1,5 +1,49 @@
 import { replenishmentExecutionScore } from './evidence-engine.js';
 import { executionScore, verificationScore, composeAssessment } from './evaluation-engine.js';
+
+/** Gamification ledger for validated standard tasks. It is intentionally separate from the 0–100 performance score. */
+export function standardTaskPointsSummary(evidence, { from, to, complexityWeights = {} }) {
+ const start = Date.parse(from), end = Date.parse(to);
+ if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) throw Error('Período inválido para pontos operacionais.');
+ const unique = new Map();
+ for (const row of evidence || []) {
+  if (row?.source_table !== 'operacao_tarefas' || row?.event_type !== 'STANDARD_TASK_VALIDATED') continue;
+  const at = Date.parse(row.evidence_date);
+  if (!Number.isFinite(at) || at < start || at >= end || !row.source_id || unique.has(row.source_id)) continue;
+  const fact = row.metadata?.task_fact || {};
+  const complexity = fact.complexity || row.metadata?.excellence_complexity || 'SIMPLES';
+  const points = Number(complexityWeights[complexity] || 0);
+  if (!Number.isFinite(points) || points <= 0) continue;
+  unique.set(row.source_id, {
+   id: row.source_id,
+   title: row.metadata?.template_title || row.description || 'Tarefa avaliada',
+   code: row.metadata?.template_code || '',
+   criterion: row.metadata?.criterion || '',
+   complexity,
+   points,
+   day: String(row.evidence_date || '').slice(0, 10),
+   completedAt: fact.completedAt || row.evidence_date
+  });
+ }
+ const items = [...unique.values()].sort((a,b) => Date.parse(a.completedAt) - Date.parse(b.completedAt));
+ const aggregate = key => [...items.reduce((map,item) => {
+  const value = item[key] || 'N/D';
+  const current = map.get(value) || { id:value, count:0, points:0 };
+  current.count += 1; current.points += item.points; map.set(value,current); return map;
+ },new Map()).values()].sort((a,b) => b.points - a.points || String(a.id).localeCompare(String(b.id)));
+ const daily = [...items.reduce((map,item) => {
+  const current = map.get(item.day) || { day:item.day, count:0, points:0 };
+  current.count += 1; current.points += item.points; map.set(item.day,current); return map;
+ },new Map()).values()].sort((a,b) => a.day.localeCompare(b.day));
+ return {
+  points: items.reduce((sum,item) => sum + item.points,0),
+  completed: items.length,
+  byComplexity: aggregate('complexity'),
+  byCriterion: aggregate('criterion'),
+  daily,
+  items
+ };
+}
 /** The same deterministic engine is used by the server and the explanation view. */
 export function calculatePreliminary({ cycle, config, evidence, scores, absences = [], period: cyclePeriod, evidenceTruncated = false }) {
  if (config.engineVersion !== 2) return { criteria: config.criteria.map(row => ({ ...row, points: null, sample: 0 })), score: null, days: 0, sources: 0, confidence: 'INSUFICIENTE', warnings: ['LEGACY_RULE_VERSION'], limitation: 'Versão anterior: crie um novo ciclo com a composição por critério. Não recalcular ciclos antigos silenciosamente.' };
@@ -10,8 +54,9 @@ export function calculatePreliminary({ cycle, config, evidence, scores, absences
  const assistedIds = new Set(scores.flatMap(row => row.evidence_ids || []));
  const facts = eligible.filter(row => !assistedIds.has(row.id));
  const standardTaskIds = new Set(facts.filter(row => row.source_table === 'operacao_tarefas' && row.event_type === 'STANDARD_TASK_VALIDATED').map(row => row.source_id));
- const taskFacts = facts.filter(row => row.metadata.task_fact && !(row.source_table === 'operacao_tarefas' && row.event_type !== 'STANDARD_TASK_VALIDATED' && standardTaskIds.has(row.source_id))).map(row => ({ ...row.metadata.task_fact, factId: row.source_table + ':' + row.source_id }));
+ const taskFacts = facts.filter(row => row.metadata.task_fact && !(row.source_table === 'operacao_tarefas' && row.event_type !== 'STANDARD_TASK_VALIDATED' && standardTaskIds.has(row.source_id))).map(row => ({ ...row.metadata.task_fact, factId: row.source_table + ':' + row.source_id, standardTask: standardTaskIds.has(row.source_id) }));
  const verificationFacts = facts.filter(row => row.metadata.verification_fact).map(row => ({ ...row.metadata.verification_fact, factId: row.source_table + ':' + row.source_id }));
+ const operationalPoints = standardTaskPointsSummary(eligible, { ...period, complexityWeights: config.complexityWeights });
  const criteria = config.criteria.map(criterion => {
   let automatic = { points: criterion.automaticMaximum === 0 ? 0 : null, included: [], excluded: [], numerator: null, denominator: null, formula: 'Não disponível' };
   if (criterion.formula === 'EXECUTION') {
@@ -19,7 +64,8 @@ export function calculatePreliminary({ cycle, config, evidence, scores, absences
    else if (config.executionModel === 'TASKS') automatic = executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
    else if (config.executionModel === 'HYBRID') {
     const replenishment = replenishmentExecutionScore(facts, criterion.automaticMaximum);
-    const tasks = executionScore(taskFacts, { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
+    // Standard shared tasks are achievements, not individual failure opportunities. Keep them out of HYBRID execution rate.
+    const tasks = executionScore(taskFacts.filter(row => !row.standardTask), { ...period, complexityWeights: config.complexityWeights, maximum: criterion.automaticMaximum });
     const available = [
      replenishment.points === null ? null : { source: 'REPOSICAO', score: replenishment },
      tasks.points === null ? null : { source: 'TAREFAS', score: tasks }
@@ -51,7 +97,7 @@ export function calculatePreliminary({ cycle, config, evidence, scores, absences
   { id: row.id + ':assisted', maximum: row.assistedMaximum, points: row.assisted, coverageSufficient: row.coverageSufficient }
  ]);
  const composition = composeAssessment(components, { version: cycle.criteria_version_id, bands: config.bands });
- return { ...composition, criteria, score: composition.complete ? composition.assessedPoints : null,
+ return { ...composition, criteria, operationalPoints, score: composition.complete ? composition.assessedPoints : null,
   days: new Set(eligible.map(row => row.evidence_date.slice(0,10))).size, sources: new Set(eligible.map(row => row.source_table)).size,
   confidence: composition.complete ? 'ALTA' : criteria.some(row => row.assessedPoints > 0) ? 'BAIXA' : 'INSUFICIENTE',
   absencePeriods: absences.filter(row => row.status === 'VALIDATED').length,
