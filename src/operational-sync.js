@@ -22,7 +22,7 @@ export function createOperationalSync({ client, actor, role, warehouse, isCurren
       const accepted = await onRefresh({ tables: affected.length ? affected : ["all"], reason });
       if (!active()) return;
       if (accepted === false) pending.add("all");
-      else { state(live ? "CONECTADO" : "DADOS_POSSIVELMENTE_DESATUALIZADOS"); diagnostic("refresh", reason, "ok"); }
+      else { state(live ? "CONECTADO" : "ATUALIZADO_POR_POLLING"); diagnostic("refresh", reason, "ok"); }
     } catch (error) { if (active()) { state("FALHA_SINCRONIZACAO"); diagnostic("refresh", error.code || "network-or-api", "failed"); } }
     finally { refreshing = false; if (pending.size && active()) schedule(); }
   }
