@@ -437,7 +437,7 @@ export function mountCaixaRequests(host, context) {
   }) } : createOperationalSync({ client: context.client, actor: context.actor, role: context.role, warehouse: context.warehouse, isCurrent: current,
     allowRealtime: context.allowOperationalRealtime === true,
     onStop: () => { chat.clear(); context.onUnreadMessages?.({ count: 0 }); },
-    onState: value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", DADOS_POSSIVELMENTE_DESATUALIZADOS: "consulta de segurança ativa", FALHA_SINCRONIZACAO: "falha ao atualizar; nova tentativa automática" }[value] || value); },
+    onState: showSync,
     onRefresh: async ({ tables }) => {
       if (busy) return false;
       if (tables.includes("all") || tables.includes("wms_caixa_requests")) await refresh(true);
