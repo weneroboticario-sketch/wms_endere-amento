@@ -9,6 +9,15 @@ export function createExcellenceService({ client, warehouse, isCurrent }) {
  return {
   async rpc(action, data = {}) {
    if (!isCurrent()) throw Error('Sessão ou unidade alterada.');
+   if (action === 'SET_MEMBERS') {
+    return directRpc('wms_excellence_set_cycle_members', { p_warehouse: warehouse, p_cycle: data.cycle_id, p_member_ids: data.member_ids });
+   }
+   if (action === 'SET_MEMBER_ELIGIBILITY') {
+    return directRpc('wms_excellence_set_member_eligibility', { p_warehouse: warehouse, p_cycle: data.cycle_id, p_user_id: data.user_id, p_eligible: data.eligible, p_justification: data.justification });
+   }
+   if (action === 'ENABLE') {
+    return directRpc('wms_excellence_enable_cycle', { p_warehouse: warehouse, p_cycle: data.cycle_id });
+   }
    if (action === 'DASHBOARD' || action === 'CLOSE' || action === 'TEAM') {
     const session = await client.auth.getSession();
     if (session.error || !session.data.session) throw Error('Autenticação necessária.');
