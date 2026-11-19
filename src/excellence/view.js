@@ -607,8 +607,6 @@ export async function mountExcellence(root,{service,actorId,leader,admin}){
 
  async function refreshDirectory(){
   if(!cycle){directory=[];person=actorId;return;}
-  const data=await service.rpc('wms_excellence_api'?undefined:'DIRECTORY').catch(()=>null);
-  // Keep the established RPC contract; the fallback above is never used in production.
   directory=await rpc('DIRECTORY');
   if(!directory.some(row=>row.id===person))person=directory.some(row=>row.id===actorId)?actorId:(directory[0]?.id||actorId);
  }
