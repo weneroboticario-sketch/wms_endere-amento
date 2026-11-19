@@ -12436,18 +12436,58 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
   }
 
+  function excellenceTaskPointValue(task) {
+    var result = task && task.executionResult ? task.executionResult : {};
+    var complexity = normalizeText(result.excellence_complexity || "").toUpperCase();
+    return ({ SIMPLES: 1, INTERMEDIARIA: 2, COMPLEXA: 3 })[complexity] || 0;
+  }
+
+  function excellenceTaskStatusLabel(status) {
+    return ({
+      PENDENTE: "Disponível",
+      ATRIBUIDA: "Atribuída",
+      EM_ANDAMENTO: "Em andamento",
+      BLOQUEADA: "Bloqueada",
+      AGUARDANDO_VALIDACAO: "Aguardando validação",
+      CONCLUIDA: "Validada",
+      CANCELADA: "Cancelada"
+    })[status] || status || "-";
+  }
+
+  function excellenceTaskCriterionLabel(task) {
+    var result = task && task.executionResult ? task.executionResult : {};
+    return ({ ORGANIZACAO: "Organização", QUALIDADE: "Qualidade" })[result.excellence_criterion] || result.excellence_criterion || "Execução";
+  }
+
   function myOperationalTaskCardHtml(task) {
-    var availableStandard = task.referenceType === "EXCELLENCE_STANDARD" && task.status === "PENDENTE" && !task.assignedTo;
-    var action = availableStandard ? "Assumir" : (task.status === "PENDENTE" || task.status === "ATRIBUIDA" ? "Iniciar" : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA" ? "Continuar" : "Ver resultado"));
-    var ref = task.referenceType === "EXCELLENCE_STANDARD" ? "Tarefa avaliada" : (task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa");
+    var standardTask = task.referenceType === "EXCELLENCE_STANDARD";
+    var availableStandard = standardTask && task.status === "PENDENTE" && !task.assignedTo;
+    var action = availableStandard
+      ? "Assumir tarefa"
+      : (task.status === "PENDENTE" || task.status === "ATRIBUIDA"
+        ? "Iniciar"
+        : (task.status === "EM_ANDAMENTO" || task.status === "BLOQUEADA"
+          ? "Continuar"
+          : (task.status === "AGUARDANDO_VALIDACAO" ? "Ver histórico" : "Ver resultado")));
+    var result = task.executionResult || {};
+    var complexity = normalizeText(result.excellence_complexity || "").toUpperCase();
+    var complexityLabel = ({ SIMPLES: "Simples", INTERMEDIARIA: "Intermediária", COMPLEXA: "Complexa" })[complexity] || "-";
+    var points = excellenceTaskPointValue(task);
+    var ref = standardTask ? "Tarefa avaliada" : (task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa");
+    var statusNote = task.status === "AGUARDANDO_VALIDACAO"
+      ? '<span>A execução foi enviada. Os pontos entram somente após a validação da liderança.</span>'
+      : "";
     return [
       '<article class="transfer-card">',
-      '<span class="eyebrow">Central de Tarefas</span>',
-      '<h3>' + escapeHtml(task.visibleCode || task.title || "Tarefa") + '</h3>',
-      '<span>Título: ' + escapeHtml(task.title || "-") + '</span>',
-      '<span>Status: ' + escapeHtml(task.status) + '</span>',
+      '<span class="eyebrow">' + escapeHtml(standardTask ? "Tarefa avaliada" : "Central de Tarefas") + '</span>',
+      '<h3>' + escapeHtml(task.title || task.visibleCode || "Tarefa") + '</h3>',
+      task.description ? '<span>' + escapeHtml(task.description) + '</span>' : '',
+      '<span>Status: ' + escapeHtml(excellenceTaskStatusLabel(task.status)) + '</span>',
       '<span>Referência: ' + escapeHtml(ref) + '</span>',
-      '<button class="primary-button" data-task-open="' + task.id + '" type="button">' + action + '</button>',
+      standardTask ? '<span>Critério: ' + escapeHtml(excellenceTaskCriterionLabel(task)) + ' · Complexidade: ' + escapeHtml(complexityLabel) + ' · Pontos: +' + points + ' após validação</span>' : '',
+      task.sla ? '<span>Prazo: ' + escapeHtml(formatDateTime(task.sla)) + '</span>' : '',
+      statusNote,
+      '<button class="primary-button" data-task-open="' + task.id + '" type="button">' + escapeHtml(action) + '</button>',
       '</article>'
     ].join("");
   }
@@ -12614,22 +12654,30 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     var isFinalStatus = isFinalOperationalTaskStatus(task.status);
     var canEdit = !archivedView && !isFinalStatus;
+    var standardTask = task.referenceType === "EXCELLENCE_STANDARD";
+    var canAssign = canEdit && !standardTask;
+    var canConclude = canEdit && !standardTask && ["ATRIBUIDA", "EM_ANDAMENTO", "BLOQUEADA"].indexOf(task.status) >= 0;
+    var canValidate = canEdit && task.status === "AGUARDANDO_VALIDACAO";
     var historyCount = (taskCenterState.historyByTaskId[task.id] || []).length;
     var elapsed = task.executionSeconds && task.executionSeconds > 0 ? formatDuration(task.executionSeconds) : "-";
-    var referenceLabel = task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa";
+    var referenceLabel = standardTask ? "Tarefa avaliada" : (task.referenceType && task.referenceId ? (task.referenceType + " #" + task.referenceId) : "Avulsa");
     var overdueBadge = isTaskOverdue(task) ? '<span class="status-badge danger">Atrasada</span>' : "";
+    var pointValue = standardTask ? excellenceTaskPointValue(task) : 0;
+    var responsibleNote = standardTask && !task.assignedTo
+      ? "Disponível para o primeiro operador assumir. A liderança não atribui manualmente tarefas avaliadas."
+      : ("Responsável atual: " + (task.assignedName || "Não atribuído"));
     return [
       '<article class="transfer-board-card">',
       '<div class="transfer-board-main">',
-      '<div class="transfer-board-top"><span class="transfer-source-pill">' + escapeHtml(taskTypeLabel(task.type)) + '</span><span class="status-badge ' + taskPriorityClass(task.priority) + '">' + escapeHtml(task.priority) + '</span>' + overdueBadge + '</div>',
+      '<div class="transfer-board-top"><span class="transfer-source-pill">' + escapeHtml(standardTask ? "TAREFA AVALIADA" : taskTypeLabel(task.type)) + '</span><span class="status-badge ' + taskPriorityClass(task.priority) + '">' + escapeHtml(task.priority) + '</span>' + overdueBadge + '</div>',
       '<div class="transfer-board-title"><strong>' + escapeHtml(task.visibleCode || task.id) + '</strong><small>' + escapeHtml(task.title || "-") + '</small></div>',
-      '<div class="transfer-board-meta"><span><small>Status</small><strong>' + escapeHtml(task.status) + '</strong></span><span><small>Estoque</small><strong>' + escapeHtml(task.warehouseCode || "-") + '</strong></span><span><small>Referência</small><strong>' + escapeHtml(referenceLabel) + '</strong></span><span><small>Tempo</small><strong>' + escapeHtml(elapsed) + '</strong></span><span><small>SLA</small><strong>' + escapeHtml(task.sla ? formatDateTime(task.sla) : "-") + '</strong></span><span><small>Histórico</small><strong>' + historyCount + ' evento(s)</strong></span></div>',
-      '<div class="transfer-board-note">Responsável atual: ' + escapeHtml(task.assignedName || "Não atribuído") + '</div>',
+      '<div class="transfer-board-meta"><span><small>Status</small><strong>' + escapeHtml(excellenceTaskStatusLabel(task.status)) + '</strong></span><span><small>Estoque</small><strong>' + escapeHtml(task.warehouseCode || "-") + '</strong></span><span><small>Referência</small><strong>' + escapeHtml(referenceLabel) + '</strong></span><span><small>Tempo</small><strong>' + escapeHtml(elapsed) + '</strong></span><span><small>SLA</small><strong>' + escapeHtml(task.sla ? formatDateTime(task.sla) : "-") + '</strong></span>' + (standardTask ? '<span><small>Pontos</small><strong>+' + pointValue + ' após validação</strong></span>' : '') + '<span><small>Histórico</small><strong>' + historyCount + ' evento(s)</strong></span></div>',
+      '<div class="transfer-board-note">' + escapeHtml(responsibleNote) + '</div>',
       '</div>',
       '<div class="row-actions transfer-action-stack transfer-board-actions">',
-      (canEdit ? ('<label class="transfer-reassign-control"><span>Atribuir</span><select data-task-assign="' + task.id + '">' + taskResponsibleOptionsHtml(task.assignedTo, operators) + '</select></label>') : ''),
-      (canEdit ? ('<button class="edit-small" data-task-conclude="' + task.id + '" type="button">Concluir</button>') : ''),
-      (canEdit ? ('<button class="edit-small" data-task-validate="' + task.id + '" type="button">Validar</button>') : ''),
+      (canAssign ? ('<label class="transfer-reassign-control"><span>Atribuir</span><select data-task-assign="' + task.id + '">' + taskResponsibleOptionsHtml(task.assignedTo, operators) + '</select></label>') : ''),
+      (canConclude ? ('<button class="edit-small" data-task-conclude="' + task.id + '" type="button">Concluir</button>') : ''),
+      (canValidate ? ('<button class="edit-small" data-task-validate="' + task.id + '" type="button">Validar execução</button>') : ''),
       (canEdit ? ('<button class="remove-small" data-task-cancel="' + task.id + '" type="button">Cancelar</button>') : ''),
       (!archivedView && isFinalStatus ? ('<button class="secondary-button" data-task-archive="' + task.id + '" type="button">Arquivar</button>') : ''),
       (archivedView && isAdminOrSupervisor() ? ('<button class="secondary-button" data-task-unarchive="' + task.id + '" type="button">Desarquivar</button>') : ''),

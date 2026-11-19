@@ -100,7 +100,7 @@ test('monthly cycle is full-month and uses hybrid execution', async () => {
 });
 
 
-test('validated standard task contributes to execution and organization scoring', async () => {
+test('validated standard task earns operational points and organization evidence in task-only cycle', async () => {
  const f=await excellenceFixture();
  try {
   await f.asActor('admin');
@@ -116,8 +116,9 @@ test('validated standard task contributes to execution and organization scoring'
   const result=await readEvaluation(f.rpc,{cycle_id:f.cycle.id});
   const execution=result.calculation.criteria.find(row=>row.id==='EXECUCAO');
   const organization=result.calculation.criteria.find(row=>row.id==='ORGANIZACAO');
-  assert.equal(execution.automatic,25);
-  assert.ok(execution.explanation.automatic.included.some(row=>row.id==='operacao_tarefas:'+task.id));
+  assert.equal(result.calculation.operationalPoints.points,1);
+  assert.ok(result.calculation.operationalPoints.items.some(row=>row.id===task.id));
+  assert.equal(execution.explanation.automatic.included.some(row=>row.id==='operacao_tarefas:'+task.id),true);
   assert.equal(organization.explanation.automatic.denominator,1);
   assert.equal(organization.explanation.automatic.numerator,1);
  } finally { await f.db.close(); }
