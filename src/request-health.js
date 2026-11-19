@@ -10,7 +10,11 @@ export function serviceFailureMessage(error) {
   return '';
 }
 export function isCancelledRequest(error) {
-  return error?.name === 'AbortError' || /aborterror|operation was aborted|signal is aborted/i.test(String(error?.message || ''));
+  const code = String(error?.code || error?.sql_state || '');
+  const message = String(error?.message || error?.details || error?.hint || '');
+  return error?.name === 'AbortError' ||
+    code === '57014' ||
+    /aborterror|operation was aborted|signal is aborted|statement timeout|canceling statement due to statement timeout/i.test(message);
 }
 export function recordRequestHealth(endpoint, started, { status = 0, rows = 0, attempt = 0 } = {}) {
   // Labels only: no URLs, query parameters, bodies, credentials or product data.
