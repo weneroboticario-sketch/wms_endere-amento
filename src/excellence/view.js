@@ -208,7 +208,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   }
   tabs.querySelector('button')?.click();
  }
- if (admin) {
+ if (leader) {
   button('Tarefas avaliadas',showTaskCatalog,controls);
   const creation = node('details'); creation.append(node('summary','Criar avaliação mensal'));
   const form = node('form');
@@ -242,7 +242,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
  if (cycle) {
   await refreshDirectory();
   users.onchange = async () => { person = users.value; await load().catch(() => {}); };
-  if (admin && !cycle.enabled) button('Definir equipe do ciclo', async () => {
+  if (leader && !cycle.enabled) button('Definir equipe do ciclo', async () => {
    const candidates=await perform('CANDIDATES');
    body.replaceChildren(node('h3','Equipe elegível · '+cycle.name),node('p','Selecione somente quem será comparado neste ciclo. Usuários fora da equipe não entram no fechamento.'));
    const form=node('form',undefined,'panel');
@@ -257,7 +257,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    }finally{submit.disabled=false;}};
    body.append(form);
   });
-  if (admin && cycle.enabled && !['CLOSED','ARCHIVED'].includes(cycle.status)) button('Gerenciar elegibilidade', async () => {
+  if (leader && cycle.enabled && !['CLOSED','ARCHIVED'].includes(cycle.status)) button('Gerenciar elegibilidade', async () => {
    const candidates=(await perform('CANDIDATES')).filter(candidate=>candidate.member);
    body.replaceChildren(node('h3','Elegibilidade do ciclo · '+cycle.name),node('p','Excluir alguém do ciclo exige justificativa e fica registrado na auditoria. Ausências temporárias devem ser registradas na aba Elegibilidade do colaborador.'));
    for(const candidate of candidates){
@@ -278,8 +278,8 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
    if (!window.confirm('Fechar o ciclo ' + cycle.name + '? Todas as avaliações precisam estar completas e revisadas. O histórico será preservado e ficará imutável.')) return;
    await perform('CLOSE'); await load();
   });
-  if (admin && !cycle.enabled) button('Ativar ciclo local', async () => { await perform('ENABLE'); await load(); });
+  if (leader && !cycle.enabled) button('Ativar ciclo local', async () => { await perform('ENABLE'); await load(); });
   await load();
- } else status.textContent = 'Nenhum ciclo cadastrado. Implantação e ativação dependem da administração.';
+ } else status.textContent = 'Nenhum ciclo cadastrado. Criação e ativação dependem da liderança da unidade.';
  return { refresh: load };
 }
