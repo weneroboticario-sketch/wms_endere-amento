@@ -147,7 +147,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var productCatalogSingleFlight = createScopedSingleFlight();
   var caixaAlertsRuntime = null;
   var caixaAlertsScope = "";
-  var productReferenceCache = createReferenceCache();
+  var productReferenceCache = createReferenceCache({ ttlMs: 30 * 60 * 1000, maxEntries: 2 });
   var stockReadSingleFlight = createScopedSingleFlight();
   var stockCacheGeneration = 0;
   var skuAddressController = null;
@@ -880,7 +880,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function invalidateWarehouseModuleCaches(warehouseCode) {
-    productReferenceCache.clear();
     var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     await Promise.all(WAREHOUSE_CACHE_MODULES.map(function (moduleName) {
       var scopedKey = cacheKeyForWarehouse(moduleName, normalizedWarehouseCode);
@@ -936,7 +935,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function resetLazyModuleState(keepUsers) {
     stockCacheGeneration++;
-    productReferenceCache.clear();
+    if (!keepUsers) productReferenceCache.clear();
     if (skuAddressController) skuAddressController.abort();
     moduleLoadState.accessRequests = false;
     moduleLoadState.core = false;
@@ -2336,17 +2335,34 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function fetchProductCatalogWithAuthRecovery() {
-    var catalogScope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":");
+    var catalogScope = [(authState.currentUser || {}).id, (authState.currentUser || {}).role, "products"].join(":");
     return productCatalogSingleFlight(catalogScope, async function () {
-      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, "products"].join(":")) throw new Error("Usuário mudou durante a consulta ao catálogo.");
       var catalogRows = IS_CP_ALAMO ? await performProductCatalogWithAuthRecovery() : await productReferenceCache.read(catalogScope, performProductCatalogWithAuthRecovery);
-      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, activeWarehouseCode()].join(":")) throw new Error("Usuário ou estoque mudou durante a consulta ao catálogo.");
+      if (catalogScope !== [(authState.currentUser || {}).id, (authState.currentUser || {}).role, "products"].join(":")) throw new Error("Usuário mudou durante a consulta ao catálogo.");
       return catalogRows;
     });
   }
 
   async function performProductCatalogWithAuthRecovery() {
-    var readCatalog = function () {
+    var readCatalog = async function () {
+      var response = await runSupabaseRequestWithRetry("fetch-product-catalog", function () {
+        return supabaseDb.rpc("wms_product_catalog");
+      });
+      if (!response.error) {
+        var payload = response.data || {};
+        return Object.keys(payload).map(function (sku) {
+          return { sku: sku, product_name: payload[sku] || "" };
+        });
+      }
+      var message = formatSupabaseError(response.error).toLowerCase();
+      var missingRpc = message.indexOf("wms_product_catalog") >= 0 && (
+        message.indexOf("pgrst202") >= 0 ||
+        message.indexOf("42883") >= 0 ||
+        message.indexOf("not found") >= 0 ||
+        message.indexOf("schema cache") >= 0
+      );
+      if (!missingRpc) throw response.error;
       return fetchAllRows("wms_products", "sku", true, { select: "sku,product_name", pageSize: 1000 });
     };
     try {

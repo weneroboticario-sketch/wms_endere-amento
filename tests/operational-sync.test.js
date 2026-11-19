@@ -28,6 +28,13 @@ test('diagnostics retain only allowlisted metadata and bounded history',()=>{
   for(let i=0;i<110;i++)recordOperationalDiagnostic({module:'caixa',event:'test',warehouse:'VDCG',operationId:String(i),token:'secret',body:'private',password:'password'});
   const events=operationalDiagnostics();assert.equal(events.length,100);assert.ok(!JSON.stringify(events).includes('secret'));assert.ok(!JSON.stringify(events).includes('private'));events[0].event='modified';assert.notEqual(operationalDiagnostics()[0].event,'modified');
 });
-test('unapplied publication keeps channels disabled and the existing 15-second read fallback active',async()=>{
-  const f=fixture({allowRealtime:false});assert.equal(f.channels.length,0);await f.tick();assert.equal(f.refreshes.length,1);assert.equal(f.refreshes[0].reason,'poll');f.sync.stop();
+test('unapplied publication keeps channels disabled and successful polling marked as current',async()=>{
+  const f=fixture({allowRealtime:false});
+  assert.equal(f.channels.length,0);
+  assert.equal(f.states.at(-1),'DADOS_POSSIVELMENTE_DESATUALIZADOS');
+  await f.tick();
+  assert.equal(f.refreshes.length,1);
+  assert.equal(f.refreshes[0].reason,'poll');
+  assert.equal(f.states.at(-1),'ATUALIZADO_POR_POLLING');
+  f.sync.stop();
 });
