@@ -122,3 +122,29 @@ test('validated standard task contributes to execution and organization scoring'
   assert.equal(organization.explanation.automatic.numerator,1);
  } finally { await f.db.close(); }
 });
+
+test('supervisor manages monthly cycle and standard task catalog only in own warehouse', async () => {
+ const f=await excellenceFixture();
+ try {
+  await f.asActor('sup');
+  const cycle=(await f.db.query("select wms_excellence_create_monthly_cycle('VDCG','2026-12-01','Avaliação Mensal - 12/2026') result")).rows[0].result;
+  const members=(await f.db.query("select wms_excellence_set_cycle_members('VDCG',$1,$2::jsonb) result",[cycle.id,JSON.stringify(['op','sup'])])).rows[0].result;
+  assert.equal(members.length,2);
+  const enabled=(await f.db.query("select wms_excellence_enable_cycle('VDCG',$1) result",[cycle.id])).rows[0].result;
+  assert.equal(enabled.status,'ACTIVE');
+  const template=(await f.db.query("select wms_excellence_save_task_template('VDCG',$1::jsonb) result",[JSON.stringify({
+   code:'ROTINA_SUPERVISOR_TESTE',
+   title:'Rotina supervisor teste',
+   criterion_id:'ORGANIZACAO',
+   cadence:'DAILY',
+   weekdays:[1,2,3,4,5,6],
+   complexity:'SIMPLES',
+   active:true
+  })])).rows[0].result;
+  assert.equal(template.code,'ROTINA_SUPERVISOR_TESTE');
+  await assert.rejects(
+   f.db.query("select wms_excellence_create_monthly_cycle('VDAR','2026-12-01','Fora da unidade')"),
+   /Liderança necessária/
+  );
+ } finally { await f.db.close(); }
+});
