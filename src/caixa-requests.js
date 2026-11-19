@@ -38,7 +38,7 @@ export function mountCaixaRequests(host, context) {
   node("p", context.role === "CAIXA" ? "Solicitações prioritárias para o estoque" : "Fila de atendimento prioritário · cliente sempre tem preferência", title);
   const syncState = node("small", "Sincronização: conectando…", title); syncState.setAttribute("role", "status");
   const scopeHint = node("small", "", title);
-  const showSync = value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", DADOS_POSSIVELMENTE_DESATUALIZADOS: "consulta de segurança ativa", FALHA_SINCRONIZACAO: "falha ao atualizar; tente Atualizar" }[value] || value); };
+  const showSync = value => { syncState.textContent = "Sincronização: " + ({ CONECTADO: "conectado", RECONECTANDO: "reconectando", SINCRONIZANDO: "atualizando", ATUALIZADO_POR_POLLING: "atualizado por consulta de segurança", DADOS_POSSIVELMENTE_DESATUALIZADOS: "aguardando atualização", FALHA_SINCRONIZACAO: "falha ao atualizar; tente Atualizar" }[value] || value); };
   if (context.attendanceFeed) showSync(context.attendanceFeed.state());
   const controls = node("div", undefined, host); controls.className = "ca-toolbar";
   const tabs = node("nav", undefined, controls); tabs.className = "ca-tabs";
