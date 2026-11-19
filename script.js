@@ -2857,12 +2857,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function fetchProductPackagingRows() {
-    try {
-      return await fetchAllRows("wms_product_packaging", "sku", true);
-    } catch (error) {
-      if (!isMissingTransferTableError(error) && !isMissingColumnError(error)) console.warn("Padroes de embalagem nao carregados:", error);
-      return [];
-    }
+    // This schema has no remote packaging table. Keep learned patterns in the scoped local transfer cache.
+    return [];
   }
 
   function fromDbProductPackaging(row) {
@@ -13120,7 +13116,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var startedAt = performance.now();
     var selectedCodes = healthSelectedWarehouseCodes();
     var schema = await checkSystemHealthColumns();
-    var stockRowsResult = await readHealthRows("wms_stock_positions", "id,warehouse_code,source_type,codigo_material,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,created_at,updated_at", "updated_at", 1800);
+    var stockRowsResult = await readHealthRows("wms_stock_positions", "id,warehouse_code,source_type,codigo_material,total_disponivel,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,created_at,updated_at", "updated_at", 4000, { warehouseCodes: selectedCodes, active: true, archived: false });
     var batchesResult = await readHealthRows("wms_stock_import_batches", "*", "created_at", 240);
     var notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,entity_id,event_type,transfer_id,read,seen,archived,created_at", "created_at", 1000);
     if (notificationRowsResult.error && isMissingColumnError(notificationRowsResult.error)) {
@@ -13212,10 +13208,16 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       message.indexOf("schema cache") >= 0 && message.indexOf("table") >= 0;
   }
 
-  async function readHealthRows(tableName, selectColumns, orderColumn, limit) {
+  async function readHealthRows(tableName, selectColumns, orderColumn, limit, options) {
     if (!isSupabaseReady()) return { rows: [], error: null };
+    options = options || {};
     try {
       var response = await selectRowsWithMissingColumnFallback(tableName, selectColumns || "*", function (query) {
+        var warehouseCodes = unique((options.warehouseCodes || []).map(normalizeWarehouseCode).filter(Boolean));
+        if (warehouseCodes.length === 1) query = query.eq("warehouse_code", warehouseCodes[0]);
+        else if (warehouseCodes.length > 1) query = query.in("warehouse_code", warehouseCodes);
+        if (options.active !== undefined) query = query.eq("active", options.active === true);
+        if (options.archived !== undefined) query = query.eq("archived", options.archived === true);
         if (orderColumn) query = query.order(orderColumn, { ascending: false });
         if (limit) query = query.limit(limit);
         return query;
@@ -13877,7 +13879,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function buildSafeMaintenanceReport(scope) {
     var selectedCodes = maintenanceSelectedWarehouseCodes();
-    var stockRowsResult = await readHealthRows("wms_stock_positions", "id,warehouse_code,source_type,codigo_material,nome_material,total_disponivel,total_fisico,total_alocado,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,archived,created_at,updated_at", "updated_at", 2500);
+    var stockColumns = "id,warehouse_code,source_type,codigo_material,nome_material,total_disponivel,total_fisico,total_alocado,estacao,rack,linha,coluna,codigo_endereco,active,batch_id,record_hash,archived,created_at,updated_at";
+    var activeStockRowsResult = await readHealthRows("wms_stock_positions", stockColumns, "updated_at", 4000, { warehouseCodes: selectedCodes, active: true, archived: false });
+    var inactiveStockRowsResult = (scope === "all" || scope === "stock")
+      ? await readHealthRows("wms_stock_positions", stockColumns, "updated_at", 1500, { warehouseCodes: selectedCodes, active: false, archived: false })
+      : { rows: [], error: null };
+    var stockRowsResult = {
+      rows: (activeStockRowsResult.rows || []).concat(inactiveStockRowsResult.rows || []),
+      error: activeStockRowsResult.error || inactiveStockRowsResult.error || null
+    };
     var batchesResult = await readHealthRows("wms_stock_import_batches", "id,warehouse_code,source_type,file_name,status,created_at,updated_at,finished_at,error_message,notes,total_rows,imported_rows,archived", "created_at", 600);
     var notificationRowsResult = await readHealthRows("wms_notifications", "id,warehouse_code,user_id,entity_id,event_type,transfer_id,read,seen,archived,created_at", "created_at", 1200);
     if (notificationRowsResult.error && isMissingColumnError(notificationRowsResult.error)) {
@@ -15274,7 +15284,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function saveProductPackagingPattern(item) {
-    if (!isSupabaseReady() || !isBoxQuantityItem(item) || !Number(item.unitsPerBox || 0)) return;
+    if (!isBoxQuantityItem(item) || !Number(item.unitsPerBox || 0)) return;
     var now = new Date().toISOString();
     var row = {
       id: "pkg-" + normalizeSku(item.sku),
@@ -15284,11 +15294,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       updated_at: now,
       updated_by: authState.currentUser ? authState.currentUser.name : ""
     };
-    var response = await supabaseDb.from("wms_product_packaging").upsert(row, { onConflict: "id" });
-    if (response.error && !isMissingTransferTableError(response.error) && !isMissingColumnError(response.error)) {
-      console.warn("Nao foi possivel salvar padrao de embalagem:", response.error);
-    }
     transferState.productPackaging[normalizeSkuKey(item.sku)] = fromDbProductPackaging(row);
+    writeTransferCacheSoon();
   }
 
   function getProductPackagingPattern(sku) {
