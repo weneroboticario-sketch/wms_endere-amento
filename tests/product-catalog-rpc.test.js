@@ -12,10 +12,12 @@ test('product reference cache is global across warehouses and kept for thirty mi
   const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
   assert.match(source,/createReferenceCache\(\{ ttlMs: 30 \* 60 \* 1000/);
   assert.match(source,/\(authState\.currentUser \|\| \{\}\)\.role, "products"/);
+  assert.match(source,/if \(!keepUsers\) productReferenceCache\.clear\(\)/);
+  assert.doesNotMatch(source,/async function invalidateWarehouseModuleCaches\(warehouseCode\) \{\s*productReferenceCache\.clear\(\)/);
 });
 
 test('catalog rpc migration is authenticated-only and security invoker',async()=>{
-  const sql=await readFile(new URL('../supabase/migrations/20261119174200_wms_product_catalog_rpc.sql',import.meta.url),'utf8');
+  const sql=await readFile(new URL('../supabase/migrations/20261119174455_wms_product_catalog_rpc_20261119.sql',import.meta.url),'utf8');
   assert.match(sql,/security invoker/i);
   assert.match(sql,/revoke all on function public\.wms_product_catalog\(\) from public, anon, authenticated/i);
   assert.match(sql,/grant execute on function public\.wms_product_catalog\(\) to authenticated/i);
