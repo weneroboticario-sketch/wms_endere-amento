@@ -880,7 +880,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function invalidateWarehouseModuleCaches(warehouseCode) {
-    productReferenceCache.clear();
     var normalizedWarehouseCode = normalizeWarehouseCode(warehouseCode || activeWarehouseCode());
     await Promise.all(WAREHOUSE_CACHE_MODULES.map(function (moduleName) {
       var scopedKey = cacheKeyForWarehouse(moduleName, normalizedWarehouseCode);
@@ -936,7 +935,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function resetLazyModuleState(keepUsers) {
     stockCacheGeneration++;
-    productReferenceCache.clear();
+    if (!keepUsers) productReferenceCache.clear();
     if (skuAddressController) skuAddressController.abort();
     moduleLoadState.accessRequests = false;
     moduleLoadState.core = false;
