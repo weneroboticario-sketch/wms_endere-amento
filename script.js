@@ -1,8 +1,6 @@
-import { mountMagazineCenterLazy } from "./src/magazines-loader.js";
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
 import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
-import { createMagazineStockReader } from "./src/magazines-stock.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
 import { createTaskSound } from "./src/task-sound.js";
@@ -192,7 +190,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   var ROLES = ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"];
   var SCREEN_PERMISSIONS = {
     comunicacao: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
-    centralRevistas: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     dashboard: ["ADMINISTRADOR", "SUPERVISOR"],
     bipagem: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"],
     consultaSku: ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"],
@@ -1078,16 +1075,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   async function ensureScreenDataLoaded(screenId) {
     if (screenId === "atendimentosCaixa") { renderCaixaRequestsScreen(); return true; }
     if (screenId === "comunicacao" && !IS_CP_ALAMO) { var runtime = await ensureCommunication(); if (runtime) await runtime.show(); return true; }
-    if (screenId === "centralRevistas" && authState.currentUser && !IS_CP_ALAMO && !isGlobalDashboardScope()) {
-      var magazineActor = authState.currentUser.id, magazineWarehouse = activeWarehouseCode();
-      await mountMagazineCenterLazy($("centralRevistas"), {
-        client: function () { return supabaseDb; }, user: function () { return authState.currentUser; }, warehouse: activeWarehouseCode,
-        isCurrent: function () { return authState.currentUser && authState.currentUser.id === magazineActor && activeWarehouseCode() === magazineWarehouse; },
-        createRequest: createReplenishmentRequest, findRequestByKey: findReplenishmentByIdempotencyKey,
-        loadStock: createMagazineStockReader({ client: function () { return supabaseDb; }, warehouse: activeWarehouseCode, user: function () { return authState.currentUser; }, positionColumns: stockPositionSelectColumns, mapPosition: fromDbStockPosition, aliases: stockSkuQueryValues, splitSku: splitSkuValues, buildSuggestion: buildStockSuggestion, openStatuses: OPEN_REPLENISHMENT_STATUSES })
-      });
-      return true;
-    }
     if (!authState.currentUser) return false;
     if (screenId === "consultaSku" && authState.currentUser.role === "CAIXA") return true;
     if (screenId === "reposicao" && authState.currentUser.role === "CAIXA") return true;
@@ -7095,7 +7082,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (screenId === "atendimentosCaixa") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "CAIXA"].includes(authState.currentUser.role);
     if (!IS_CP_ALAMO && screenId === "reposicao" && authState.currentUser.role === "CAIXA") return false;
     if (screenId === "comunicacao") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "ATENDENTE", "CAIXA"].indexOf(authState.currentUser.role) >= 0;
-    if (screenId === "centralRevistas") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].indexOf(authState.currentUser.role) >= 0;
     if (screenId === "consultaPrateleira") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR"].includes(authState.currentUser.role);
     if (screenId === "stockOverview") return !IS_CP_ALAMO && canViewStockOverview(authState.currentUser);
     if (screenId === "globalDashboard") return isGlobalDashboardScope();
@@ -8544,7 +8530,6 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   function updateModuleSubtitleLabel(screenId) {
     if (screenId === "atendimentosCaixa") return "Atendimentos do caixa";
     if (screenId === "comunicacao") return "Comunicação";
-    if (screenId === "centralRevistas") return "Central de Revistas";
     if (screenId === "consultaPrateleira") return "Leitura de Prateleira";
     if (screenId === "stockOverview") return "Visão Geral dos Estoques";
     if (screenId === "globalDashboard") return "Central de Controle";
