@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "lint": "eslint script.js src api scripts tests vite.config.js eslint.config.js",
     "test": "node --experimental-strip-types --test --test-isolation=none tests/*.test.js tests/excellence/*.test.js",
-    "auth:provision": "node scripts/provision-auth-users.mjs"
+    "auth:provision": "node scripts/provision-auth-users.mjs",
+    "prebuild": "npm test"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.110.7",
