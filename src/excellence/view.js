@@ -4,11 +4,15 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
  const node = (tag, text, cls) => { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (cls) el.className = cls; return el; };
  const status = node('p', '', 'muted'); status.setAttribute('role', 'status');
  const shell = node('section', undefined, 'panel'); root.replaceChildren(shell);
- shell.append(node('h2', 'Logística de Excelência'), node('p', 'Experimental · informações insuficientes aparecem como N/D.'));
- const controls = node('div', undefined, 'button-row'); shell.append(controls, status);
+ shell.append(node('h2', 'Logística de Excelência'), node('p', leader ? 'Acompanhamento automático do trabalho já registrado no WMS. A equipe não precisa preencher esta tela para essas atividades serem contabilizadas.' : 'Seu desempenho e suas evidências aparecem quando houver uma avaliação ativa.'));
+ const monitoring = node('section'); shell.append(monitoring);
+ const evaluation = node('details'); evaluation.className='panel'; evaluation.open=!leader;
+ evaluation.append(node('summary', leader ? 'Avaliação e premiação mensal (opcional)' : 'Minha avaliação'));
+ const evaluationInner=node('div');evaluation.append(evaluationInner);shell.append(evaluation);
+ const controls = node('div', undefined, 'button-row'); evaluationInner.append(controls, status);
  const cycles = node('select'); cycles.setAttribute('aria-label', 'Ciclo'); controls.append(cycles);
  const users = node('select'); users.setAttribute('aria-label', 'Colaborador'); controls.append(users);
- const body = node('div'); shell.append(body);
+ const body = node('div'); evaluationInner.append(body);
  async function showTaskCatalog() {
   status.textContent='Carregando tarefas avaliadas…';
   try {
@@ -47,6 +51,73 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
  function button(text, action, host = controls) {
   const el = node('button', text, 'secondary-button'); el.type = 'button';
   el.onclick = async () => { el.disabled = true; try { await action(); } catch { /* Status already shows server error. */ } finally { el.disabled = false; } }; host.append(el); return el;
+ }
+ async function loadMonitoring() {
+  if (!leader) { monitoring.replaceChildren(); return; }
+  const now=new Date(),pad=value=>String(value).padStart(2,'0');
+  const defaultFrom=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-01';
+  const defaultTo=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
+  const previousFrom=monitoring.querySelector('[data-monitor-from]')?.value||defaultFrom;
+  const previousTo=monitoring.querySelector('[data-monitor-to]')?.value||defaultTo;
+  monitoring.replaceChildren();
+  const title=node('h3','Atividades já contabilizadas');
+  const intro=node('p','Leitura automática dos registros operacionais do WMS. Solicitar reposição, executar reposição, trabalhar em transferências e concluir tarefas já registradas são contabilizados sem ação extra do colaborador.');
+  const filters=node('form',undefined,'panel');
+  const from=node('input');from.type='date';from.value=previousFrom;from.dataset.monitorFrom='true';
+  const to=node('input');to.type='date';to.value=previousTo;to.dataset.monitorTo='true';
+  const fromLabel=node('label','De');fromLabel.append(from);
+  const toLabel=node('label','Até');toLabel.append(to);
+  const refresh=node('button','Atualizar acompanhamento','secondary-button');refresh.type='submit';
+  const monitorStatus=node('p','Carregando…','muted');monitorStatus.setAttribute('role','status');
+  filters.append(fromLabel,toLabel,refresh,monitorStatus);
+  monitoring.append(title,intro,filters);
+  const render=async()=>{
+   refresh.disabled=true;monitorStatus.textContent='Atualizando registros do WMS…';
+   try{
+    const data=await service.operationalOverview({from:from.value,to:to.value});
+    const old=monitoring.querySelector('[data-monitor-results]');if(old)old.remove();
+    const results=node('div');results.dataset.monitorResults='true';
+    const totals=data?.totals||{};
+    const kpis=node('div',undefined,'button-row');
+    const metric=(label,value,help)=>{
+     const card=node('article',undefined,'panel');card.append(node('small',label),node('h3',String(value??0)));
+     if(help)card.append(node('small',help));kpis.append(card);
+    };
+    metric('Reposições executadas',totals.replenishments_handled,'Pedidos com participação registrada');
+    metric('Unidades repostas',totals.replenishment_units,'Quantidade positiva atendida');
+    metric('Itens em transferências',totals.transfer_items,'Itens distintos trabalhados');
+    metric('Registros de atividade',totals.activity_records,'Volume observado; não é nota');
+    results.append(kpis);
+    const wrap=node('div');wrap.style.overflowX='auto';
+    const table=node('table');const header=node('tr');
+    for(const label of ['Colaborador','Reposições solicitadas','Reposições executadas','Unid. repostas','Itens transferência','Transf. finalizadas','Tarefas Central','Rotinas avaliadas','Registros'])header.append(node('th',label));
+    table.append(header);
+    for(const person of data?.people||[]){
+     const tr=node('tr');
+     for(const value of [
+      person.name,
+      person.replenishments_requested,
+      person.replenishments_handled,
+      person.replenishment_units,
+      person.transfer_items,
+      person.transfers_finalized,
+      person.tasks_completed,
+      person.standard_tasks_completed,
+      person.activity_records
+     ])tr.append(node('td',String(value??0)));
+     table.append(tr);
+    }
+    wrap.append(table);results.append(wrap);
+    results.append(node('p','O total de registros serve para acompanhamento de volume. Ele não é convertido automaticamente em nota ou premiação, porque os fluxos têm cargas de trabalho diferentes.'));
+    const rules=node('details');rules.append(node('summary','Como o sistema contabiliza'));
+    for(const rule of data?.rules||[])rules.append(node('p',rule));
+    results.append(rules);monitoring.append(results);
+    monitorStatus.textContent='Atualizado automaticamente com dados registrados no WMS.';
+   }catch(error){monitorStatus.textContent=error.message||'Não foi possível atualizar o acompanhamento.';throw error;}
+   finally{refresh.disabled=false;}
+  };
+  filters.onsubmit=async event=>{event.preventDefault();await render().catch(()=>{});};
+  await render().catch(()=>{});
  }
  async function load() {
   if (!cycle) return;
@@ -252,8 +323,9 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
     await mountExcellence(root,{service,actorId,leader,admin});
    }catch(error){status.textContent=error.message;}finally{submit.disabled=false;}
   };
-  creation.append(form);shell.insertBefore(creation,controls);
+  creation.append(form);evaluationInner.insertBefore(creation,controls);
  }
+ await loadMonitoring();
  const available = await service.rpc('CYCLES');
  for (const row of available) { const option = node('option', row.name); option.value = row.id; cycles.append(option); }
  cycle = available[0] || null;
@@ -306,6 +378,6 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   });
   if (leader && !cycle.enabled) button('Ativar ciclo local', async () => { await perform('ENABLE'); await load(); });
   await load();
- } else status.textContent = 'Nenhum ciclo cadastrado. Criação e ativação dependem da liderança da unidade.';
- return { refresh: load };
+ } else status.textContent = leader ? 'Nenhuma avaliação formal ativa. O acompanhamento automático acima continua funcionando normalmente.' : 'Nenhuma avaliação ativa neste momento.';
+ return { refresh: async()=>{ await loadMonitoring(); await load(); } };
 }

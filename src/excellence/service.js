@@ -39,6 +39,9 @@ export function createExcellenceService({ client, warehouse, isCurrent }) {
   },
   setTaskTemplateActive(id, active) {
    return directRpc('wms_excellence_set_task_template_active', { p_warehouse: warehouse, p_template: id, p_active: active });
+  },
+  operationalOverview({ from, to }) {
+   return directRpc('wms_excellence_operational_overview', { p_warehouse: warehouse, p_from: from, p_to: to });
   }
  };
 }
