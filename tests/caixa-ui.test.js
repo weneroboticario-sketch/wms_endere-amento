@@ -207,6 +207,7 @@ test("two cashier sessions observe stock progress and confirmation through exist
     assert.ok(text(pending(hosts[0])).includes("AGUARDANDO ESTOQUE"));assert.ok(!pending(hosts[0]).querySelectorAll("button").some(node=>node.textContent==="Passou"));
     const code=hosts[1].querySelectorAll("fieldset")[0].querySelectorAll("input")[0];code.value="00123";
     request={...request,claimed_by:"stock",claimed_by_name:"Responsável"};for(const poll of polls)await poll();
+    for(const host of hosts)assert.ok(text(host).includes("Sincronização: atualizado por consulta de segurança"));
     assert.ok(text(pending(hosts[1])).includes("EM ATENDIMENTO"));assert.equal(code.value,"00123");
     request={...request,status:"AGUARDANDO_CONFIRMACAO_CAIXA",resolution_notes:"Pronto",resolved_at:new Date().toISOString()};for(const poll of polls)await poll();
     assert.ok(text(pending(hosts[1])).includes("AGUARDANDO CAIXA"));
