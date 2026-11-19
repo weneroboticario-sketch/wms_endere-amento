@@ -7090,7 +7090,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   function canAccessScreen(screenId) {
     // This check controls navigation UX only. Supabase RLS is the authorization boundary.
-    if (screenId === "excellence") return !IS_CP_ALAMO && import.meta.env.VITE_LOGISTICA_EXCELENCIA_ENABLED === "true" && !!authState.currentUser && !isGlobalDashboardScope();
+    if (screenId === "excellence") return !IS_CP_ALAMO && import.meta.env.VITE_LOGISTICA_EXCELENCIA_ENABLED === "true" && !!authState.currentUser && ["ADMINISTRADOR", "SUPERVISOR"].includes(authState.currentUser.role) && !isGlobalDashboardScope();
     if (!authState.currentUser) return false;
     if (screenId === "atendimentosCaixa") return !IS_CP_ALAMO && !isGlobalDashboardScope() && ["ADMINISTRADOR", "SUPERVISOR", "OPERADOR", "CAIXA"].includes(authState.currentUser.role);
     if (!IS_CP_ALAMO && screenId === "reposicao" && authState.currentUser.role === "CAIXA") return false;
