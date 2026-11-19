@@ -13,7 +13,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   status.textContent='Carregando tarefas avaliadas…';
   try {
    const templates=await service.taskTemplates();
-   body.replaceChildren(node('h3','Tarefas avaliadas'),node('p','Estas rotinas entram na avaliação somente quando forem assumidas, concluídas e validadas. Reposição e Transferências continuam pelos fluxos próprios.'));
+   body.replaceChildren(node('h3','Tarefas avaliadas'),node('p','Estas rotinas geram Pontos Operacionais somente após execução e validação. Os pontos servem para ranking e premiação; a nota de desempenho continua baseada em evidências comparáveis.'));
    for(const template of templates){
     const card=node('article',undefined,'panel');
     card.append(node('strong',template.title),node('p',(template.description||'')+' · '+template.cadence+' · '+template.criterion_id+' · '+template.complexity),node('p','Status: '+(template.active?'Ativa':'Inativa')));
@@ -54,7 +54,7 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
   const result = dashboard.calculation;
   if (!result) throw Error('Cálculo validado pelo servidor indisponível.');
   body.replaceChildren(node('h3', leader ? 'Visão da equipe · detalhe individual' : 'Meu desempenho'));
-  body.append(node('p', `${cycle.name} · ${dashboard.cycle.status} · Nota preliminar: ${result.score === null ? 'N/D' : result.score.toFixed(1)} · Confiança: ${result.confidence}`));
+  body.append(node('p', `${cycle.name} · ${dashboard.cycle.status} · Nota preliminar: ${result.score === null ? 'N/D' : result.score.toFixed(1)} · Confiança: ${result.confidence} · Pontos Operacionais: ${result.operationalPoints?.points ?? 0}`));
   body.append(node('p', result.limitation));
   body.append(node('p', `Apurados: ${result.assessedPoints ?? 'N/D'} · Pendentes: ${result.pendingPoints ?? 'N/D'} · Não obtidos em critérios avaliados: ${result.notObtainedPoints ?? 'N/D'}`));
   const tabs = node('div', undefined, 'button-row'), content = node('div'); body.append(tabs, content);
@@ -78,6 +78,32 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
      if (rule.assisted) explanation.append(node('p', 'Avaliação assistida: ' + rule.assisted.score + '/100 × ' + rule.assisted.maximum + ' · ' + rule.assisted.justification));
     } else explanation.append(node('p','Versão de regra ainda não integrada.'));
     details.append(explanation); card.append(details); content.append(card);
+   }
+  }), tabs);
+  button('Tarefas e pontos', () => show(() => {
+   const summary=result.operationalPoints||{points:0,completed:0,byComplexity:[],byCriterion:[],daily:[],items:[]};
+   content.append(node('h4','Pontos Operacionais'));
+   content.append(node('p',summary.points+' ponto(s) · '+summary.completed+' tarefa(s) validada(s). Estes pontos são de gamificação e não são somados diretamente à nota de 0–100.'));
+   const complexityNames={SIMPLES:'Simples',INTERMEDIARIA:'Intermediária',COMPLEXA:'Complexa'};
+   if(summary.byComplexity.length){
+    const breakdown=node('div',undefined,'panel');breakdown.append(node('strong','Por complexidade'));
+    for(const row of summary.byComplexity)breakdown.append(node('p',(complexityNames[row.id]||row.id)+': '+row.count+' tarefa(s) · '+row.points+' ponto(s)'));
+    content.append(breakdown);
+   }
+   if(summary.daily.length){
+    content.append(node('h4','Evolução diária'));
+    const max=Math.max(...summary.daily.map(row=>row.points),1);
+    for(const row of summary.daily){
+     const line=node('div',undefined,'panel');
+     line.append(node('strong',row.day+' · '+row.points+' ponto(s)'));
+     const track=node('div');track.style.height='14px';track.style.background='#e8edf3';track.style.borderRadius='999px';track.style.overflow='hidden';
+     const bar=node('div');bar.style.height='100%';bar.style.width=(row.points/max*100)+'%';bar.style.background='#1468c4';bar.setAttribute('role','img');bar.setAttribute('aria-label',row.day+': '+row.points+' pontos operacionais');
+     track.append(bar);line.append(track);content.append(line);
+    }
+   } else content.append(node('p','Ainda não há tarefa-padrão concluída e validada neste ciclo.'));
+   if(summary.items.length){
+    content.append(node('h4','Histórico pontuado'));
+    for(const item of [...summary.items].reverse())content.append(node('p',item.day+' · '+item.title+' · '+(complexityNames[item.complexity]||item.complexity)+' · +'+item.points+' ponto(s)'));
    }
   }), tabs);
   button('Composição dos pontos', () => show(() => {
@@ -178,10 +204,10 @@ export async function mountExcellence(root, { service, actorId, leader, admin })
     show(()=>{
      const wrap=node('div');wrap.style.overflowX='auto';
      const table=node('table');const header=node('tr');
-     for(const title of ['Colaborador','Automática','Assistida','Proposta','Confiança','Evidências','Pendentes','Ação'])header.append(node('th',title));table.append(header);
+     for(const title of ['Colaborador','Automática','Assistida','Pontos tarefas','Proposta','Confiança','Evidências','Pendentes','Ação'])header.append(node('th',title));table.append(header);
      for(const member of team.rows){
       const r=member.calculation;const tr=node('tr');
-      for(const value of [member.name,r.criteria.reduce((sum,x)=>sum+(x.automatic??0),0),r.criteria.reduce((sum,x)=>sum+(x.assisted??0),0),r.score??'N/D',r.confidence,member.evidenceCount,r.pendingPoints])tr.append(node('td',String(value)));
+      for(const value of [member.name,r.criteria.reduce((sum,x)=>sum+(x.automatic??0),0),r.criteria.reduce((sum,x)=>sum+(x.assisted??0),0),r.operationalPoints?.points??0,r.score??'N/D',r.confidence,member.evidenceCount,r.pendingPoints])tr.append(node('td',String(value)));
       const action=node('td');button('Abrir',async()=>{person=member.user_id;users.value=person;await load();},action);tr.append(action);table.append(tr);
      }
      wrap.append(table);content.append(wrap);
