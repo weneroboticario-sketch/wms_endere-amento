@@ -19,3 +19,10 @@ test("unique pending index blocks same requester + SKU + qty while preserving se
   await insert("new-after-cancellation","VDCG","51213","evandro",9);
  } finally { await db.close(); }
 });
+
+test("maintenance exception is limited to postgres and unknown application roles remain blocked",async()=>{
+ const sql=await readFile(new URL("../supabase/migrations/20261120161500_wms_replenishment_dedup_20261120.sql",import.meta.url),"utf8");
+ assert.match(sql,/if current_user = 'postgres' then/);
+ assert.match(sql,/if \(select private\.current_wms_role\(\)\) <> 'ATENDENTE' then/);
+ assert.doesNotMatch(sql,/current_wms_role\(\)\) is distinct from 'ATENDENTE'/);
+});
