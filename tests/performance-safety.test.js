@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createReferenceCache } from '../src/reference-cache.js';
 import { readIncrementalPages } from '../src/incremental-pages.js';
-import { isServiceRestricted, isCancelledRequest, serviceFailureMessage, recordRequestHealth, requestHealthSnapshot } from '../src/request-health.js';
+import { isServiceRestricted, isCancelledRequest, serviceFailureMessage, recordRequestHealth, requestHealthSnapshot, responseRequestMetrics } from '../src/request-health.js';
 
 const script = await readFile(new URL('../script.js', import.meta.url), 'utf8');
 function extract(start, end, env) {
@@ -94,7 +94,7 @@ test('actual warehouse reader scopes every page and uses inclusive server waterm
 
 test('402 and cancellation do not retry, while transient reads keep bounded retries', async () => {
   let calls = 0;
-  const env = { IS_CP_ALAMO: false, performance, recordRequestHealth, delay: async () => {}, isSupabaseTransientNetworkError: error => !isServiceRestricted(error) && !isCancelledRequest(error) && /network/.test(error.message) };
+  const env = { IS_CP_ALAMO: false, performance, recordRequestHealth, responseRequestMetrics, delay: async () => {}, isSupabaseTransientNetworkError: error => !isServiceRestricted(error) && !isCancelledRequest(error) && /network/.test(error.message) };
   const run = extract('  async function runSupabaseRequestWithRetry(', '  function smallerSupabaseChunkSize(', env);
   const blocked = { status: 402, message: 'exceed_egress_quota' };
   assert.equal((await run('login', async () => { calls++; return { error: blocked, status: 402 }; })).error, blocked);
