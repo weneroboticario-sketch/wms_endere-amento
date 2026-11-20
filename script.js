@@ -49,6 +49,7 @@ import {
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { buildReplenishmentRoute, loadActiveReplenishmentPages, replenishmentRouteAddress, compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { findPendingOwnDuplicate, summarizeOpenReplenishment } from "./src/replenishment-duplicates.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
@@ -4941,11 +4942,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!cleanSkus.length || !isSupabaseReady()) return {};
     var response = await supabaseDb
       .from("wms_replenishment_requests")
-      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,responsavel_nome,created_at,is_deleted")
+      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,solicitado_por_nome,responsavel_nome,created_at,is_deleted")
       .eq("warehouse_code", activeWarehouseCode())
       .in("codigo_material", cleanSkus)
       .in("status", OPEN_REPLENISHMENT_STATUSES)
-      .neq("is_deleted", true)
+      .eq("is_deleted", false)
+      .eq("archived", false)
       .order("created_at", { ascending: false })
       .limit(Math.max(100, cleanSkus.length * 3));
     if (response.error) throw response.error;
@@ -4964,6 +4966,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }).sort(function (left, right) {
       return Date.parse(right.created_at) - Date.parse(left.created_at);
     })[0] || null;
+  }
+
+  async function getOpenReplenishmentRequestsForSku(sku) {
+    var warehouse = activeWarehouseCode();
+    var querySkus = stockSkuQueryValues([sku]);
+    if (!querySkus.length || !isSupabaseReady()) return [];
+    var response = await supabaseDb.from("wms_replenishment_requests")
+      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,quantidade_atendida,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,created_at,is_deleted,archived")
+      .eq("warehouse_code", warehouse).in("codigo_material", querySkus)
+      .in("status", OPEN_REPLENISHMENT_STATUSES).eq("is_deleted", false).eq("archived", false)
+      .order("created_at", { ascending: false }).limit(100);
+    if (response.error) throw response.error;
+    if (activeWarehouseCode() !== warehouse) throw new Error("Estoque mudou durante a conferência.");
+    return (response.data || []).filter(function (row) { return normalizeSkuKey(row.codigo_material) === normalizeSkuKey(sku); });
   }
 
   function groupStockPositionsBySku(positions) {
@@ -5047,7 +5063,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         hasOpenRequest: Boolean(openRequest),
         openRequestId: openRequest ? openRequest.id : "",
         openRequestStatus: openRequest ? openRequest.status : "",
-        openRequestResponsible: openRequest ? openRequest.responsavel_nome || "" : ""
+        openRequestResponsible: openRequest ? openRequest.responsavel_nome || "" : "",
+        openRequestRequester: openRequest ? openRequest.solicitado_por_nome || "" : "",
+        openRequestPending: openRequest ? Number(openRequest.quantidade_pendente || 0) : 0
       });
     }).filter(function (suggestion) {
       return suggestion && replenishmentSuggestionMatchesFilter(suggestion, filter);
