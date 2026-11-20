@@ -19,6 +19,7 @@ export function isBarcodeEntry(input){
  if(supportedIds.has(id))return true;
  const attributes=[input.name,input.getAttribute('aria-label'),input.placeholder,input.getAttribute('data-code'),input.getAttribute('data-sku'),id].filter(Boolean).join(' ');
  if(forbidden.test(attributes))return false;
+ if(input.hasAttribute('data-map-sku'))return true;
  if(input.hasAttribute('data-code')&&/sku|ean|bipe|scan/i.test(attributes))return true;
  return patterns.test(attributes);
 }
