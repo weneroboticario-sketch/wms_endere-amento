@@ -6,7 +6,7 @@ const supportedIds=new Set([
  'dashboardSkuQuickInput','skuInput','locationInput','replenishmentSkuInput',
  'transferScanInput'
 ]);
-const specialExisting=new Set(['skuSearchInput','shelfSearchInput']);
+const specialExisting=new Set(['skuSearchInput','shelfSearchInput','transferScanInput']);
 const patterns=/\b(sku|ean|gtin|c[oó]digo de barras|bip(?:e|ar|agem)|scanner|prateleira|endere[cç]o wms)\b/i;
 const forbidden=/senha|password|token|autentica|acesso|login|usu[aá]rio|cupom|pedido|nota fiscal|nfe|nf-e|cnpj|cpf|telefone|email|transfercodefilter|search|filter/i;
 export function isBarcodeEntry(input){
