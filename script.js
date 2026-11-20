@@ -39,7 +39,7 @@ import { operationalDiagnostics } from "./src/operational-diagnostics.js";
 import { createScopedSingleFlight } from "./src/request-coalescing.js";
 import { createReferenceCache } from "./src/reference-cache.js";
 import { readIncrementalPages } from "./src/incremental-pages.js";
-import { isServiceRestricted, isCancelledRequest, serviceFailureMessage, recordRequestHealth, requestHealthSnapshot } from "./src/request-health.js";
+import { isServiceRestricted, isCancelledRequest, serviceFailureMessage, recordRequestHealth, requestHealthSnapshot, summarizeRequestHealth, responseRequestMetrics } from "./src/request-health.js";
 import {
   buildAddressingOccupantSnapshot,
   planBindingRemoval,
@@ -653,7 +653,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         if (waits[attempt]) await delay(waits[attempt]);
         requestStarted = performance.now();
         var response = await operation();
-        if (!IS_CP_ALAMO) recordRequestHealth(label, requestStarted, { status: response && (response.status || (response.error ? response.error.status : 200)), rows: response && Array.isArray(response.data) ? response.data.length : 0, attempt: attempt });
+        if (!IS_CP_ALAMO) recordRequestHealth(label, requestStarted, { status: response && (response.status || (response.error ? response.error.status : 200)), ...responseRequestMetrics(label, response), attempt: attempt });
         if (!response || !response.error || !isSupabaseTransientNetworkError(response.error) || attempt === waits.length - 1) {
           return response;
         }
@@ -12974,6 +12974,13 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     state.bindings = state.bindings.filter(function (binding) { return !removeSet[binding.id]; });
   }
 
+  function formatRecentRequestHealthSummary(samples) {
+    var summary = summarizeRequestHealth(samples);
+    return summary.success + " consulta(s) concluída(s), " + summary.failed + " falha(s). "
+      + (summary.partial ? summary.partial + " consulta(s) de contagem com HTTP 206 (resposta esperada). " : "")
+      + "O campo rows é a quantidade de registros retornados, não o saldo; nas consultas HEAD aparece como não aplicável.";
+  }
+
   async function renderSystemDiagnostics() {
     if (!$("systemDiagnosticsSummary") || !$("systemDiagnosticsDetails")) return;
     var cacheBytes = await estimateLocalCacheBytes();
@@ -13006,7 +13013,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       summaryChip("Schema", schemaVersion.version || "Pendente", schemaVersion.current ? "result-ok" : "result-missing")
     ].join("");
     $("systemDiagnosticsDetails").innerHTML = [
-      !IS_CP_ALAMO ? "<p><strong>Requisições recentes (sem conteúdo):</strong> " + escapeHtml(JSON.stringify(requestHealthSnapshot().slice(-12))) + ".</p>" : "",
+      !IS_CP_ALAMO ? "<p><strong>Saúde das consultas:</strong> " + escapeHtml(formatRecentRequestHealthSummary(requestHealthSnapshot().slice(-12))) + "</p>" : "",
+      !IS_CP_ALAMO ? "<details><summary>Ver detalhes técnicos das últimas consultas</summary><pre style='white-space:pre-wrap;overflow-wrap:anywhere'>" + escapeHtml(JSON.stringify(requestHealthSnapshot().slice(-12), null, 2)) + "</pre></details>" : "",
       "<p><strong>Comunicação Caixa/Estoque:</strong> " + escapeHtml(JSON.stringify(operationalDiagnostics().filter(function (entry) { return entry.warehouse === warehouse; }).slice(-8))) + ".</p>",
       "<p><strong>Canal Caixa/Estoque:</strong> " + escapeHtml(import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true" ? "Realtime configurado" : "Polling configurado") + " | Estado: " + escapeHtml(caixaAlertsRuntime && caixaAlertsRuntime.feed ? caixaAlertsRuntime.feed.state() : "nao inicializado") + ".</p>",
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
