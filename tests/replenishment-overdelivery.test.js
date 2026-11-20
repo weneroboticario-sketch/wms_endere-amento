@@ -10,7 +10,7 @@ const complete = source.slice(source.indexOf("  async function completeReplenish
 
 test("explicitly confirmed overdelivery accepts 70 units against 50 originally requested", async () => {
   const request={id:"synthetic",requestedQty:50,attendedQty:0,pendingQty:50,observacao:"",status:"EM_SEPARACAO"};
-  const context=vm.createContext({getReplenishmentById:()=>request,formatQty:String,normalizeText:value=>String(value || "").trim(),updateReplenishmentRow:async(id,patch)=>Object.assign(request,patch),authState:{currentUser:{id:"op",name:"Operador"}}});
+  const context=vm.createContext({getReplenishmentById:()=>request,formatQty:String,nowIso:()=>"2026-11-20T15:00:00Z",normalizeText:value=>String(value || "").trim(),updateReplenishmentRow:async(id,patch)=>Object.assign(request,patch),authState:{currentUser:{id:"op",name:"Operador"}}});
   vm.runInContext(update+complete,context);
   await assert.rejects(context.updateReplenishmentQuantity(request.id,70,""),/Confirme o excedente/);
   assert.equal(request.attendedQty,0);
