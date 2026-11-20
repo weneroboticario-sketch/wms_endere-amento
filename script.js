@@ -1,5 +1,7 @@
 import { openSkuPhotoLookup } from "./src/sku-photo-lookup.js";
 import { openShelfBarcodeScanner } from "./src/shelf-barcode-scanner.js";
+import { openTransferBarcodeScanner } from "./src/transfer-barcode-camera.js";
+import { resolveTransferScanSku } from "./src/transfer-scan-resolver.js";
 import { uniqueShelfProducts, shelfAvailableBySku, formatShelfQuantity } from "./src/shelf-location-lookup.js";
 import { createPackingController } from "./src/transfer-packing-view.js";
 import { packingAuditReport } from "./src/transfer-packing-audit.js";
@@ -8975,6 +8977,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
     $("refreshTransferProgressButton").addEventListener("click", refreshTransferProgress);
     $("transferScanInput").addEventListener("input", markTransferScanInput);
+    mountTransferBarcodeCameraButton();
     $("transferScanInput").addEventListener("keydown", function (event) {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -14700,6 +14703,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     renderTransferStepSummary(transfer, stats, mode, items);
     renderTransferFinalSummary(transfer, stats, items, mode);
     var requiresScan = mode === "MONTAGEM";
+    if ($("transferBarcodeCameraButton")) $("transferBarcodeCameraButton").hidden = finalized || !requiresScan;
     var allSeparated = mode === "SEPARACAO" && stats.pendingSeparation <= 0;
     var waitingPacking = mode === "MONTAGEM" && items.some(function (item) { return !item.isExtra && !isTransferItemPackingClosed(item) && Number(item.packedQty || 0) < Number(item.separatedQty || 0); });
     var showFinalBoxes = !finalized && mode === "MONTAGEM";
@@ -18858,6 +18862,38 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     return copy;
   }
 
+  function mountTransferBarcodeCameraButton() {
+    var input = $("transferScanInput");
+    if (!input || $("transferBarcodeCameraButton")) return;
+    var button = document.createElement("button");
+    button.id = "transferBarcodeCameraButton";
+    button.type = "button";
+    button.className = "secondary-button";
+    button.textContent = "Bipar com câmera";
+    button.hidden = true;
+    input.insertAdjacentElement("afterend", button);
+    button.addEventListener("click", function () {
+      var transfer = getTransferById(transferState.activeTransferId);
+      if (!transfer || isFinalTransferStatus(transfer.status) ||
+          (transferState.activeWorkMode || getTransferWorkMode(transfer)) !== "MONTAGEM") return;
+      var userId = (authState.currentUser || {}).id;
+      var warehouse = activeWarehouseCode();
+      var transferId = transfer.id;
+      openTransferBarcodeScanner({
+        canUse: function () {
+          return Boolean(authState.currentUser && authState.currentUser.id === userId &&
+            activeWarehouseCode() === warehouse && transferState.activeTransferId === transferId &&
+            transferState.activeWorkMode === "MONTAGEM" &&
+            !isFinalTransferStatus((getTransferById(transferId) || {}).status));
+        },
+        onRead: async function (raw) {
+          $("transferScanInput").value = raw;
+          await locateTransferItem();
+        }
+      });
+    });
+  }
+
   function markTransferScanInput() {
     var value = $("transferScanInput").value || "";
     if (!value) {
@@ -18958,13 +18994,29 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function locateTransferItem() {
+    if (transferState.scanProcessing) return;
+    transferState.scanProcessing = true;
+    try {
     var transfer = getTransferById(transferState.activeTransferId);
     if (!transfer) return;
     if (isFinalTransferStatus(transfer.status)) {
       setStatus("transferWorkStatus", "Esta tarefa ja foi finalizada.", "warning");
       return;
     }
-    var sku = firstSkuValue($("transferScanInput").value);
+    var rawInput = String($("transferScanInput").value || "").trim();
+    var sku = firstSkuValue(rawInput);
+    try {
+      sku = await resolveTransferScanSku(rawInput, {
+        items: getTransferItems(transfer.id),
+        client: supabaseDb,
+        warehouse: activeWarehouseCode(),
+        isSameSku: isSameSku
+      });
+    } catch (error) {
+      setStatus("transferWorkStatus", error.message, "error");
+      $("transferScanInput").focus();
+      return;
+    }
     if (!sku) {
       setStatus("transferWorkStatus", "Informe ou bipe o SKU.", "error");
       return;
@@ -18997,6 +19049,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     renderCurrentTransferItem();
     setStatus("transferWorkStatus", item.description + " localizado. Informe a quantidade conferida.", "success");
     $("transferQuantityInput").focus();
+    } finally { transferState.scanProcessing = false; }
   }
 
   async function handleUnknownTransferSku(transfer, sku) {
