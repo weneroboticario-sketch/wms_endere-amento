@@ -10127,7 +10127,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       "</div>",
       "<div class=\"replenishment-suggestion-locations\">",
       "<span><small>Localizacao CAPTACAO</small><b>" + escapeHtml(location) + "</b></span>",
-      item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(item.openRequestStatus + (item.openRequestResponsible ? " - " + item.openRequestResponsible : "")) + "</b></span>" : "",
+      item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(displayReplenishmentStatus(item.openRequestStatus) + " | " + (item.openRequestRequester || "Solicitante não informado") + " | " + formatQty(item.openRequestPending || 0) + " un. pendentes" + (item.openRequestResponsible ? " | Responsável: " + item.openRequestResponsible : "")) + "</b></span>" : "",
       "</div>",
       isRupture ? "" : "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
       "</article>"
@@ -10323,12 +10323,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var product = lookupReplenishmentProduct(sku);
     replenishmentState.currentProduct = product;
     renderReplenishmentProductCard(product);
+    var queryWarehouse = activeWarehouseCode(), queryActor = authState.currentUser && authState.currentUser.id;
+    setStatus("replenishmentCreateStatus", "", "");
     stockState.lookupTimer = window.setTimeout(function () {
       lookupReplenishmentProductWithStock(sku);
+      if (!queryActor || !isSupabaseReady()) return;
+      getOpenRequestBySku(sku).then(function (existing) {
+        if (activeWarehouseCode() !== queryWarehouse || !authState.currentUser || authState.currentUser.id !== queryActor || normalizeSku($("replenishmentSkuInput").value) !== sku) return;
+        setStatus("replenishmentCreateStatus",
+          existing ? "Já solicitado por " + (existing.solicitado_por_nome || "colaborador não identificado") + " | " + formatQty(existing.quantidade_pendente || 0) + " un. pendentes | " + displayReplenishmentStatus(existing.status) + ". Confira antes de criar outro." : "",
+          existing ? "warning" : "");
+      }).catch(function () {
+        if (activeWarehouseCode() === queryWarehouse && authState.currentUser && authState.currentUser.id === queryActor && normalizeSku($("replenishmentSkuInput").value) === sku)
+          setStatus("replenishmentCreateStatus", "Não foi possível conferir pedidos abertos; o envio exigirá nova verificação.", "warning");
+      });
     }, 250);
   }
 
-  function selectedRadioValue(name, fallback) {
+    function selectedRadioValue(name, fallback) {
     var selected = document.querySelector("input[name=\"" + name + "\"]:checked");
     return selected ? selected.value : fallback;
   }
@@ -10369,6 +10381,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       showToast("Pedido de reposicao criado.", "success");
       if ($("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
     } catch (error) {
+      if (error && error.code === "DUPLICATE_PENDING_REPLENISHMENT") {
+        setStatus("replenishmentCreateStatus", error.message, "warning");
+        showToast("Reposição já solicitada. Confira a fila.", "warning");
+        return;
+      }
       var message = formatSupabaseError(error);
       recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentCreateStatus", "Erro ao criar pedido: " + message, "error");
@@ -10511,7 +10528,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var defaultPriority = document.querySelector("input[name=\"suggestionPriority\"][value=\"NORMAL\"]");
     if (defaultPriority) defaultPriority.checked = true;
     applyReplenishmentPriorityRoleView(isAttendant());
-    setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
+    setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Já solicitado por " + (suggestion.openRequestRequester || "colaborador não identificado") + " | " + formatQty(suggestion.openRequestPending || 0) + " un. pendentes | " + displayReplenishmentStatus(suggestion.openRequestStatus) + ". Confira antes de criar outro." : "", suggestion.hasOpenRequest ? "warning" : "");
     $("replenishmentSuggestionModal").hidden = false;
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").focus();
   }
@@ -10569,6 +10586,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         setStatus("skuSearchStatus", "Pedido de reposicao criado para SKU " + created.codigoMaterial + ".", "success");
       }
     } catch (error) {
+      if (error && error.code === "DUPLICATE_PENDING_REPLENISHMENT") {
+        setStatus("replenishmentSuggestionModalStatus", error.message, "warning");
+        return;
+      }
       recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentSuggestionModalStatus", "Erro ao criar pedido: " + formatSupabaseError(error), "error");
     } finally {
