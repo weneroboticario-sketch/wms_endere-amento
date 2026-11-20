@@ -5404,7 +5404,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function replenishmentRequestSelectColumns() {
-    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,last_attended_by_id,last_attended_by_name,no_stock_by_id,no_stock_by_name,completed_by_id,completed_by_name,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
+    return "id,created_at,updated_at,warehouse_code,codigo_material,nome_material,quantidade_disponivel_loja_informada,quantidade_solicitada,quantidade_atendida,quantidade_pendente,localizacao_wms,localizacao_estacao,localizacao_rack,localizacao_linha,localizacao_coluna,captacao_estacao,captacao_rack,captacao_linha,captacao_coluna,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,claimed_by_id,claimed_by_name,claimed_at,last_attended_by_id,last_attended_by_name,no_stock_by_id,no_stock_by_name,completed_by_id,completed_by_name,returned_to_queue_at,returned_to_queue_by_id,returned_to_queue_by_name,return_reason,status,prioridade,observacao,motivo_cancelamento,cancellation_requested_at,cancellation_requested_by_id,cancellation_requested_by_name,cancellation_request_reason,overdelivery_confirmed_qty,overdelivery_reason,overdelivery_confirmed_by_id,overdelivery_confirmed_at,started_at,finished_at,duration_seconds,is_deleted,deleted_at,deleted_by_id,deleted_by_name";
   }
 
   function fromDbReplenishmentRequest(row) {
@@ -5459,6 +5459,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       cancellationRequestedById: row.cancellation_requested_by_id || "",
       cancellationRequestedByName: row.cancellation_requested_by_name || "",
       cancellationRequestReason: row.cancellation_request_reason || "",
+      overdeliveryConfirmedQty: Number(row.overdelivery_confirmed_qty || 0),
+      overdeliveryReason: row.overdelivery_reason || "",
+      overdeliveryConfirmedById: row.overdelivery_confirmed_by_id || "",
+      overdeliveryConfirmedAt: row.overdelivery_confirmed_at || "",
       startedAt: row.started_at || "",
       finishedAt: row.finished_at || "",
       durationSeconds: Number(row.duration_seconds || 0),
@@ -5519,6 +5523,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       cancellation_requested_by_id: item.cancellationRequestedById || "",
       cancellation_requested_by_name: item.cancellationRequestedByName || "",
       cancellation_request_reason: item.cancellationRequestReason || "",
+      overdelivery_confirmed_qty: Number(item.overdeliveryConfirmedQty || 0),
+      overdelivery_reason: item.overdeliveryReason || "",
+      overdelivery_confirmed_by_id: item.overdeliveryConfirmedById || "",
+      overdelivery_confirmed_at: item.overdeliveryConfirmedAt || null,
       started_at: item.startedAt || null,
       finished_at: item.finishedAt || null,
       duration_seconds: Number(item.durationSeconds || 0),
@@ -6010,6 +6018,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       // A returned picking attempt must not carry its former attendance forward.
       attendedQty: 0,
       pendingQty: Number(request.requestedQty || 0),
+      overdeliveryConfirmedQty: 0,
+      overdeliveryReason: "",
+      overdeliveryConfirmedById: "",
+      overdeliveryConfirmedAt: "",
       lastAttendedById: "",
       lastAttendedByName: "",
       noStockById: "",
@@ -6033,7 +6045,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     });
   }
 
-  async function updateReplenishmentQuantity(id, qty, observation) {
+  async function updateReplenishmentQuantity(id, qty, observation, overdeliveryReason) {
     var request = getReplenishmentById(id);
     if (!request) throw new Error("Pedido de reposicao nao encontrado.");
     if (!authState.currentUser) throw new Error("Usuario logado obrigatorio.");
@@ -6042,7 +6054,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var requested = Number(request.requestedQty || 0);
     var previousAttended = Number(request.attendedQty || 0);
     var remaining = Math.max(0, requested - previousAttended);
-    if (qty > remaining) throw new Error("Quantidade acima do pendente (" + formatQty(remaining) + " un.). Confira o físico ou devolva para a fila para reiniciar a contagem.");
+    if (qty > remaining && !normalizeText(overdeliveryReason)) throw new Error("Quantidade excede o pedido. Confirme o excedente e informe o motivo da separação adicional.");
     var attended = previousAttended + qty;
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
@@ -6056,6 +6068,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       __expectedStatus: request.status,
       __expectedAttended: previousAttended
     };
+    if (attended > requested) {
+      patch.overdeliveryConfirmedQty = attended;
+      patch.overdeliveryReason = normalizeText(overdeliveryReason) || request.overdeliveryReason || "";
+    }
     if (qty > 0) {
       patch.lastAttendedById = authState.currentUser.id;
       patch.lastAttendedByName = actorName;
@@ -10250,7 +10266,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Puxar pedido</button>");
     if (canWork && item.status === "ATRIBUIDO") actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
-      if (Number(item.attendedQty || 0) < Number(item.requestedQty || 0)) actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
+      actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
       actions.push("<button class=\"secondary-button\" data-replenishment-nostock=\"" + escapeHtml(item.id) + "\" type=\"button\">Sem estoque</button>");
       if (Number(item.attendedQty || 0) > 0) actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
     }
@@ -10457,11 +10473,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
-        var qty = window.prompt("Quantidade adicional atendida agora (pendentes: " + (request ? formatQty(Math.max(0,request.requestedQty - request.attendedQty)) : "0") + " un.). Não pode ultrapassar a solicitada:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
+        var qty = window.prompt("Quantidade separada agora (solicitada: " + (request ? formatQty(request.requestedQty) : "0") + " un.; já atendida: " + (request ? formatQty(request.attendedQty || 0) : "0") + " un.). É permitido excedente com confirmação:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
         if (qty === null) return;
-        var note = "";
-        if (Number((request && request.attendedQty) || 0) + Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
-        await updateReplenishmentQuantity(id, Number(qty || 0), note);
+        var note = "", overdeliveryReason = "";
+        var newTotal = Number((request && request.attendedQty) || 0) + Number(qty || 0);
+        var originallyRequested = Number((request && request.requestedQty) || 0);
+        if (newTotal > originallyRequested) {
+          if (!window.confirm("ATENÇÃO: foram solicitadas " + formatQty(originallyRequested) + " un., mas você informou " + formatQty(newTotal) + " un. no total (" + formatQty(newTotal - originallyRequested) + " un. extras). Confirma a conferência física e o atendimento excedente? A movimentação de estoque ocorrerá somente na conclusão.")) return;
+          var enteredReason = window.prompt("Informe o motivo da quantidade excedente (obrigatório):", "");
+          if (enteredReason === null) return;
+          overdeliveryReason = normalizeText(enteredReason);
+          if (!overdeliveryReason) throw new Error("O motivo do excedente é obrigatório.");
+        }
+        if (newTotal < originallyRequested) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
+        await updateReplenishmentQuantity(id, Number(qty || 0), note, overdeliveryReason);
       }
       if (target.dataset.replenishmentNostock) {
         var reason = window.prompt("Motivo do sem estoque:");

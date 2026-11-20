@@ -32,7 +32,7 @@ test("return UI resets progress, confirms physical recheck and preserves the pri
  assert.match(ret,/__expectedStatus: request.status/);
  assert.match(ret,/__expectedAttended: Number\(request.attendedQty/);
  assert.match(source,/O histórico será preservado/);
- assert.doesNotMatch(source,/Pode superar a solicitada/);
+ assert.match(source,/É permitido excedente com confirmação/);
 });
 
 test("stale quantity updates are rejected rather than overwriting another tab",()=>{
