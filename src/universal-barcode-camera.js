@@ -28,10 +28,12 @@ export function activateBarcodeCamera(){
  const look=()=>{
   if(!document.body)return;
   for(const field of document.querySelectorAll('input')){
-   if(attached.has(field)||!isBarcodeEntry(field))continue;
+   if(attached.has(field)){const existing=field.nextElementSibling;if(existing?.classList.contains('universal-barcode-trigger'))existing.disabled=field.disabled||field.readOnly;continue;}
+   if(!isBarcodeEntry(field))continue;
    attached.add(field);
    const button=document.createElement('button');
    button.type='button';button.className='secondary-button universal-barcode-trigger';
+   button.disabled=field.disabled||field.readOnly;
    button.title='Ler código de barras pela câmera';button.setAttribute('aria-label','Ler código de barras pela câmera');
    button.innerHTML='<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V5h5M15 5h5v4M20 15v4h-5M9 20H4v-5M7 10v4M10 9v6M13 9v6M16 10v4"/></svg><span>Câmera</span>';
    field.insertAdjacentElement('afterend',button);
@@ -57,7 +59,7 @@ export function activateBarcodeCamera(){
   if(scheduled)return;scheduled=true;
   queueMicrotask(()=>{scheduled=false;look();});
  });
- observer.observe(document.documentElement,{subtree:true,childList:true});
+ observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:['disabled','readonly']});
  look();
 }
 export function openGenericScanner({accept,canUse=()=>true,scannerFactory=createSkuLiveBarcodeScanner}){
