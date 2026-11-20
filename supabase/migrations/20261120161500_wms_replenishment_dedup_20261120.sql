@@ -3,7 +3,12 @@
 create or replace function private.guard_wms_replenishment_attendant_update()
 returns trigger language plpgsql set search_path to '' as $guard$
 begin
-  if (select private.current_wms_role()) is distinct from 'ATENDENTE' then
+  -- Only the trusted database owner can perform direct maintenance without a JWT.
+  if current_user = 'postgres' then
+    return new;
+  end if;
+  -- Keep the existing deny-by-default behavior for sessions without a WMS profile.
+  if (select private.current_wms_role()) <> 'ATENDENTE' then
     return new;
   end if;
   if old.cancellation_requested_at is not null then
