@@ -5684,16 +5684,25 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
     var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
     var warehouse = activeWarehouseCode(), actor = authState.currentUser;
-    var openRequest = await getOpenRequestBySku(sku);
+    // Replay the same action ID before considering a duplicate.
+    if (data.idempotencyKey) {
+      var replay = await findReplenishmentByIdempotencyKey(data.idempotencyKey);
+      if (replay) return replay;
+    }
+    var openRequests = await getOpenReplenishmentRequestsForSku(sku);
     if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
+    var samePending = findPendingOwnDuplicate(openRequests, { warehouse: warehouse, actorId: actor.id, sku: sku, quantity: requestedQty });
+    if (samePending) {
+      var repeated = new Error("Já existe pedido idêntico para o SKU " + sku + ": " + formatQty(requestedQty) + " un. por " + (samePending.solicitado_por_nome || actor.name || "este colaborador") + " (" + displayReplenishmentStatus(samePending.status) + "). O pedido original foi mantido.");
+      repeated.code = "DUPLICATE_PENDING_REPLENISHMENT";
+      throw repeated;
+    }
+    var openRequest = openRequests[0] || null;
     if (openRequest && !data.forceDuplicate) {
-      var warning = "O item " + sku + " já foi solicitado."
-        + "\nSituação: " + displayReplenishmentStatus(openRequest.status) + "."
-        + "\nQuantidade solicitada: " + formatQty(openRequest.quantidade_solicitada) + " un."
-        + (openRequest.responsavel_nome ? "\nResponsável: " + openRequest.responsavel_nome + "." : "")
-        + "\n\nDeseja realmente criar outra reposição para este item?"
-        + "\nOK: criar uma nova solicitação. Cancelar: voltar e conferir."
-        + "\nA solicitação existente continuará como está.";
+      var warning = "ATENÇÃO: já existem solicitações abertas para o SKU " + sku + "."
+        + "\n" + summarizeOpenReplenishment(openRequests, { formatQty: formatQty, statusLabel: displayReplenishmentStatus })
+        + "\n\nDeseja realmente criar OUTRA solicitação independente?"
+        + "\nOK: necessidade adicional. Cancelar: conferir pedido existente.";
       if (!window.confirm(warning)) return null;
     }
     if (!openRequest && replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
@@ -5766,6 +5775,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (response.error && isDuplicateKeyError(response.error)) {
       var duplicated = await findReplenishmentByIdempotencyKey(idempotencyKey);
       if (duplicated) return duplicated;
+      var freshOpen = await getOpenReplenishmentRequestsForSku(sku);
+      if (findPendingOwnDuplicate(freshOpen, { warehouse: warehouse, actorId: actor.id, sku: sku, quantity: requestedQty })) {
+        var collision = new Error("Pedido idêntico já foi registrado. O pedido existente foi mantido.");
+        collision.code = "DUPLICATE_PENDING_REPLENISHMENT";
+        throw collision;
+      }
     }
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
