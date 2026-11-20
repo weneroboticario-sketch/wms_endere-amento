@@ -3359,6 +3359,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (!stockState.importing && getActiveScreenId() === "baseEstoque" && $("stockImportStatus").textContent === "Carregando Base de Estoque...") {
         setStatus("stockImportStatus", "", "");
       }
+      // Track a successful stock read without caching quantities or forcing another query.
+      try { localStorage.setItem(LOCAL_SYNC_PREFIX + cacheKeyForWarehouse("stockData", warehouse), nowIso()); }
+      catch { /* local storage is optional; stock loading must still succeed */ }
       recordPerformanceMetric("lastStockLoadMs", startedAt);
       return true;
     } catch (error) {
@@ -12979,7 +12982,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if ("serviceWorker" in navigator) serviceWorkerStatus = navigator.serviceWorker.controller ? "Ativo" : "Registrado/pendente";
     var syncKeys = ["coreData", "transferData", "stockData", "replenishmentData"].map(function (moduleName) {
       var key = LOCAL_SYNC_PREFIX + moduleName + ":" + warehouse;
-      return { moduleName: moduleName, value: localStorage.getItem(key) || "" };
+      var loaded = { coreData: moduleLoadState.core, transferData: moduleLoadState.transfers, stockData: moduleLoadState.stock, replenishmentData: moduleLoadState.replenishment }[moduleName] === true;
+      return { moduleName: moduleName, value: localStorage.getItem(key) || "", loaded: loaded };
     });
     var disabledRealtimeTables = Object.keys(realtimeState.disabledOptionalTables || {}).map(function (tableName) {
       var entry = realtimeState.disabledOptionalTables[tableName] || {};
@@ -13004,6 +13008,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     $("systemDiagnosticsDetails").innerHTML = [
       !IS_CP_ALAMO ? "<p><strong>Requisições recentes (sem conteúdo):</strong> " + escapeHtml(JSON.stringify(requestHealthSnapshot().slice(-12))) + ".</p>" : "",
       "<p><strong>Comunicação Caixa/Estoque:</strong> " + escapeHtml(JSON.stringify(operationalDiagnostics().filter(function (entry) { return entry.warehouse === warehouse; }).slice(-8))) + ".</p>",
+      "<p><strong>Canal Caixa/Estoque:</strong> " + escapeHtml(import.meta.env.VITE_WMS_OPERATIONAL_REALTIME === "true" ? "Realtime configurado" : "Polling configurado") + " | Estado: " + escapeHtml(caixaAlertsRuntime && caixaAlertsRuntime.feed ? caixaAlertsRuntime.feed.state() : "nao inicializado") + ".</p>",
       "<p><strong>Supabase URL em uso:</strong> " + escapeHtml(previewPublicValue(supabaseConfig.url) || "-") + ".</p>",
       "<p><strong>Versao do schema:</strong> codigo espera " + escapeHtml(EXPECTED_SCHEMA_VERSION) + " | banco atual " + escapeHtml(schemaVersion.version || "nao registrada") + " | status " + escapeHtml(schemaVersion.current ? "OK" : "Migration pendente") + (schemaVersion.appliedAt ? " | aplicada em " + escapeHtml(formatDateTime(schemaVersion.appliedAt)) : "") + ".</p>",
       "<p><strong>Tabela wms_replenishment_requests:</strong> idempotency_key existe: " + yesNoDiagnostic(replenishmentSchema.columns.idempotency_key) + " | warehouse_code existe: " + yesNoDiagnostic(replenishmentSchema.columns.warehouse_code) + " | client_action_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.client_action_id) + " | created_by_id existe: " + yesNoDiagnostic(replenishmentSchema.columns.created_by_id) + " | updated_at existe: " + yesNoDiagnostic(replenishmentSchema.columns.updated_at) + ".</p>",
@@ -13020,7 +13025,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       "<p><strong>Ultimos eventos realtime:</strong></p>",
       realtimeState.recentEvents.length ? "<ul>" + realtimeState.recentEvents.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.table + " " + entry.event + " - " + (entry.transferId || entry.id || "-") + " - " + (entry.warehouseCode || "-")) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum evento realtime recebido nesta sessao.</p>",
       "<p><strong>Sincronizacao por modulo:</strong></p>",
-      "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : "sem registro") + "</li>"; }).join("") + "</ul>",
+      "<ul>" + syncKeys.map(function (entry) { return "<li><code>" + escapeHtml(entry.moduleName) + "</code>: " + escapeHtml(entry.value ? formatDateTime(entry.value) : entry.loaded ? "carregado; sem marcacao de cache" : "nao carregado (sob demanda)") + "</li>"; }).join("") + "</ul>",
       "<p><strong>Erros recentes:</strong></p>",
       performanceState.recentErrors.length ? "<ul>" + performanceState.recentErrors.map(function (entry) { return "<li>" + escapeHtml(formatDateTime(entry.at) + " - " + entry.label + ": " + entry.message) + "</li>"; }).join("") + "</ul>" : "<p>Nenhum erro recente registrado nesta sessao.</p>"
     ].join("");

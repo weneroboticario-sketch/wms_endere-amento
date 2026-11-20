@@ -21,3 +21,12 @@ test('missing remote product packaging table is not queried by the client',async
  assert.doesNotMatch(source,/\.from\("wms_product_packaging"\)\.upsert/);
  assert.match(source,/Patterns stay in the scoped local transfer cache|Keep learned patterns in the scoped local transfer cache/);
 });
+
+test('successful stock refresh marks the module sync without caching balances',async()=>{
+ const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
+ const load=source.slice(source.indexOf('  async function performStockOperationalLoad('),source.indexOf('  async function countActiveStockPositions('));
+ assert.match(load,/localStorage\.setItem\(LOCAL_SYNC_PREFIX \+ cacheKeyForWarehouse\("stockData", warehouse\), nowIso\(\)\)/);
+ assert.doesNotMatch(load,/writeModuleCache\("stockData"/);
+ assert.match(source,/nao carregado \(sob demanda\)/);
+ assert.match(source,/Canal Caixa\/Estoque:/);
+});
