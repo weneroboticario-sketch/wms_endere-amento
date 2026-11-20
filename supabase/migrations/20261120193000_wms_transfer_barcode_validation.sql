@@ -141,4 +141,4 @@ begin
  if exists(select 1 from public.wms_transfer_items x where x.transfer_id=t.id and private.packing_box(x) and coalesce(x.unidades_por_caixa,0)<=0 and coalesce(x.quantidade_lacrada_unidades,0)<=0 and coalesce(x.quantidade_lacrada,0)>0) then total_packed:=null;end if;
  update public.wms_transfers set packing_audit_version=1,total_items=item_count,total_skus=item_count,total_expected_quantity=total_expected,total_previsto=total_expected,total_separated_quantity=total_separated,total_packed_quantity=total_packed,total_enviado=total_packed,diferenca_total=total_packed-total_expected,updated_at=ts,last_action_at=ts,last_action_label=operation where id=t.id returning * into t;
  return jsonb_build_object('item',case when operation<>'FINALIZACAO' then to_jsonb(i) else null end,'transfer',to_jsonb(t),'event',to_jsonb(prior),'replayed',false);
-end $function$
+end $function$;
