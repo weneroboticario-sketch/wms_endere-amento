@@ -10,8 +10,10 @@ test("return to queue resets 72 picked units to zero; later overage cannot be re
  const db=new PGlite();
  try {
   await db.exec("create schema private; create table public.wms_replenishment_requests(id text primary key,status text,quantidade_solicitada numeric,quantidade_atendida numeric,quantidade_pendente numeric,last_attended_by_id text,last_attended_by_name text,no_stock_by_id text,no_stock_by_name text);");
-  await db.exec(sql);
+  // Simulate a legacy row created before the safety trigger is installed.
   await db.exec("insert into public.wms_replenishment_requests values('rep','SEPARADO',50,72,0,'op','Operador','','');");
+  await db.exec(sql);
+  await assert.rejects(db.exec("insert into public.wms_replenishment_requests values('invalid','SEPARADO',50,70,0,'op','Operador','','');"),/Quantidade atendida acima/);
   await db.exec("update public.wms_replenishment_requests set status='PENDENTE' where id='rep';");
   const row=(await db.query("select quantidade_atendida,quantidade_pendente,last_attended_by_id from public.wms_replenishment_requests where id='rep'")).rows[0];
   assert.equal(Number(row.quantidade_atendida),0);
