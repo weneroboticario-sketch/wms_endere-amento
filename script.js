@@ -5911,14 +5911,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!existing) throw new Error("Pedido de reposicao nao encontrado.");
     if (existing.warehouseCode !== activeWarehouseCode()) throw new Error("Pedido pertence a outro estoque.");
     var updated = Object.assign({}, existing, patch, { updatedAt: nowIso() });
-    var response = await supabaseDb
+    var query = supabaseDb
       .from("wms_replenishment_requests")
       .update(toDbReplenishmentRequest(updated))
       .eq("id", id)
-      .eq("warehouse_code", activeWarehouseCode())
-      .select(replenishmentRequestSelectColumns())
-      .single();
+      .eq("warehouse_code", activeWarehouseCode());
+    // Reject stale quantity-sensitive writes from other tabs or devices.
+    if (patch.__expectedStatus !== undefined) query = query.eq("status", patch.__expectedStatus);
+    if (patch.__expectedAttended !== undefined) query = query.eq("quantidade_atendida", patch.__expectedAttended);
+    var response = await query.select(replenishmentRequestSelectColumns()).maybeSingle();
     if (response.error) throw response.error;
+    if (!response.data) throw new Error("Pedido alterado por outra sessão. Atualize a fila e confira a quantidade antes de continuar.");
     var saved = fromDbReplenishmentRequest(response.data);
     upsertById(replenishmentState.requests, saved);
     return saved;
@@ -6004,10 +6007,19 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       returnedToQueueById: authState.currentUser.id,
       returnedToQueueByName: userName,
       returnReason: normalizeText(reason || "Devolvido para a fila."),
+      // A returned picking attempt must not carry its former attendance forward.
+      attendedQty: 0,
+      pendingQty: Number(request.requestedQty || 0),
+      lastAttendedById: "",
+      lastAttendedByName: "",
+      noStockById: "",
+      noStockByName: "",
       startedAt: "",
       finishedAt: "",
       durationSeconds: 0,
-      status: "PENDENTE"
+      status: "PENDENTE",
+      __expectedStatus: request.status,
+      __expectedAttended: Number(request.attendedQty || 0)
     });
     createReplenishmentNotification(saved, "returned");
     return saved;
@@ -6028,7 +6040,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     qty = Number(qty ?? 0);
     if (!Number.isFinite(qty) || qty < 0) throw new Error("Quantidade atendida invalida.");
     var requested = Number(request.requestedQty || 0);
-    var attended = Number(request.attendedQty || 0) + qty;
+    var previousAttended = Number(request.attendedQty || 0);
+    var remaining = Math.max(0, requested - previousAttended);
+    if (qty > remaining) throw new Error("Quantidade acima do pendente (" + formatQty(remaining) + " un.). Confira o físico ou devolva para a fila para reiniciar a contagem.");
+    var attended = previousAttended + qty;
     var pending = Math.max(0, requested - attended);
     var status = attended >= requested ? "SEPARADO" : attended > 0 ? "ATENDIDO_PARCIAL" : "SEM_ESTOQUE";
     if (qty === 0 && !normalizeText(observation)) throw new Error("Informe o motivo para marcar sem estoque.");
@@ -6037,7 +6052,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       attendedQty: attended,
       pendingQty: pending,
       status: status,
-      observacao: normalizeText(observation || request.observacao)
+      observacao: normalizeText(observation || request.observacao),
+      __expectedStatus: request.status,
+      __expectedAttended: previousAttended
     };
     if (qty > 0) {
       patch.lastAttendedById = authState.currentUser.id;
@@ -10233,7 +10250,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (canClaimReplenishmentRequest(item)) actions.push("<button class=\"primary-button\" data-replenishment-claim=\"" + escapeHtml(item.id) + "\" type=\"button\">Puxar pedido</button>");
     if (canWork && item.status === "ATRIBUIDO") actions.push("<button class=\"primary-button\" data-replenishment-start=\"" + escapeHtml(item.id) + "\" type=\"button\">Iniciar</button>");
     if (canWork && ["ATRIBUIDO", "EM_SEPARACAO", "ATENDIDO_PARCIAL", "SEPARADO"].indexOf(item.status) >= 0) {
-      actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
+      if (Number(item.attendedQty || 0) < Number(item.requestedQty || 0)) actions.push("<button class=\"secondary-button\" data-replenishment-attend=\"" + escapeHtml(item.id) + "\" type=\"button\">Atender</button>");
       actions.push("<button class=\"secondary-button\" data-replenishment-nostock=\"" + escapeHtml(item.id) + "\" type=\"button\">Sem estoque</button>");
       if (Number(item.attendedQty || 0) > 0) actions.push("<button class=\"primary-button\" data-replenishment-complete=\"" + escapeHtml(item.id) + "\" type=\"button\">Concluir</button>");
     }
@@ -10430,14 +10447,17 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     try {
       if (target.dataset.replenishmentClaim) await claimReplenishmentRequest(id);
       if (target.dataset.replenishmentReturn) {
-        var returnReason = window.prompt("Motivo para devolver para a fila:", "");
+        var returning = getReplenishmentById(id);
+        var returnReason = window.prompt("Motivo para devolver para a fila (a contagem atendida será zerada):", "");
         if (returnReason === null) return;
+        if (returning && Number(returning.attendedQty || 0) > 0 &&
+            !window.confirm("Devolver este pedido apagará a contagem operacional de " + formatQty(returning.attendedQty) + " un. O histórico será preservado. Confirma a nova conferência física?")) return;
         await returnReplenishmentRequestToQueue(id, returnReason);
       }
       if (target.dataset.replenishmentStart) await startReplenishmentRequest(id);
       if (target.dataset.replenishmentAttend) {
         var request = getReplenishmentById(id);
-        var qty = window.prompt("Quantidade adicional atendida agora (já atendida: " + (request ? formatQty(request.attendedQty || 0) : "0") + "). Pode superar a solicitada:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
+        var qty = window.prompt("Quantidade adicional atendida agora (pendentes: " + (request ? formatQty(Math.max(0,request.requestedQty - request.attendedQty)) : "0") + " un.). Não pode ultrapassar a solicitada:", request && request.pendingQty > 0 ? String(request.pendingQty) : "");
         if (qty === null) return;
         var note = "";
         if (Number((request && request.attendedQty) || 0) + Number(qty || 0) < Number((request && request.requestedQty) || 0)) note = window.prompt("Observacao do atendimento parcial:", (request && request.observacao) || "") || "";
