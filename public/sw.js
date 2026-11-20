@@ -1,4 +1,4 @@
-const STATIC_CACHE = "wms-static-v59";
+const STATIC_CACHE = "wms-static-v60";
 const RUNTIME_CACHE = "wms-runtime-v24";
 const STATIC_ASSETS = ["/", "/index.html", "/manifest.webmanifest", "/icon.svg"];
 
@@ -11,24 +11,21 @@ self.addEventListener("install", function (event) {
   self.skipWaiting();
 });
 
+// Do not reload open operational forms when an updated shell activates.
 self.addEventListener("activate", function (event) {
-  event.waitUntil(
-    caches.keys().then(async function (keys) {
-      const hadPreviousVersion = keys.some(function (key) {
-        return (key.startsWith("wms-static-") || key.startsWith("wms-runtime-")) && key !== STATIC_CACHE && key !== RUNTIME_CACHE;
-      });
-      await Promise.all(keys.map(function (key) {
-        if (key !== STATIC_CACHE && key !== RUNTIME_CACHE) return caches.delete(key);
-        return undefined;
-      }));
-      await self.clients.claim();
-      if (!hadPreviousVersion) return;
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      await Promise.all(windows.map(function (client) {
-        return client.navigate(client.url).catch(function () { return undefined; });
-      }));
-    })
-  );
+  event.waitUntil((async function () {
+    const current = await caches.open(STATIC_CACHE);
+    // Retain the last offline shell if the new shell was not successfully cached.
+    const shellReady = Boolean(await current.match("/index.html"));
+    const keys = await caches.keys();
+    await Promise.all(keys.map(function (key) {
+      if (key === STATIC_CACHE || key === RUNTIME_CACHE) return undefined;
+      if (!key.startsWith("wms-static-") && !key.startsWith("wms-runtime-")) return undefined;
+      if (!shellReady && key.startsWith("wms-static-")) return undefined;
+      return caches.delete(key);
+    }));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", function (event) {
@@ -44,9 +41,12 @@ self.addEventListener("fetch", function (event) {
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)
-        .then(function (response) {
+        .then(async function (response) {
+          if (!response || !response.ok) {
+            return (await caches.match("/")) || (await caches.match("/index.html")) || response;
+          }
           const copy = response.clone();
-          caches.open(STATIC_CACHE).then(function (cache) { cache.put("/", copy); });
+          caches.open(STATIC_CACHE).then(function (cache) { return cache.put("/", copy); }).catch(function () {});
           return response;
         })
         .catch(function () { return caches.match("/") || caches.match("/index.html"); })

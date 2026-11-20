@@ -1,11 +1,6 @@
 {
   "git": {
-    "deploymentEnabled": {
-      "feat/wms-caixa-alertas-globais": false,
-      "integration/wms-performance-alertas-20261116": false,
-      "perf/wms-otimizacao-segura": false,
-      "feat/wms-logistica-excelencia-foundation-20261118": false
-    }
+    "deploymentEnabled": false
   },
   "redirects": [
     {
