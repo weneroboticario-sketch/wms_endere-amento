@@ -49,6 +49,7 @@ import {
 import { isStoreStaffRole, normalizeAccessRequestRole } from "./src/access-control.js";
 import { normalizePresenceMap } from "./src/schema-diagnostics.js";
 import { buildReplenishmentRoute, loadActiveReplenishmentPages, replenishmentRouteAddress, compareReplenishmentQueueItems, isReplenishmentVisibleInActiveQueue, matchesReplenishmentQueueFilter, normalizeReplenishmentPriority } from "./src/replenishment.js";
+import { findPendingOwnDuplicate, summarizeOpenReplenishment } from "./src/replenishment-duplicates.js";
 import { isGlobalAdministrator, isGlobalView } from "./src/global-dashboard-service.js";
 import { mountGlobalDashboard } from "./src/global-dashboard-view.js";
 import { mountStockOverview, canViewStockOverview } from "./src/stock-overview.js";
@@ -4941,11 +4942,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!cleanSkus.length || !isSupabaseReady()) return {};
     var response = await supabaseDb
       .from("wms_replenishment_requests")
-      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,responsavel_nome,created_at,is_deleted")
+      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,solicitado_por_nome,responsavel_nome,created_at,is_deleted")
       .eq("warehouse_code", activeWarehouseCode())
       .in("codigo_material", cleanSkus)
       .in("status", OPEN_REPLENISHMENT_STATUSES)
-      .neq("is_deleted", true)
+      .eq("is_deleted", false)
+      .eq("archived", false)
       .order("created_at", { ascending: false })
       .limit(Math.max(100, cleanSkus.length * 3));
     if (response.error) throw response.error;
@@ -4964,6 +4966,20 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     }).sort(function (left, right) {
       return Date.parse(right.created_at) - Date.parse(left.created_at);
     })[0] || null;
+  }
+
+  async function getOpenReplenishmentRequestsForSku(sku) {
+    var warehouse = activeWarehouseCode();
+    var querySkus = stockSkuQueryValues([sku]);
+    if (!querySkus.length || !isSupabaseReady()) return [];
+    var response = await supabaseDb.from("wms_replenishment_requests")
+      .select("id,warehouse_code,codigo_material,status,quantidade_solicitada,quantidade_pendente,quantidade_atendida,solicitado_por_id,solicitado_por_nome,responsavel_id,responsavel_nome,created_at,is_deleted,archived")
+      .eq("warehouse_code", warehouse).in("codigo_material", querySkus)
+      .in("status", OPEN_REPLENISHMENT_STATUSES).eq("is_deleted", false).eq("archived", false)
+      .order("created_at", { ascending: false }).limit(100);
+    if (response.error) throw response.error;
+    if (activeWarehouseCode() !== warehouse) throw new Error("Estoque mudou durante a conferência.");
+    return (response.data || []).filter(function (row) { return normalizeSkuKey(row.codigo_material) === normalizeSkuKey(sku); });
   }
 
   function groupStockPositionsBySku(positions) {
@@ -5047,7 +5063,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         hasOpenRequest: Boolean(openRequest),
         openRequestId: openRequest ? openRequest.id : "",
         openRequestStatus: openRequest ? openRequest.status : "",
-        openRequestResponsible: openRequest ? openRequest.responsavel_nome || "" : ""
+        openRequestResponsible: openRequest ? openRequest.responsavel_nome || "" : "",
+        openRequestRequester: openRequest ? openRequest.solicitado_por_nome || "" : "",
+        openRequestPending: openRequest ? Number(openRequest.quantidade_pendente || 0) : 0
       });
     }).filter(function (suggestion) {
       return suggestion && replenishmentSuggestionMatchesFilter(suggestion, filter);
@@ -5666,16 +5684,25 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!requestedQty || requestedQty <= 0) throw new Error("Quantidade para repor deve ser maior que zero.");
     var signature = [activeWarehouseCode(), authState.currentUser.id, sku, requestedQty, priority].join(":");
     var warehouse = activeWarehouseCode(), actor = authState.currentUser;
-    var openRequest = await getOpenRequestBySku(sku);
+    // Replay the same action ID before considering a duplicate.
+    if (data.idempotencyKey) {
+      var replay = await findReplenishmentByIdempotencyKey(data.idempotencyKey);
+      if (replay) return replay;
+    }
+    var openRequests = await getOpenReplenishmentRequestsForSku(sku);
     if (activeWarehouseCode() !== warehouse || authState.currentUser !== actor) throw new Error("Usuário ou estoque mudou. Reabra a solicitação.");
+    var samePending = findPendingOwnDuplicate(openRequests, { warehouse: warehouse, actorId: actor.id, sku: sku, quantity: requestedQty });
+    if (samePending) {
+      var repeated = new Error("Já existe pedido idêntico para o SKU " + sku + ": " + formatQty(requestedQty) + " un. por " + (samePending.solicitado_por_nome || actor.name || "este colaborador") + " (" + displayReplenishmentStatus(samePending.status) + "). O pedido original foi mantido.");
+      repeated.code = "DUPLICATE_PENDING_REPLENISHMENT";
+      throw repeated;
+    }
+    var openRequest = openRequests[0] || null;
     if (openRequest && !data.forceDuplicate) {
-      var warning = "O item " + sku + " já foi solicitado."
-        + "\nSituação: " + displayReplenishmentStatus(openRequest.status) + "."
-        + "\nQuantidade solicitada: " + formatQty(openRequest.quantidade_solicitada) + " un."
-        + (openRequest.responsavel_nome ? "\nResponsável: " + openRequest.responsavel_nome + "." : "")
-        + "\n\nDeseja realmente criar outra reposição para este item?"
-        + "\nOK: criar uma nova solicitação. Cancelar: voltar e conferir."
-        + "\nA solicitação existente continuará como está.";
+      var warning = "ATENÇÃO: já existem solicitações abertas para o SKU " + sku + "."
+        + "\n" + summarizeOpenReplenishment(openRequests, { formatQty: formatQty, statusLabel: displayReplenishmentStatus })
+        + "\n\nDeseja realmente criar OUTRA solicitação independente?"
+        + "\nOK: necessidade adicional. Cancelar: conferir pedido existente.";
       if (!window.confirm(warning)) return null;
     }
     if (!openRequest && replenishmentState.lastCreatedSignature === signature && Date.now() - replenishmentState.lastCreatedAt < 15000) {
@@ -5748,6 +5775,12 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (response.error && isDuplicateKeyError(response.error)) {
       var duplicated = await findReplenishmentByIdempotencyKey(idempotencyKey);
       if (duplicated) return duplicated;
+      var freshOpen = await getOpenReplenishmentRequestsForSku(sku);
+      if (findPendingOwnDuplicate(freshOpen, { warehouse: warehouse, actorId: actor.id, sku: sku, quantity: requestedQty })) {
+        var collision = new Error("Pedido idêntico já foi registrado. O pedido existente foi mantido.");
+        collision.code = "DUPLICATE_PENDING_REPLENISHMENT";
+        throw collision;
+      }
     }
     if (response.error) throw response.error;
     var saved = fromDbReplenishmentRequest(response.data);
@@ -10094,7 +10127,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       "</div>",
       "<div class=\"replenishment-suggestion-locations\">",
       "<span><small>Localizacao CAPTACAO</small><b>" + escapeHtml(location) + "</b></span>",
-      item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(item.openRequestStatus + (item.openRequestResponsible ? " - " + item.openRequestResponsible : "")) + "</b></span>" : "",
+      item.hasOpenRequest ? "<span><small>Pedido aberto</small><b>" + escapeHtml(displayReplenishmentStatus(item.openRequestStatus) + " | " + (item.openRequestRequester || "Solicitante não informado") + " | " + formatQty(item.openRequestPending || 0) + " un. pendentes" + (item.openRequestResponsible ? " | Responsável: " + item.openRequestResponsible : "")) + "</b></span>" : "",
       "</div>",
       isRupture ? "" : "<div class=\"replenishment-actions\"><button class=\"primary-button\" data-create-replenishment-from-suggestion=\"" + escapeHtml(item.sku) + "\" type=\"button\">Criar pedido</button></div>",
       "</article>"
@@ -10290,12 +10323,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var product = lookupReplenishmentProduct(sku);
     replenishmentState.currentProduct = product;
     renderReplenishmentProductCard(product);
+    var queryWarehouse = activeWarehouseCode(), queryActor = authState.currentUser && authState.currentUser.id;
+    setStatus("replenishmentCreateStatus", "", "");
     stockState.lookupTimer = window.setTimeout(function () {
       lookupReplenishmentProductWithStock(sku);
+      if (!queryActor || !isSupabaseReady()) return;
+      getOpenRequestBySku(sku).then(function (existing) {
+        if (activeWarehouseCode() !== queryWarehouse || !authState.currentUser || authState.currentUser.id !== queryActor || normalizeSku($("replenishmentSkuInput").value) !== sku) return;
+        setStatus("replenishmentCreateStatus",
+          existing ? "Já solicitado por " + (existing.solicitado_por_nome || "colaborador não identificado") + " | " + formatQty(existing.quantidade_pendente || 0) + " un. pendentes | " + displayReplenishmentStatus(existing.status) + ". Confira antes de criar outro." : "",
+          existing ? "warning" : "");
+      }).catch(function () {
+        if (activeWarehouseCode() === queryWarehouse && authState.currentUser && authState.currentUser.id === queryActor && normalizeSku($("replenishmentSkuInput").value) === sku)
+          setStatus("replenishmentCreateStatus", "Não foi possível conferir pedidos abertos; o envio exigirá nova verificação.", "warning");
+      });
     }, 250);
   }
 
-  function selectedRadioValue(name, fallback) {
+    function selectedRadioValue(name, fallback) {
     var selected = document.querySelector("input[name=\"" + name + "\"]:checked");
     return selected ? selected.value : fallback;
   }
@@ -10336,6 +10381,11 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       showToast("Pedido de reposicao criado.", "success");
       if ($("replenishmentSkuInput")) $("replenishmentSkuInput").focus();
     } catch (error) {
+      if (error && error.code === "DUPLICATE_PENDING_REPLENISHMENT") {
+        setStatus("replenishmentCreateStatus", error.message, "warning");
+        showToast("Reposição já solicitada. Confira a fila.", "warning");
+        return;
+      }
       var message = formatSupabaseError(error);
       recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentCreateStatus", "Erro ao criar pedido: " + message, "error");
@@ -10478,7 +10528,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     var defaultPriority = document.querySelector("input[name=\"suggestionPriority\"][value=\"NORMAL\"]");
     if (defaultPriority) defaultPriority.checked = true;
     applyReplenishmentPriorityRoleView(isAttendant());
-    setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Ja existe pedido aberto para este produto. O sistema pedira confirmacao ao gravar." : "", suggestion.hasOpenRequest ? "warning" : "");
+    setStatus("replenishmentSuggestionModalStatus", suggestion.hasOpenRequest ? "Já solicitado por " + (suggestion.openRequestRequester || "colaborador não identificado") + " | " + formatQty(suggestion.openRequestPending || 0) + " un. pendentes | " + displayReplenishmentStatus(suggestion.openRequestStatus) + ". Confira antes de criar outro." : "", suggestion.hasOpenRequest ? "warning" : "");
     $("replenishmentSuggestionModal").hidden = false;
     if ($("suggestionRequestQtyInput")) $("suggestionRequestQtyInput").focus();
   }
@@ -10536,6 +10586,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         setStatus("skuSearchStatus", "Pedido de reposicao criado para SKU " + created.codigoMaterial + ".", "success");
       }
     } catch (error) {
+      if (error && error.code === "DUPLICATE_PENDING_REPLENISHMENT") {
+        setStatus("replenishmentSuggestionModalStatus", error.message, "warning");
+        return;
+      }
       recordPerformanceError("reposicao-create", error);
       setStatus("replenishmentSuggestionModalStatus", "Erro ao criar pedido: " + formatSupabaseError(error), "error");
     } finally {

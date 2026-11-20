@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import vm from "node:vm";
 import test from "node:test";
+import { findPendingOwnDuplicate, summarizeOpenReplenishment } from "../src/replenishment-duplicates.js";
 
 const source = fs.readFileSync(new URL("../script.js", import.meta.url), "utf8");
 const creation = source.slice(source.indexOf("  async function createReplenishmentRequest("), source.indexOf("  async function insertReplenishmentRequest("));
 const display = source.slice(source.indexOf("  function displayReplenishmentStatus("), source.indexOf("  function statusBadgeClass("));
 
-function fixture(status, confirmed = true) {
-  const existing = Object.freeze({ id: "existing", codigo_material: "01314", warehouse_code: "VDCG", status, quantidade_solicitada: 4, responsavel_nome: "Estoquista", created_at: "2026-11-05T12:00:00Z" });
+function fixture(status, confirmed = true, requesterId = "other") {
+  const existing = Object.freeze({ id: "existing", codigo_material: "01314", warehouse_code: "VDCG", status, quantidade_solicitada: 4, quantidade_pendente: 4, quantidade_atendida: 0, solicitado_por_id: requesterId, solicitado_por_nome: requesterId === "cashier" ? "Caixa" : "Outro colaborador", responsavel_nome: "Estoquista", created_at: "2026-11-05T12:00:00Z" });
   const state = { requests: [existing], lastCreatedSignature: "VDCG:cashier:01314:4:NORMAL", lastCreatedAt: Date.now() };
   const actions = new Map();
   const warnings = [];
@@ -17,7 +18,9 @@ function fixture(status, confirmed = true) {
     replenishmentState: state, authState: { currentUser: { id: "cashier", name: "Caixa" } },
     isSupabaseReady: () => true, ensureActiveWarehouse: () => true, activeWarehouseCode: () => warehouse,
     normalizeSku: value => value, normalizeText: value => String(value || ""), normalizeReplenishmentPriority: () => "NORMAL",
-    getOpenRequestBySku: async () => existing, window: { confirm: message => { warnings.push(message); return confirmed; } },
+    getOpenRequestBySku: async () => existing,
+    getOpenReplenishmentRequestsForSku: async () => [existing], findPendingOwnDuplicate, summarizeOpenReplenishment,
+    window: { confirm: message => { warnings.push(message); return confirmed; } },
     formatQty: String, lookupReplenishmentProduct: () => ({ name: "Produto" }),
     getStockSuggestion: async () => ({}), enrichReplenishmentProductWithStock: product => product,
     isMissingStockTableError: () => false, isMissingColumnError: () => false, recordPerformanceError() {},
@@ -44,26 +47,29 @@ test("duplicate warning identifies queued or separating request; cancellation le
   }
 });
 
-test("confirming creates independent requests even within 15 seconds while preserving original assignment and quantities", async () => {
-  const f = fixture("EM_SEPARACAO");
-  const first = await f.context.createReplenishmentRequest({ codigoMaterial: "01314", requestedQty: 4, idempotencyKey: "one" });
-  const second = await f.context.createReplenishmentRequest({ codigoMaterial: "01314", requestedQty: 4, idempotencyKey: "two" });
-  assert.notEqual(first.id, second.id);
-  assert.equal(f.inserts, 2);
-  assert.equal(f.warnings.length, 2);
-  assert.equal(first.status, "PENDENTE");
-  assert.equal(first.requestedQty, 4);
-  assert.equal(f.existing.status, "EM_SEPARACAO");
-  assert.equal(f.existing.quantidade_solicitada, 4);
-  assert.equal(f.existing.responsavel_nome, "Estoquista");
-  const retry = await f.context.createReplenishmentRequest({ codigoMaterial: "01314", requestedQty: 4, idempotencyKey: "two" });
-  assert.equal(retry.id, second.id);
-  assert.equal(f.inserts, 2);
+test("different coworker can request an additional quantity after explicit confirmation; retry preserves same action", async () => {
+  const f=fixture("EM_SEPARACAO");
+  const created=await f.context.createReplenishmentRequest({ codigoMaterial:"01314", requestedQty:4, idempotencyKey:"one" });
+  const retry=await f.context.createReplenishmentRequest({ codigoMaterial:"01314", requestedQty:4, idempotencyKey:"one" });
+  assert.equal(retry.id,created.id);
+  assert.equal(f.inserts,1);
+  assert.equal(f.warnings.length,1);
+  assert.match(f.warnings[0],/Outro colaborador/);
+  assert.equal(f.existing.status,"EM_SEPARACAO");
+  assert.equal(f.existing.quantidade_solicitada,4);
+});
+
+test("the same requester cannot place an identical pending request even after confirmation",async()=>{
+  const f=fixture("PENDENTE",true,"cashier");
+  await assert.rejects(f.context.createReplenishmentRequest({codigoMaterial:"01314",requestedQty:4,idempotencyKey:"separate-action"}),{code:"DUPLICATE_PENDING_REPLENISHMENT"});
+  assert.equal(f.inserts,0);
+  assert.equal(f.warnings.length,0);
+  assert.equal(f.state.requests.length,1);
 });
 
 test("warehouse change while checking existing requests prevents creation", async () => {
   const f = fixture("PENDENTE");
-  f.context.getOpenRequestBySku = async () => { f.warehouse("VDAR"); return f.existing; };
+  f.context.getOpenReplenishmentRequestsForSku = async () => { f.warehouse("VDAR"); return [f.existing]; };
   await assert.rejects(f.context.createReplenishmentRequest({ codigoMaterial: "01314", requestedQty: 4 }), /estoque mudou/);
   assert.equal(f.inserts, 0);
 });
