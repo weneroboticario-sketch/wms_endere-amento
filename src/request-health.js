@@ -16,9 +16,34 @@ export function isCancelledRequest(error) {
     code === '57014' ||
     /aborterror|operation was aborted|signal is aborted|statement timeout|canceling statement due to statement timeout/i.test(message);
 }
-export function recordRequestHealth(endpoint, started, { status = 0, rows = 0, attempt = 0 } = {}) {
-  // Labels only: no URLs, query parameters, bodies, credentials or product data.
-  samples.push({ endpoint: String(endpoint).replace(/[^a-z0-9_-]/gi, '').slice(0, 80), latencyMs: Math.max(0, Math.round(performance.now() - started)), status: Number(status) || 0, rows: Number(rows) || 0, attempt, at: new Date().toISOString() });
+// Supabase RPCs may return an object, whereas HEAD counts carry only "count".
+export function responseRequestMetrics(endpoint, response) {
+  const data = response?.data;
+  const rows = Array.isArray(data) ? data.length
+    : endpoint === "fetch-product-catalog" && data && typeof data === "object"
+      ? Object.keys(data).length : null;
+  const count = Number.isFinite(Number(response?.count)) && response?.count != null
+    ? Number(response.count) : null;
+  return { rows, count };
+}
+export function summarizeRequestHealth(events = samples) {
+  const requests = Array.isArray(events) ? events : [];
+  return {
+    success: requests.filter(entry => entry.status >= 200 && entry.status < 300).length,
+    failed: requests.filter(entry => entry.status < 200 || entry.status >= 300).length,
+    partial: requests.filter(entry => entry.status === 206).length
+  };
+}
+export function recordRequestHealth(endpoint, started, { status = 0, rows = null, count = null, attempt = 0 } = {}) {
+  // Labels and aggregate counts only: no URLs, query parameters, bodies, credentials or product data.
+  samples.push({
+    endpoint: String(endpoint).replace(/[^a-z0-9_-]/gi, "").slice(0, 80),
+    latencyMs: Math.max(0, Math.round(performance.now() - started)),
+    status: Number(status) || 0,
+    rows: rows == null ? null : Number(rows) || 0,
+    count: count == null ? null : Number(count) || 0,
+    attempt, at: new Date().toISOString()
+  });
   if (samples.length > 100) samples.shift();
 }
 export function requestHealthSnapshot() { return samples.map(sample => ({ ...sample })); }
