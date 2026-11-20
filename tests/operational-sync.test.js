@@ -38,3 +38,29 @@ test('unapplied publication keeps channels disabled and successful polling marke
   assert.equal(f.states.at(-1),'ATUALIZADO_POR_POLLING');
   f.sync.stop();
 });
+
+test('busy Caixa refresh waits for the next polling interval instead of retrying every 300 ms',async()=>{
+  let attempts=0;
+  const f=fixture({allowRealtime:false,onRefresh:async()=>{attempts++;return false;}});
+  await f.tick();
+  assert.equal(attempts,1);
+  assert.equal(f.states.at(-1),'DADOS_POSSIVELMENTE_DESATUALIZADOS');
+  assert.equal(f.timeouts.size,0);
+  await f.tick();
+  assert.equal(attempts,2);
+  f.sync.stop();
+});
+
+test('Realtime resumes a deferred refresh on the next safety tick',async()=>{
+  let attempts=0;
+  const f=fixture({onRefresh:async()=>{attempts++;return attempts>1;}});
+  f.channels[0].status('SUBSCRIBED');
+  f.sync.reconcile();
+  await f.fire(300);
+  assert.equal(attempts,1);
+  assert.equal(f.timeouts.size,0);
+  await f.tick();
+  assert.equal(attempts,2);
+  assert.equal(f.states.at(-1),'CONECTADO');
+  f.sync.stop();
+});

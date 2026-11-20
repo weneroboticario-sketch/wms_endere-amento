@@ -16,15 +16,15 @@ export function createOperationalSync({ client, actor, role, warehouse, isCurren
   async function flush(reason) {
     if (!active()) { stop(); return; }
     if (refreshing) { pending.add("all"); return; }
-    const affected = [...pending]; pending.clear(); refreshing = true;
+    const affected = [...pending]; pending.clear(); refreshing = true; let deferred = false;
     state("SINCRONIZANDO");
     try {
       const accepted = await onRefresh({ tables: affected.length ? affected : ["all"], reason });
       if (!active()) return;
-      if (accepted === false) pending.add("all");
+      if (accepted === false) { pending.add("all"); deferred = true; state("DADOS_POSSIVELMENTE_DESATUALIZADOS"); }
       else { state(live ? "CONECTADO" : "ATUALIZADO_POR_POLLING"); diagnostic("refresh", reason, "ok"); }
     } catch (error) { if (active()) { state("FALHA_SINCRONIZACAO"); diagnostic("refresh", error.code || "network-or-api", "failed"); } }
-    finally { refreshing = false; if (pending.size && active()) schedule(); }
+    finally { refreshing = false; if (pending.size && active() && !deferred) schedule(); }
   }
   function schedule() {
     if (!active() || debounce) return;
@@ -64,7 +64,7 @@ export function createOperationalSync({ client, actor, role, warehouse, isCurren
   const interval = timers.setInterval(async () => {
     if (!active()) { stop(); return; }
     // Reconcile even with Realtime: filtered DELETE events may not be delivered.
-    if (live && ++ticks < 4) return;
+    if (live && !pending.size && ++ticks < 4) return;
     ticks = 0; await flush(live ? "reconciliation" : "poll");
   }, 15000);
   interval?.unref?.(); connect();
