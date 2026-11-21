@@ -26,3 +26,10 @@ test('camera reads live video without file upload and does not submit a form or 
  assert.match(camera,/MutationObserver/);
  assert.match(camera,/field\.disabled\|\|field\.readOnly/);
 });
+
+test('observer skips its own button mutations and only changes disabled state when necessary',async()=>{
+ const code=await read('../src/universal-barcode-camera.js');
+ assert.match(code,/existing\.disabled!==desired/);
+ assert.match(code,/m\.target\.tagName==='INPUT'/);
+ assert.match(code,/m\.type==='childList'/);
+});
