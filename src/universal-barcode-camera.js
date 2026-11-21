@@ -29,7 +29,7 @@ export function activateBarcodeCamera(){
  const look=()=>{
   if(!document.body)return;
   for(const field of document.querySelectorAll('input')){
-   if(attached.has(field)){const existing=field.nextElementSibling;if(existing?.classList.contains('universal-barcode-trigger'))existing.disabled=field.disabled||field.readOnly;continue;}
+   if(attached.has(field)){const existing=field.nextElementSibling;if(existing?.classList.contains('universal-barcode-trigger')){const desired=field.disabled||field.readOnly;if(existing.disabled!==desired)existing.disabled=desired;}continue;}
    if(!isBarcodeEntry(field))continue;
    attached.add(field);
    const button=document.createElement('button');
@@ -56,7 +56,9 @@ export function activateBarcodeCamera(){
   }
  };
  let scheduled=false;
- const observer=new MutationObserver(()=>{
+ const observer=new MutationObserver(mutations=>{
+  // Ignore attribute mutations on our own buttons and unrelated elements.
+  if(!mutations.some(m=>m.type==='childList'||(m.type==='attributes'&&m.target.tagName==='INPUT')))return;
   if(scheduled)return;scheduled=true;
   queueMicrotask(()=>{scheduled=false;look();});
  });
