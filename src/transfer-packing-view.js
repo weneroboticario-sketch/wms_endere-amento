@@ -32,16 +32,32 @@ export function createPackingController({client,scope,warehouse,items,events,set
   if(el('packingAuditControls'))return;
   const host=document.createElement('div');host.id='packingAuditControls';host.innerHTML=`<p id="packingDetectedMethod" role="status">Digite o SKU de 5 dígitos ou bipe o código completo.</p><label>Quantidade<select id="packingQuantityMode"><option value="MANUAL">Informar quantidade manual</option><option value="UNITARIA">Uma unidade UN por leitura</option></select></label><small>Origem detectada automaticamente: código completo (mais de 5 dígitos) = bipagem; SKU de 5 dígitos = digitação.</small><button type="button" class="secondary-button" id="packingRetry" hidden>Tentar novamente a operação</button>`;
   el('transferScanInput').before(host);
+  const warning=document.createElement('p');
+  warning.id='packingPendingWarning';warning.setAttribute('role','alert');
+  warning.className='inline-status warning';
+  warning.hidden=true;
+  el('packingRetry').before(warning);
   el('transferScanInput').addEventListener('input',()=>{const raw=el('transferScanInput').value;el('packingDetectedMethod').textContent=raw?`Entrada identificada: ${method(raw)==='MODO_SCANNER'?'bipagem — código completo':'digitação — SKU de 5 dígitos'}.`:'Digite o SKU de 5 dígitos ou bipe o código completo.';});
   el('packingRetry').onclick=async()=>{
-   try{const request=gateway.pending();const result=await gateway.retry();if(result.stale)return;accept(result.data);status('Operação confirmada sem duplicação.','success');refresh();el('transferQuantityInput').value='';el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';el('transferScanInput').focus();}
+   try{const request=gateway.pending();const result=await gateway.retry();if(result.stale)return;accept(result.data);status('Operação anterior confirmada ou recuperada. Confira o saldo atualizado antes de informar uma nova quantidade.','success');refresh();el('transferQuantityInput').value='';el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';el('transferScanInput').focus();}
    catch(error){if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);status(error.message,'error');render(active,selected);}
   };
  }
  function render(t,item){
   active=t;selected=item;controls();
   const outbound=t&&t.flowType!=='CONFERENCIA_XML';const montage=outbound&&['SEPARACAO_CONCLUIDA','EM_LACRE','EM_MONTAGEM_CAIXA','CORRECAO_SOLICITADA','EM_CORRECAO'].includes(t.status);
-  el('packingAuditControls').hidden=!montage;el('packingRetry').hidden=!pendingSafe();
+  el('packingAuditControls').hidden=!montage;
+  const pendingOperation=pendingSafe();
+  el('packingRetry').hidden=!pendingOperation;
+  const pendingWarning=el('packingPendingWarning');
+  if(pendingWarning){
+   pendingWarning.hidden=!montage||!pendingOperation;
+   if(pendingOperation){
+    const action=pendingOperation.p_action||{};
+    const description=action.operation==='LEITURA_UNITARIA'?'leitura unitária':action.operation==='QUANTIDADE_MANUAL'?'registro de quantidade':action.operation==='LEITURA_SKU'?'leitura de SKU':'operação de montagem';
+    pendingWarning.textContent='Existe '+description+' sem confirmação do servidor. Antes de registrar mais unidades, clique em "Tentar novamente a operação". A repetição utiliza o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
+   }
+  }
   let panel=el('packingItemAudit');if(!panel){panel=document.createElement('div');panel.id='packingItemAudit';panel.className='current-item-card packing-item-audit';el('transferCurrentItem').after(panel);}
   panel.hidden=!outbound||!item;if(panel.hidden)return;
   const r=reconcilePacking(item,events());
