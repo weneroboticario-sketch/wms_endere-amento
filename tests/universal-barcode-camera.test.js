@@ -10,7 +10,8 @@ test('camera button is available to the main barcode entry points',async()=>{
   assert.match(html,new RegExp('id="'+id+'"'));
   assert.match(camera,new RegExp("'"+id+"'"));
  }
- assert.match(html,/src="\/src\/universal-barcode-camera\.js"/);
+ assert.doesNotMatch(html,/src="\/src\/universal-barcode-camera\.js"/);
+ assert.match(html,/src="\/src\/dynamic-sku-camera\.js"/);
 });
 test('existing specialized scanners remain separate',async()=>{
  const camera=await read('../src/universal-barcode-camera.js');
