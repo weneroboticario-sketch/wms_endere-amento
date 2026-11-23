@@ -16,9 +16,29 @@ export function createPackingController({client,scope,warehouse,items,events,set
   try{const rows=await loadPackingHistory(client(),t.id,warehouse());if(scope()!==captured)return;const ids=new Set(rows.map(e=>e.id));setEvents(rows.concat(events().filter(e=>e.transfer_id===t.id&&!ids.has(e.id))));loaded=true;loadedTransfer=t.id;}
   catch(error){if(scope()===captured)status(`Histórico indisponível: ${error.message}. A rastreabilidade não foi confirmada.`,'error');}
  }
+ async function syncItemAfterConflict(t,item){
+  if(!t?.id||!item?.id)return false;
+  try{
+   const result=await client().from('wms_transfer_items').select('*')
+    .eq('id',item.id).eq('transfer_id',t.id).eq('warehouse_code',warehouse()).maybeSingle();
+   if(result.error||!result.data)return false;
+   accept({item:result.data});
+   refresh();
+   return true;
+  }catch{return false;}
+ }
  async function perform(t,item,action){
   const captured=scope();
   try{
+   if(action.operation==='QUANTIDADE_MANUAL'&&item&&!pendingSafe()){
+    const current=Number(item.packedQty||0),separated=Number(item.separatedQty||0),additional=Number(action.quantity);
+    if(Number.isFinite(current)&&Number.isFinite(separated)&&Number.isFinite(additional)&&current+additional>separated){
+     const accepted=window.confirm('ATENÇÃO: valor adicional, não total. Já existem '+current+
+       ' unidades na caixa. Lançar '+additional+' elevará o total para '+(current+additional)+
+       ', acima das '+separated+' unidades separadas. Confirma excedente físico?');
+     if(!accepted){status('Quantidade não registrada. Informe apenas o restante ou confirme o excedente físico.','warning');return false;}
+    }
+   }
    const result=await gateway.perform({transferId:t.id,itemId:item?.id,warehouse:warehouse(),revision:item?.packingRevision||0,action:{...action,box_number:el('boxIdInput')?.value||''}});
    if(result.stale||scope()!==captured)return false;
    if(result.recoveredPending){accept(result.data);status('Operação anterior recuperada sem duplicar unidades. Confira a quantidade atualizada e confirme novamente apenas o restante físico.','warning');refresh();return false;}
@@ -26,7 +46,12 @@ export function createPackingController({client,scope,warehouse,items,events,set
   }catch(error){
    if(scope()!==captured)return false;
    if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);
-   status(`${error.message}${pendingSafe()?' Operação sem confirmação: use Tentar novamente.':''}`,'error');render(t,item);return false;
+   const conflict=error.code==='40001'||error.cause?.code==='40001';
+   const synchronized=conflict?await syncItemAfterConflict(t,item):false;
+   const hint=synchronized?' Os valores foram atualizados do servidor; confira a quantidade restante antes de repetir.':'';
+   status(`${error.message}${hint}${pendingSafe()?' Operação sem confirmação: use Tentar novamente.':''}`,'error');
+   if(!synchronized)render(t,item);
+   return false;
   }
  }
  function controls(){
@@ -38,11 +63,35 @@ export function createPackingController({client,scope,warehouse,items,events,set
   warning.className='inline-status warning';
   warning.hidden=true;
   el('packingRetry').before(warning);
+  const guidance=document.createElement('p');
+  guidance.id='packingQuantityGuidance';
+  guidance.setAttribute('role','status');
+  guidance.className='inline-status';
+  guidance.hidden=true;
+  el('transferQuantityInput').insertAdjacentElement('afterend',guidance);
+  el('transferQuantityInput').addEventListener('input',()=>updateQuantityGuidance());
   el('transferScanInput').addEventListener('input',()=>{const raw=el('transferScanInput').value;el('packingDetectedMethod').textContent=raw?`Entrada identificada: ${method(raw)==='MODO_SCANNER'?'bipagem — código completo':'digitação — SKU de 5 dígitos'}.`:'Digite o SKU de 5 dígitos ou bipe o código completo.';});
   el('packingRetry').onclick=async()=>{
    try{const request=gateway.pending();const result=await gateway.retry();if(result.stale)return;accept(result.data);status('Operação anterior confirmada ou recuperada. Confira o saldo atualizado antes de informar uma nova quantidade.','success');refresh();el('transferQuantityInput').value='';el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';el('transferScanInput').focus();}
    catch(error){if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);status(error.message,'error');render(active,selected);}
   };
+ }
+ function updateQuantityGuidance(){
+  const guide=el('packingQuantityGuidance');
+  if(!guide)return;
+  const t=active,item=selected,manual=el('packingQuantityMode')?.value!=='UNITARIA';
+  if(!t||!item||!manual){guide.hidden=true;return;}
+  const current=Number(item.packedQty||0),target=Number(item.separatedQty||0);
+  if(!Number.isFinite(current)||!Number.isFinite(target)){guide.hidden=true;return;}
+  const remaining=Math.max(0,target-current);
+  const raw=el('transferQuantityInput')?.value.trim()||'';
+  const requested=raw===''?null:Number(raw);
+  const projected=requested!==null&&Number.isInteger(requested)&&requested>=0?current+requested:null;
+  guide.hidden=false;
+  guide.textContent='Quantidade ADICIONAL (não total): já na caixa '+current+
+    ', separado '+target+', restante '+remaining+
+    '. Para completar, informe '+remaining+'.'+
+    (projected===null?'':' Se confirmar '+requested+', o total ficará '+projected+'.');
  }
  function render(t,item){
   active=t;selected=item;controls();
@@ -59,6 +108,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
     pendingWarning.textContent='Existe '+description+' sem confirmação do servidor. Antes de registrar mais unidades, clique em "Tentar novamente a operação". A repetição utiliza o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
    }
   }
+  updateQuantityGuidance();
   let panel=el('packingItemAudit');if(!panel){panel=document.createElement('div');panel.id='packingItemAudit';panel.className='current-item-card packing-item-audit';el('transferCurrentItem').after(panel);}
   panel.hidden=!outbound||!item;if(panel.hidden)return;
   const r=reconcilePacking(item,events());
