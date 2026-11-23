@@ -20,7 +20,7 @@ export function mountCaixaRequestComposer(host, context) {
   const choices = node("div", undefined, form); choices.className = "ca-operation"; choices.setAttribute("role", "group"); choices.setAttribute("aria-label", "Tipo da solicitação");
   const buttons = [];
   const codeLabel = node("label", "Código SKU/EAN", form);
-  const code = node("input", undefined, codeLabel); code.type = "text"; code.inputMode = "numeric"; code.maxLength = 14; code.autocomplete = "off"; code.placeholder = "Bipe ou digite o código do produto";
+  const code = node("input", undefined, codeLabel); code.type = "text"; code.dataset.cameraSku = ""; code.inputMode = "numeric"; code.maxLength = 14; code.autocomplete = "off"; code.placeholder = "Bipe ou digite o código do produto";
   const product = node("div", undefined, form); product.className = "ca-product-preview"; product.setAttribute("role", "status");
   const quantityGroup = node("div", undefined, form); quantityGroup.className = "ca-quantity";
   const quantityLabel = node("label", "Quantidade", quantityGroup);
