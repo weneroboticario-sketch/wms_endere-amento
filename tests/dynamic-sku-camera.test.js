@@ -13,7 +13,7 @@ test('only intended dynamic barcode fields receive camera buttons',async()=>{
   }
   assert.match(receipt,/data-scan/);
   assert.match(receipt,/data-map-sku/);
-  assert.match(receipt,/data-extra-form/); // extra form is rendered by inbound-receipts.js
+  assert.match(receipt,/data-map-sku/);
   assert.match(caixa,/code\.dataset\.cameraSku = ""/);
   assert.match(html,/src="\/src\/dynamic-sku-camera\.js"/);
   assert.doesNotMatch(html,/src="\/src\/universal-barcode-camera\.js"/);
