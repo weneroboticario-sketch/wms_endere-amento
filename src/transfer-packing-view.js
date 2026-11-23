@@ -21,6 +21,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
   try{
    const result=await gateway.perform({transferId:t.id,itemId:item?.id,warehouse:warehouse(),revision:item?.packingRevision||0,action:{...action,box_number:el('boxIdInput')?.value||''}});
    if(result.stale||scope()!==captured)return false;
+   if(result.recoveredPending){accept(result.data);status('Operação anterior recuperada sem duplicar unidades. Confira a quantidade atualizada e confirme novamente apenas o restante físico.','warning');refresh();return false;}
    accept(result.data);if(action.operation!=='LEITURA_SKU')lastCode='';status('Operação confirmada no servidor.','success');refresh();return true;
   }catch(error){
    if(scope()!==captured)return false;
