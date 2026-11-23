@@ -1,3 +1,4 @@
+/* global HTMLInputElement, Event, MutationObserver, queueMicrotask, clearInterval, setInterval */
 import {createSkuLiveBarcodeScanner} from './sku-live-barcode.js';
 import './universal-barcode-camera.css';
 
