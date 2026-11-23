@@ -16,6 +16,17 @@ export function createPackingController({client,scope,warehouse,items,events,set
   try{const rows=await loadPackingHistory(client(),t.id,warehouse());if(scope()!==captured)return;const ids=new Set(rows.map(e=>e.id));setEvents(rows.concat(events().filter(e=>e.transfer_id===t.id&&!ids.has(e.id))));loaded=true;loadedTransfer=t.id;}
   catch(error){if(scope()===captured)status(`Histórico indisponível: ${error.message}. A rastreabilidade não foi confirmada.`,'error');}
  }
+ async function syncItemAfterConflict(t,item){
+  if(!t?.id||!item?.id)return false;
+  try{
+   const result=await client().from('wms_transfer_items').select('*')
+    .eq('id',item.id).eq('transfer_id',t.id).eq('warehouse_code',warehouse()).maybeSingle();
+   if(result.error||!result.data)return false;
+   accept({item:result.data});
+   refresh();
+   return true;
+  }catch{return false;}
+ }
  async function perform(t,item,action){
   const captured=scope();
   try{
@@ -35,7 +46,12 @@ export function createPackingController({client,scope,warehouse,items,events,set
   }catch(error){
    if(scope()!==captured)return false;
    if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);
-   status(`${error.message}${pendingSafe()?' Operação sem confirmação: use Tentar novamente.':''}`,'error');render(t,item);return false;
+   const conflict=error.code==='40001'||error.cause?.code==='40001';
+   const synchronized=conflict?await syncItemAfterConflict(t,item):false;
+   const hint=synchronized?' Os valores foram atualizados do servidor; confira a quantidade restante antes de repetir.':'';
+   status(`${error.message}${hint}${pendingSafe()?' Operação sem confirmação: use Tentar novamente.':''}`,'error');
+   if(!synchronized)render(t,item);
+   return false;
   }
  }
  function controls(){
