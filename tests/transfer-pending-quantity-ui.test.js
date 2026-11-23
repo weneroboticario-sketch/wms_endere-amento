@@ -11,7 +11,8 @@ test('montagem destaca uma operação incerta e exige retry idempotente antes de
  assert.match(view,/Tentar novamente a operação/);
  assert.match(view,/Confira o saldo atualizado antes do próximo lançamento/);
  assert.match(view,/pendingWarning\.hidden=!montage\|\|!pendingOperation/);
- assert.match(gateway,/if\(pending\(\)\)throw new Error/);
+ assert.match(gateway,/const previous=pending\(\)/);
+ assert.match(gateway,/const recovered=await send\(previous\)/);
  assert.match(gateway,/retry\(\)\{const request=pending\(\)/);
  assert.match(gateway,/p_action_id:uuid\(\)/);
 });

@@ -16,7 +16,21 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
  }
  return {pending,
   async perform({transferId,itemId,warehouse,revision,action}){
-   if(pending())throw new Error('Existe uma operação sem confirmação. Use Tentar novamente antes de continuar.');
+   const previous=pending();
+   if(previous){
+    // Never send the newly typed quantity while the preceding action is unresolved.
+    // Retry the original UUID and refresh the current item before accepting another action.
+    try{
+     const recovered=await send(previous);
+     return {...recovered,recoveredPending:true};
+    }catch(error){
+     if(['40001','42501','22023','P0001','23514'].includes(error.code)){
+      storage.removeItem(key());
+      throw new Error('A operação anterior foi recusada pelo servidor e não foi repetida. Atualize o item e confirme novamente a quantidade atual.',{cause:error});
+     }
+     throw new Error('A operação anterior ainda está sem confirmação. Utilize Tentar novamente a operação antes de lançar outra quantidade.',{cause:error});
+    }
+   }
    const request={p_transfer_id:transferId,p_item_id:itemId||'',p_warehouse:warehouse,p_action_id:uuid(),p_expected_revision:revision??0,p_action:action};
    storage.setItem(key(),JSON.stringify(request));return send(request);
   },
