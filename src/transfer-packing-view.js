@@ -41,6 +41,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
    }
    const result=await gateway.perform({transferId:t.id,itemId:item?.id,warehouse:warehouse(),revision:item?.packingRevision||0,action:{...action,box_number:el('boxIdInput')?.value||''}});
    if(result.stale||scope()!==captured)return false;
+   if(result.cancelled){status('A operação anterior foi cancelada de forma auditada, sem registrar quantidade. Confira o estoque físico e informe novamente apenas o que realmente está na caixa.','warning');refresh();return false;}
    if(result.recoveredPending){accept(result.data);status('Operação anterior recuperada sem duplicar unidades. Confira a quantidade atualizada e confirme novamente apenas o restante físico.','warning');refresh();return false;}
    accept(result.data);if(action.operation!=='LEITURA_SKU')lastCode='';status('Operação confirmada no servidor.','success');refresh();return true;
   }catch(error){
@@ -63,7 +64,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
  }
  function controls(){
   if(el('packingAuditControls'))return;
-  const host=document.createElement('div');host.id='packingAuditControls';host.innerHTML=`<p id="packingDetectedMethod" role="status">Digite o SKU de 5 dígitos ou bipe o código completo.</p><label>Quantidade<select id="packingQuantityMode"><option value="MANUAL">Informar quantidade manual</option><option value="UNITARIA">Uma unidade UN por leitura</option></select></label><small>Origem detectada automaticamente: código completo (mais de 5 dígitos) = bipagem; SKU de 5 dígitos = digitação.</small><button type="button" class="secondary-button" id="packingRetry" hidden>Tentar novamente a operação</button>`;
+  const host=document.createElement('div');host.id='packingAuditControls';host.innerHTML=`<p id="packingDetectedMethod" role="status">Digite o SKU de 5 dígitos ou bipe o código completo.</p><label>Quantidade<select id="packingQuantityMode"><option value="MANUAL">Informar quantidade manual</option><option value="UNITARIA">Uma unidade UN por leitura</option></select></label><small>Origem detectada automaticamente: código completo (mais de 5 dígitos) = bipagem; SKU de 5 dígitos = digitação.</small><button type="button" class="secondary-button" id="packingRetry" hidden>Tentar novamente a operação</button><button type="button" class="secondary-button" id="packingCancelPending" hidden>Verificar e liberar operação pendente</button>`;
   el('transferScanInput').before(host);
   const warning=document.createElement('p');
   warning.id='packingPendingWarning';warning.setAttribute('role','alert');
@@ -78,9 +79,48 @@ export function createPackingController({client,scope,warehouse,items,events,set
   el('transferQuantityInput').insertAdjacentElement('afterend',guidance);
   el('transferQuantityInput').addEventListener('input',()=>updateQuantityGuidance());
   el('transferScanInput').addEventListener('input',()=>{const raw=el('transferScanInput').value;el('packingDetectedMethod').textContent=raw?`Entrada identificada: ${method(raw)==='MODO_SCANNER'?'bipagem — código completo':'digitação — SKU de 5 dígitos'}.`:'Digite o SKU de 5 dígitos ou bipe o código completo.';});
+  el('packingCancelPending').onclick=async()=>{
+   const request=pendingSafe();
+   if(!request)return;
+   const qty=request.p_action?.quantity;
+   const label=qty!==undefined?' de '+qty+' unidade(s)':'';
+   if(!window.confirm('Verificar e liberar a operação pendente'+label+'? O servidor confirmará se ela já foi registrada. Caso não tenha sido, o identificador será cancelado com auditoria e nenhuma quantidade será adicionada. Confira os produtos físicos antes de lançar novamente.'))return;
+   const button=el('packingCancelPending');
+   button.disabled=true;
+   try{
+    const response=await gateway.cancelPending();
+    if(response.event)accept({event:response.event,transfer:response.transfer,item:response.item});
+    if(response.status==='confirmed'){
+     status('A operação anterior JÁ ESTAVA CONFIRMADA no servidor. Nenhuma quantidade foi somada novamente. Confira o item atualizado antes de continuar.','success');
+    }else{
+     status('Operação pendente cancelada com segurança e registrada na auditoria. Nenhuma quantidade foi somada. Confira a quantidade física e bipe novamente o produto, se necessário.','success');
+    }
+    refresh();
+   }catch(error){
+    status('Não foi possível validar ou liberar a operação pendente: '+error.message+'. Nenhuma quantidade foi alterada.','error');
+    render(active,selected);
+   }finally{button.disabled=false;}
+  };
   el('packingRetry').onclick=async()=>{
-   try{const request=gateway.pending();const result=await gateway.retry();if(result.stale)return;accept(result.data);status('Operação anterior confirmada ou recuperada. Confira o saldo atualizado antes de informar uma nova quantidade.','success');refresh();el('transferQuantityInput').value='';el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';el('transferScanInput').focus();}
-   catch(error){if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);status(error.message,'error');render(active,selected);}
+   try{
+    const request=gateway.pending();
+    const result=await gateway.retry();
+    if(result.stale)return;
+    if(result.cancelled){
+     status('A operação pendente foi cancelada pelo servidor sem lançar quantidades. Confira a quantidade física e registre novamente somente se necessário.','warning');
+     refresh();return;
+    }
+    accept(result.data);
+    status('Operação anterior confirmada ou recuperada. Confira o saldo atualizado antes de informar uma nova quantidade.','success');
+    refresh();
+    el('transferQuantityInput').value='';
+    el('transferScanInput').value=request.p_action.operation==='LEITURA_SKU'?result.data.event.sku:'';
+    lastCode=request.p_action.operation==='LEITURA_SKU'?`${scope()}:${result.data.event.item_id}:${result.data.event.sku}`:'';
+    el('transferScanInput').focus();
+   }catch(error){
+    if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);
+    status(error.message,'error');render(active,selected);
+   }
   };
  }
  function updateQuantityGuidance(){
@@ -106,6 +146,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
   el('packingAuditControls').hidden=!montage;
   const pendingOperation=pendingSafe();
   el('packingRetry').hidden=!pendingOperation;
+  el('packingCancelPending').hidden=!pendingOperation;
   const pendingWarning=el('packingPendingWarning');
   if(pendingWarning){
    pendingWarning.hidden=!montage||!pendingOperation;
