@@ -7,7 +7,7 @@ const storage=()=>{
  return {getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
 };
 const args={transferId:'trf-vdar',itemId:'item-1',warehouse:'VDCG',revision:0,action:{operation:'LEITURA_SKU',raw_code:'85308',code_method:'MANUAL'}};
-test('a 504 retries with the same action UUID and never creates a second event',async()=>{
+test('a 504 leaves the same UUID pending without a second long-running write',async()=>{
  const saved=storage(),requests=[];
  const gateway=createPackingGateway({
   client:{rpc:async(_name,payload)=>{
@@ -17,12 +17,10 @@ test('a 504 retries with the same action UUID and never creates a second event',
   }},
   storage:saved,scope:()=> 'VDCG:trf-vdar',uuid:()=> 'fixed-uuid'
  });
- const response=await gateway.perform(args);
- assert.equal(response.recovered,true);
- assert.equal(requests.length,2);
- assert.deepEqual(requests[0],requests[1]);
+ await assert.rejects(gateway.perform(args),/Gateway timeout/);
+ assert.equal(requests.length,1);
  assert.equal(requests[0].p_action_id,'fixed-uuid');
- assert.equal(gateway.pending(),null);
+ assert.equal(gateway.pending().p_action_id,'fixed-uuid');
 });
 test('a persistent 504 keeps the identical action for explicit recovery',async()=>{
  const saved=storage(),requests=[];
@@ -36,11 +34,11 @@ test('a persistent 504 keeps the identical action for explicit recovery',async()
   storage:saved,scope:()=> 'VDCG:trf-vdar',uuid:()=> 'fixed-uuid'
  });
  await assert.rejects(gateway.perform(args),/Gateway timeout/);
- assert.equal(requests.length,2);
+ assert.equal(requests.length,1);
  assert.equal(gateway.pending().p_action_id,'fixed-uuid');
  fail=false;
  await gateway.retry();
- assert.deepEqual(requests[0],requests[2]);
+ assert.deepEqual(requests[0],requests[1]);
  assert.equal(gateway.pending(),null);
 });
 test('authorization and SKU mismatch errors are not automatically retried',async()=>{
