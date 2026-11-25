@@ -76,7 +76,9 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
      return {data:result.data,stale:scope()!==scopeAtSend,recovered:attempt>0};
     }catch(error){
      lastError=error;
-     if(attempt===1||!transient(error))break;
+     // A 504 can arrive after ~125 seconds. Do not immediately start another
+     // long-running write; check the audited event and keep the UUID pending.
+     if(attempt===1||!transient(error)||Number(error?.status)===504)break;
      await pause(900);
     }
    }
