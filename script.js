@@ -3503,7 +3503,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!beginTransferAction("import-stock-" + sourceType, button, "Importando...")) return;
     try {
       stockState.importing = true;
-      var importMode = $("stockImportModeInput") ? $("stockImportModeInput").value : "CARGA_COMPLETA";
+      var importMode = $("stockImportModeInput") ? $("stockImportModeInput").value : "CARGA_PARCIAL";
       setStatus("stockImportStatus", "Lendo planilha de " + stockSourceLabel(sourceType) + "...", "warning");
       var entry = await readWorkbookFile(file);
       var parsed = parseStockWorkbook(entry.workbook, sourceType);
@@ -3725,6 +3725,21 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           updatedAt: now
         })));
       });
+      // Safety barrier: a short extract is not a full warehouse snapshot.
+      // Validate the expected removals BEFORE writing any stock positions.
+      if(importMode === "CARGA_COMPLETA" && currentRows.length >= 1000){
+        var previewRemovals = currentRows.filter(function(position){
+          var operationalKey = stockPositionOperationalKey(sourceType, position, warehouseCode);
+          return operationalKey && !incomingKeys[operationalKey];
+        });
+        var removalLimit = Math.max(200, Math.floor(currentRows.length * 0.20));
+        if(previewRemovals.length > removalLimit){
+          throw new Error("IMPORTACAO BLOQUEADA PARA PROTEGER SALDOS: o arquivo tem " +
+            parsed.rows.length + " posicoes e inativaria " + previewRemovals.length +
+            " de " + currentRows.length + " posicoes ativas. Uma planilha parcial nao pode substituir " +
+            "toda a base. Selecione Carga parcial e importe novamente; nenhuma posicao foi alterada nesta tentativa.");
+        }
+      }
       updateLocalStockBatchProgress(batchId, {
         imported_rows: metrics.unchanged,
         inserted_rows: metrics.inserted,
