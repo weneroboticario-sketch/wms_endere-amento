@@ -32,6 +32,10 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
    if(!sameJson(payload.request,request.p_action)||
       String(payload.requested_item_id||'')!==String(request.p_item_id||''))
     throw Object.assign(new Error('A operação auditada não corresponde à solicitação pendente. Solicite suporte antes de prosseguir.'),{code:'PENDING_MISMATCH'});
+   if(event.event_type==='OPERACAO_DESCARTADA'){
+    if(pending()?.p_action_id===request.p_action_id)storage.removeItem(key());
+    return {cancelled:true,data:{event},recoveredFromHistory:true,stale:false};
+   }
    const [transferResult,itemResult]=await Promise.all([
     client.from('wms_transfers').select('*').eq('id',request.p_transfer_id).eq('warehouse_code',request.p_warehouse).maybeSingle(),
     request.p_item_id?client.from('wms_transfer_items').select('*').eq('id',request.p_item_id).eq('transfer_id',request.p_transfer_id).eq('warehouse_code',request.p_warehouse).maybeSingle():Promise.resolve({data:null})
@@ -64,6 +68,10 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
       throw failure;
      }
      if(!result?.data)throw new Error('Sem confirmação do servidor. Tente novamente a mesma operação.');
+     if(result.data.event?.event_type==='OPERACAO_DESCARTADA'){
+      storage.removeItem(keyAtSend);
+      return {cancelled:true,data:result.data,stale:scope()!==scopeAtSend};
+     }
      storage.removeItem(keyAtSend);
      return {data:result.data,stale:scope()!==scopeAtSend,recovered:attempt>0};
     }catch(error){
@@ -102,6 +110,32 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
   async retry(){const request=pending();if(!request)throw new Error('Nenhuma operação pendente.');
    const confirmed=await recoverConfirmed(request);
    return confirmed||send(request);
+  },
+  async cancelPending(){
+   const request=pending();
+   if(!request)throw new Error('Nenhuma operação pendente para verificar.');
+   if(busy)throw new Error('Aguarde a operação em andamento antes de verificar o registro.');
+   if(typeof client.rpc!=='function')throw new Error('Servidor indisponível para validar a operação.');
+   const response=await client.rpc('cancel_wms_pending_packing_action',{
+    p_transfer_id:request.p_transfer_id,p_warehouse:request.p_warehouse,
+    p_action_id:request.p_action_id,p_item_id:request.p_item_id||'',
+    p_action:request.p_action
+   });
+   if(response?.error)throw Object.assign(new Error(response.error.message||'Falha ao verificar lançamento pendente.'),{code:response.error.code,status:response.status});
+   const result=response?.data;
+   if(!result||!['confirmed','cancelled'].includes(result.status))
+    throw new Error('O servidor não confirmou o resultado. Operação preservada; não registre a quantidade novamente.');
+   if(pending()?.p_action_id!==request.p_action_id)throw new Error('A operação pendente mudou. Atualize a tela.');
+   if(result.status==='confirmed'&&typeof client.from==='function'&&request.p_item_id){
+    const itemResponse=await client.from('wms_transfer_items').select('*')
+      .eq('id',request.p_item_id).eq('transfer_id',request.p_transfer_id)
+      .eq('warehouse_code',request.p_warehouse).maybeSingle();
+    if(itemResponse.error||!itemResponse.data)
+     throw new Error('Lançamento confirmado, mas não foi possível atualizar o item. Atualize a página.');
+    result.item=itemResponse.data;
+   }
+   storage.removeItem(key());
+   return result;
   },
   discardRejected(code){
    // Only a server rejection known to roll back permits dropping the action.
