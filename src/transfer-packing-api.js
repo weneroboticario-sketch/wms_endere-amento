@@ -7,7 +7,7 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
   const message=String(error?.message||error?.details||error||'').toLowerCase();
   const status=Number(error?.status||0);
   return [408,429,500,502,503,504].includes(status) ||
-   /timeout|timed out|failed to fetch|networkerror|load failed|fetch failed|gateway|temporar(?:y|i)|connection/.test(message);
+   /timeout|timed out|failed to fetch|networkerror|load failed|fetch failed|gateway|temporar(?:y|i)|connection|abort/.test(message);
  };
  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  const sameJson=(left,right)=>{
@@ -60,7 +60,17 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
    let result,lastError;
    for(let attempt=0;attempt<2;attempt++){
     try{
-     result=await client.rpc('apply_wms_packing_action',request);
+     // Bound the wait in the browser; the server may still complete after
+     // abort, so the UUID remains pending until audited reconciliation.
+     const aborter=typeof AbortController==='function'?new AbortController():null;
+     let deadline=null;
+     try{
+      const call=client.rpc('apply_wms_packing_action',request);
+      if(aborter&&typeof call?.abortSignal==='function'){
+       deadline=setTimeout(()=>aborter.abort(),12000);
+       result=await call.abortSignal(aborter.signal);
+      }else result=await call;
+     }finally{if(deadline!==null)clearTimeout(deadline);}
      if(result?.error){
       const failure=Object.assign(new Error(result.error.message||'Erro ao confirmar a bipagem.'),{
        code:result.error.code,status:result.status||result.error.status
@@ -78,7 +88,7 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
      lastError=error;
      // A 504 can arrive after ~125 seconds. Do not immediately start another
      // long-running write; check the audited event and keep the UUID pending.
-     if(attempt===1||!transient(error)||Number(error?.status)===504)break;
+     if(attempt===1||!transient(error)||Number(error?.status)===504||/abort/i.test(String(error?.name||'')+' '+String(error?.message||'')))break;
      await pause(900);
     }
    }
