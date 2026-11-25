@@ -3641,6 +3641,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         Number(row && row.totalDisponivel || 0)
       ].join("|");
     };
+    var rawLocationSignature = function (row) {
+      return [
+        row && (row.codigoEndereco || row.codigo_endereco) || "",
+        row && row.estacao || "",
+        row && row.rack || "",
+        row && row.linha || "",
+        row && row.coluna || ""
+      ].map(function (value) { return String(value || "").trim().toUpperCase(); }).join("|");
+    };
     (rows || []).forEach(function (row) {
       var key = stockPositionOperationalKey(sourceType, row, activeWarehouseCode());
       if (!key) return;
@@ -3649,7 +3658,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         return;
       }
       var previous = grouped[key];
-      if (quantitySignature(previous) !== quantitySignature(row)) {
+      if (rawLocationSignature(previous) === rawLocationSignature(row) &&
+          quantitySignature(previous) !== quantitySignature(row)) {
         if (errors) {
           errors.push(
             "SKU " + normalizeSku(row.codigoMaterial || "") +
@@ -3664,7 +3674,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         }
         return;
       }
-      // Duplicata exata: mantenha uma unica posicao, sem escolher silenciosamente outro saldo.
+      // Mesma chave de banco com descricao de local diferente: preserve a regra historica e use a ultima linha.
+      // Duplicatas identicas tambem permanecem como uma unica posicao.
       grouped[key] = Object.assign({}, previous, row);
     });
     return Object.keys(grouped).map(function (key) { return grouped[key]; });
