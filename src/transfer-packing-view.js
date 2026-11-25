@@ -112,7 +112,10 @@ export function createPackingController({client,scope,warehouse,items,events,set
    if(pendingOperation){
     const action=pendingOperation.p_action||{};
     const description=action.operation==='LEITURA_UNITARIA'?'leitura unitária':action.operation==='QUANTIDADE_MANUAL'?'registro de quantidade':action.operation==='LEITURA_SKU'?'leitura de SKU':'operação de montagem';
-    pendingWarning.textContent='Existe '+description+' sem confirmação do servidor. Antes de registrar mais unidades ou finalizar, clique em "Tentar novamente a operação". A repetição utiliza o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
+    const pendingCode=String(action.raw_code||action.sku||'').trim();
+    const pendingQty=action.quantity===undefined?'':String(action.quantity);
+    const pendingDetails=[pendingCode?'Código da operação pendente: '+pendingCode:'',pendingQty?'Quantidade pendente: '+pendingQty:''].filter(Boolean).join(' · ');
+    pendingWarning.textContent='Existe '+description+' sem confirmação do servidor.'+(pendingDetails?' '+pendingDetails+'.':'')+' O código digitado agora não substitui a operação anterior. Antes de registrar mais unidades ou finalizar, clique em "Tentar novamente a operação". A repetição usa o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
    }
   }
   updateQuantityGuidance();
