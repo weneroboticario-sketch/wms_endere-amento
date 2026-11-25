@@ -3,15 +3,40 @@
 export function createPackingGateway({client,storage,scope,uuid=()=>crypto.randomUUID()}){
  const key=()=>`wms:packing:${scope()}`;let busy=false;
  const pending=()=>{const raw=storage.getItem(key());return raw?JSON.parse(raw):null;};
+ const transient=(error)=>{
+  const message=String(error?.message||error?.details||error||'').toLowerCase();
+  const status=Number(error?.status||0);
+  return [408,429,500,502,503,504].includes(status) ||
+   /timeout|timed out|failed to fetch|networkerror|load failed|fetch failed|gateway|temporar(?:y|i)|connection/.test(message);
+ };
+ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  async function send(request){
   if(busy)throw new Error('Aguarde a confirmação da operação anterior.');
   const scopeAtSend=scope(),keyAtSend=key();busy=true;
   try{
-   const result=await client.rpc('apply_wms_packing_action',request);
-   if(result.error)throw Object.assign(new Error(result.error.message),{code:result.error.code});
-   if(!result.data)throw new Error('Sem confirmação do servidor. Tente novamente a mesma operação.');
-   storage.removeItem(keyAtSend);
-   return {data:result.data,stale:scope()!==scopeAtSend};
+   // A 504 may occur after COMMIT. Never issue a fresh action id on retry.
+   // Retry the exact original payload once; the server returns the existing
+   // action by UUID if the first attempt committed.
+   let result,lastError;
+   for(let attempt=0;attempt<2;attempt++){
+    try{
+     result=await client.rpc('apply_wms_packing_action',request);
+     if(result?.error){
+      const failure=Object.assign(new Error(result.error.message||'Erro ao confirmar a bipagem.'),{
+       code:result.error.code,status:result.status||result.error.status
+      });
+      throw failure;
+     }
+     if(!result?.data)throw new Error('Sem confirmação do servidor. Tente novamente a mesma operação.');
+     storage.removeItem(keyAtSend);
+     return {data:result.data,stale:scope()!==scopeAtSend,recovered:attempt>0};
+    }catch(error){
+     lastError=error;
+     if(attempt===1||!transient(error))break;
+     await pause(900);
+    }
+   }
+   throw lastError;
   }finally{busy=false;}
  }
  return {pending,
