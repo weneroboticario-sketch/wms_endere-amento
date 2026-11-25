@@ -19281,7 +19281,10 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var auditBox = isBoxQuantityItem(item) ? readTransferBoxPackingInput(item, auditQty) : null;
       if (auditBox && !auditBox.valid) { setStatus("transferWorkStatus", auditBox.message || "Confira a conversão UN/CX.", "error"); return; }
       var auditRaw = $("transferScanInput").value.trim();
-      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: packingController().codeReadRequired(item, auditRaw), raw_code: auditRaw, code_method: packingController().method(auditRaw), units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
+      // Preserve the validated scanned EAN while writing quantity and audit once.
+      // SKU lookup itself is read-only; scanner mode is never inferred from a typed short SKU.
+      var scanProof = packingController().scanProof(item, auditRaw);
+      var auditSaved = await packingController().perform(transfer, item, { operation: "QUANTIDADE_MANUAL", quantity: auditQty, code_read: scanProof.codeRead, raw_code: scanProof.rawCode, code_method: scanProof.codeMethod, units_per_box: auditBox ? auditBox.unitsPerBox : 0, units: auditBox ? auditBox.packedUnitsDelta : auditQty, mixed: Boolean($("transferMixedBoxInput") && $("transferMixedBoxInput").checked) });
       if (auditSaved) { clearTransferInputs(); $("transferScanInput").focus(); }
       return;
     }
