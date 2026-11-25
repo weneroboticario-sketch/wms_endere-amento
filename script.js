@@ -3901,19 +3901,47 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   async function upsertStockImportPositions(rows, warehouseCode, sourceType, batchId, onProgress) {
-    var chunkSize = 200;
-    for (var i = 0; i < rows.length; i += chunkSize) {
+    // A large CAPTACAO import must not keep sending 200-row writes to a busy DB.
+    // Smaller, sequential, idempotent UPSERT transactions avoid statement timeouts.
+    var chunkSize = rows.length > 5000 ? 60 : 120;
+    var minSize = 20;
+    var i = 0;
+    var slowFailures = 0;
+    while (i < rows.length) {
       var chunk = rows.slice(i, i + chunkSize);
-      var response = await runSupabaseRequestWithRetry("upsert-stock-import-positions", function () {
-        return supabaseDb.rpc("wms_upsert_import_positions", {
-          p_warehouse_code: warehouseCode,
-          p_source_type: sourceType,
-          p_batch_id: batchId,
-          p_rows: chunk
+      var response;
+      try {
+        response = await runSupabaseRequestWithRetry("upsert-stock-import-positions", function () {
+          return supabaseDb.rpc("wms_upsert_import_positions", {
+            p_warehouse_code: warehouseCode,
+            p_source_type: sourceType,
+            p_batch_id: batchId,
+            p_rows: chunk
+          });
         });
-      });
-      if (response.error) throw response.error;
-      if (onProgress) onProgress({ processed: Math.min(i + chunk.length, rows.length), total: rows.length });
+      } catch (error) {
+        response = { error: error };
+      }
+      var error = response && response.error;
+      if (error) {
+        var message = String(error.message || error.details || "").toLowerCase();
+        var status = Number(error.status || response.status || 0);
+        var transient = String(error.code || "") === "57014" ||
+          /statement timeout|canceling statement due to statement timeout|timed out|timeout/i.test(message) ||
+          [408, 500, 502, 503, 504].includes(status) && /fetch|connection|service|timeout|gateway|unavailable/i.test(message);
+        if (transient && chunkSize > minSize) {
+          chunkSize = Math.max(minSize, Math.floor(chunkSize / 2));
+          slowFailures += 1;
+          if (onProgress) onProgress({ processed: i, total: rows.length, reducingBatch: true, chunkSize: chunkSize });
+          await delay(Math.min(6000, 1000 * slowFailures));
+          continue; // Same input rows and batch_id; no duplicate stock positions.
+        }
+        throw error;
+      }
+      i += chunk.length;
+      slowFailures = 0;
+      if (onProgress) onProgress({ processed: i, total: rows.length });
+      if (rows.length > 5000 && i < rows.length) await delay(30);
     }
   }
 
