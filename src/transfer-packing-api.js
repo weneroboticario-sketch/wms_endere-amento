@@ -37,6 +37,8 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
     request.p_item_id?client.from('wms_transfer_items').select('*').eq('id',request.p_item_id).eq('transfer_id',request.p_transfer_id).eq('warehouse_code',request.p_warehouse).maybeSingle():Promise.resolve({data:null})
    ]);
    if(transferResult.error||!transferResult.data||itemResult.error||(request.p_item_id&&!itemResult.data))return null;
+   const outstanding=pending();
+   if(!outstanding||outstanding.p_action_id!==request.p_action_id)return null;
    storage.removeItem(key());
    return {data:{event,transfer:transferResult.data,item:itemResult.data,replayed:true},recovered:true,recoveredFromHistory:true,stale:false};
   }catch(error){
