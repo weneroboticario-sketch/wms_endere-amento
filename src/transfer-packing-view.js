@@ -7,7 +7,7 @@ const historyQuantity=e=>e.audit_version===1?e.quantity:`${e.quantity??'—'} (l
 const historyReads=e=>e.audit_version===1?e.payload?.code_reads||0:'Não registrado';
 export function createPackingController({client,scope,warehouse,items,events,setEvents,accept,refresh,status,playScanSound=()=>{}}){
  const gateway=createPackingGateway({client:{rpc:(...args)=>client().rpc(...args),from:(table)=>client().from(table)},storage:window.sessionStorage,scope});
- let active=null,selected=null,loaded=false,loadedTransfer='',queue=Promise.resolve(),lastCode='';
+ let active=null,selected=null,loaded=false,loadedTransfer='',queue=Promise.resolve(),lastCode='',lastScanRaw='';
  const el=id=>document.getElementById(id);
  const method=raw=>String(raw??el('transferScanInput')?.value??'').trim().replace(/\D/g,'').length>5?'MODO_SCANNER':'MANUAL';
  const pendingSafe=()=>{try{return gateway.pending();}catch{return null;}};
@@ -43,7 +43,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
    if(result.stale||scope()!==captured)return false;
    if(result.cancelled){status('A operação anterior foi cancelada de forma auditada, sem registrar quantidade. Confira o estoque físico e informe novamente apenas o que realmente está na caixa.','warning');refresh();return false;}
    if(result.recoveredPending){accept(result.data);status('Operação anterior recuperada sem duplicar unidades. Confira a quantidade atualizada e confirme novamente apenas o restante físico.','warning');refresh();return false;}
-   accept(result.data);if(action.operation!=='LEITURA_SKU')lastCode='';status('Operação confirmada no servidor.','success');refresh();return true;
+   accept(result.data);if(action.operation!=='LEITURA_SKU'){lastCode='';lastScanRaw='';}status('Operação confirmada no servidor.','success');refresh();return true;
   }catch(error){
    if(scope()!==captured)return false;
    if(['40001','42501','22023','P0001','23514'].includes(error.code))gateway.discardRejected(error.code);
@@ -190,15 +190,28 @@ export function createPackingController({client,scope,warehouse,items,events,set
    const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=`auditoria-${t.code||t.id}.${format}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   });
  }
- return {history,render,report,perform,pending:pendingSafe,method,codeReadRequired:(item,raw)=>lastCode!==`${scope()}:${item.id}:${raw}`,
+ return {history,render,report,perform,pending:pendingSafe,method,scanProof:(item,raw)=>{
+   const matched=Boolean(item&&lastCode===`${scope()}:${item.id}:${item.sku}`&&String(raw).trim()===String(item.sku));
+   const captured=matched?lastScanRaw:String(raw||'');
+   const codeMethod=method(captured);
+   return {rawCode:captured,codeMethod,codeRead:matched&&codeMethod==='MODO_SCANNER'};
+  },codeReadRequired:(item,raw)=>lastCode!==`${scope()}:${item.id}:${raw}`,
   locate(t,item,raw){
    if(el('packingQuantityMode')?.value==='UNITARIA'){
     if(method(raw)!=='MODO_SCANNER'){status('Para registrar uma unidade por leitura, bipe o código completo do produto.','error');return Promise.resolve(false);}
     const captured=scope();const action={operation:'LEITURA_UNITARIA',quantity:1,raw_code:raw,code_method:method(raw)};
     queue=queue.then(async()=>{if(scope()!==captured)return false;const ok=await perform(t,items(t.id).find(x=>x.id===item.id),action);if(ok)playScanSound();return ok;});return queue;
    }
+   // Locating an item is read-only. The subsequent quantity confirmation
+   // persists the barcode proof, quantity and audit event in ONE transaction.
    const codeMethod=method(raw);
-   return perform(t,item,{operation:'LEITURA_SKU',raw_code:raw,code_method:codeMethod}).then(ok=>{if(ok){lastCode=`${scope()}:${item.id}:${item.sku}`;if(codeMethod==='MODO_SCANNER')playScanSound();}return ok;});
+   lastCode=`${scope()}:${item.id}:${item.sku}`;
+   lastScanRaw=String(raw||'').trim();
+   selected=item;
+   status('SKU '+item.sku+' localizado. Informe a quantidade para confirmar em uma única operação no servidor.','success');
+   if(codeMethod==='MODO_SCANNER')playScanSound();
+   if(pendingSafe())status('Produto localizado. Existe uma operação anterior pendente: verifique e libere antes de confirmar a nova quantidade.','warning');
+   return Promise.resolve(true);
   }
  };
 }
