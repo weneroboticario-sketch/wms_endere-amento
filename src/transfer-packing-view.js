@@ -146,7 +146,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
    const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=`auditoria-${t.code||t.id}.${format}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   });
  }
- return {history,render,report,perform,method,codeReadRequired:(item,raw)=>lastCode!==`${scope()}:${item.id}:${raw}`,
+ return {history,render,report,perform,pending:pendingSafe,method,codeReadRequired:(item,raw)=>lastCode!==`${scope()}:${item.id}:${raw}`,
   locate(t,item,raw){
    if(el('packingQuantityMode')?.value==='UNITARIA'){
     if(method(raw)!=='MODO_SCANNER'){status('Para registrar uma unidade por leitura, bipe o código completo do produto.','error');return Promise.resolve(false);}
