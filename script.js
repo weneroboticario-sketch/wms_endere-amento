@@ -3922,7 +3922,8 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       } catch (error) {
         response = { error: error };
       }
-      var error = response && response.error;
+      if (!response) response = { error: new Error("O servidor não confirmou o lote de importação. Nenhuma posição será ignorada.") };
+      var error = response.error;
       if (error) {
         var message = String(error.message || error.details || "").toLowerCase();
         var status = Number(error.status || response.status || 0);
