@@ -19561,7 +19561,18 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
 
   async function finishPacking() {
     var transfer = getTransferById(transferState.activeTransferId);
-    if (!transfer || isFinalTransferStatus(transfer.status)) return;
+    if (!transfer) {
+      setStatus("transferWorkStatus", "Transferência não encontrada. Clique em Atualizar antes de finalizar.", "error");
+      return;
+    }
+    if (isFinalTransferStatus(transfer.status)) {
+      setStatus("transferWorkStatus", "A montagem desta transferência já foi concluída: " + transferStatusDisplayLabel(transfer.status) + ". Para concluir a transferência fiscal, siga para a etapa de nota fiscal.", "warning");
+      return;
+    }
+    if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer) && packingController().pending()) {
+      setStatus("transferWorkStatus", "Existe uma operação de montagem sem confirmação do servidor. Clique em Tentar novamente a operação, confira as quantidades e só depois finalize. Não repita a digitação.", "error");
+      return;
+    }
     var finalBoxCount = readFinalBoxCountInput();
     if (!IS_CP_ALAMO && !isXmlConferenceTransfer(transfer)) {
       if (finalBoxCount === null) { setStatus("transferWorkStatus", "Informe a quantidade final de caixas.", "error"); return; }
