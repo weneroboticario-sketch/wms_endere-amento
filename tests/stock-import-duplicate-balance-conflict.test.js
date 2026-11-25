@@ -12,11 +12,9 @@ function loadDedupe(){
     stockPositionOperationalKey:(_source,row)=>JSON.stringify(['VDCG','CAPTACAO',String(row.codigoMaterial||''),String(row.codigoEndereco||'')]),
     Number
   });
-  for(const name of ['stockImportQuantitySignature','dedupeStockRows']){
-    const body=source.match(new RegExp('  function '+name+'\\([^]*?\\n  }'))?.[0];
-    assert.ok(body,name);
-    vm.runInContext(body,ctx);
-  }
+  const body=source.match(new RegExp('  function dedupeStockRows\\([^]*?\\n  }'))?.[0];
+  assert.ok(body,'dedupeStockRows');
+  vm.runInContext(body,ctx);
   return ctx;
 }
 
