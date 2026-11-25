@@ -6216,3 +6216,19 @@ body.role-atendente .replenishment-layout {
 
 #finalizedTransferRows > tr > td { background: #fff; }
 #finalizedTransferRows > tr.transfer-ready > td { background: #e8f6ec; }
+
+/* As sugestoes sao auxiliares: mantenha a fila operacional em primeiro plano. */
+.replenishment-suggestions-collapse > .replenishment-suggestions-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding: .25rem 0;
+  list-style-position: inside;
+}
+.replenishment-suggestions-summary strong { font-size: 1rem; }
+.replenishment-suggestions-summary-help { font-size: .8rem; font-weight: 400; }
+.replenishment-suggestions-collapse[open] > .replenishment-suggestions-summary { margin-bottom: 1rem; }
+.replenishment-suggestions-summary:focus-visible { outline: 2px solid var(--primary, #2563eb); outline-offset: 4px; border-radius: 4px; }
