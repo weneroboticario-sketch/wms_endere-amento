@@ -3507,6 +3507,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       setStatus("stockImportStatus", "Lendo planilha de " + stockSourceLabel(sourceType) + "...", "warning");
       var entry = await readWorkbookFile(file);
       var parsed = parseStockWorkbook(entry.workbook, sourceType);
+      if (parsed.errors.length) {
+        var examples = parsed.errors.slice(0, 5).join(" ");
+        setStatus("stockImportStatus",
+          "Importacao bloqueada: a planilha possui " + parsed.errors.length +
+          " conflito(s) de saldo para o mesmo SKU/endereco. " + examples +
+          (parsed.errors.length > 5 ? " Revise tambem os demais conflitos antes de importar." : ""),
+          "error");
+        return;
+      }
       if (!parsed.rows.length) {
         setStatus("stockImportStatus", "Nenhuma linha valida encontrada no modelo de " + stockSourceLabel(sourceType) + ".", "error");
         return;
@@ -3566,7 +3575,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       });
     });
     var inputRowCount = result.rows.length;
-    result.rows = dedupeStockRows(sourceType, result.rows);
+    result.rows = dedupeStockRows(sourceType, result.rows, result.errors);
     result.ignored += inputRowCount - result.rows.length;
     return result;
   }
@@ -3623,7 +3632,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].indexOf(text) >= 0;
   }
 
-  function dedupeStockRows(sourceType, rows) {
+  function stockImportQuantitySignature(row) {
+    return [
+      Number(row && row.totalFisico || 0),
+      Number(row && row.totalAlocado || 0),
+      Number(row && row.totalDisponivel || 0)
+    ].join("|");
+  }
+
+  function dedupeStockRows(sourceType, rows, errors) {
     var grouped = {};
     (rows || []).forEach(function (row) {
       var key = stockPositionOperationalKey(sourceType, row, activeWarehouseCode());
@@ -3632,7 +3649,24 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         grouped[key] = Object.assign({}, row);
         return;
       }
-      grouped[key] = Object.assign({}, grouped[key], row);
+      var previous = grouped[key];
+      if (stockImportQuantitySignature(previous) !== stockImportQuantitySignature(row)) {
+        if (errors) {
+          errors.push(
+            "SKU " + normalizeSku(row.codigoMaterial || "") +
+            " possui linhas conflitantes no endereco " + (row.codigoEndereco || "SEM ENDERECO") +
+            ": primeira linha [fisico " + Number(previous.totalFisico || 0) +
+            ", alocado " + Number(previous.totalAlocado || 0) +
+            ", disponivel " + Number(previous.totalDisponivel || 0) +
+            "] e outra linha [fisico " + Number(row.totalFisico || 0) +
+            ", alocado " + Number(row.totalAlocado || 0) +
+            ", disponivel " + Number(row.totalDisponivel || 0) + "]."
+          );
+        }
+        return;
+      }
+      // Duplicata exata: mantenha uma unica posicao, sem escolher silenciosamente outro saldo.
+      grouped[key] = Object.assign({}, previous, row);
     });
     return Object.keys(grouped).map(function (key) { return grouped[key]; });
   }
