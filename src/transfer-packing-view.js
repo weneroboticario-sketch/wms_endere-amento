@@ -6,7 +6,7 @@ const value=v=>v===null?'Conversão indefinida':String(v);
 const historyQuantity=e=>e.audit_version===1?e.quantity:`${e.quantity??'—'} (legado; unidade não validada)`;
 const historyReads=e=>e.audit_version===1?e.payload?.code_reads||0:'Não registrado';
 export function createPackingController({client,scope,warehouse,items,events,setEvents,accept,refresh,status,playScanSound=()=>{}}){
- const gateway=createPackingGateway({client:{rpc:(...args)=>client().rpc(...args)},storage:window.sessionStorage,scope});
+ const gateway=createPackingGateway({client:{rpc:(...args)=>client().rpc(...args),from:(table)=>client().from(table)},storage:window.sessionStorage,scope});
  let active=null,selected=null,loaded=false,loadedTransfer='',queue=Promise.resolve(),lastCode='';
  const el=id=>document.getElementById(id);
  const method=raw=>String(raw??el('transferScanInput')?.value??'').trim().replace(/\D/g,'').length>5?'MODO_SCANNER':'MANUAL';
