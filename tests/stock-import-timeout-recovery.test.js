@@ -56,5 +56,5 @@ test('permanent errors are not silently skipped',async()=>{
   delay:async()=>{}
  });
  vm.runInContext(functionSource,scope);
- await assert.rejects(scope.upsertStockImportPositions([{id:'1'}],'VDCG','CAPTACAO','batch-one'),/Estoque nao autorizado/);
+ await assert.rejects(scope.upsertStockImportPositions([{id:'1'}],'VDCG','CAPTACAO','batch-one'),error=>error.code==='42501'&&error.message==='Estoque nao autorizado');
 });
