@@ -653,11 +653,13 @@
         </section>
 
         <section class="panel replenishment-suggestions-panel" id="replenishmentSuggestionsPanel">
+          <details class="replenishment-suggestions-collapse" id="replenishmentSuggestionsCollapse">
+          <summary class="replenishment-suggestions-summary" aria-label="Expandir ou recolher sugestoes de abastecimento">
+            <strong>Sugestoes de abastecimento</strong>
+            <span class="muted replenishment-suggestions-summary-help">Clique para expandir ou recolher</span>
+          </summary>
           <div class="panel-header">
-            <div>
-              <h3>Sugestoes de abastecimento</h3>
-              <p class="muted">Produtos vendaveis com Loja abaixo de 3, CAPTACAO acima de 1 e soma Loja + CAPTACAO maior que 3.</p>
-            </div>
+            <div><p class="muted">Produtos vendaveis com Loja abaixo de 3, CAPTACAO acima de 1 e soma Loja + CAPTACAO maior que 3.</p></div>
             <button class="secondary-button" id="refreshReplenishmentSuggestionsButton" type="button">Atualizar</button>
           </div>
           <div class="button-row replenishment-suggestion-filters">
@@ -674,6 +676,7 @@
             <button class="secondary-button" id="loadMoreReplenishmentSuggestionsButton" type="button" hidden>Carregar mais sugestoes</button>
           </div>
           <div id="replenishmentSuggestionsStatus" class="inline-status"></div>
+          </details>
         </section>
       </section>
 
