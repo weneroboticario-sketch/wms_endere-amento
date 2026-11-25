@@ -15513,6 +15513,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       summaryChip("Produtos faltando", remainingProducts, remainingProducts ? "result-missing" : "result-ok"),
       "<div><span>Qtd prevista</span><strong>" + formatQty(expectedQtyTotal) + "</strong></div>",
       summaryChip("Qtd lacrada", formatQty(checkedQtyTotal), totalResult.key === "ok" ? "result-ok" : "result-changed"),
+      summaryChip("Caixas finais", isFinalTransferStatus(transfer.status) ? formatQty(Number(transfer.totalBoxes || 0)) : "Aguardando conclusão", isFinalTransferStatus(transfer.status) && Number(transfer.totalBoxes || 0) > 0 ? "result-ok" : "result-changed"),
       summaryChip("Qtd faltando", formatQty(remainingQtyTotal), remainingQtyTotal ? "result-missing" : "result-ok"),
       summaryChip("Diferença", formatQty(differenceQtyTotal), "result-" + totalResult.key)
     ].join("");
