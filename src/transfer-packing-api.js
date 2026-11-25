@@ -10,6 +10,40 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
    /timeout|timed out|failed to fetch|networkerror|load failed|fetch failed|gateway|temporar(?:y|i)|connection/.test(message);
  };
  const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const sameJson=(left,right)=>{
+  const canonical=value=>{
+   if(Array.isArray(value))return value.map(canonical);
+   if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])]));
+   return value;
+  };
+  return JSON.stringify(canonical(left))===JSON.stringify(canonical(right));
+ };
+ async function recoverConfirmed(request){
+  // An HTTP 504 can lose the reply even after the database COMMIT.
+  // Check the immutable audited event before attempting a new RPC.
+  if(typeof client.from!=='function')return null;
+  try{
+   const response=await client.from('wms_transfer_events').select('*')
+    .eq('warehouse_code',request.p_warehouse).eq('transfer_id',request.p_transfer_id)
+    .eq('action_id',request.p_action_id).maybeSingle();
+   if(response.error||!response.data)return null;
+   const event=response.data;
+   const payload=typeof event.payload==='string'?JSON.parse(event.payload):event.payload||{};
+   if(!sameJson(payload.request,request.p_action)||
+      String(payload.requested_item_id||'')!==String(request.p_item_id||''))
+    throw Object.assign(new Error('A operação auditada não corresponde à solicitação pendente. Solicite suporte antes de prosseguir.'),{code:'PENDING_MISMATCH'});
+   const [transferResult,itemResult]=await Promise.all([
+    client.from('wms_transfers').select('*').eq('id',request.p_transfer_id).eq('warehouse_code',request.p_warehouse).maybeSingle(),
+    request.p_item_id?client.from('wms_transfer_items').select('*').eq('id',request.p_item_id).eq('transfer_id',request.p_transfer_id).eq('warehouse_code',request.p_warehouse).maybeSingle():Promise.resolve({data:null})
+   ]);
+   if(transferResult.error||!transferResult.data||itemResult.error||(request.p_item_id&&!itemResult.data))return null;
+   storage.removeItem(key());
+   return {data:{event,transfer:transferResult.data,item:itemResult.data,replayed:true},recovered:true,recoveredFromHistory:true,stale:false};
+  }catch(error){
+   if(error?.code==='PENDING_MISMATCH')throw error;
+   return null; // Network/read failure: preserve pending UUID, never guess success.
+  }
+ }
  async function send(request){
   if(busy)throw new Error('Aguarde a confirmação da operação anterior.');
   const scopeAtSend=scope(),keyAtSend=key();busy=true;
@@ -36,6 +70,10 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
      await pause(900);
     }
    }
+   if(transient(lastError)){
+    const confirmed=await recoverConfirmed(request);
+    if(confirmed)return {...confirmed,stale:scope()!==scopeAtSend};
+   }
    throw lastError;
   }finally{busy=false;}
  }
@@ -59,7 +97,10 @@ export function createPackingGateway({client,storage,scope,uuid=()=>crypto.rando
    const request={p_transfer_id:transferId,p_item_id:itemId||'',p_warehouse:warehouse,p_action_id:uuid(),p_expected_revision:revision??0,p_action:action};
    storage.setItem(key(),JSON.stringify(request));return send(request);
   },
-  retry(){const request=pending();if(!request)throw new Error('Nenhuma operação pendente.');return send(request);},
+  async retry(){const request=pending();if(!request)throw new Error('Nenhuma operação pendente.');
+   const confirmed=await recoverConfirmed(request);
+   return confirmed||send(request);
+  },
   discardRejected(code){
    // Only a server rejection known to roll back permits dropping the action.
    if(!['40001','42501','22023','P0001','23514'].includes(code))throw new Error('Resultado incerto. Repita a operação com o mesmo identificador.');
