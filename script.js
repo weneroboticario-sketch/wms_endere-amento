@@ -3632,16 +3632,15 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     ].indexOf(text) >= 0;
   }
 
-  function stockImportQuantitySignature(row) {
-    return [
-      Number(row && row.totalFisico || 0),
-      Number(row && row.totalAlocado || 0),
-      Number(row && row.totalDisponivel || 0)
-    ].join("|");
-  }
-
   function dedupeStockRows(sourceType, rows, errors) {
     var grouped = {};
+    var quantitySignature = function (row) {
+      return [
+        Number(row && row.totalFisico || 0),
+        Number(row && row.totalAlocado || 0),
+        Number(row && row.totalDisponivel || 0)
+      ].join("|");
+    };
     (rows || []).forEach(function (row) {
       var key = stockPositionOperationalKey(sourceType, row, activeWarehouseCode());
       if (!key) return;
@@ -3650,7 +3649,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         return;
       }
       var previous = grouped[key];
-      if (stockImportQuantitySignature(previous) !== stockImportQuantitySignature(row)) {
+      if (quantitySignature(previous) !== quantitySignature(row)) {
         if (errors) {
           errors.push(
             "SKU " + normalizeSku(row.codigoMaterial || "") +
