@@ -11,8 +11,19 @@ export async function resolveTransferScanSku(raw,{items=[],client,warehouse,isSa
  if(!shortGtin&&!longerBarcode)return code;
  if(!validGtin(code))throw new Error('Código de barras inválido. Confira o EAN e tente novamente.');
  if(!client?.rpc||!warehouse)throw new Error('Não foi possível validar o EAN no estoque atual.');
- const response=await client.rpc('lookup_wms_sku_photo',{p_warehouse:warehouse,p_code:code,p_kind:'GTIN'});
- if(response.error)throw response.error;
+ let response;
+ try{
+  response=await client.rpc('lookup_wms_sku_photo',{p_warehouse:warehouse,p_code:code,p_kind:'GTIN'});
+ }catch(error){
+  throw new Error('Consulta do EAN indisponível no servidor. Tente novamente ou use o SKU curto impresso na lista.',{cause:error});
+ }
+ if(response?.error){
+  const codeStatus=Number(response.status||response.error.status||0);
+  const message=String(response.error.message||'');
+  if([408,429,500,502,503,504].includes(codeStatus)||/timeout|failed to fetch|networkerror/i.test(message))
+   throw new Error('Servidor não respondeu à validação do EAN. Tente novamente ou digite o SKU curto; nenhuma unidade foi registrada.');
+  throw response.error;
+ }
  if(!Array.isArray(response.data)||response.data.length===0)
    throw new Error('EAN sem vínculo validado neste estoque. Cadastre o código na Consulta de SKU ou digite o SKU curto.');
  if(response.data.length!==1)throw new Error('EAN associado a mais de um SKU. Solicite revisão antes de bipar.');
