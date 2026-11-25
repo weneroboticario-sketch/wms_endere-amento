@@ -49,7 +49,14 @@ export function createPackingController({client,scope,warehouse,items,events,set
    const conflict=error.code==='40001'||error.cause?.code==='40001';
    const synchronized=conflict?await syncItemAfterConflict(t,item):false;
    const hint=synchronized?' Os valores foram atualizados do servidor; confira a quantidade restante antes de repetir.':'';
-   status(`${error.message}${hint}${pendingSafe()?' Operação sem confirmação: use Tentar novamente.':''}`,'error');
+   const pendingRequest=pendingSafe();
+   const transientStatus=/504|gateway timeout|timed out|timeout|failed to fetch|networkerror/i.test(String(error.message||'')) || Number(error.status)===504;
+   const detail=pendingRequest
+     ? (transientStatus
+       ? ' O servidor não confirmou a operação. NÃO digite a quantidade novamente. Clique em "Tentar novamente a operação" para recuperar o mesmo lançamento, sem duplicar unidades.'
+       : ' Operação sem confirmação: utilize "Tentar novamente a operação" antes de qualquer novo lançamento.')
+     : '';
+   status(`${transientStatus?'Falha temporária de comunicação com o Supabase. ':''}${error.message}${hint}${detail}`,'error');
    if(!synchronized)render(t,item);
    return false;
   }
@@ -105,7 +112,7 @@ export function createPackingController({client,scope,warehouse,items,events,set
    if(pendingOperation){
     const action=pendingOperation.p_action||{};
     const description=action.operation==='LEITURA_UNITARIA'?'leitura unitária':action.operation==='QUANTIDADE_MANUAL'?'registro de quantidade':action.operation==='LEITURA_SKU'?'leitura de SKU':'operação de montagem';
-    pendingWarning.textContent='Existe '+description+' sem confirmação do servidor. Antes de registrar mais unidades, clique em "Tentar novamente a operação". A repetição utiliza o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
+    pendingWarning.textContent='Existe '+description+' sem confirmação do servidor. Antes de registrar mais unidades ou finalizar, clique em "Tentar novamente a operação". A repetição utiliza o mesmo identificador e não deve somar a quantidade duas vezes. Confira o saldo atualizado antes do próximo lançamento.';
    }
   }
   updateQuantityGuidance();
