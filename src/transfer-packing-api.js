@@ -1,3 +1,4 @@
+/* global AbortController */
 // Persist the exact request before sending. An uncertain acknowledgement must
 // be retried with the same action UUID, never reconstructed from form values.
 export function createPackingGateway({client,storage,scope,uuid=()=>crypto.randomUUID()}){
