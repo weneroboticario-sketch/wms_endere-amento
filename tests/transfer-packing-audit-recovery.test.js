@@ -20,19 +20,19 @@ test('a committed operation is recovered from audit history after a 504 without 
  assert.equal(result.recoveredFromHistory,true);
  assert.equal(result.data.item.quantidade_lacrada,5);
  assert.equal(gateway.pending(),null);
- assert.equal(writes,2);
+ assert.equal(writes,1);
 });
 test('a retry verifies existing event without calling the RPC',async()=>{
  const saved=memory();let writes=0;let lookup=null;
  const client={rpc:async(_name,payload)=>{writes++;return {status:504,error:{message:'Gateway timeout'}};},from:table=>chain(table,lookup)};
  const gateway=createPackingGateway({client,storage:saved,scope:()=> 'user:VDCG:trf-vdar',uuid:()=> 'uuid-2'});
  await assert.rejects(gateway.perform(req),/Gateway timeout/);
- assert.equal(writes,2);
+ assert.equal(writes,1);
  const pending=gateway.pending();
  lookup={event:{payload:{request:pending.p_action,requested_item_id:pending.p_item_id}},transfer:{id:'trf-vdar'},item:{id:'sku-85308',quantidade_lacrada:5}};
  const recovered=await gateway.retry();
  assert.equal(recovered.recoveredFromHistory,true);
- assert.equal(writes,2);
+ assert.equal(writes,1);
  assert.equal(gateway.pending(),null);
 });
 test('mismatched audit request cannot clear pending quantity',async()=>{
