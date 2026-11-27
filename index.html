@@ -499,8 +499,8 @@
             </div>
             <label for="stockImportModeInput">Tipo de carga</label>
             <select id="stockImportModeInput">
-              <option value="CARGA_PARCIAL">Carga parcial (segura: preserva produtos ausentes do arquivo)</option>
-              <option value="CARGA_COMPLETA">Carga completa (substitui a base; arquivo integral)</option>
+              <option value="CARGA_COMPLETA">Snapshot atual (padrão: ausentes ficam zerados/inativos)</option>
+              <option value="CARGA_PARCIAL">Carga parcial (manual: preserva produtos ausentes do arquivo)</option>
             </select>
             <label for="captureStockFileInput">Base CAPTACAO</label>
             <input id="captureStockFileInput" type="file" accept=".xlsx,.xls">
