@@ -15,17 +15,30 @@ test('fallback da importacao usa CARGA_COMPLETA',async()=>{
   assert.match(source,/\$\("stockImportModeInput"\)\.value : "CARGA_COMPLETA"/);
 });
 
-test('snapshot completo inativa posicoes ausentes da nova carga',async()=>{
+test('snapshot completo zera ausentes mantendo o registro ativo',async()=>{
   const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
   const start=source.indexOf('async function saveStockImportBatch(');
-  const imp=source.slice(start,start+22000);
-  assert.match(imp,/importMode === "CARGA_COMPLETA" && !incomingKeys\[stockPositionOperationalKey\(sourceType, position, warehouseCode\)\]/);
+  const imp=source.slice(start,start+26000);
+  assert.match(imp,/var snapshotZeroPositions = currentRows\.filter/);
+  assert.match(imp,/if \(importMode !== "CARGA_COMPLETA"\) return false/);
+  assert.match(imp,/totalFisico: 0/);
+  assert.match(imp,/totalAlocado: 0/);
+  assert.match(imp,/totalDisponivel: 0/);
+  assert.match(imp,/active: true/);
+  assert.match(imp,/sem inativar/);
   assert.doesNotMatch(imp,/IMPORTACAO BLOQUEADA PARA PROTEGER SALDOS/);
-  assert.doesNotMatch(imp,/Math\.floor\(currentRows\.length \* 0\.20\)/);
 });
 
 test('carga parcial manual preserva posicoes simplesmente ausentes',async()=>{
   const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
   assert.match(source,/importMode = importMode === "CARGA_PARCIAL" \? "CARGA_PARCIAL" : "CARGA_COMPLETA"/);
-  assert.match(source,/duplicateActiveIds\[position\.id\] \|\| becameUnlocated \|\| \(importMode === "CARGA_COMPLETA"/);
+  assert.match(source,/if \(importMode !== "CARGA_COMPLETA"\) return false/);
+});
+
+test('active false fica restrito a limpeza estrutural, nao a ausencia de snapshot',async()=>{
+  const source=await readFile(new URL('../script.js',import.meta.url),'utf8');
+  const start=source.indexOf('var deactivatedPositions = currentRows.filter');
+  const block=source.slice(start,start+1800);
+  assert.match(block,/return duplicateActiveIds\[position\.id\] \|\| becameUnlocated/);
+  assert.doesNotMatch(block,/!incomingKeys/);
 });

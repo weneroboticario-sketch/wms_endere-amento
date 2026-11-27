@@ -3528,7 +3528,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       if (sourceType === "CAPTACAO") {
         await publishAddressCacheInvalidation(activeWarehouseCode(), file.name, parsed.rows.length, "IMPORTACAO_BASE");
       }
-      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + importResult.deactivated + " inativado(s), " + importResult.negative + " negativo(s), " + (importResult.locationBindingsSynced || 0) + " endereco(s) sincronizado(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
+      setStatus("stockImportStatus", "Base " + stockSourceLabel(sourceType) + " sincronizada (" + stockImportModeLabel(importMode) + "): " + importResult.inserted + " novo(s), " + importResult.updated + " atualizado(s), " + importResult.unchanged + " igual(is), " + (importResult.zeroed || 0) + " zerado(s) por ausencia, " + importResult.deactivated + " limpeza(s) estrutural(is), " + importResult.negative + " negativo(s), " + (importResult.locationBindingsSynced || 0) + " endereco(s) sincronizado(s), " + (importResult.unlocatedBindingsRemoved || 0) + " endereco(s) antigo(s) removido(s), " + parsed.ignored + " ignorado(s).", "success");
       showToast("Base de estoque importada.", "success");
     } catch (error) {
       setStatus("stockImportStatus", "Falha na importacao: " + missingStockSchemaMessage(error), "error");
@@ -3743,7 +3743,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
       var unlocatedSkuKeys = sourceType === "CAPTACAO" ? stockImportSkuKeysWithoutLocation(parsed.rows) : [];
       var unlocatedSkuKeySet = {};
       unlocatedSkuKeys.forEach(function (key) { unlocatedSkuKeySet[key] = true; });
-      var metrics = { inserted: 0, updated: 0, unchanged: 0, deactivated: 0, negative: 0, alertRows: 0, locationBindingsSynced: 0, locationBindingsCreated: 0, locationBindingDuplicatesRemoved: 0, unlocatedBindingsRemoved: 0, changedSkus: [] };
+      var metrics = { inserted: 0, updated: 0, unchanged: 0, zeroed: 0, deactivated: 0, negative: 0, alertRows: 0, locationBindingsSynced: 0, locationBindingsCreated: 0, locationBindingDuplicatesRemoved: 0, unlocatedBindingsRemoved: 0, changedSkus: [] };
       parsed.rows.forEach(function (row, index) {
         var key = stockPositionOperationalKey(sourceType, row, warehouseCode);
         if (!key) return;
@@ -3769,9 +3769,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           updatedAt: now
         })));
       });
-      // Em modo snapshot completo, a ausência no arquivo é intencionalmente tratada
-      // como saldo zerado/inativo para esta VD + origem. Carga parcial continua disponível
-      // apenas quando o operador realmente deseja preservar registros ausentes.
+      // Em modo snapshot completo, ausência no arquivo significa saldo operacional zero.
+      // O registro continua ativo; não usamos active=false para representar falta de saldo.
+      // Carga parcial continua disponível apenas quando o operador deseja preservar ausentes.
       updateLocalStockBatchProgress(batchId, {
         imported_rows: metrics.unchanged,
         inserted_rows: metrics.inserted,
@@ -3794,16 +3794,57 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           });
         });
       }
+      var snapshotZeroPositions = currentRows.filter(function (position) {
+        if (importMode !== "CARGA_COMPLETA") return false;
+        var operationalKey = stockPositionOperationalKey(sourceType, position, warehouseCode);
+        if (!operationalKey || incomingKeys[operationalKey]) return false;
+        if (duplicateActiveIds[position.id]) return false;
+        var skuKey = normalizeSkuKey(position.codigoMaterial);
+        var becameUnlocated = unlocatedSkuKeySet[skuKey] && stockPositionLocation(position);
+        if (becameUnlocated) return false;
+        return Number(position.totalFisico || 0) !== 0 ||
+          Number(position.totalAlocado || 0) !== 0 ||
+          Number(position.totalDisponivel || 0) !== 0 ||
+          position.active !== true;
+      });
+      metrics.zeroed = snapshotZeroPositions.length;
+      if (snapshotZeroPositions.length) {
+        snapshotZeroPositions.forEach(function (position) {
+          metrics.changedSkus.push(normalizeSku(position.codigoMaterial));
+        });
+        var zeroRows = snapshotZeroPositions.map(function (position) {
+          var zeroed = Object.assign({}, position, {
+            totalFisico: 0,
+            totalAlocado: 0,
+            totalDisponivel: 0,
+            batchId: batchId,
+            lastSeenBatchId: position.lastSeenBatchId || position.batchId || "",
+            sourceType: sourceType,
+            warehouseCode: warehouseCode,
+            active: true,
+            updatedAt: now
+          });
+          zeroed.recordHash = calculateStockRecordHash(zeroed, sourceType);
+          return toDbStockPosition(zeroed);
+        });
+        setStatus("stockImportStatus", "Zerando " + zeroRows.length + " SKU(s) ausente(s) do snapshot, sem inativar...", "warning");
+        await upsertStockImportPositions(zeroRows, warehouseCode, sourceType, batchId, function (progress) {
+          setStatus("stockImportStatus", "Zerando " + progress.processed + " de " + progress.total + " SKU(s) ausente(s), sem inativar...", "warning");
+        });
+      }
+
+      // Inativação fica restrita a limpeza estrutural de duplicidades/endereços antigos,
+      // nunca para representar SKU ausente ou saldo zero.
       var deactivatedPositions = currentRows.filter(function (position) {
         var skuKey = normalizeSkuKey(position.codigoMaterial);
         var becameUnlocated = unlocatedSkuKeySet[skuKey] && stockPositionLocation(position);
-        return duplicateActiveIds[position.id] || becameUnlocated || (importMode === "CARGA_COMPLETA" && !incomingKeys[stockPositionOperationalKey(sourceType, position, warehouseCode)]);
+        return duplicateActiveIds[position.id] || becameUnlocated;
       });
       deactivatedPositions.forEach(function (position) { metrics.changedSkus.push(normalizeSku(position.codigoMaterial)); });
       var deactivatedIds = deactivatedPositions.map(function (position) { return position.id; }).filter(Boolean);
       metrics.deactivated = deactivatedIds.length;
       if (deactivatedIds.length) {
-        setStatus("stockImportStatus", "Inativando " + deactivatedIds.length + " registro(s) fora da carga atual...", "warning");
+        setStatus("stockImportStatus", "Limpando " + deactivatedIds.length + " registro(s) estrutural(is) duplicado(s)/antigo(s)...", "warning");
         await updateStockRowsByIds(deactivatedIds, { active: false, updated_at: now, batch_id: batchId });
       }
       setStatus("stockImportStatus", "Conferindo enderecos da base importada...", "warning");
@@ -3829,7 +3870,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         errorRows: parsed.errors.length,
         status: "COMPLETED",
         importMode: importMode,
-        notes: "Importacao de estoque " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.locationBindingsSynced + " endereco(s) sincronizado(s), " + metrics.locationBindingsCreated + " endereco(s) criado(s), " + metrics.locationBindingDuplicatesRemoved + " duplicidade(s) removida(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
+        notes: "Importacao de estoque " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.zeroed + " zerado(s) por ausencia sem inativar, " + metrics.deactivated + " limpeza(s) estrutural(is), " + metrics.negative + " negativo(s), " + metrics.locationBindingsSynced + " endereco(s) sincronizado(s), " + metrics.locationBindingsCreated + " endereco(s) criado(s), " + metrics.locationBindingDuplicatesRemoved + " duplicidade(s) removida(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
       }));
       updateLocalStockBatchProgress(batchId, {
         imported_rows: parsed.rows.length,
