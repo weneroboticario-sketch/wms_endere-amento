@@ -3503,7 +3503,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
     if (!beginTransferAction("import-stock-" + sourceType, button, "Importando...")) return;
     try {
       stockState.importing = true;
-      var importMode = $("stockImportModeInput") ? $("stockImportModeInput").value : "CARGA_PARCIAL";
+      var importMode = $("stockImportModeInput") ? $("stockImportModeInput").value : "CARGA_COMPLETA";
       setStatus("stockImportStatus", "Lendo planilha de " + stockSourceLabel(sourceType) + "...", "warning");
       var entry = await readWorkbookFile(file);
       var parsed = parseStockWorkbook(entry.workbook, sourceType);
@@ -3682,7 +3682,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
   }
 
   function stockImportModeLabel(mode) {
-    return mode === "CARGA_PARCIAL" ? "carga parcial" : "carga completa";
+    return mode === "CARGA_PARCIAL" ? "carga parcial" : "snapshot atual";
   }
 
   async function saveStockImportBatch(sourceType, fileName, parsed, importMode) {
@@ -3769,21 +3769,9 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
           updatedAt: now
         })));
       });
-      // Safety barrier: a short extract is not a full warehouse snapshot.
-      // Validate the expected removals BEFORE writing any stock positions.
-      if(importMode === "CARGA_COMPLETA" && currentRows.length >= 1000){
-        var previewRemovals = currentRows.filter(function(position){
-          var operationalKey = stockPositionOperationalKey(sourceType, position, warehouseCode);
-          return operationalKey && !incomingKeys[operationalKey];
-        });
-        var removalLimit = Math.max(200, Math.floor(currentRows.length * 0.20));
-        if(previewRemovals.length > removalLimit){
-          throw new Error("IMPORTACAO BLOQUEADA PARA PROTEGER SALDOS: o arquivo tem " +
-            parsed.rows.length + " posicoes e inativaria " + previewRemovals.length +
-            " de " + currentRows.length + " posicoes ativas. Uma planilha parcial nao pode substituir " +
-            "toda a base. Selecione Carga parcial e importe novamente; nenhuma posicao foi alterada nesta tentativa.");
-        }
-      }
+      // Em modo snapshot completo, a ausência no arquivo é intencionalmente tratada
+      // como saldo zerado/inativo para esta VD + origem. Carga parcial continua disponível
+      // apenas quando o operador realmente deseja preservar registros ausentes.
       updateLocalStockBatchProgress(batchId, {
         imported_rows: metrics.unchanged,
         inserted_rows: metrics.inserted,
@@ -3841,7 +3829,7 @@ import { createAddressingPresence } from "./src/addressing-presence.js";
         errorRows: parsed.errors.length,
         status: "COMPLETED",
         importMode: importMode,
-        notes: "Importacao incremental " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.locationBindingsSynced + " endereco(s) sincronizado(s), " + metrics.locationBindingsCreated + " endereco(s) criado(s), " + metrics.locationBindingDuplicatesRemoved + " duplicidade(s) removida(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
+        notes: "Importacao de estoque " + stockSourceLabel(sourceType) + " (" + stockImportModeLabel(importMode) + "): " + metrics.inserted + " novo(s), " + metrics.updated + " atualizado(s), " + metrics.unchanged + " igual(is), " + metrics.deactivated + " inativado(s), " + metrics.negative + " negativo(s), " + metrics.locationBindingsSynced + " endereco(s) sincronizado(s), " + metrics.locationBindingsCreated + " endereco(s) criado(s), " + metrics.locationBindingDuplicatesRemoved + " duplicidade(s) removida(s), " + metrics.unlocatedBindingsRemoved + " vinculo(s) sem localizacao removido(s)."
       }));
       updateLocalStockBatchProgress(batchId, {
         imported_rows: parsed.rows.length,
